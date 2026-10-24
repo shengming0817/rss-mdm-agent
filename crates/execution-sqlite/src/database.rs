@@ -4,7 +4,7 @@ use rusqlite::{Connection, OpenFlags, TransactionBehavior};
 use std::path::Path;
 
 // Includes persisted lifecycle records and the journal fingerprint domain, not just DDL.
-pub(crate) const SCHEMA_VERSION: u32 = 1;
+pub(crate) const SCHEMA_VERSION: u32 = 2;
 const APPLICATION_ID: u32 = 0x52534558;
 
 // Only internal schema column names are accepted, never caller-provided SQL.
@@ -23,6 +23,7 @@ pub struct Store {
     pub(crate) conn: Connection,
     pub(crate) limits: Limits,
     pub(crate) authority: Authority,
+    pub(crate) installation_owner: bool,
     pub(crate) material_owner: u64,
     pub(crate) material_safety: std::cell::Cell<u64>,
 }
@@ -39,6 +40,16 @@ pub enum OpenOutcome {
     },
 }
 impl Store {
+    /// Enable the sole product service's multi-namespace view of an installation journal.
+    /// This trusted composition operation grants no caller, execution or scope permission.
+    /// Every stored scope is still authenticated by JournalHost; ordinary opens stay strict.
+    pub fn into_installation_owner(mut self) -> Result<Self, Error> {
+        if !matches!(self.authority, Authority::Local { .. }) {
+            return Err(Error::Denied);
+        }
+        self.installation_owner = true;
+        Ok(self)
+    }
     /// Device-owner lookup, fenced by the exact current journal format and authority.
     pub(crate) fn sql_contains_request(
         &self,
@@ -156,6 +167,7 @@ impl Store {
             conn,
             limits,
             authority: stored,
+            installation_owner: false,
             material_owner: crate::material::owner_id(),
             material_safety: Default::default(),
         })))

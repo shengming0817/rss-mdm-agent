@@ -25,6 +25,7 @@ fn recipe(
     let interpreter = if [
         "native-software-worker",
         "native-local-software-worker",
+        "native-settings-worker",
         "native-collection-worker",
         "native-enrollment-worker",
         "native-credential-worker",

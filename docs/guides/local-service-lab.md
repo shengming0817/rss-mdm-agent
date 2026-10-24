@@ -71,37 +71,27 @@ Windows 使用 PowerShell 7 运行 `scripts/service/execution-windows.ps1 -Actio
 
 软件脚本检测器在退出码为 0 且完整捕获 stdout 时读取一个严格 JSON 对象：`{"kind":"absent"}` 或 `{"kind":"present","version":"固定版本"}`。其它输出、截断或无法核实的执行活动保持 Unknown；检测事实与安装进程退出分别记入同一 journal。
 
-### 本地软件操作规则
+### 内置本地能力与权限限制
 
-当前安装文档格式为 deployment 3，桌面/服务 IPC 为 3；旧格式直接拒绝，不协商或回退。显式安装为 `execution.local_software.policyFile` 建立管理员保护的 `software-policy.json`，正常刷新保留已有有效规则。运行时缺失、权限错误或格式错误均禁止本地操作，不自动创建允许规则。修改规则使用已有管理员部署操作；不要修改执行日志或创建第二个执行服务。
+安装后的同一系统服务在企业注册前即可承接本地任务。本地采集定义由客户端代码选择固定版本 `rss-mdm-agent-wire` 的原生定义，连同客户端补充的设置能力一起打包；后端策略不决定本地能力是否存在。运行时不下载或定义本地 SQL、脚本、执行配方或周期采集规则。
 
-初始规则内容如下；它允许支持的非保护目标进入准备，实际提交仍重新核验当前规则、原 OS 会话、观察快照与对象身份：
+安装配置使用 `execution.local_permissions.policyFile` 指向管理员保护的 `local-permissions.json`。显式安装创建以下初始权限限制；正常刷新保留现有有效文件。运行时缺失、格式错误或权限保护不成立时，修改操作拒绝执行，不自动创建允许规则。旧部署、IPC 和执行库格式直接拒绝并保留，不迁移、重置或另建日志。
 
 ```json
-{"version":1,"allowNativeUninstall":true,"allowLaunch":true,"allowUserUpdate":true,"protected":["com.rss.mdmagent","com.rss-mdm.agent","RSS MDM Agent"],"recipes":[]}
+{"version":2,"allowNativeUninstall":true,"allowLaunch":true,"allowDisplay":true,"allowProxy":false,"allowPower":false,"protected":["com.rss.mdmagent","com.rss-mdm.agent","RSS MDM Agent"]}
 ```
 
-`protected` 为明确原生标识，比较忽略 ASCII 大小写；系统 Apple 标识和本产品身份始终受保护。`allowNativeUninstall` 控制无配方的原生卸载，明确配方仍需组织单独允许。规则文件受既有 protected reader 大小上限约束。
+此文件只能限制代码内置能力，不能提供执行命令、材料路径或新增动作。`protected` 按原生身份忽略 ASCII 大小写比较；Apple 系统身份和本产品始终受保护。管理员可通过现有部署操作委派代理或电源修改，实际操作仍重新检查当前权限、登录会话、观察快照与目标身份。
 
-macOS 自动路径支持 `/Applications` 直属、可核实签名的 `.app` 和当前用户 Applications 中的应用；系统根、别名及设备级嵌套目录不推断卸载权限。系统服务先使用禁止覆盖的原子重命名隔离并核验原目录对象，再执行不跟随链接的删除；失败或中断保留未知结果和隔离内容，不根据旧路径重试删除。GUI 使用 NSWorkspace，在当前用户 helper 内启动。
+macOS 支持受核实签名的应用启动、检测和原生卸载。设备级卸载只处理 `/Applications` 直属应用；当前用户应用使用原用户 helper。系统服务以禁止覆盖的原子重命名隔离并核验原目录对象，再执行不跟随链接的删除；中断保留未知结果与隔离内容，不按旧路径重试删除。GUI 使用当前登录内的 NSWorkspace。
 
-Windows 原生路径支持经 Windows Installer 与受保护缓存重新核实的 MSI 产品，以及当前用户已注册、非框架、非系统的已签名 MSIX。MSI 的用户/机器安装上下文分别执行；系统组件、禁止移除项、本产品及需要单独配方的 Microsoft 产品拒绝自动卸载。MSIX 移除当前用户注册，不将设备取消预配冒充所有用户卸载。GUI 使用唯一 AppListEntry 的原生启动接口；多入口不猜测。开发机不执行 Windows 构建或验收。
+Windows 原生路径支持经 Windows Installer 与受保护缓存重新核实的 MSI 产品，以及当前用户已注册的已签名 MSIX。用户与设备上下文分别执行，系统组件、本产品和禁止移除项拒绝卸载。MSIX 移除当前用户注册，不据此声明设备上所有用户均已卸载。PKG、EXE 等没有安全通用卸载语义的目标保持不支持；不执行注册表 UninstallString 或根据 PKG 收据删除文件。
 
-PKG、EXE 和其它不具备通用安全卸载语义的目标要求 `recipes` 中的明确配方，不执行注册表 UninstallString，不根据 PKG 收据遍历删除文件。每个配方必须给出 `nativeId`、`kind`、`scope`（`user` / `device`）、`action`（`update` / `uninstall`）、`publisher`、`fromVersions`、`targetVersion`、既有 `ExecutionInput` 的 `input` 与精确 `SoftwareMaterial[]` 的 `files`。调用者不能传入路径、命令或可执行输入；服务将原请求、用户、设备、执行范围及登录会话绑定进现有 SoftwareProgram，材料必须位于受保护路径并匹配 SHA256。卸载配方匹配当前确切安装版本，且提供独立 detector；检测动作可复用同一卸载配方的只读 detector。
+安装、升级继续选择真实企业发布目标，通过后端签名 Offer/Start 授权。本地界面没有固定更新候选时明确显示不可更新，不根据安装版本推断最新版。本地任务和企业任务共用 journal、runner、恢复、取消与物理资源排他，授权分别绑定安装身份与企业注册世代。
 
-本地更新仅允许当前用户范围，要求 `fromVersions` 明确包含所观察版本、固定 `targetVersion` 等于程序最终版本，并满足既有执行器的前向版本规则；不支持未知顺序或允许降级的候选。设备级更新继续使用企业任务。PKG/EXE 的安装与企业升级仍消费现有发布和执行机制，不由本地规则签发企业授权。
+系统设置页保留逐字段来源、质量、时间及不可用原因。代理只修改所选网络服务或当前用户的手动配置，保留 PAC/WPAD 与未编辑项；Windows 系统服务代理独立只读。显示模式仅选择系统枚举的模式，修改先预览十五秒，未确认则由工作进程恢复；取消与恢复回读分别报告。电源分别处理 AC/DC 的屏幕关闭、系统睡眠和平台支持的电源模式，不把锁屏登录要求一并修改。系统原生入口使用固定目的地，打开请求不代表设置已应用。macOS 在无法可靠确认设置未受组织管理时保留只读状态，使用系统设置入口核对；管理员委派不会绕过这一检查。
 
-普通企业网络故障或证书过期阻止相应后台工作，不撤销已经独立获准的本地动作；退管、凭据撤销、服务停止仍阻止新的本地提交。规则变更、选择快照变化、准备过期、会话变化及材料变化都必须重新核实，点击确认本身不能补权。
-
-执行宿主机制诊断：macOS 可用 `log show --last 10m --predicate 'subsystem == "com.rss-mdm.agent.execution"'` 查看闭合的阶段/失败分类；Windows 在 Application Event Log 查看 source 为 `RSS Execution` 的事件数据（不要求自定义消息资源安装）。日志由 OS 留存，卸载不删除历史。launchd 初始化结果不确定会尝试 bootout；补偿失败保留 plist，需核对 endpoint 后重试 Remove，不直接删配置冒充回收完成。
-
-受控 macOS 接线验收先以 release profile 构建 `agent-service` 的 `rss-execution-service` 和 `controlled-backend` example，再运行 `python3 scripts/service/verify-execution-macos.py --binary <构建产物> --backend <example产物> --output <不存在的本地回执目录>`。入口通过原生管理员授权安装隔离配置，使用真实 HTTPS、系统 Keychain、launchd IPC、系统/用户脚本和固定 PKG；只卸载本次注册，保留凭据、journal、材料和包收据供核查。已有执行服务或 helper 注册时拒绝替换。回执的失败或缺失不能算通过。
-
-每次受控旅程只请求一次管理员授权，限于预先固定的安装、初始化、重启和清理操作；不保存密码。授权等待超过 120 秒即终止，迟到授权不能创建安装；取消和超时分别保留回执，重新开始旅程才会再次请求授权。
-
-如明确选择本地密码文件，可为两个受控入口提供 `--authorization-password-file <绝对路径>`。文件须属于当前登录用户、仅该用户可读写（`0600`）、为普通文件且非符号链接；不得提交。密码仅通过 AppleScript 标准输入提供给原生授权，不进入 argv、日志、部署配置或回执。验收不创建或复制密码；`.passwd` 已由 Git 忽略。
-
-材料目录最多 8 GiB / 32,768 条目，硬链接按同一文件身份计费，每个目录和文件名占一个条目。系统服务独占材料目录，并绑定设备权威及原 journal 文件身份；不匹配时拒绝打开，不覆盖归属。服务在提交之间完整读取 journal 与补传状态，只回收已安全结清且无活跃引用的精确材料；Unknown、补传未完成、未知来源和无法核实的材料保留。达到配额时拒绝新材料。管理员不得清空材料目录、删除归属文件或替换 journal 来绕过未决任务；新部署使用独立材料目录。
+企业网络故障、证书过期或撤销只阻止相应企业任务；已接受的退管和服务停止会阻止新的本地提交。运行时权限、快照、会话与材料变化均重新核实。开发机只验证当前宿主；Windows 代码、构建、打包与原生效果须在目标环境另验。
 
 ### 已发布 SQL 模板采集
 
@@ -117,7 +107,7 @@ WinGet/Brew 使用签名任务中的完整源绑定、文档摘要和物料集�
 
 管理员在当前格式部署的 `software_read_grants` 中显式登记 Brew 只读凭据，例如 `{"credential":{"source":"实际 target","reference":"只读凭据引用"},"origin":"https://软件源主机"}`。source/reference 必须与签名任务一致，origin 仅允许 HTTPS origin；凭据不写入 JSON 或源 URL。先完成首次安装初始化，停止系统服务，再由服务 OS 主体运行固定服务镜像 `--config <受保护配置> --import-software-credential <target>`，通过 stdin 提供 32–512 字节 ASCII 可见只读 token（允许一个结尾换行）；该入口只向现有 OS 凭据命名空间追加，不覆盖、自动获取或扩大权限。macOS 使用 root 服务身份，Windows 使用原服务账户；重新启动后才宣告对应凭据可用。WinGet 公共源不需要读 token。软件源使用独立的无客户端证书 HTTPS 传输，仅信任部署 CA；设备 mTLS 身份不会发送给软件源。
 
-原生源 Prepare/Cleanup 与安装共用原 attempt、manager 排他和预算。Brew 仅在 tap/URI/commit/文档完全匹配时借用已有源，借用资源不会删除；本次新建资源记录所有权后才能创建；Brew checkout 在 attempt 私有目录完成并校验，再以禁止覆盖的原子重命名发布到 tap 路径，部分 checkout 随原 attempt 清理。attempt 与 tap 须位于同一文件系统，不支持原子发布时明确失败，不退回直接写 tap。恢复只清理本次资源。WinGet 只创建本次私有 manifest。原活动结束证明绑定原内核启动世代与 runner 原进程组/Windows Job；仍在运行、无查询权限或共享源内容变化时保留证据与排他。资源清理成功不改写未知安装事实，不重置既有包管理器配置。新部署使用 deployment version 4；不提供旧软件 Ring、旧部署格式或旧库兼容入口。当前 macOS 测试覆盖真实 TLS/SQLite/Git 与固定 fixture manager；不代表 Windows 原生 WinGet 或真实软件安装验收通过。
+原生源 Prepare/Cleanup 与安装共用原 attempt、manager 排他和预算。Brew 仅在 tap/URI/commit/文档完全匹配时借用已有源，借用资源不会删除；本次新建资源记录所有权后才能创建；Brew checkout 在 attempt 私有目录完成并校验，再以禁止覆盖的原子重命名发布到 tap 路径，部分 checkout 随原 attempt 清理。attempt 与 tap 须位于同一文件系统，不支持原子发布时明确失败，不退回直接写 tap。恢复只清理本次资源。WinGet 只创建本次私有 manifest。原活动结束证明绑定原内核启动世代与 runner 原进程组/Windows Job；仍在运行、无查询权限或共享源内容变化时保留证据与排他。资源清理成功不改写未知安装事实，不重置既有包管理器配置。新部署只使用当前部署格式；不提供旧软件 Ring、旧部署格式或旧库兼容入口。当前 macOS 测试覆盖真实 TLS/SQLite/Git 与固定 fixture manager；不代表 Windows 原生 WinGet 或真实软件安装验收通过。
 
 验收入口可加 `--dmg-app <已公证 app>`，将固定候选装入只读镜像，经真实 HTTPS、系统服务、SQLite 与认证 IPC 验证安装及精确卸载；测试不修改签名信任或 quarantine。
 
@@ -348,7 +338,7 @@ Windows CPU 当前仅接纳单 processor group，多组系统报告 unsupported�
 
 本机设置页的“RSS 登录”只向当前已解锁的物理控制台本地账户提供首次自助关联，需有效员工登录与后台候选策略。设置验证器后提交六位动态码；创建账户时 Windows 密码只经本机受控输入交给 SYSTEM worker，不上传后台。页面的“准备完成”不代表已应用，应刷新并核对后台应用 revision。追加关联、创建其它账户、角色变更由后台 AccountWrite 授权；本地管理员身份不提供 RSS 授权。
 
-Credential Provider 是独立 `windows-credential-provider` cdylib，与 Agent 静态链接同一离线因子 owner；当前仅交付源码与手工组件入口，安装包装配另行验收。在 Windows x64 构建环境使用 `cargo build --locked --release -p windows-credential-provider -p agent-service`，固定 Agent 和 DLL 的提交、摘要及签名后，将 DLL 放入 SYSTEM/管理员拥有、普通用户不可写的规范绝对路径。部署格式为 version 4，旧格式在候选准入阶段拒绝，不迁移；已有当前格式部署在服务切换前核对离线库与安装身份。先由系统服务的新部署初始化 `execution.material_root/device-access`；注册不能创建或替换离线库。以 LocalSystem 主体运行：
+Credential Provider 是独立 `windows-credential-provider` cdylib，与 Agent 静态链接同一离线因子 owner；当前仅交付源码与手工组件入口，安装包装配另行验收。在 Windows x64 构建环境使用 `cargo build --locked --release -p windows-credential-provider -p agent-service`，固定 Agent 和 DLL 的提交、摘要及签名后，将 DLL 放入 SYSTEM/管理员拥有、普通用户不可写的规范绝对路径。部署使用当前格式，旧格式在候选准入阶段拒绝，不迁移；已有当前格式部署在服务切换前核对离线库与安装身份。先由系统服务的新部署初始化 `execution.material_root/device-access`；注册不能创建或替换离线库。以 LocalSystem 主体运行：
 
 ```powershell
 & $Agent --device-access-component register $OfflineRoot $ServiceId $ProviderDll

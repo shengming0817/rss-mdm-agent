@@ -67,7 +67,7 @@ impl Helper {
         if host::current_subject()? != self.subject || host::current_session()? != self.session {
             return Err(Error::Unbound);
         }
-        if !matches!(&input.request.authority, Authority::Enterprise { .. })
+        if !local_or_enterprise(&input.request.authority, &input.launch.interpreter.profile)
             || !matches!(&input.run_as, RunAs::User { account } if account.subject.as_str() == self.subject)
             || !matches!(&input.session_requirement, SessionRequirement::ActiveUser { account, session } if account.subject.as_str() == self.subject && session == &self.binding)
             || input.launch.cwd != self.work_root.to_str().ok_or(Error::Configuration)?
@@ -321,7 +321,7 @@ impl Helper {
     ) -> Result<(FrozenExecution, SoftwareInvocation), Error> {
         if host::current_subject()? != self.subject
             || host::current_session()? != self.session
-            || !matches!(input.request.authority, Authority::Enterprise { .. })
+            || !local_or_enterprise(&input.request.authority, &input.launch.interpreter.profile)
         {
             return Err(Error::Unbound);
         }
@@ -461,4 +461,17 @@ mod shutdown_tests {
         helper.physical.clear();
         assert!(helper.stop().is_ok());
     }
+}
+
+/// The authenticated system connection delegates only compiled native local capabilities.
+pub(crate) fn local_or_enterprise(authority: &Authority, profile: &VersionedRef) -> bool {
+    matches!(authority, Authority::Enterprise { .. })
+        || (matches!(authority, Authority::Local { .. })
+            && profile.revision.as_str() == "1"
+            && [
+                "native-collection-worker",
+                "native-local-software-worker",
+                "native-settings-worker",
+            ]
+            .contains(&profile.id.as_str()))
 }

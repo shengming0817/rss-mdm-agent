@@ -256,8 +256,8 @@ impl Candidate {
                 interactive: true,
             },
             execution: ExecutionConfig {
-                local_software: crate::local_software::LocalSoftwareConfig {
-                    policy_file: base.join("software-policy.json"),
+                local_permissions: crate::local_permissions::Config {
+                    policy_file: base.join("local-permissions.json"),
                 },
                 work_root: base.join("work"),
                 material_root: base.join("materials"),

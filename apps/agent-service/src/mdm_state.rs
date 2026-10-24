@@ -67,21 +67,34 @@ async fn profiles(args: &[&str]) -> Option<Vec<u8>> {
     .ok()
     .flatten()
 }
+#[cfg(any(test, target_os = "macos"))]
+pub(crate) fn macos_enrollment_flag(status: &str) -> Option<bool> {
+    let values = status
+        .lines()
+        .filter_map(|line| {
+            let value = line.trim().strip_prefix("MDM enrollment: ")?;
+            if value == "No" {
+                Some(false)
+            } else if value == "Yes" || value.starts_with("Yes (") && value.ends_with(')') {
+                Some(true)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    if values.len() == 1 {
+        Some(values[0])
+    } else {
+        None
+    }
+}
 #[cfg(target_os = "macos")]
 async fn macos(expected: Option<&str>) -> Option<State> {
     let status = profiles(&["status", "-type", "enrollment"]).await?;
     let status = std::str::from_utf8(&status).ok()?;
-    if status
-        .lines()
-        .any(|line| line.trim() == "MDM enrollment: No")
-    {
-        return Some(State::Unenrolled);
-    }
-    if !status
-        .lines()
-        .any(|line| line.trim().starts_with("MDM enrollment: Yes"))
-    {
-        return None;
+    match macos_enrollment_flag(status)? {
+        false => return Some(State::Unenrolled),
+        true => {}
     }
     let expected = expected?;
     let document = profiles(&["show", "-type", "configuration", "-output", "stdout-xml"]).await?;

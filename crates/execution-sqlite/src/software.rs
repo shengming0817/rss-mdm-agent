@@ -1,60 +1,7 @@
 use crate::{Error, Limits};
 use execution_contract::{AttemptId, FrozenExecution, SoftwareDiagnostic};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::Connection;
 
-pub(crate) fn claim(
-    conn: &Connection,
-    plan: &FrozenExecution,
-    attempt: &AttemptId,
-) -> Result<(), Error> {
-    if let Some(program) = plan.spec().execution.software_program() {
-        for key in program.lock_keys() {
-            let held: Option<String> = conn
-                .query_row(
-                    "SELECT attempt_id FROM software_claims WHERE resource=?1",
-                    [&key],
-                    |r| r.get(0),
-                )
-                .optional()?;
-            if held.as_deref().is_some_and(|a| a != attempt.as_str()) {
-                return Err(Error::Busy);
-            }
-            conn.execute(
-                "INSERT OR IGNORE INTO software_claims VALUES(?1,?2)",
-                params![key, attempt.as_str()],
-            )?;
-        }
-    }
-    Ok(())
-}
-pub(crate) fn settle(
-    conn: &Connection,
-    plan: &FrozenExecution,
-    next: &execution_lifecycle::Snapshot,
-    limits: Limits,
-) -> Result<(), Error> {
-    if plan.spec().execution.software_program().is_none() {
-        return Ok(());
-    }
-    if let Some(attempt) = next.attempt.as_ref().filter(|a| a.termination.is_some()) {
-        let never = attempt.termination.as_ref().is_some_and(|v| {
-            matches!(
-                v.observation,
-                execution_lifecycle::Observation::NeverDispatched { .. }
-            )
-        });
-        if never
-            || crate::software_progress::read(conn, &attempt.id, limits)?
-                .is_some_and(|p| p.closed(plan))
-        {
-            conn.execute(
-                "DELETE FROM software_claims WHERE attempt_id=?1",
-                [attempt.id.as_str()],
-            )?;
-        }
-    }
-    Ok(())
-}
 pub(crate) fn diagnostic(
     conn: &Connection,
     plan: &FrozenExecution,

@@ -55,7 +55,7 @@ impl Data {
                     generated_uid: crate::account_identity::generated_uid(subject)?,
                 },
             })?;
-            self.pin(&d.descriptor.reference);
+            self.pin(&d.descriptor.reference, &d.read);
         }
         Ok(())
     }
@@ -85,6 +85,19 @@ impl Data {
                         Q::MacosHardware { section },
                         section.cardinality(),
                         vec!["id"],
+                    ));
+                }
+                for section in [
+                    w::MacosSecuritySection::Filevault,
+                    w::MacosSecuritySection::Firewall,
+                ] {
+                    let query = w::NativeSystemQuery::MacosSecurity { section };
+                    let cardinality = query.cardinality();
+                    recipes.push((
+                        format!("security.{section:?}"),
+                        Q::System { query },
+                        cardinality,
+                        vec![],
                     ));
                 }
                 for root in [
@@ -159,6 +172,19 @@ impl Data {
                         vec![],
                     ));
                 }
+                for query in [
+                    w::NativeSystemQuery::WindowsBitlocker,
+                    w::NativeSystemQuery::WindowsFirewall,
+                    w::NativeSystemQuery::WindowsDefender,
+                ] {
+                    let cardinality = query.cardinality();
+                    recipes.push((
+                        format!("security.{query:?}"),
+                        Q::System { query },
+                        cardinality,
+                        vec!["id"],
+                    ));
+                }
                 use w::CimType::*;
                 for (title, class, fields) in [
                     (
@@ -184,6 +210,7 @@ impl Data {
                             ("Caption", String),
                             ("Version", String),
                             ("BuildNumber", String),
+                            ("SystemDrive", String),
                         ],
                     ),
                     (
@@ -196,8 +223,18 @@ impl Data {
                         "Win32_DiskDrive",
                         vec![("DeviceID", String), ("Model", String), ("Size", Uint64)],
                     ),
+                    (
+                        "volumes",
+                        "Win32_LogicalDisk",
+                        vec![
+                            ("DeviceID", String),
+                            ("Size", Uint64),
+                            ("FreeSpace", Uint64),
+                            ("DriveType", Uint32),
+                        ],
+                    ),
                 ] {
-                    let list = class == "Win32_DiskDrive";
+                    let list = matches!(class, "Win32_DiskDrive" | "Win32_LogicalDisk");
                     recipes.push((
                         title.into(),
                         Q::WindowsWmi {
@@ -264,7 +301,7 @@ impl Data {
             };
             let definition = self.register(read)?;
             let _ = title;
-            self.pin(&definition.descriptor.reference);
+            self.pin(&definition.descriptor.reference, &definition.read);
         }
         Ok(())
     }

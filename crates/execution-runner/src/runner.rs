@@ -105,8 +105,10 @@ impl NativeRunner {
         start_before_ms: u64,
         remaining_output_bytes: u64,
     ) -> Result<DispatchOutcome, Error> {
-        if !matches!(plan.spec().request.authority, Authority::Enterprise { .. })
-            || !matches!(plan.spec().run_as, RunAs::User { .. })
+        if !crate::helper::local_or_enterprise(
+            &plan.spec().request.authority,
+            &plan.spec().launch.interpreter.profile,
+        ) || !matches!(plan.spec().run_as, RunAs::User { .. })
             || !matches!(
                 plan.spec().session_requirement,
                 SessionRequirement::ActiveUser { .. }
@@ -1108,6 +1110,10 @@ async fn run(
     // A software installer may finish its root while child installation work is still active.
     // Job completion is awaited naturally; cancellation/timeout still owns termination.
     let software = invocation.is_some();
+    // A native display preview owns a bounded rollback independently of UI cancellation.
+    // Keep the original process/job owner alive until it can restore; never detach activity.
+    let display_preview = recipe.launch.interpreter.profile.id.as_str() == "native-settings-worker"
+        && plan.spec().request.operation.resource.id.as_str() == "settings:Display";
     let mut next_session_check = Instant::now();
     loop {
         let clock = Instant::now();
@@ -1124,7 +1130,9 @@ async fn run(
             if let Some(cause) = cause {
                 facts.end = cause;
                 stop_at = Some(clock);
-                owner.stop();
+                if !(display_preview && cause == ProcessEnd::Cancelled) {
+                    owner.stop();
+                }
             }
         }
         if stop_at.is_none() && clock >= next_session_check {
@@ -1137,12 +1145,17 @@ async fn run(
             }
         }
         if let Some(stop) = stop_at {
-            if !killed && clock.duration_since(stop) >= Duration::from_millis(200) {
+            let grace = if display_preview && facts.end == ProcessEnd::Cancelled {
+                Duration::from_secs(17)
+            } else {
+                Duration::from_millis(200)
+            };
+            if !killed && clock.duration_since(stop) >= grace {
                 owner.terminate();
                 let _ = child.start_kill();
                 killed = true;
             }
-            if clock.duration_since(stop) >= Duration::from_secs(2) {
+            if clock.duration_since(stop) >= grace + Duration::from_secs(2) {
                 break;
             }
         }
@@ -1259,7 +1272,8 @@ async fn run(
             }
         }
     }
-    let collection = recipe.launch.interpreter.profile.id.as_str() == "native-collection-worker";
+    let collection = ["native-collection-worker", "native-settings-worker"]
+        .contains(&recipe.launch.interpreter.profile.id.as_str());
     if collection {
         if let Ok(receipt) = serde_json::from_slice::<CollectionCompletion>(&facts.stderr) {
             facts.total_output_bytes = facts
@@ -1271,7 +1285,8 @@ async fn run(
         }
     }
     let collection_closed = collection
-        && facts.end == ProcessEnd::Exited
+        && (facts.end == ProcessEnd::Exited
+            || display_preview && facts.end == ProcessEnd::Cancelled)
         && facts.failure_kind == ProcessFailureKind::None
         && facts.exit_code == Some(0)
         && serde_json::from_slice::<CollectionCompletion>(&facts.stderr).is_ok_and(|r| {

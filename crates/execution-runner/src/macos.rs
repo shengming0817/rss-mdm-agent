@@ -161,6 +161,7 @@ pub(crate) fn profile(profile: &VersionedRef) -> Result<(), Error> {
             "native-osquery-template",
             "native-software-worker",
             "native-local-software-worker",
+            "native-settings-worker",
             "native-collection-worker",
         ]
         .contains(&profile.id.as_str()))
@@ -186,6 +187,13 @@ pub(crate) fn arguments(
     let path = script.to_str().ok_or(Error::InvalidInput)?;
     if profile.id.as_str() == "native-collection-worker" {
         return if args == ["--collection-worker", path] {
+            Ok(())
+        } else {
+            Err(Error::Denied)
+        };
+    }
+    if profile.id.as_str() == "native-settings-worker" {
+        return if args == ["--settings-worker", path] {
             Ok(())
         } else {
             Err(Error::Denied)

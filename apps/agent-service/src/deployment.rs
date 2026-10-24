@@ -269,9 +269,11 @@ impl Deployment {
             return Err(Error::Storage);
         }
         if root.join("execution.sqlite").exists() {
-            let binding = agent_client::inspect_binding(&root.join("communication"), &network)?;
-            let (context, _) =
-                crate::backend::plan::context(network.service_id, network.tenant, &binding)?;
+            let (context, _) = crate::local_execution::binding(
+                self.service_id,
+                self.tenant,
+                self.installation_id,
+            )?;
             execution_sqlite::Store::validate_existing(
                 &root.join("execution.sqlite"),
                 &context.authority,
@@ -357,6 +359,10 @@ impl Deployment {
         platform_private_storage::directory(&self.execution.work_root)?;
         execution_runner::staging::initialize(&self.execution.material_root)
             .map_err(crate::error::app_error)?;
+        execution_runner::staging::initialize(&crate::local_settings::control_root(
+            &self.execution,
+        )?)
+        .map_err(crate::error::app_error)?;
         let journal = self.state_root.join("execution.sqlite");
         let mut service = DeviceService::open(
             client,
@@ -369,6 +375,7 @@ impl Deployment {
             self.execution.clone(),
             SystemClock::new()?,
             self.helpers(),
+            self.installation_id,
         )?;
         service.installation = Some(self.clone());
         let marker = self.state_root.join("execution-initialized");
@@ -442,6 +449,7 @@ impl Deployment {
             self.execution.clone(),
             clock,
             self.helpers(),
+            self.installation_id,
         )
     }
     pub(crate) fn capabilities(&self) -> Vec<wire::Capability> {
@@ -667,7 +675,7 @@ pub(crate) mod tests {
             "installation_id":uuid::Uuid::new_v4(), "installation_artifact":"a".repeat(64),
             "registration_clients":peer.clone(), "clients":peer, "service":image,
             "state_root":root.path.join("state"), "helper_work_roots":{},
-            "execution":{"local_software":{"policyFile":"/unavailable/software-policy.json"},"work_root":root.path.join("work"), "material_root":root.path.join("materials"),
+            "execution":{"local_permissions":{"policyFile":"/unavailable/local-permissions.json"},"work_root":root.path.join("work"), "material_root":root.path.join("materials"),
                 "processes":1, "interpreters":[], "managers":[]}
         });
         let bytes = serde_json::to_vec(&current).unwrap();
@@ -772,8 +780,8 @@ pub(crate) mod tests {
             },
             helper_work_roots: Default::default(),
             execution: ExecutionConfig {
-                local_software: crate::local_software::LocalSoftwareConfig {
-                    policy_file: "/unavailable/software-policy.json".into(),
+                local_permissions: crate::local_permissions::Config {
+                    policy_file: "/unavailable/local-permissions.json".into(),
                 },
                 work_root: PathBuf::new(),
                 material_root: PathBuf::new(),

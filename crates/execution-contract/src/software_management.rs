@@ -20,7 +20,7 @@ pub struct SoftwareRef {
 pub enum InstalledSoftwareKind {
     /// macOS application bundle.
     Application,
-    /// macOS PackageInstaller receipt; removal requires a trusted recipe.
+    /// macOS PackageInstaller receipt; native removal is unsupported.
     Pkg,
     /// Windows native program record, requiring native MSI/EXE qualification before mutation.
     WindowsProgram,
@@ -54,8 +54,6 @@ pub enum SoftwareBlock {
     IdentityUnknown,
     /// Data is missing, stale, incomplete or changed since selection.
     ObservationUnavailable,
-    /// No fixed trusted installation/removal recipe is registered.
-    RecipeUnavailable,
     /// No allowed fixed update candidate is known.
     UpdateUnknown,
     /// The record is not a launchable GUI application.
@@ -199,70 +197,6 @@ pub enum LocalSoftwareOperation {
     Cancel(QueryRequest),
 }
 
-// Software programs accept no caller-supplied executable parameters. The product may bind
-// this closed, value-only local preview into the canonical input before journaling it.
 pub(crate) fn valid_software_metadata(input: &ExecutionInput) -> bool {
-    let parameters = &input.request.parameters;
-    if parameters.is_empty() {
-        return true;
-    }
-    if !input.policy.id.as_str().starts_with("local-software:")
-        || parameters.len() != 4
-        || !matches!(
-            input.request.initiator,
-            Initiator::Human { .. } | Initiator::Ai { .. }
-        )
-    {
-        return false;
-    }
-    fn literal<T: serde::de::DeserializeOwned>(
-        p: &std::collections::BTreeMap<String, InputValue>,
-        key: &str,
-    ) -> Option<T> {
-        let InputValue::Literal { value } = p.get(key)? else {
-            return None;
-        };
-        serde_json::from_value(value.clone()).ok()
-    }
-    let Some(choice): Option<LocalSoftwareChoice> = literal(parameters, "local-software-choice")
-    else {
-        return false;
-    };
-    let Some(_context): Option<NativeContextRef> = literal(parameters, "local-software-context")
-    else {
-        return false;
-    };
-    let Some(name): Option<String> = literal(parameters, "local-software-name") else {
-        return false;
-    };
-    let Some(target): Option<Option<PackageValue>> =
-        literal(parameters, "local-software-target-version")
-    else {
-        return false;
-    };
-    if choice.request != input.request.request_id
-        || name.is_empty()
-        || name.len() > 1024
-        || name.chars().any(char::is_control)
-    {
-        return false;
-    }
-    let Some(program) = input.execution.software_program() else {
-        return false;
-    };
-    match choice.action {
-        LocalSoftwareAction::Update => {
-            program.intent == SoftwareOperation::Install
-                && target
-                    .as_ref()
-                    .is_some_and(|v| program.steps.last().is_some_and(|s| &s.version == v))
-        }
-        LocalSoftwareAction::Uninstall => {
-            program.intent == SoftwareOperation::Uninstall && target.is_none()
-        }
-        LocalSoftwareAction::Detect => {
-            program.intent == SoftwareOperation::Detect && target.is_none()
-        }
-        LocalSoftwareAction::Launch => false,
-    }
+    input.request.parameters.is_empty()
 }

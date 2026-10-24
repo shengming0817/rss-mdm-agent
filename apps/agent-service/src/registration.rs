@@ -1,10 +1,15 @@
-//! Registration runs on one communication owner before the execution owner is assembled.
+//! Registration is an independently authorized interface to the installation execution owner.
 use crate::{deployment::Deployment, SystemClock};
-use agent_client::{Client, EnrollmentPhase, EnrollmentStatus, Error};
+#[cfg(test)]
+use agent_client::Client;
+use agent_client::{EnrollmentPhase, EnrollmentStatus, Error};
+#[cfg(test)]
+use execution_ipc::host::Readiness;
 use execution_ipc::host::{
-    CredentialStatus, Handler, Peer, PeerPolicy, Readiness, RegistrationPhase, RegistrationStatus,
-    Reply, Request, ServiceStatus,
+    CredentialStatus, Handler, Peer, PeerPolicy, RegistrationPhase, RegistrationStatus, Reply,
+    Request,
 };
+#[cfg(test)]
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc, Arc, Mutex,
@@ -101,10 +106,117 @@ pub(crate) fn project(value: EnrollmentStatus) -> RegistrationStatus {
         credential,
     }
 }
+/// Authentication facade; the one service owner exists before enterprise registration.
+pub(crate) struct RegistrationOwner {
+    network: agent_client::Config,
+    installer_format: Option<rss_mdm_agent_wire::enroll::configuration::InstallerFormat>,
+    policy: PeerPolicy,
+    registration_policy: PeerPolicy,
+    owner: crate::service::ServiceHandle,
+}
+impl RegistrationOwner {
+    pub(crate) fn new(deployment: Deployment) -> Result<Self, Error> {
+        let exists = deployment
+            .state_root
+            .join("communication/communication.sqlite")
+            .exists();
+        let client = deployment.communication(!exists)?;
+        Ok(Self {
+            network: deployment.network()?,
+            installer_format: crate::installation::installer_format(&deployment).ok(),
+            policy: deployment.clients.clone(),
+            registration_policy: deployment.registration_clients.clone(),
+            owner: deployment.activate(client)?,
+        })
+    }
+}
+impl Handler for RegistrationOwner {
+    fn peer_policy(&self) -> Option<PeerPolicy> {
+        let mut policy = self
+            .owner
+            .peer_policy()
+            .unwrap_or_else(|| self.policy.clone());
+        for image in &self.registration_policy.images {
+            if !policy.images.iter().any(|v| {
+                v.path == image.path && v.sha256 == image.sha256 && v.cdhash == image.cdhash
+            }) {
+                policy.images.push(image.clone());
+            }
+        }
+        for subject in &self.registration_policy.subjects {
+            if !policy.subjects.contains(subject) {
+                policy.subjects.push(subject.clone());
+            }
+        }
+        Some(policy)
+    }
+    fn register_helper(&mut self, peer: &Peer) -> Result<(), execution_app::Error> {
+        self.owner.register_helper(peer)
+    }
+    fn handle(&mut self, peer: &Peer, request: Request) -> Reply {
+        if matches!(
+            request,
+            Request::RegistrationStatus {}
+                | Request::RegistrationContext {}
+                | Request::RequestRegistration {}
+                | Request::ImportRegistration { .. }
+        ) {
+            if peer.authenticate(&self.registration_policy).is_err()
+                || peer.session_binding().is_err()
+            {
+                return Reply::Rejected;
+            }
+            if let Request::RegistrationContext {} = request {
+                return match self.owner.registration_status() {
+                    Reply::RegistrationStatus { value } => Reply::RegistrationContext {
+                        value: execution_ipc::host::RegistrationContext {
+                            service_id: self.network.service_id.to_string(),
+                            origin: self
+                                .network
+                                .connections
+                                .configuration
+                                .preferred_origin
+                                .clone(),
+                            tenant_id: self.network.tenant.to_string(),
+                            status: value,
+                        },
+                    },
+                    other => other,
+                };
+            }
+            if let Request::RegistrationStatus {} = request {
+                return self.owner.registration_status();
+            }
+            if let Request::ImportRegistration { file } = &request {
+                use agent_client::Clock;
+                if self.installer_format.is_none()
+                    || SystemClock::new()
+                        .and_then(|clock| clock.now())
+                        .and_then(|now| {
+                            agent_client::verify_configuration(file, &self.network, now)
+                        })
+                        .is_err()
+                {
+                    return Reply::Rejected;
+                }
+            }
+            return self.owner.registration_request(request);
+        }
+        self.owner.handle(peer, request)
+    }
+    fn tick(&mut self) -> Result<(), execution_app::Error> {
+        self.owner.tick()
+    }
+    fn stop(&mut self) -> Result<(), execution_app::Error> {
+        self.owner.stop()
+    }
+}
+#[cfg(test)]
 struct Snapshot {
     status: RegistrationStatus,
     readiness: Readiness,
 }
+#[cfg(test)]
 enum Command {
     Request {
         prepared: Option<mpsc::SyncSender<Result<(), Error>>>,
@@ -114,110 +226,8 @@ enum Command {
         installer_format: rss_mdm_agent_wire::enroll::configuration::InstallerFormat,
     },
 }
-/// Native callbacks read a public snapshot and enqueue an explicit fixed-context request.
-pub(crate) struct RegistrationOwner {
-    network: agent_client::Config,
-    installer_format: Option<rss_mdm_agent_wire::enroll::configuration::InstallerFormat>,
-    service_id: uuid::Uuid,
-    origin: String,
-    tenant_id: String,
-    policy: PeerPolicy,
-    registration_policy: PeerPolicy,
-    snapshot: Arc<Mutex<Snapshot>>,
-    commands: mpsc::SyncSender<Command>,
-    completion: mpsc::Receiver<Result<Option<crate::service::ServiceHandle>, Error>>,
-    owner: Option<crate::service::ServiceHandle>,
-    thread: Option<std::thread::JoinHandle<()>>,
-    failed: bool,
-    stopping: Arc<AtomicBool>,
-}
-impl RegistrationOwner {
-    pub(crate) fn new(deployment: Deployment) -> Result<Self, Error> {
-        let snapshot = Arc::new(Mutex::new(Snapshot {
-            status: RegistrationStatus {
-                task_trust: None,
-                pki_trust: None,
-                failure: None,
-                phase: RegistrationPhase::Unregistered,
-                grant_id: None,
-                expires_at: None,
-                public_key_fingerprint: None,
-                registered: false,
-                credential: CredentialStatus::Absent,
-            },
-            readiness: Readiness::RegistrationRequired,
-        }));
-        let (commands, requests) = mpsc::sync_channel(8);
-        let (completed, completion) = mpsc::sync_channel(1);
-        let stopping = Arc::new(AtomicBool::new(false));
-        let stop = stopping.clone();
-        let shared = snapshot.clone();
-        let network = deployment.network()?;
-        let installer_format = crate::installation::installer_format(&deployment).ok();
-        let origin = deployment
-            .connections
-            .configuration
-            .preferred_origin
-            .clone();
-        let service_id = deployment.service_id;
-        let tenant_id = deployment.tenant.to_string();
-        let policy = deployment.clients.clone();
-        let registration_policy = deployment.registration_clients.clone();
-        let thread = std::thread::Builder::new()
-            .name("rss-registration-owner".into())
-            .spawn(move || {
-                let result = drive(deployment, shared.clone(), requests, stop);
-                if let Err(error) = &result {
-                    execution_ipc::record_startup_failure(super::deployment::startup_failure(
-                        *error,
-                    ));
-                    if let Ok(mut snapshot) = shared.lock() {
-                        snapshot.readiness = Readiness::NotReady;
-                        snapshot.status.phase = RegistrationPhase::Rejected;
-                    }
-                }
-                let _ = completed.send(result);
-            })?;
-        Ok(Self {
-            network,
-            installer_format,
-            service_id,
-            origin,
-            tenant_id,
-            policy,
-            registration_policy,
-            snapshot,
-            commands,
-            completion,
-            owner: None,
-            thread: Some(thread),
-            failed: false,
-            stopping,
-        })
-    }
-}
-fn drive(
-    deployment: Deployment,
-    shared: Arc<Mutex<Snapshot>>,
-    requests: mpsc::Receiver<Command>,
-    stopping: Arc<AtomicBool>,
-) -> Result<Option<crate::service::ServiceHandle>, Error> {
-    let exists = deployment
-        .state_root
-        .join("communication/communication.sqlite")
-        .exists();
-    let client = Some(deployment.communication(!exists)?);
-    run(
-        client,
-        deployment.capabilities(),
-        shared,
-        requests,
-        stopping,
-        || deployment.communication(true),
-        |client| deployment.activate(client),
-    )
-}
-fn run<S: agent_client::IdentityProvider, C: agent_client::Clock, O>(
+#[cfg(test)]
+fn drive_fixture_enrollment<S: agent_client::IdentityProvider, C: agent_client::Clock, O>(
     mut client: Option<Client<S, C>>,
     capabilities: Vec<rss_mdm_agent_wire::runtime::Capability>,
     shared: Arc<Mutex<Snapshot>>,
@@ -294,6 +304,7 @@ fn run<S: agent_client::IdentityProvider, C: agent_client::Clock, O>(
         }
     }
 }
+#[cfg(test)]
 async fn until_stopped<T>(
     future: impl std::future::Future<Output = Result<T, Error>>,
     stopping: &AtomicBool,
@@ -307,6 +318,7 @@ async fn until_stopped<T>(
         } => Err(Error::Unavailable),
     }
 }
+#[cfg(test)]
 fn failure(error: Error) -> execution_ipc::host::RegistrationFailure {
     use execution_ipc::host::RegistrationFailure as F;
     match error {
@@ -320,6 +332,7 @@ fn failure(error: Error) -> execution_ipc::host::RegistrationFailure {
         _ => F::Unavailable,
     }
 }
+#[cfg(test)]
 fn record_result<S: agent_client::IdentityProvider, C: agent_client::Clock>(
     result: Result<(), Error>,
     client: &Client<S, C>,
@@ -333,202 +346,6 @@ fn record_result<S: agent_client::IdentityProvider, C: agent_client::Clock>(
     shared.lock().map_err(|_| Error::Unavailable)?.status = status;
     Ok(())
 }
-impl Handler for RegistrationOwner {
-    fn peer_policy(&self) -> Option<PeerPolicy> {
-        let mut policy = self
-            .owner
-            .as_ref()
-            .and_then(Handler::peer_policy)
-            .unwrap_or_else(|| self.policy.clone());
-        for image in &self.registration_policy.images {
-            if !policy.images.iter().any(|v| {
-                v.path == image.path && v.sha256 == image.sha256 && v.cdhash == image.cdhash
-            }) {
-                policy.images.push(image.clone());
-            }
-        }
-        for subject in &self.registration_policy.subjects {
-            if !policy.subjects.contains(subject) {
-                policy.subjects.push(subject.clone());
-            }
-        }
-        Some(policy)
-    }
-    fn register_helper(&mut self, peer: &Peer) -> Result<(), execution_app::Error> {
-        self.owner
-            .as_mut()
-            .ok_or(execution_app::Error::Unavailable)?
-            .register_helper(peer)
-    }
-    fn handle(&mut self, peer: &Peer, request: Request) -> Reply {
-        match request {
-            Request::RevokeContext {} if self.owner.is_none() => {
-                // Before activation there are no execution contexts to retire. Acknowledge
-                // the authenticated desktop's fence so first login can reach registration.
-                match peer
-                    .authenticate(&self.policy)
-                    .and_then(|_| peer.session_binding())
-                {
-                    Ok(_) => Reply::ContextRevoked,
-                    Err(_) => Reply::Rejected,
-                }
-            }
-            Request::ImportRegistration { file } => {
-                use agent_client::Clock;
-                if peer.authenticate(&self.registration_policy).is_err()
-                    || self.owner.is_some()
-                    || self.failed
-                {
-                    return Reply::Rejected;
-                }
-                let Some(installer_format) = self.installer_format else {
-                    return Reply::Rejected;
-                };
-                let valid = SystemClock::new()
-                    .and_then(|clock| clock.now())
-                    .and_then(|now| agent_client::verify_configuration(&file, &self.network, now));
-                if valid.is_err() {
-                    return Reply::Rejected;
-                }
-                if self
-                    .commands
-                    .try_send(Command::Configuration {
-                        file: Box::new(file),
-                        installer_format,
-                    })
-                    .is_err()
-                {
-                    return Reply::Unavailable;
-                }
-                match self.snapshot.lock() {
-                    Ok(v) => Reply::RegistrationStatus {
-                        value: v.status.clone(),
-                    },
-                    Err(_) => Reply::Unavailable,
-                }
-            }
-            Request::RegistrationContext {} => {
-                if peer.authenticate(&self.registration_policy).is_err() {
-                    return Reply::Rejected;
-                }
-                let status = if let Some(owner) = &self.owner {
-                    match owner.registration_status() {
-                        Reply::RegistrationStatus { value } => value,
-                        reply => return reply,
-                    }
-                } else {
-                    match self.snapshot.lock() {
-                        Ok(value) => value.status.clone(),
-                        Err(_) => return Reply::Unavailable,
-                    }
-                };
-                Reply::RegistrationContext {
-                    value: execution_ipc::host::RegistrationContext {
-                        service_id: self.service_id.to_string(),
-                        origin: self.origin.clone(),
-                        tenant_id: self.tenant_id.clone(),
-                        status,
-                    },
-                }
-            }
-            Request::DeviceOverview {} => {
-                let Ok(subject) = peer
-                    .authenticate(&self.policy)
-                    .or_else(|_| peer.authenticate(&self.registration_policy))
-                else {
-                    return Reply::Rejected;
-                };
-                if peer.session_binding().is_err() {
-                    return Reply::Rejected;
-                }
-                crate::device_overview::read(&subject, peer.session())
-            }
-            Request::RegistrationStatus {} | Request::RequestRegistration {} => {
-                if peer.authenticate(&self.registration_policy).is_err() {
-                    return Reply::Rejected;
-                }
-                if matches!(request, Request::RequestRegistration {}) {
-                    if self.owner.is_some() || self.failed {
-                        return Reply::Rejected;
-                    }
-                    let (prepared, completion) = mpsc::sync_channel(1);
-                    if self
-                        .commands
-                        .try_send(Command::Request {
-                            prepared: Some(prepared),
-                        })
-                        .is_err()
-                    {
-                        return Reply::Unavailable;
-                    }
-                    // Acknowledge durable local preparation before the caller interprets a stale failure.
-                    // HTTP/PKI continues on the communication owner, outside this callback.
-                    if completion
-                        .recv_timeout(std::time::Duration::from_secs(2))
-                        .is_err()
-                    {
-                        return Reply::Unavailable;
-                    }
-                }
-                if let Some(owner) = &self.owner {
-                    return owner.registration_status();
-                }
-                match self.snapshot.lock() {
-                    Ok(v) => Reply::RegistrationStatus {
-                        value: v.status.clone(),
-                    },
-                    Err(_) => Reply::Unavailable,
-                }
-            }
-            Request::ServiceStatus {} => {
-                if peer.authenticate(&self.policy).is_err()
-                    && peer.authenticate(&self.registration_policy).is_err()
-                {
-                    return Reply::Rejected;
-                }
-                if let Some(owner) = &mut self.owner {
-                    return owner.service_status();
-                }
-                match self.snapshot.lock() {
-                    Ok(v) => Reply::ServiceStatus {
-                        value: ServiceStatus::new(v.readiness.clone()),
-                    },
-                    Err(_) => Reply::Unavailable,
-                }
-            }
-            request => self
-                .owner
-                .as_mut()
-                .map_or(Reply::Rejected, |owner| owner.handle(peer, request)),
-        }
-    }
-    fn tick(&mut self) -> Result<(), execution_app::Error> {
-        if self.owner.is_none() && !self.failed {
-            match self.completion.try_recv() {
-                Ok(Ok(Some(owner))) => self.owner = Some(owner),
-                Ok(Err(_)) | Ok(Ok(None)) => self.failed = true,
-                Err(mpsc::TryRecvError::Disconnected) => self.failed = true,
-                Err(mpsc::TryRecvError::Empty) => (),
-            }
-        }
-        self.owner.as_mut().map_or(Ok(()), Handler::tick)
-    }
-    fn stop(&mut self) -> Result<(), execution_app::Error> {
-        self.stopping.store(true, Ordering::Release);
-        if let Some(thread) = self.thread.take() {
-            thread
-                .join()
-                .map_err(|_| execution_app::Error::OutcomeUnknown)?;
-        }
-        if self.owner.is_none() {
-            if let Ok(Ok(Some(owner))) = self.completion.try_recv() {
-                self.owner = Some(owner);
-            }
-        }
-        self.owner.as_mut().map_or(Ok(()), Handler::stop)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -622,7 +439,7 @@ mod tests {
                 let (_sender, receiver) = mpsc::sync_channel(8);
                 let (completed, completion) = mpsc::channel();
                 let worker = std::thread::spawn(move || {
-                    let result = run(
+                    let result = drive_fixture_enrollment(
                         Some(client),
                         capabilities(),
                         published,
@@ -683,7 +500,7 @@ mod tests {
                 registered: false,
                 failure: None,
             }),
-            readiness: Readiness::RegistrationRequired,
+            readiness: Readiness::NotReady,
         }))
     }
     fn capabilities() -> Vec<Capability> {
@@ -742,7 +559,7 @@ mod tests {
             let published = shared.clone();
             let (completed, completion) = mpsc::channel();
             let worker = std::thread::spawn(move || {
-                let result = run(
+                let result = drive_fixture_enrollment(
                     Some(client),
                     capabilities,
                     published,
@@ -809,7 +626,7 @@ mod tests {
                 let (sender, receiver) = mpsc::sync_channel(8);
                 let (completed, completion) = mpsc::channel();
                 let worker = std::thread::spawn(move || {
-                    let result = run(
+                    let result = drive_fixture_enrollment(
                         client,
                         capabilities(),
                         published,
@@ -870,7 +687,7 @@ mod tests {
         let stopping = Arc::new(AtomicBool::new(false));
         let stop = stopping.clone();
         let thread = std::thread::spawn(move || {
-            let result = run(
+            let result = drive_fixture_enrollment(
                 None,
                 capabilities(),
                 published,
@@ -895,60 +712,29 @@ mod tests {
             );
             completed.send(result).unwrap();
         });
-        let policy = PeerPolicy {
-            images: vec![],
-            subjects: vec![],
-            interactive: true,
-        };
-        let mut owner = RegistrationOwner {
-            network: server.config(),
-            installer_format: None,
-            service_id: crate::protocol_test_support::SERVICE_ID,
-            origin: server.url.origin().ascii_serialization(),
-            tenant_id: server.config().tenant.to_string(),
-            policy: policy.clone(),
-            registration_policy: policy,
-            snapshot: shared,
-            commands,
-            completion,
-            owner: None,
-            thread: Some(thread),
-            failed: false,
-            stopping,
-        };
-        owner
-            .commands
-            .send(Command::Request { prepared: None })
-            .unwrap();
+        commands.send(Command::Request { prepared: None }).unwrap();
         tokio::task::spawn_blocking(move || start.recv_timeout(std::time::Duration::from_secs(3)))
             .await
             .unwrap()
             .unwrap();
         for _ in 0..8 {
-            owner
-                .commands
+            commands
                 .try_send(Command::Request { prepared: None })
                 .unwrap();
         }
-        assert!(owner
-            .commands
+        assert!(commands
             .try_send(Command::Request { prepared: None })
             .is_err());
-        let observed = owner.stopping.clone();
-        let shutdown = tokio::task::spawn_blocking(move || owner.stop());
-        tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            while !observed.load(Ordering::Acquire) {
-                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-            }
+        stopping.store(true, Ordering::Release);
+        release.send(()).unwrap();
+        let result = tokio::task::spawn_blocking(move || {
+            completion.recv_timeout(std::time::Duration::from_secs(4))
         })
         .await
+        .unwrap()
         .unwrap();
-        release.send(()).unwrap();
-        tokio::time::timeout(std::time::Duration::from_secs(4), shutdown)
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
+        assert!(result.unwrap().is_none());
+        thread.join().unwrap();
         assert_eq!(server.data.lock().unwrap().certificate_calls.len(), 0);
     }
 }

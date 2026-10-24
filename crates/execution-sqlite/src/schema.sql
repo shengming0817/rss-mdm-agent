@@ -76,11 +76,11 @@ CREATE TABLE process_evidence (
     stdout BLOB NOT NULL, stderr BLOB NOT NULL
 );
 
-CREATE TABLE software_claims (
+CREATE TABLE resource_claims (
     resource TEXT PRIMARY KEY, attempt_id TEXT NOT NULL REFERENCES attempts(attempt_id)
 );
 CREATE TABLE software_progress (
     attempt_id TEXT PRIMARY KEY REFERENCES attempts(attempt_id), body BLOB NOT NULL
 );
 
-CREATE TABLE backend_requests (scope TEXT PRIMARY KEY, actor TEXT NOT NULL, request_id TEXT NOT NULL, body BLOB NOT NULL);
+CREATE TABLE backend_requests (scope TEXT PRIMARY KEY, actor TEXT NOT NULL, request_id TEXT NOT NULL UNIQUE, body BLOB NOT NULL);

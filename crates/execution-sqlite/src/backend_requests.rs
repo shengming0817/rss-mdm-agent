@@ -9,6 +9,7 @@ impl Store {
     /// List bounded preparation records without creating another task queue.
     pub(crate) fn sql_backend_requests(
         &self,
+        authority: &execution_contract::Authority,
         actor: &execution_contract::ActorId,
         host: &impl JournalHost,
     ) -> Result<Vec<BackendRequest>, Error> {
@@ -24,7 +25,7 @@ impl Store {
         ids.into_iter()
             .map(|id| {
                 let scope = Scope {
-                    authority: self.authority.clone(),
+                    authority: authority.clone(),
                     actor: actor.clone(),
                     request_id: execution_contract::RequestId::new(id)
                         .map_err(|_| Error::Corrupt)?,
@@ -57,6 +58,7 @@ impl Store {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         crate::database::ensure_current(&tx, &self.authority, self.limits)?;
         authorize(host, Access::Execute, scope, None)?;
+        reserve_request(&tx, scope)?;
         use execution_contract::BackendRequestState as S;
         let transition = match expected.map(|p| p.state) {
             None => matches!(
@@ -142,4 +144,17 @@ fn read(
         .optional()?;
     body.map(|bytes| decode(&bytes, limits.max_record_bytes))
         .transpose()
+}
+
+/// One physical journal reserves each UUID across preparation and execution atomically.
+pub(crate) fn reserve_request(conn: &rusqlite::Connection, scope: &Scope) -> Result<(), Error> {
+    let collision: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM backend_requests WHERE request_id=?1 AND scope<>?2 UNION ALL SELECT 1 FROM executions WHERE request_id=?1 AND scope<>?2)",
+        params![scope.request_id.as_str(), scope.interaction_subject().as_str()],
+        |row| row.get(0),
+    )?;
+    if collision {
+        return Err(Error::Conflict);
+    }
+    Ok(())
 }

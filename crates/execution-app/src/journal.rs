@@ -59,6 +59,7 @@ pub trait JournalPort {
     /// List bounded preparation records without creating another task queue.
     fn backend_requests(
         &self,
+        authority: &Authority,
         actor: &execution_contract::ActorId,
         host: &impl JournalHost,
     ) -> Result<Vec<BackendRequest>, JournalError>;

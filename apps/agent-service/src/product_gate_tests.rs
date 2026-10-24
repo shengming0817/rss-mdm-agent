@@ -101,8 +101,8 @@ impl Case {
             &root.path.join("execution.sqlite"),
             crate::ProductionStartup::Create,
             ExecutionConfig {
-                local_software: crate::local_software::LocalSoftwareConfig {
-                    policy_file: "/unavailable/software-policy.json".into(),
+                local_permissions: crate::local_permissions::Config {
+                    policy_file: "/unavailable/local-permissions.json".into(),
                 },
                 work_root: root.path.clone(),
                 material_root: root.path.join("materials"),
@@ -119,6 +119,7 @@ impl Case {
                 work_roots: Default::default(),
             },
             execution_runner::staging::MaterialRoot::open_fixture,
+            uuid::Uuid::from_u128(2909),
         )
         .unwrap();
         stage_gate_offer(&mut service).await;
@@ -539,7 +540,7 @@ async fn material_gc_finishes_old_content_under_continuing_publication_and_new_j
     let _budget = crate::scenario_budget::enter();
     let mut c = Case::new(None).await;
     let caller = c.service.core.caller();
-    let consumer = plan::id("backend-results").unwrap();
+    let consumer = plan::id(RESULT_CONSUMER).unwrap();
     let bytes = vec![5; 8 * 1024 * 1024];
     let digest = execution_contract::Digest::new(format!("{:x}", Sha256::digest(&bytes))).unwrap();
     let old = c
@@ -655,7 +656,7 @@ async fn material_gc_history(materials_per_request: usize) {
         .publish(None, bytes.as_slice(), &digest, bytes.len() as u64)
         .unwrap();
     let caller = c.service.core.caller();
-    let consumer = plan::id("backend-results").unwrap();
+    let consumer = plan::id(RESULT_CONSUMER).unwrap();
     let mut requests = Vec::new();
     for index in 0..65 {
         let mut spec: ExecutionInput = serde_json::from_str(include_str!(
@@ -1013,8 +1014,8 @@ async fn material_owner_rejects_a_replaced_journal_and_keeps_original_material()
         "{:x}",
         Sha256::digest(
             serde_json::to_vec(&(
-                &c.service.core.host.binding.authority,
-                &c.service.core.host.binding.device
+                &c.service.core.host.root.authority,
+                &c.service.core.host.root.device
             ))
             .unwrap()
         )
@@ -1052,8 +1053,8 @@ async fn service_assembly_creates_and_reopens_journal_with_its_actual_budgets() 
         cdhash: None,
     };
     let config = ExecutionConfig {
-        local_software: crate::local_software::LocalSoftwareConfig {
-            policy_file: "/unavailable/software-policy.json".into(),
+        local_permissions: crate::local_permissions::Config {
+            policy_file: "/unavailable/local-permissions.json".into(),
         },
         work_root: root.path.clone(),
         material_root: root.path.join("materials"),
@@ -1090,6 +1091,7 @@ async fn service_assembly_creates_and_reopens_journal_with_its_actual_budgets() 
                     work_roots: Default::default(),
                 },
                 execution_runner::staging::MaterialRoot::open_fixture,
+                uuid::Uuid::from_u128(2909),
             )
             .unwrap(),
         );
@@ -1141,6 +1143,7 @@ async fn renewal_and_revoked_restart_keep_the_existing_journal_authority() {
         clock.clone(),
         helpers.clone(),
         execution_runner::staging::MaterialRoot::open_fixture,
+        uuid::Uuid::from_u128(2909),
     )
     .unwrap();
     assert_eq!(
@@ -1195,6 +1198,7 @@ async fn renewal_and_revoked_restart_keep_the_existing_journal_authority() {
         clock,
         helpers,
         execution_runner::staging::MaterialRoot::open_fixture,
+        uuid::Uuid::from_u128(2909),
     )
     .unwrap();
     assert_eq!(
@@ -1263,9 +1267,7 @@ async fn running_owner_publishes_current_credential_and_safe_status_without_exec
     })
     .await
     .unwrap();
-    assert!(
-        matches!(reply, Reply::ServiceStatus { value } if value.readiness == Readiness::NotReady)
-    );
+    assert!(matches!(reply, Reply::ServiceStatus { value } if value.readiness == Readiness::Ready));
 }
 
 impl Case {
@@ -2940,6 +2942,7 @@ impl Case {
             clock,
             helpers,
             execution_runner::staging::MaterialRoot::open_fixture,
+            uuid::Uuid::from_u128(2909),
         )
         .unwrap();
         Self {
@@ -3753,6 +3756,7 @@ async fn full_report_queue_after_restart_drains_before_retrying_native_observati
         clock,
         helpers,
         execution_runner::staging::MaterialRoot::open_fixture,
+        uuid::Uuid::from_u128(2909),
     )
     .unwrap();
     assert!(service.core.mdm.observed_at.is_none());
@@ -4049,6 +4053,7 @@ async fn service_restart_retires_confirmed_relation_and_replays_cleanup_but_pres
                 clock,
                 helpers.clone(),
                 execution_runner::staging::MaterialRoot::open_fixture,
+                uuid::Uuid::from_u128(2909),
             )
             .unwrap()
         };
@@ -4160,7 +4165,7 @@ async fn local_data_queries_keep_os_prerequisites_exact_authority_and_offline_re
             c.service
                 .core
                 .app
-                .status(&c.service.core.caller(), &request)
+                .status(&c.service.core.local_caller(), &request)
                 .unwrap()
                 .attempts,
             1
@@ -4177,7 +4182,7 @@ async fn local_data_queries_keep_os_prerequisites_exact_authority_and_offline_re
             .service
             .core
             .app
-            .has_service_execution(&request, &c.service.core.host.binding.device)
+            .has_service_execution(&request, &c.service.core.host.root.device)
             .unwrap());
     }
     // Opaque, non-dispatchable fixture input tests the product grant and revoke fence;
@@ -4194,11 +4199,11 @@ async fn local_data_queries_keep_os_prerequisites_exact_authority_and_offline_re
             request: ExecutionRequest {
                 schema_version: V1,
                 request_id: request.clone(),
-                authority: c.service.core.host.binding.authority.clone(),
-                actor: c.service.core.host.actor.clone(),
+                authority: c.service.core.host.root.authority.clone(),
+                actor: c.service.core.host.local_actor.clone(),
                 initiator: Initiator::Human {
                     os_session: OsSessionRef {
-                        device: c.service.core.host.binding.device.clone(),
+                        device: c.service.core.host.root.device.clone(),
                         account: OsAccountRef {
                             platform: plan::platform().unwrap(),
                             subject: plan::id(&c.selection.subject).unwrap(),
@@ -4208,7 +4213,7 @@ async fn local_data_queries_keep_os_prerequisites_exact_authority_and_offline_re
                 },
                 delegation: None,
                 target: Target {
-                    device: c.service.core.host.binding.device.clone(),
+                    device: c.service.core.host.root.device.clone(),
                     platform: plan::platform().unwrap(),
                     scope: TargetScope::Device {},
                 },
@@ -4254,14 +4259,15 @@ async fn local_data_queries_keep_os_prerequisites_exact_authority_and_offline_re
         &plan::storage_limits().input,
     )
     .unwrap();
-    *c.service.core.host.local_query.lock().unwrap() = Some(frozen.clone());
+    *c.service.core.host.local_read.lock().unwrap() =
+        Some(crate::local_execution::ReadPermit::new(frozen.clone()).unwrap());
     let attempt = AttemptId::new("proof-only-no-dispatch").unwrap();
     let facts =
         execution_admission::AuthorityVerifier::verify(&c.service.core.host, &frozen, &attempt)
             .unwrap();
     assert!(matches!(facts.verified_origin, Initiator::Human { .. }));
     assert_eq!(facts.risk, Some(RiskLevel::One));
-    *c.service.core.host.local_query.lock().unwrap() = None;
+    *c.service.core.host.local_read.lock().unwrap() = None;
     assert!(execution_admission::AuthorityVerifier::verify(
         &c.service.core.host,
         &frozen,
@@ -4280,7 +4286,7 @@ async fn local_data_queries_keep_os_prerequisites_exact_authority_and_offline_re
         reply: reply_tx,
     };
     assert!(c.service.core.submit_local(&stale, &frozen).is_err());
-    assert!(c.service.core.host.local_query.lock().unwrap().is_none());
+    assert!(c.service.core.host.local_read.lock().unwrap().is_none());
     assert!(matches!(
         c.policy_call(Request::Data {
             context: context.clone(),
@@ -4458,7 +4464,7 @@ async fn late_policy_page_is_revalidated_for_invoke_draft_and_confirmation_witho
 /// This never establishes System privilege, a real install/uninstall or Windows acceptance.
 #[cfg(target_os = "macos")]
 async fn local_software_case() -> (Case, LocalSoftwareChoice) {
-    use crate::local_software::{LocalScope, Recipe, Rules};
+    use crate::local_permissions::Restrictions;
     use execution_ipc::host::Request;
     let mut c = Case::new(None).await;
     let context = c.context();
@@ -4516,83 +4522,20 @@ async fn local_software_case() -> (Case, LocalSoftwareChoice) {
         _ => panic!("unexpected software facts reply"),
     };
     let item = page.items.into_iter().next().unwrap();
-    let material = plan::pin(std::path::Path::new("/bin/sh")).unwrap();
-    let mut input: ExecutionInput = serde_json::from_slice(include_bytes!(
-        "../../../crates/execution-contract/tests/fixtures/plan.json"
-    ))
-    .unwrap();
-    input.request.target.platform = Platform::Macos;
-    input.request.target.scope = TargetScope::Device {};
-    input.run_as = RunAs::System {
-        platform: Platform::Macos,
-    };
-    input.session_requirement = SessionRequirement::NotRequired {};
-    input.constraints = IsolationPolicy::OsIdentity {};
-    input.budget = ExecutionBudget {
-        total_timeout_ms: 10_000,
-        total_output_bytes: 65536,
-        max_attempts: 1,
-    };
-    input.launch.cwd = c._root.path.to_str().unwrap().into();
-    input.launch.env.clear();
-    input.launch.stdin = StandardInput::Closed {};
-    input.launch.artifact = material.artifact.clone();
-    input.launch.interpreter.artifact = material.artifact.clone();
-    input.launch.interpreter.profile = script_plan::ScriptProfile::PosixSh.reference();
-    input.launch.argv = vec![LaunchArg::ArtifactPath {}];
-    let invocation = SoftwareInvocation {
-        launch: input.launch.clone(),
-        run_as: input.run_as.clone(),
-        session_requirement: input.session_requirement.clone(),
-        timeout_ms: 1000,
-        output_bytes: 4096,
-        exit_codes: SoftwareExitCodes {
-            success: [0].into(),
-            reboot: Default::default(),
-        },
-    };
-    input.launch.interpreter.profile = plan::reference("native-software-sequence", "1").unwrap();
-    input.request.parameters.clear();
-    input.request.operation.action = plan::id("software.uninstall").unwrap();
-    let version = PackageValue::new("1.0.0").unwrap();
-    input.execution = ExecutionSpec::SoftwareProgram {
-        program: Box::new(SoftwareProgram {
-            definition_digest: Digest::new("8".repeat(64)).unwrap(),
-            intent: SoftwareOperation::Uninstall,
-            steps: vec![SoftwareProgramStep {
-                format: SoftwareFormat::Pkg {},
-                package: PackageValue::new(&receipt).unwrap(),
-                version: version.clone(),
-                architecture: PackageValue::new("aarch64").unwrap(),
-                payload: material.artifact.clone(),
-                materials: vec![],
-                signatures: vec![],
-                upgrade: SoftwareUpgrade::Deny {},
-                install: invocation.clone(),
-                auxiliary: Default::default(),
-                uninstall: Some(invocation),
-                detection: SoftwareDetector::PkgReceipt { receipt, version },
-                allow_downgrade: false,
-                allow_reboot: false,
-            }],
-        }),
-    };
-    let mut rules = Rules::installation_default();
-    rules.recipes.push(Recipe {
-        native_id: item.native_id.clone(),
-        kind: item.kind,
-        scope: LocalScope::Device,
-        action: LocalSoftwareAction::Uninstall,
-        publisher: None,
-        from_versions: vec![],
-        target_version: None,
-        input,
-        files: vec![material],
+    // This fixture supplies only a native identity, never executable content.
+    c.service.core.local_target_fixture = Some(|item| crate::local_software::native::Target::App {
+        path: std::path::PathBuf::from("/Applications/ExplicitFixture.app"),
+        device: 1,
+        inode: 1,
+        bundle: item.native_id.clone(),
+        version: item.version.clone().unwrap(),
+        team: "FIXTURE".into(),
     });
+    let rules = Restrictions::installation_default();
     let path = c._root.path.join("explicit-fixture-policy.json");
     std::fs::write(&path, serde_json::to_vec(&rules).unwrap()).unwrap();
-    c.service.core.config.local_software.policy_file = path;
-    c.service.core.local_policy_fixture = Some(crate::local_software::Policy::fixture);
+    c.service.core.config.local_permissions.policy_file = path;
+    c.service.core.local_policy_fixture = Some(crate::local_permissions::Policy::fixture);
     let choice = LocalSoftwareChoice {
         request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
         software: item.reference,
@@ -4630,7 +4573,7 @@ async fn local_software_api_stages_no_attempt_and_replays_the_original_after_los
         c.service
             .core
             .app
-            .status(&c.service.core.caller(), &choice.request)
+            .status(&c.service.core.local_caller(), &choice.request)
             .unwrap()
             .attempts,
         0
@@ -4639,7 +4582,7 @@ async fn local_software_api_stages_no_attempt_and_replays_the_original_after_los
         .service
         .core
         .app
-        .frozen_input(&c.service.core.caller(), &choice.request)
+        .frozen_input(&c.service.core.local_caller(), &choice.request)
         .unwrap();
     assert!(!c.service.core.host.materials.registered(&original).unwrap());
     // Discarded acknowledgement, repeated prepare and explicit status reuse the retained UUID/digest.
@@ -4746,8 +4689,8 @@ async fn local_software_api_rechecks_rules_and_snapshot_before_any_attempt() {
             panic!("prepare");
         };
         if changed_rules {
-            let path = &c.service.core.config.local_software.policy_file;
-            let mut rules: crate::local_software::Rules =
+            let path = &c.service.core.config.local_permissions.policy_file;
+            let mut rules: crate::local_permissions::Restrictions =
                 serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
             rules.allow_launch = false;
             std::fs::write(path, serde_json::to_vec(&rules).unwrap()).unwrap();
@@ -4794,10 +4737,338 @@ async fn local_software_api_rechecks_rules_and_snapshot_before_any_attempt() {
             c.service
                 .core
                 .app
-                .status(&c.service.core.caller(), &choice.request)
+                .status(&c.service.core.local_caller(), &choice.request)
                 .unwrap()
                 .attempts,
             0
         );
     }
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn installation_owner_exists_before_registration_and_preserves_both_scopes_after_reopen() {
+    use execution_admission::AuthorityVerifier;
+    use execution_app::AppHost;
+    let _budget = crate::scenario_budget::enter();
+    let server = protocol::Server::new().await;
+    let root = protocol::Root::new();
+    let clock = SystemClock::new().unwrap();
+    server.time.set(clock.now().unwrap());
+    let installation = uuid::Uuid::new_v4();
+    let cfg = server.config();
+    let image = installation_security::Artifact {
+        path: "/bin/sh".into(),
+        sha256: format!("{:x}", Sha256::digest(std::fs::read("/bin/sh").unwrap())),
+        cdhash: None,
+    };
+    let config = ExecutionConfig {
+        local_permissions: crate::local_permissions::Config {
+            policy_file: root.path.join("local-permissions.json"),
+        },
+        work_root: root.path.clone(),
+        material_root: root.path.join("materials"),
+        interpreters: vec![],
+        managers: vec![],
+        processes: 2,
+    };
+    platform_private_storage::directory(&config.material_root).unwrap();
+    let helpers = UserResources {
+        image,
+        work_roots: Default::default(),
+    };
+    let journal = root.path.join("execution.sqlite");
+    let client = Client::open(
+        &root.path,
+        cfg.clone(),
+        OpenMode::Create,
+        server.secrets.clone(),
+        clock.clone(),
+    )
+    .unwrap();
+    let mut service = DeviceService::assemble(
+        client,
+        &journal,
+        ProductionStartup::Create,
+        config.clone(),
+        clock.clone(),
+        helpers.clone(),
+        execution_runner::staging::MaterialRoot::open_fixture,
+        installation,
+    )
+    .unwrap();
+    assert!(service.client.registration().is_err());
+    let root_binding = service.core.host.service_binding().unwrap();
+    assert!(matches!(root_binding.authority, Authority::Local { .. }));
+    let definition = service
+        .core
+        .data
+        .directory("0")
+        .unwrap()
+        .into_iter()
+        .find(|d| d.domains.contains(&"hardware.memory".into()))
+        .unwrap();
+    let mut read = service
+        .core
+        .data
+        .local_definition(&definition.reference, "0")
+        .unwrap()
+        .read;
+    let now = clock.millis().unwrap();
+    read.deadline = (now / 1000 + 90) as i64;
+    let request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+    let initiator = Initiator::Human {
+        os_session: OsSessionRef {
+            device: root_binding.device.clone(),
+            account: OsAccountRef {
+                platform: Platform::Macos,
+                subject: plan::id("501").unwrap(),
+            },
+            session: plan::id("fixture-login").unwrap(),
+        },
+    };
+    let (local, materials) = backend::collection::compile_read(
+        &read,
+        request.clone(),
+        initiator,
+        Operation {
+            action: plan::id("local-query").unwrap(),
+            resource: plan::reference("native-read", "1").unwrap(),
+        },
+        plan::reference("local-native-query", "1").unwrap(),
+        (now / 1000 + 30) as i64,
+        &root_binding,
+        &service.core.host.local_actor,
+        (&service.core.config, &mut service.core.material_root),
+        None,
+    )
+    .unwrap();
+    service
+        .core
+        .host
+        .materials
+        .register(&local, materials)
+        .unwrap();
+    service
+        .core
+        .app
+        .stage_execution(&service.core.local_caller(), &local)
+        .unwrap();
+    *service.core.host.local_read.lock().unwrap() =
+        Some(crate::local_execution::ReadPermit::new(local.clone()).unwrap());
+    let attempt = AttemptId::new("scope-proof-attempt").unwrap();
+    assert_eq!(
+        service.core.host.verify(&local, &attempt).unwrap().risk,
+        Some(RiskLevel::One)
+    );
+    *service.core.host.local_read.lock().unwrap() = None;
+    assert!(service.core.host.verify(&local, &attempt).is_err());
+    service
+        .client
+        .request_authorization(vec![
+            wire::Capability::InventoryCollectionV1,
+            wire::Capability::TaskExecuteV1,
+        ])
+        .await
+        .unwrap();
+    service.client.drive_pki().await.unwrap();
+    service.client.drive_task_trust().await.unwrap();
+    service.activate_enterprise().unwrap();
+    assert_eq!(service.core.host.service_binding().unwrap(), root_binding);
+    let mut remote = local.spec().clone();
+    remote.request.request_id = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+    remote.request.authority = service.core.host.binding.authority.clone();
+    remote.request.actor = service.core.host.actor.clone();
+    remote.request.target.device = service.core.host.binding.device.clone();
+    let remote = FrozenExecution::freeze(remote, &plan::storage_limits().input).unwrap();
+    let materials = crate::recovery::materials(&remote, &config, &helpers).unwrap();
+    service
+        .core
+        .host
+        .materials
+        .register(&remote, materials)
+        .unwrap();
+    service
+        .core
+        .app
+        .stage_execution(&service.core.caller(), &remote)
+        .unwrap();
+    assert!(
+        service.core.host.verify(&remote, &attempt).is_err(),
+        "a namespace alone cannot replace a signed enterprise Start"
+    );
+    assert!(service
+        .core
+        .app
+        .frozen_input(&service.core.caller(), &request)
+        .is_err());
+    assert!(service
+        .core
+        .app
+        .frozen_input(
+            &service.core.local_caller(),
+            &remote.spec().request.request_id
+        )
+        .is_err());
+    assert_eq!(
+        service
+            .core
+            .app
+            .service_tasks(None, 128)
+            .unwrap()
+            .items
+            .len(),
+        2
+    );
+    let mut collision = remote.spec().clone();
+    collision.request.request_id = request.clone();
+    let collision = FrozenExecution::freeze(collision, &plan::storage_limits().input).unwrap();
+    let materials = crate::recovery::materials(&collision, &config, &helpers).unwrap();
+    service
+        .core
+        .host
+        .materials
+        .register(&collision, materials)
+        .unwrap();
+    assert!(matches!(
+        service
+            .core
+            .app
+            .stage_execution(&service.core.caller(), &collision),
+        Err(execution_app::Error::Conflict)
+    ));
+    // Preparation also reserves the global UUID, before an execution exists.
+    let prepared_id = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+    let record = BackendRequest {
+        action: PreparedAction::Offered {
+            offer: BackendTask {
+                request: prepared_id.clone(),
+                task: plan::id("remote-task").unwrap(),
+                attempt: plan::id("remote-attempt").unwrap(),
+                revision: Digest::new("a".repeat(64)).unwrap(),
+                presentation: BackendPresentation {
+                    title: "Remote task".into(),
+                    summary: BackendTaskSummary::Software {
+                        intent: SoftwareOperation::Uninstall,
+                        steps: vec![BackendStepSummary {
+                            package: "fixed".into(),
+                            version: "1".into(),
+                            identity: BackendIdentity::User,
+                        }],
+                    },
+                    extra: Default::default(),
+                },
+                expires_at: (now / 1000 + 60) as i64,
+                user_initiated: true,
+            },
+        },
+        trigger: BackendTrigger::Human {
+            os_session: match &local.spec().request.initiator {
+                Initiator::Human { os_session } => os_session.clone(),
+                _ => unreachable!(),
+            },
+        },
+        risk: None,
+        confirmation: None,
+        revision: 1,
+        state: BackendRequestState::Ready,
+        failure: None,
+    };
+    service
+        .core
+        .app
+        .record_backend_request(&service.core.caller(), None, &record)
+        .unwrap();
+    let mut collision = local.spec().clone();
+    collision.request.request_id = prepared_id;
+    let collision = FrozenExecution::freeze(collision, &plan::storage_limits().input).unwrap();
+    let materials = crate::recovery::materials(&collision, &config, &helpers).unwrap();
+    service
+        .core
+        .host
+        .materials
+        .register(&collision, materials)
+        .unwrap();
+    assert!(matches!(
+        service
+            .core
+            .app
+            .stage_execution(&service.core.local_caller(), &collision),
+        Err(execution_app::Error::Conflict)
+    ));
+    let mut reverse = record.clone();
+    let PreparedAction::Offered { offer } = &mut reverse.action else {
+        unreachable!()
+    };
+    offer.request = request.clone();
+    assert!(matches!(
+        service
+            .core
+            .app
+            .record_backend_request(&service.core.caller(), None, &reverse),
+        Err(execution_app::Error::Conflict)
+    ));
+    service
+        .core
+        .app
+        .cancel(&service.core.local_caller(), &request)
+        .unwrap();
+    service.core.finish_local_result(&request).unwrap();
+    let consumer = plan::id(crate::service::RESULT_CONSUMER).unwrap();
+    assert!(
+        service
+            .core
+            .app
+            .service_material_fact(&request, &consumer)
+            .unwrap()
+            .reclaimable
+    );
+    assert!(
+        !service
+            .core
+            .app
+            .service_material_fact(&remote.spec().request.request_id, &consumer)
+            .unwrap()
+            .reclaimable
+    );
+    drop(service);
+    let client = Client::open(
+        &root.path,
+        cfg,
+        OpenMode::Existing,
+        server.secrets.clone(),
+        clock.clone(),
+    )
+    .unwrap();
+    let service = DeviceService::assemble(
+        client,
+        &journal,
+        ProductionStartup::Open,
+        config,
+        clock,
+        helpers,
+        execution_runner::staging::MaterialRoot::open_fixture,
+        installation,
+    )
+    .unwrap();
+    assert_eq!(service.core.host.service_binding().unwrap(), root_binding);
+    assert_eq!(
+        service
+            .core
+            .app
+            .service_tasks(None, 128)
+            .unwrap()
+            .items
+            .len(),
+        2
+    );
+    assert_eq!(
+        service
+            .core
+            .app
+            .frozen_input(&service.core.local_caller(), &request)
+            .unwrap()
+            .digest(),
+        local.digest()
+    );
 }

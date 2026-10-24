@@ -13,6 +13,7 @@ mod material;
 mod model;
 pub use material::MaterialCheckpoint;
 mod process;
+mod resources;
 mod software;
 mod software_progress;
 mod trust;

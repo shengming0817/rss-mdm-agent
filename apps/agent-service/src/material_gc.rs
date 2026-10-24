@@ -186,7 +186,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 .map_err(crate::error::app_error);
         }
         if !pass.scanned {
-            let consumer = crate::backend::plan::id("backend-results")?;
+            let consumer = crate::backend::plan::id(crate::service::RESULT_CONSUMER)?;
             let page = self
                 .core
                 .app
@@ -208,7 +208,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             }
             return Ok(());
         }
-        let consumer = crate::backend::plan::id("backend-results")?;
+        let consumer = crate::backend::plan::id(crate::service::RESULT_CONSUMER)?;
         // A newly associated request can precede the historical request cursor.
         if let Some(request) = pass.associated.pop_first() {
             let fact = self

@@ -85,13 +85,15 @@ impl<H: AppHost> JournalHost for Host<'_, H> {
             .service_binding()
             .map_err(|_| JournalError::Denied)?;
         if &actual != self.binding
-            || request.scope.authority != actual.authority
             || self
                 .caller
                 .is_some_and(|caller| request.scope.actor != caller.actor)
         {
             return Err(JournalError::Denied);
         }
+        self.inner
+            .binding_for_authority(&request.scope.authority)
+            .map_err(|_| JournalError::Denied)?;
         match self.caller {
             Some(caller) => self.inner.authorize(caller, request),
             None => self.inner.authorize_service(request),

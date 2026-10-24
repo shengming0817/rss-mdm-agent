@@ -30,6 +30,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
             return Err(Error::Unbound);
         }
         Ok(self.journal.backend_requests(
+            &self.host.binding_for_actor(&caller.actor)?.authority,
             &caller.actor,
             &Host::new(&self.host, &self.binding, &self.config, Some(caller)),
         )?)
@@ -44,7 +45,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
             return Err(Error::Unbound);
         }
         let scope = Scope {
-            authority: self.binding.authority.clone(),
+            authority: self.host.binding_for_actor(&caller.actor)?.authority,
             actor: caller.actor.clone(),
             request_id: request.clone(),
         };
@@ -64,7 +65,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
             return Err(Error::Unbound);
         }
         let scope = Scope {
-            authority: self.binding.authority.clone(),
+            authority: self.host.binding_for_actor(&caller.actor)?.authority,
             actor: caller.actor.clone(),
             request_id: next.action.request().clone(),
         };
@@ -95,6 +96,16 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
             config,
         })
     }
+    /// Replace only independently verified business bindings under the same physical owner.
+    /// Existing inputs, journal identity, runner, budgets and attempts remain unchanged.
+    pub fn replace_host(&mut self, host: H) -> Result<(), Error> {
+        if host.service_binding()? != self.binding {
+            return Err(Error::Unbound);
+        }
+        host.reliable_now()?;
+        self.host = host;
+        Ok(())
+    }
     pub(crate) fn adapter<'a>(
         &'a self,
         context: Option<&'a RequestContext>,
@@ -109,10 +120,11 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
     ) -> Result<(), Error> {
         let actual = self.host.service_binding()?;
         let p = &plan.spec().request;
+        let selected = self.host.binding_for_authority(&p.authority)?;
         if actual != self.binding
-            || p.authority != actual.authority
+            || p.authority != selected.authority
             || context.is_some_and(|caller| p.actor != caller.actor)
-            || p.target.device != actual.device
+            || p.target.device != selected.device
         {
             return Err(Error::Denied);
         }
@@ -1234,12 +1246,17 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         after: Option<&RequestId>,
         limit: usize,
     ) -> Result<crate::TaskPage, Error> {
-        let page = self.journal.device_execution_requests(
-            &self.binding.device,
-            after,
-            limit,
-            &self.adapter(None, None),
-        )?;
+        if !(1..=128).contains(&limit) {
+            return Err(Error::Configuration);
+        }
+        let requests = self
+            .journal
+            .service_requests(after, limit, &self.adapter(None, None))?;
+        let page = crate::ExecutionRequestPage {
+            next: (requests.len() == limit)
+                .then(|| requests.last().expect("nonempty page").clone()),
+            requests,
+        };
         let items = page
             .requests
             .iter()
@@ -1263,7 +1280,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         }
         let page = self.journal.execution_requests(
             &caller.actor,
-            &self.binding.device,
+            &self.host.binding_for_actor(&caller.actor)?.device,
             after,
             limit,
             &self.adapter(context, None),

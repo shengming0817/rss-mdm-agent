@@ -6,6 +6,7 @@
 #![deny(missing_docs)]
 mod audit;
 mod query_schema;
+mod resources;
 pub use query_schema::*;
 mod collected_data;
 pub use collected_data::*;
@@ -19,8 +20,10 @@ mod launch;
 mod model;
 mod network;
 mod process;
+mod settings;
 mod software;
 mod software_management;
+pub use settings::*;
 pub use software_management::*;
 mod software_format;
 mod software_program;

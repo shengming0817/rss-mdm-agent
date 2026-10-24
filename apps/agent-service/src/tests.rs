@@ -117,12 +117,16 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
         local_software: Arc::new(std::sync::Mutex::new(None)),
         local_stopped: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         binding: binding.clone(),
+        root: binding.clone(),
+        namespaces: vec![(binding.clone(), actor.clone())],
+        local_actor: actor.clone(),
         actor: actor.clone(),
         clock,
         materials: execution_runner::MaterialRegistry::new(4).unwrap(),
         subject: execution_ipc::host::current_subject().unwrap(),
         current: Arc::new(Mutex::new(None)),
-        local_query: Arc::new(Mutex::new(None)),
+        local_settings: Arc::new(std::sync::Mutex::new(None)),
+        local_read: Arc::new(Mutex::new(None)),
         identity_until: client.runtime_gate(),
         revoked: Default::default(),
     };
@@ -331,8 +335,8 @@ async fn current_software_steps_compile_from_exact_prefixed_artifacts() {
         let material_root = root.path.join("materials");
         execution_runner::staging::initialize(&material_root).unwrap();
         let config = ExecutionConfig {
-            local_software: crate::local_software::LocalSoftwareConfig {
-                policy_file: "/unavailable/software-policy.json".into(),
+            local_permissions: crate::local_permissions::Config {
+                policy_file: "/unavailable/local-permissions.json".into(),
             },
             work_root: root.path.clone(),
             material_root,

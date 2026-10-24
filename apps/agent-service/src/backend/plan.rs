@@ -69,7 +69,11 @@ pub(crate) fn context(
             },
             device: DeviceId::new(&r.device_id).map_err(|_| Error::Protocol)?,
         },
-        ActorId::new(format!("registration:{}", r.registration_id)).map_err(|_| Error::Protocol)?,
+        ActorId::new(format!(
+            "registration:{}:{}",
+            r.registration_id, r.generation
+        ))
+        .map_err(|_| Error::Protocol)?,
     ))
 }
 pub(crate) fn script_profile(profile: wire::ExecutorProfile) -> Result<ScriptProfile, Error> {

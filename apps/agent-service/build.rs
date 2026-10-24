@@ -1,4 +1,5 @@
 fn main() {
+    println!("cargo:rerun-if-changed=src/local_settings/macos.m");
     println!("cargo:rerun-if-changed=src/local_software/native/launch.m");
     println!("cargo:rerun-if-changed=src/telemetry/environment.m");
     println!("cargo:rerun-if-changed=src/account_identity.m");
@@ -6,6 +7,7 @@ fn main() {
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
         cc::Build::new()
             .file("src/account_identity.m")
+            .file("src/local_settings/macos.m")
             .file("src/local_software/native/launch.m")
             .file("src/telemetry/environment.m")
             .file("src/collection_worker/macos/native.m")
@@ -20,5 +22,7 @@ fn main() {
         println!("cargo:rustc-link-lib=framework=Security");
         println!("cargo:rustc-link-lib=framework=SystemConfiguration");
         println!("cargo:rustc-link-lib=framework=AppKit");
+        println!("cargo:rustc-link-lib=framework=CoreAudio");
+        println!("cargo:rustc-link-lib=framework=CoreGraphics");
     }
 }
