@@ -188,9 +188,10 @@ Host/launcher 故障、保留后代和未知 scope。真实 Codex 链分别验�
 回执用 `journeyStatus` 表示本次旅程结果，用 `security.scenarios` 逐项记录
 `passed / failed / notApplicable / notExecuted`，完整矩阵由 `security.status` 汇总。
 旅程通过但矩阵未完成时顶层为 `partial`。旧 `unexecutedSecurity` 字段直接退出，不双读旧回执。
-macOS 普通 PKG 包装执行保留既有保守语义：不保证逃逸后代停止，可能返回
-`outcomeUnknown / capture_failed`。回执保留 `executionUncertain`；旅程仅在原尝试、
-后台确认、安装器退出及独立设备效果全部相符时接纳该已知不确定性，不改写执行成功。
+普通脚本的解释器结果与活动清理分别记录：完整结果不要求先证明所有后代已结束，
+但未知活动仍阻止安全回收和退管。脚本返回成功不证明任意后台活动已停止。
+PKG 使用原生软件 worker；旅程要求原调用、后台确认、安装器结果、After 检测与独立设备效果一致，
+不再接纳旧包装路径的 `capture_failed / Unknown` 作为成功基线。
 刷新停止前先验证原 PID、持久事实和正常用户健康查询；停止后失败比较完整配置值，
 保留注册、凭据及 journal，不要求旧 PID 存活。SQLite 权限检查不得另开、关闭活跃
 数据或 sidecar 文件，以免释放同进程 POSIX 锁并破坏 WAL 共享内存。
