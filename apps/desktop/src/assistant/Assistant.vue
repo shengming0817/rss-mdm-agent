@@ -351,13 +351,7 @@ async function copy(text: string) {
           ><Sparkles :size="24" aria-hidden="true"
         /></span>
         <h2>
-          {{
-            presentation === "main"
-              ? "有什么可以帮你？"
-              : c.context.value?.scope === "page"
-                ? "聊聊当前页面"
-                : "想了解这个资源？"
-          }}
+          {{ presentation === "main" ? "有什么可以帮你？" : "聊聊当前页面" }}
         </h2>
         <p>
           {{
@@ -601,9 +595,7 @@ async function copy(text: string) {
         <MessageComposer
           :placeholder="
             presentation === 'context' && c.context.value
-              ? c.context.value.scope === 'page'
-                ? '询问当前页面，或输入你的问题…'
-                : '输入关于此资源的问题…'
+              ? '询问当前页面，或输入你的问题…'
               : empty
                 ? '向 RSS 提问，或描述你希望完成的事…'
                 : '继续提问…'
@@ -621,7 +613,7 @@ async function copy(text: string) {
             <section
               v-if="c.context.value"
               class="resource-context"
-              aria-label="待发送资源上下文"
+              aria-label="待发送页面上下文"
             >
               <div class="resource-context-heading">
                 <details>
@@ -629,14 +621,10 @@ async function copy(text: string) {
                     aria-label="核对将发送的信息"
                     title="核对将发送的信息"
                   >
-                    <span
-                      >待发送{{
-                        c.context.value.scope === "page" ? "页面" : "资源"
-                      }}
-                      · {{ c.context.value.path.at(-1) }}</span
+                    <span>待发送页面 · {{ c.context.value.path.at(-1) }}</span
                     ><ChevronDown :size="12" aria-hidden="true" />
                   </summary>
-                  <p>仅发送所选目录信息，不包含表单输入或设备历史。</p>
+                  <p>仅发送列出的页面信息，不包含表单输入、凭据或原始日志。</p>
                   <pre>{{ c.context.value.text }}</pre>
                 </details>
                 <button
@@ -669,18 +657,12 @@ async function copy(text: string) {
               suggest(
                 presentation === 'main'
                   ? '帮我整理一个想法：'
-                  : c.context.value?.scope === 'page'
-                    ? '解释当前页面的内容与作用。'
-                    : '解释这个资源的用途与限制。',
+                  : '解释当前页面的内容与作用。',
               )
             "
           >
             <MessageSquare :size="16" aria-hidden="true" />{{
-              presentation === "main"
-                ? "整理一个想法"
-                : c.context.value?.scope === "page"
-                  ? "解释当前页面"
-                  : "解释资源用途"
+              presentation === "main" ? "整理一个想法" : "解释当前页面"
             }}
           </button>
           <button
@@ -690,19 +672,11 @@ async function copy(text: string) {
               suggest(
                 presentation === 'main'
                   ? '帮我理解软件与工具的使用要求。'
-                  : c.context.value?.scope === 'page'
-                    ? '根据当前页面信息，建议我可以继续检查的内容。'
-                    : '核对这个资源的版本与运行身份。',
+                  : '根据当前页面信息，建议我可以继续检查的内容。',
               )
             "
           >
-            {{
-              presentation === "main"
-                ? "理解使用要求"
-                : c.context.value?.scope === "page"
-                  ? "建议下一步"
-                  : "核对版本与身份"
-            }}
+            {{ presentation === "main" ? "理解使用要求" : "建议下一步" }}
           </button>
         </div>
 

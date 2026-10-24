@@ -707,6 +707,8 @@ impl NativeContextSession {
     deny_unknown_fields
 )]
 pub enum Request {
+    /// Verify only this authenticated native peer's configured user helper.
+    HelperStatus {},
     /// Finite desktop DNS/TCP diagnostics through the existing execution owner.
     NetworkCheck {
         /// Current native login context.
@@ -920,6 +922,11 @@ struct Envelope {
     rename_all_fields = "camelCase"
 )]
 pub enum Reply {
+    /// Native helper facts verified by the system owner for the requesting peer.
+    HelperStatus {
+        /// Code identity, login binding and work root have been checked by the owner.
+        value: crate::helper::UserContext,
+    },
     /// Default destination selected from the installed backend configuration.
     NetworkDefaults {
         /// Absent when backend configuration is unavailable; manual entry remains possible.
@@ -1295,6 +1302,31 @@ pub fn run(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn helper_status_accepts_no_caller_coordinates_and_returns_closed_native_facts() {
+        let bytes = super::encode(super::Request::HelperStatus {}).unwrap();
+        let mut request: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        for key in ["subject", "session", "binding", "workRoot"] {
+            request["request"][key] = serde_json::json!("spoofed");
+            assert!(serde_json::from_value::<super::Envelope>(request.clone()).is_err());
+            request["request"].as_object_mut().unwrap().remove(key);
+        }
+        let bytes = super::encode_reply(super::Reply::HelperStatus {
+            value: crate::helper::UserContext {
+                subject: "501".into(),
+                session: 42,
+                binding: execution_contract::Id::new("current-login").unwrap(),
+                work_root: "/private/helper".into(),
+            },
+        });
+        assert!(
+            matches!(super::decode_reply(&bytes), Ok(super::Reply::HelperStatus { value }) if value.subject == "501" && value.session == 42)
+        );
+        let mut reply: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        reply["reply"]["value"]["authority"] = serde_json::json!("spoofed");
+        assert!(super::decode_reply(&serde_json::to_vec(&reply).unwrap()).is_err());
+    }
+
     #[test]
     fn device_overview_request_cannot_supply_a_login_or_network_target() {
         let request = super::encode(super::Request::DeviceOverview {}).unwrap();

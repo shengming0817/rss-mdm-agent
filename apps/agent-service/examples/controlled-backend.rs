@@ -59,6 +59,17 @@ async fn main() {
                             data.offer = Some(data.signed(wire::TaskPayload::Script(payload)));
                         }
                     }
+                    "software-catalog" => {
+                        let item = protocol::self_service_software::publish(
+                            &mut data, command["path"].as_str().unwrap(), command["receipt"].as_str().unwrap(),
+                        );
+                        match item {
+                            Ok(item) => println!("{}", serde_json::json!({"policyId":item.policy_id,"policyRevision":item.policy_revision,"policyVersion":item.policy_version,"item":item})),
+                            Err(reason) => println!("{}", serde_json::json!({"error":reason})),
+                        }
+                        std::io::stdout().flush().unwrap();
+                        continue;
+                    }
                     "package" => {
                         data.task = uuid::Uuid::new_v4(); data.attempt = uuid::Uuid::new_v4();
                         data.bytes = std::fs::read(command["path"].as_str().unwrap()).unwrap();
@@ -71,7 +82,7 @@ async fn main() {
                         }
                         use sha2::{Digest, Sha256};
                         payload.definition_digest = Sha256::digest(serde_json::to_vec(&payload.steps).unwrap()).into();
-                        data.offer = Some(data.signed(wire::TaskPayload::Software(payload)));
+                        data.offer = Some(data.signed(wire::TaskPayload::try_from(*payload).unwrap()));
                     }
                     "dmg" => {
                         data.task = uuid::Uuid::new_v4(); data.attempt = uuid::Uuid::new_v4();

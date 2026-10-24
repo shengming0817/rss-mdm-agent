@@ -240,7 +240,7 @@ test("tree scan covers desktop files and both production manifests", () => {
     );
     assert.ok(
       errors.includes(
-        "desktop production dependencies must be UI, public AI contract/client/bridge, generated execution bindings, pinned A2UI core, pinned Ajv schema validation, Vue and pinned Tauri core only",
+        "desktop production dependencies must be UI, public AI contract/client/bridge, generated execution bindings, pinned A2UI core, Vue and pinned Tauri core only",
       ),
     );
   } finally {

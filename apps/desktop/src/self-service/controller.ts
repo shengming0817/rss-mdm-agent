@@ -4,7 +4,6 @@ import type { BackendTask, SelfServicePort, Snapshot } from "./types";
 export function createController(port: SelfServicePort | null) {
   const state = reactive({
     snapshot: null as Snapshot | null,
-    item: null as BackendTask | null,
     taskId: "",
     loading: false,
     busy: false,
@@ -27,16 +26,6 @@ export function createController(port: SelfServicePort | null) {
       if (!active || call !== epoch) return;
       state.snapshot = value;
       if (
-        state.item &&
-        !value.available.some(
-          (t) =>
-            t.task === state.item?.task &&
-            t.attempt === state.item?.attempt &&
-            t.revision === state.item?.revision,
-        )
-      )
-        state.item = null;
-      if (
         state.taskId &&
         (value.selected ||
           value.requests.some((t) => t.action.requestId === state.taskId))
@@ -50,50 +39,13 @@ export function createController(port: SelfServicePort | null) {
       if (active && call === epoch) state.loading = false;
     }
   }
-  function select(task: BackendTask) {
-    if (state.busy || state.uncertain || !task.userInitiated) return;
-    state.item = { ...task };
-    state.taskId = task.request;
-  }
-  async function observe(task: BackendTask, step: number) {
-    if (!port || state.busy || state.uncertain) return;
-    const request = crypto.randomUUID();
-    state.taskId = request;
-    state.busy = true;
-    try {
-      await port.observe_software({
-        request,
-        input: {
-          selection: {
-            request: task.request,
-            task: task.task,
-            attempt: task.attempt,
-            revision: task.revision,
-          },
-          step,
-        },
-      });
-    } catch {
-      state.uncertain = true;
-      state.error = "检测回执未确认；请查询原请求。";
-    } finally {
-      state.busy = false;
-      await refresh();
-    }
-  }
-  async function confirm() {
-    await submit(state.item, false);
-  }
   async function confirmPreparation(item: BackendTask) {
-    await submit(item, true);
-  }
-  async function submit(item: BackendTask | null, confirmation: boolean) {
-    if (!port || !item || state.busy || state.uncertain) return;
+    if (!port || state.busy || state.uncertain) return;
     state.taskId = item.request;
     state.busy = true;
     state.error = "";
     try {
-      const result = await (confirmation ? port.confirm : port.execute)({
+      const result = await port.confirm({
         request: item.request,
         task: item.task,
         attempt: item.attempt,
@@ -102,7 +54,6 @@ export function createController(port: SelfServicePort | null) {
       if (!active) return;
       state.taskId = result.request;
       if (result.confirmationRequired) state.error = "此操作仍等待本人确认";
-      else state.item = null;
     } catch {
       if (!active) return;
       state.uncertain = true;
@@ -153,10 +104,7 @@ export function createController(port: SelfServicePort | null) {
     port,
     state,
     interactive: !!port,
-    observe,
     refresh,
-    select,
-    confirm,
     confirmPreparation,
     cancel,
     next,

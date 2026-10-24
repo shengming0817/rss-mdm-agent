@@ -7,11 +7,9 @@ import type {
 import { computed, markRaw, reactive, shallowRef } from "vue";
 import {
   composePrompt,
-  contextCurrent,
   type ResourceContext,
   type Composition,
 } from "./resource-context";
-import type { ContextSource } from "./resource-context";
 import {
   ClientError,
   type ClientOptions,
@@ -226,23 +224,6 @@ export function createAssistant(
   function removeContext() {
     state.drafts.set(state.selected, { text: draft.value });
   }
-  function validateContexts(
-    catalog: readonly BackendTask[],
-    source: ContextSource,
-  ) {
-    for (const [id, value] of state.drafts) {
-      if (
-        value.context &&
-        value.context.scope === "catalog" &&
-        !value.context.stale &&
-        !contextCurrent(value.context, catalog, source, ownerKey)
-      )
-        state.drafts.set(id, {
-          ...value,
-          context: Object.freeze({ ...value.context, stale: true }),
-        });
-    }
-  }
   function validatePageContexts(current: readonly ResourceContext[]) {
     for (const [id, value] of state.drafts) {
       const attached = value.context;
@@ -251,10 +232,7 @@ export function createAssistant(
         !attached.stale &&
         (attached.ownerKey !== ownerKey ||
           attached.expiresAt <= now() ||
-          (attached.scope === "page" &&
-            !current.some(
-              (value) => !value.stale && attached.key === value.key,
-            )))
+          !current.some((value) => !value.stale && attached.key === value.key))
       )
         state.drafts.set(id, {
           ...value,
@@ -1045,7 +1023,6 @@ export function createAssistant(
     compositionError,
     stageContext,
     removeContext,
-    validateContexts,
     validatePageContexts,
     busy,
     active,

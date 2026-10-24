@@ -13,12 +13,90 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { runtimeTreeSha256 } from "./ai-host-artifacts.mjs";
+import { startModelFixture } from "../tests/desktop/model-fixture.mjs";
 import {
   freezeCandidate,
   verifyCandidate,
   verifyNativeRuntime,
   nativeProductModules,
 } from "./native-candidate.mjs";
+
+test("native model oracle requires the original software request to await human confirmation", async (t) => {
+  for (const [request, state, confirmation, expectedStatus] of [
+    ["review-request", "awaitingConfirmation", null, 200],
+    ["review-request", "ready", null, 500],
+    ["another-request", "awaitingConfirmation", null, 500],
+    ["review-request", "awaitingConfirmation", { approved: true }, 500],
+  ]) {
+    const fixture = await startModelFixture();
+    t.after(() => fixture.close());
+    fixture.accept();
+    fixture.facts.request = "original-human-request";
+    const result = (value) =>
+      JSON.stringify({
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({ status: "ok", result: value }),
+          },
+        ],
+      });
+    const response = await fetch(fixture.url + "/responses", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${fixture.secret}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "native-golden-model",
+        input: [
+          { role: "user", content: "GOLDEN_REVIEW" },
+          {
+            type: "function_call_output",
+            call_id: "REVIEW-tools",
+            output: result({
+              tools: [
+                {
+                  name: "exact-discovered-tool",
+                  inputSchema: {
+                    properties: {
+                      locator: { properties: { after: { type: "null" } } },
+                    },
+                  },
+                },
+              ],
+            }),
+          },
+          {
+            type: "function_call_output",
+            call_id: "REVIEW-invoke",
+            output: result({ operationRequestId: "review-request" }),
+          },
+          {
+            type: "function_call_output",
+            call_id: "REVIEW-status",
+            output: result({
+              kind: "preparation",
+              value: {
+                action: { kind: "policy", choice: { request } },
+                state,
+                risk: { level: "two" },
+                confirmation,
+              },
+            }),
+          },
+        ],
+      }),
+    });
+    await response.text();
+    assert.equal(response.status, expectedStatus);
+    assert.equal(fixture.facts.reviewRequest, "review-request");
+    assert.deepEqual(
+      fixture.facts.completions,
+      expectedStatus === 200 ? ["REVIEW"] : [],
+    );
+  }
+});
 
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), "agent-candidate-"));

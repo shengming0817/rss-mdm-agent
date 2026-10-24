@@ -18,7 +18,6 @@ import {
   Terminal,
   Sparkles,
   Settings as SettingsIcon,
-  UiDialog,
   X,
 } from "@rss-mdm-agent/ui";
 import AppShell from "./workspace/WorkspaceChrome.vue";
@@ -34,13 +33,7 @@ import { homeFacts } from "./system-settings/facts";
 import { pageContext } from "./workspace/page-context";
 import { nativeAssistant } from "./assistant/native";
 import Assistant from "./assistant/Assistant.vue";
-import ContextPanel from "./assistant/ContextPanel.vue";
-import {
-  resourceContext,
-  contextCurrent,
-  type ResourceContext,
-} from "./assistant/resource-context";
-import type { BackendTask, SelfServicePort } from "./self-service/types";
+import type { SelfServicePort } from "./self-service/types";
 import {
   createAssistant,
   type AssistantServices,
@@ -423,13 +416,8 @@ watch(
   },
   { immediate: true },
 );
-const contextOpen = ref(false),
-  wide = ref(false),
-  chosen = ref(false),
-  moving = ref(false);
-const candidate = shallowRef<ResourceContext>(),
-  target = shallowRef<HTMLElement>();
-const panelHost = ref<HTMLElement>();
+const moving = ref(false);
+const target = shallowRef<HTMLElement>();
 const pageAssistantOpen = ref(false);
 const pagePanelHost = ref<HTMLElement>();
 const pageAssistantTrigger = ref<HTMLButtonElement>();
@@ -537,13 +525,11 @@ function attachPage() {
 async function togglePageAssistant() {
   if (!assistant) return;
   const opening = !pageAssistantOpen.value;
+  if (opening) closeHistory();
   if (opening && props.page === "assistant")
     emit("navigate", lastContentPage.value);
   await relocate(() => {
     pageAssistantOpen.value = opening;
-    contextOpen.value = false;
-    candidate.value = undefined;
-    chosen.value = false;
   });
   if (opening) {
     attachPage();
@@ -566,17 +552,10 @@ watch(
   { immediate: true },
 );
 const headerHost = ref<HTMLElement>();
-const contextSelection = ref("");
-const panelError = ref(""),
-  panelNotice = ref("");
 let transition = 0;
-let trigger: HTMLElement | null = null;
 const assistantVisible = computed(
   () =>
-    !moving.value &&
-    (props.page === "assistant" ||
-      pageAssistantOpen.value ||
-      (contextOpen.value && chosen.value)),
+    !moving.value && (props.page === "assistant" || pageAssistantOpen.value),
 );
 async function relocate(change: () => void) {
   const version = ++transition;
@@ -588,105 +567,15 @@ async function relocate(change: () => void) {
   await nextTick();
   if (version !== transition) return;
   if (pageAssistantOpen.value) target.value = pagePanelHost.value;
-  else if (contextOpen.value && chosen.value) target.value = panelHost.value;
   moving.value = false;
-}
-async function askAi(item: BackendTask, source: HTMLElement) {
-  const snapshot = controller?.state.snapshot;
-  if (!snapshot || !assistant) return;
-  const value = resourceContext(item, assistant.state.mode, ownerKey);
-  if (
-    !value ||
-    !contextCurrent(value, snapshot.available, assistant.state.mode, ownerKey)
-  )
-    return;
-  trigger = source;
-  await relocate(() => {
-    pageAssistantOpen.value = false;
-    candidate.value = value;
-    contextSelection.value = "";
-    chosen.value = false;
-    panelError.value = "";
-    panelNotice.value = "";
-    contextOpen.value = true;
-  });
-}
-async function chooseConversation(id: string) {
-  const value = candidate.value,
-    version = transition;
-  if (!assistant || !value || value.stale) return;
-  if (id !== "new" && !assistant.state.sessions.has(id)) {
-    panelError.value = "会话不可用，请重新选择。";
-    return;
-  }
-  if (id === "new") assistant.create();
-  else await assistant.select(id);
-  if (
-    version !== transition ||
-    !contextOpen.value ||
-    candidate.value !== value ||
-    value.stale
-  )
-    return;
-  if (id !== "new" && assistant.state.selected !== id) return;
-  panelNotice.value =
-    assistant.context.value && assistant.context.value.text !== value.text
-      ? `已替换待发送资源为“${value.path[2]}”，原问题已保留。`
-      : "";
-  assistant.stageContext(value);
-  await relocate(() => {
-    chosen.value = true;
-  });
-  await nextTick();
-  panelHost.value?.querySelector<HTMLTextAreaElement>("textarea")?.focus();
-}
-async function closeContext() {
-  await relocate(() => {
-    contextOpen.value = false;
-    candidate.value = undefined;
-    chosen.value = false;
-  });
-  if (trigger?.isConnected && trigger.getClientRects().length) trigger.focus();
-}
-async function mainConversation() {
-  await closeContext();
-  emit("navigate", "assistant");
 }
 watch(
   () => props.page,
   () => {
-    if (contextOpen.value) void closeContext();
     if (props.page === "assistant" && pageAssistantOpen.value)
       void relocate(() => {
         pageAssistantOpen.value = false;
       });
-  },
-);
-watch(
-  () => controller?.state.snapshot,
-  (snapshot) => {
-    if (!snapshot) return;
-    assistant?.validateContexts(
-      snapshot.available,
-      assistant?.state.mode ?? "live",
-    );
-    if (
-      candidate.value &&
-      !contextCurrent(
-        candidate.value,
-        snapshot.available,
-        assistant?.state.mode ?? "live",
-        ownerKey,
-      )
-    )
-      candidate.value = Object.freeze({ ...candidate.value, stale: true });
-  },
-  { deep: true },
-);
-watch(
-  () => controller?.state.error,
-  (error) => {
-    if (error) assistant?.validateContexts([], assistant.state.mode);
   },
 );
 let sizing: ResizeObserver | undefined;
@@ -743,11 +632,6 @@ onMounted(() => {
         workspaceRoot.value!.closest(".workspace-chrome") ??
         workspaceRoot.value!;
       chromeNarrow.value = outer.getBoundingClientRect().width < 900;
-      const next = workspaceRoot.value!.getBoundingClientRect().width >= 1200;
-      if (wide.value !== next) {
-        wide.value = next;
-        if (contextOpen.value && chosen.value) void relocate(() => {});
-      }
     };
     resize();
     sizing = new ResizeObserver(resize);
@@ -1022,10 +906,7 @@ onBeforeUnmount(() => {
         />
       </aside>
       <p v-if="navigationError" role="alert">{{ navigationError }}</p>
-      <div
-        class="workspace-page-surface"
-        :class="{ 'context-layout': contextOpen && wide }"
-      >
+      <div class="workspace-page-surface">
         <div
           v-if="controller"
           v-show="page === 'tasks'"
@@ -1038,15 +919,12 @@ onBeforeUnmount(() => {
           v-show="page === 'software-management'"
           :model="software"
           :active="page === 'software-management'"
-          :context-key="candidate?.key ?? assistant?.context.value?.key"
-          @ask-ai="askAi"
           :execution="controller"
           @navigation="softwarePage = $event"
           @navigate="emit('navigate', $event)"
         />
         <ToolsPage
           :network-port="networkCheck"
-          @ask-ai="askAi"
           :execution="controller"
           :active="page === 'device-tools'"
           @task="openTask"
@@ -1082,65 +960,11 @@ onBeforeUnmount(() => {
             v-if="assistant"
             :visible="assistantVisible"
             :controller="assistant"
-            :presentation="
-              pageAssistantOpen || (contextOpen && chosen) ? 'context' : 'main'
-            "
+            :presentation="pageAssistantOpen ? 'context' : 'main'"
             :header-target="headerHost"
             @settings="openConnectionSettings"
             @tasks="emit('navigate', 'tasks')"
         /></Teleport>
-        <UiDialog
-          :open="true"
-          presentation="drawer"
-          v-if="contextOpen && !wide && candidate && assistant"
-          class="resource-context-drawer"
-          title="资源上下文 AI"
-          side="right"
-          @update:open="closeContext"
-        >
-          <ContextPanel
-            v-model:selection="contextSelection"
-            :wide="false"
-            :candidate="candidate"
-            :controller="assistant"
-            :chosen="chosen"
-            :notice="panelNotice"
-            :error="
-              panelError ||
-              (candidate.stale && !chosen
-                ? '资源信息已变更，请从最新资源详情重新选择。'
-                : '')
-            "
-            @choose="chooseConversation"
-            @close="closeContext"
-            @main="mainConversation"
-            ><div ref="panelHost" class="assistant-panel-host"
-          /></ContextPanel>
-        </UiDialog>
-        <aside
-          v-if="contextOpen && wide && candidate && assistant"
-          class="resource-context-aside"
-          aria-label="资源上下文 AI"
-        >
-          <ContextPanel
-            v-model:selection="contextSelection"
-            :wide="true"
-            :candidate="candidate"
-            :controller="assistant"
-            :chosen="chosen"
-            :notice="panelNotice"
-            :error="
-              panelError ||
-              (candidate.stale && !chosen
-                ? '资源信息已变更，请从最新资源详情重新选择。'
-                : '')
-            "
-            @choose="chooseConversation"
-            @close="closeContext"
-            @main="mainConversation"
-            ><div ref="panelHost" class="assistant-panel-host"
-          /></ContextPanel>
-        </aside>
         <Settings
           @navigation="settingsPage = $event"
           v-show="!ready || page === 'settings'"
@@ -1302,27 +1126,8 @@ onBeforeUnmount(() => {
   overflow: auto;
   padding: 24px;
 }
-.context-layout {
-  display: flex;
-}
-.context-layout > .resource-content {
-  flex: 1;
-}
 .assistant-panel-host {
   height: 100%;
-  min-height: 0;
-}
-:global(.resource-context-drawer) {
-  --rss-drawer-width: 520px;
-  --rss-drawer-padding: 16px;
-}
-:global(.resource-context-drawer .ui-dialog-body > .context-panel) {
-  flex: 1;
-  min-height: 0;
-}
-.resource-context-aside {
-  min-width: 0;
-  flex: 0 0 var(--rss-inspector-width);
   min-height: 0;
 }
 @media (max-width: 640px) {

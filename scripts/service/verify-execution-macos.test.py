@@ -35,6 +35,17 @@ def absent_execution_registration():
 
 
 class BackendLifecycleTests(unittest.TestCase):
+    def test_unregistered_local_owner_requires_ready_and_empty_original_tasks(self):
+        status = {'reply': {'kind': 'serviceStatus', 'value': {'readiness': {'phase': 'ready'}}}}
+        tasks = {'reply': {'kind': 'tasks', 'value': {'items': [], 'next': None}}}
+        self.assertEqual(acceptance.unregistered_local_evidence(status, tasks), dict(service=status, tasks=tasks))
+        for phase in ('notReady', 'registrationRequired'):
+            changed = copy.deepcopy(status)
+            changed['reply']['value']['readiness']['phase'] = phase
+            with self.assertRaises(AssertionError): acceptance.unregistered_local_evidence(changed, tasks)
+        for reply in ({'kind': 'rejected'}, {'kind': 'tasks', 'value': {'items': [{'request': 'unexpected'}]}}):
+            with self.assertRaises(AssertionError): acceptance.unregistered_local_evidence(status, {'reply': reply})
+
     def test_fixed_operation_cancellation_reaps_child_and_restores_before_cleanup(self):
         for disconnect,orphan in ((False,False),(True,False),(False,True)):
           with self.subTest(disconnect=disconnect,orphan=orphan), tempfile.TemporaryDirectory(dir='/private/tmp') as directory:

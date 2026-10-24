@@ -9,7 +9,6 @@ import {
   watch,
   toRaw,
 } from "vue";
-import Ajv, { type AnySchema } from "ajv";
 import type {
   SelfServicePort,
   SelfServiceDirectoryItem,
@@ -81,13 +80,7 @@ const selected = ref<SelfServiceDirectoryItem>(),
   busy = ref(false),
   error = ref("");
 const fieldErrors = ref(new Map<string, string>());
-const ajv = new Ajv({ strict: false, allErrors: true });
-function isSchema(value: unknown): value is AnySchema {
-  return (
-    typeof value === "boolean" ||
-    (typeof value === "object" && value !== null && !Array.isArray(value))
-  );
-}
+const form = ref<HTMLFormElement>();
 const scriptTask = computed(() =>
   selected.value?.task.kind === "script" ? selected.value.task : undefined,
 );
@@ -102,10 +95,6 @@ const parameterSchema = computed(
       additionalProperties: false,
     },
 );
-const validator = computed(() => {
-  const schema = parameterSchema.value;
-  return isSchema(schema) ? ajv.compile(schema) : undefined;
-});
 let epoch = 0;
 const finished = computed(() => {
   if (status.value?.kind === "absent") return true;
@@ -227,19 +216,10 @@ function preview() {
         fieldErrors.value.set(field.name, "请填写有效的字段值。");
       }
     }
-    const resolvedParameters = Object.fromEntries(
-      Object.entries(parameterSources.value).map(([name, source]) => [
-        name,
-        source.kind === "fixed" ? source.value : parameters.get(name),
-      ]),
-    );
-    if (!validator.value?.(resolvedParameters)) {
-      for (const issue of validator.value?.errors ?? []) {
-        const name =
-          issue.instancePath.split("/").at(1) || issue.params.missingProperty;
-        if (name)
-          fieldErrors.value.set(name, `不符合字段要求：${issue.message}`);
-      }
+    // Native form constraints are hints; the service validates the full Resource schema.
+    if (form.value && !form.value.checkValidity()) {
+      error.value = "请修正标出的参数后再核对。";
+      return;
     }
     if (fieldErrors.value.size) {
       error.value = "请修正标出的参数后再核对。";
@@ -422,6 +402,7 @@ function presentationText(value: unknown, fallback = "未提供"): string {
       </p>
       <div class="catalog-grid">
         <article
+          :data-policy-id="item.policyId"
           v-for="item in visibleDirectory"
           :key="item.policyId"
           class="resource-card"
@@ -457,6 +438,7 @@ function presentationText(value: unknown, fallback = "未提供"): string {
         </article>
       </div>
       <form
+        ref="form"
         v-if="selected && !choice"
         @submit.prevent="scriptTask ? runScript() : preview()"
       >
@@ -474,6 +456,7 @@ function presentationText(value: unknown, fallback = "未提供"): string {
           ><select
             v-if="options(field.schema)"
             v-model="inputs[field.name]"
+            :name="field.name"
             required
           >
             <option disabled value="">请选择</option>
@@ -487,12 +470,14 @@ function presentationText(value: unknown, fallback = "未提供"): string {
           ><input
             v-else-if="field.schema.type === 'string'"
             v-model="inputs[field.name]"
+            :name="field.name"
             required
             :minlength="field.schema.minLength"
             :maxlength="field.schema.maxLength"
           /><textarea
             v-else
             v-model="inputs[field.name]"
+            :name="field.name"
             placeholder="按字段要求填写 JSON 值"
           /><small
             v-if="

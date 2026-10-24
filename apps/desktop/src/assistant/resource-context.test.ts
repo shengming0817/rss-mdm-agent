@@ -1,85 +1,37 @@
-import { describe, it, expect } from "vitest";
-import { resourceOffer } from "../../../../tests/self-service/support";
-import {
-  resourceContext,
-  contextCurrent,
-  composePrompt,
-} from "./resource-context";
-
-describe("resource context projection", () => {
-  it("uses existing backend display information, exact versions and honest missing fields without task/account data", () => {
-    const item = resourceOffer();
-    Object.assign(item, {
-      description: "UNAPPROVED_FIELD",
-      inputs: { secret: "SECRET_INPUT" },
-      deviceList: ["SECRET_DEVICE"],
-    });
-    const c = resourceContext(item, "live", "anonymous");
-    expect(c.path).toEqual(["软件中心", "未提供分类", "办公套件", "软件详情"]);
-    const data = JSON.parse(c.text.split("\n").slice(1).join("\n"));
-    expect(data.resourceVersions).toEqual([
-      { package: "办公套件", version: "1.0" },
-    ]);
-    expect(data.sourceRevision).toBe(item.revision);
-    expect(data.catalogVersion).toBe("未提供");
-    expect(data.display).toEqual({
-      visibility: "allowed",
-      requestability: "unknown",
-      executability: "unknown",
-    });
-    for (const excluded of [
-      item.task,
-      item.attempt,
-      item.request,
-      "system",
-      "SECRET_INPUT",
-      "SECRET_DEVICE",
-      "UNAPPROVED_FIELD",
-      "userInitiated",
-      "expiresAt",
-    ])
-      expect(c.text).not.toContain(excluded);
-    expect(composePrompt({ text: " 解释版本 ", context: c })).toBe(
-      "解释版本\n\n" + c.text,
-    );
-  });
-  it("freezes the projection and invalidates revised, replaced or removed resources", () => {
-    const item = resourceOffer();
-    const c = resourceContext(item, "s1", "anonymous");
-    const original = c.text;
-    expect(contextCurrent(c, [item], "s1", "anonymous")).toBe(true);
-    item.revision = "b".repeat(64);
-    expect(c.text).toBe(original);
-    expect(contextCurrent(c, [item], "s1", "anonymous")).toBe(false);
-    expect(contextCurrent(c, [], "s1", "anonymous")).toBe(false);
-    expect(contextCurrent(c, [resourceOffer()], "live", "anonymous")).toBe(
-      false,
-    );
-    expect(
-      contextCurrent(
-        c,
-        [{ ...resourceOffer(), task: "replacement" }],
-        "s1",
-        "anonymous",
-      ),
-    ).toBe(false);
-  });
-  it("projects scripts without invention and blocks empty, stale or over-budget submissions", () => {
-    const item = {
-      ...resourceOffer(),
-      presentation: {
-        title: "诊断脚本",
-        summary: { kind: "script" as const, identity: "system" as const },
+import { it, expect } from "vitest";
+import { composePrompt } from "./resource-context";
+import { pageContext } from "../workspace/page-context";
+it("uses the same frozen page projection for preview and sending", () => {
+  const c = pageContext(
+    "software-management",
+    "软件管理",
+    [],
+    [
+      {
+        id: "r",
+        title: "办公套件",
+        description: "展示信息",
+        source: "授权目录",
+        revision: "v1",
       },
-    };
-    const c = resourceContext(item, "s1", "anonymous");
-    expect(c.path).toEqual(["工具中心", "未提供分类", "诊断脚本", "脚本详情"]);
-    expect(c.text).toContain('"resourceVersions": []');
-    expect(c.text).not.toContain("system");
-    expect(composePrompt({ text: "", context: c })).toBeUndefined();
-    expect(composePrompt({ text: "x".repeat(65537) })).toBeUndefined();
-    expect(
-      composePrompt({ text: "question", context: { ...c, stale: true } }),
-    ).toBeUndefined();
-  });
+    ],
+    "owner",
+    100,
+  );
+  expect(composePrompt({ text: " 解释版本 ", context: c }, 101)).toBe(
+    "解释版本\n\n" + c.text,
+  );
+  expect(c.scope).toBe("page");
+});
+it("rejects empty, expired, stale and over-budget page compositions", () => {
+  const c = pageContext("home", "主页", [], [], "owner", 100);
+  expect(composePrompt({ text: "", context: c }, 101)).toBeUndefined();
+  expect(
+    composePrompt({ text: "question", context: c }, c.expiresAt),
+  ).toBeUndefined();
+  expect(
+    composePrompt({ text: "question", context: { ...c, stale: true } }, 101),
+  ).toBeUndefined();
+  expect(composePrompt({ text: "x".repeat(65537) }, 101)).toBeUndefined();
+  expect(composePrompt({ text: "question" }, 101)).toBe("question");
 });

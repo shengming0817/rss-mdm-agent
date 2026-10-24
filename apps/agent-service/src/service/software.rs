@@ -249,13 +249,12 @@ impl Core {
         if original != *context {
             return Err(Error::Identity);
         }
-        if mutating {
-            if self.stopping
+        if mutating
+            && (self.stopping
                 || self.host.local_stopped.load(Ordering::Acquire)
-                || command.binding.as_ref() != Some(&session.session)
-            {
-                return Err(Error::Denied);
-            }
+                || command.binding.as_ref() != Some(&session.session))
+        {
+            return Err(Error::Denied);
         }
         Ok(frozen)
     }

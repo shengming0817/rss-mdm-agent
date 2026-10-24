@@ -527,7 +527,7 @@ def native_stale_helper_security(probe, matrix, query, command, protected, prior
     deadline=time.monotonic()+15
     while True:
         value=query()
-        records=[row for row in value['preparations'] if row['offer']['attempt']==task['attempt']]
+        records=[row for row in value['preparations'] if row['action']['offer']['attempt']==task['attempt']]
         if records and records[0]['state']=='failed':break
         assert time.monotonic()<deadline, 'stale helper denial did not settle the original selection'
         time.sleep(.1)
@@ -1300,6 +1300,14 @@ def rejected_image_probe(image, binary, config):
     return dict(baseline=baseline, response=reply, exitCode=rejected.returncode, changed='client image path')
 
 
+def unregistered_local_evidence(status, tasks):
+    assert status['reply']['kind'] == 'serviceStatus', 'missing authenticated service status'
+    assert status['reply']['value']['readiness'] == {'phase': 'ready'}, 'local owner is not ready'
+    assert tasks['reply']['kind'] == 'tasks', 'local task read was not accepted'
+    assert tasks['reply']['value']['items'] == [], 'fresh unregistered owner has unexpected tasks'
+    return dict(service=status, tasks=tasks)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, required=True)
@@ -1529,6 +1537,9 @@ if default.exists():
 from pathlib import Path
 p=plistlib.loads(Path('/Library/LaunchDaemons/com.rss-mdm.agent.execution.plist').read_bytes())
 assert p['ProgramArguments']==%r, 'initialization registration owner mismatch'
+state=Path(p['ProgramArguments'][2]).parent/'state'
+assert (state/'execution.sqlite').is_file(), 'local journal was not initialized'
+assert (state/'communication/communication.sqlite').is_file(), 'registration owner was not initialized'
 try:
     subprocess.run(%r,text=True,check=True,capture_output=True)
 except subprocess.CalledProcessError as error:
@@ -1589,11 +1600,8 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
                 if time.monotonic() >= deadline: raise RuntimeError('unregistered service diagnostic deadline exceeded')
                 time.sleep(.2)
             status = json.loads(probe.stdout)
-            assert status['reply']['value']['readiness']['phase'] == 'registrationRequired'
-            denied = json.loads(run(str(binary), '--config', str(config), '--query').stdout)
-            assert denied['reply']['kind'] == 'rejected'
-            assert not (protected / 'state').exists(), 'diagnostic startup created device state'
-            receipt['scenarios']['unregistered_status_without_authority'] = status
+            tasks = json.loads(run(str(binary), '--config', str(config), '--query').stdout)
+            receipt['scenarios']['local_owner_before_enterprise_registration'] = unregistered_local_evidence(status, tasks)
             administrator_session.command('initialize')
 
         helper = True
@@ -1648,10 +1656,9 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             package_receipt = 'org.rss.verification.' + tag
             run('/usr/bin/pkgbuild', '--root', str(payload), '--identifier', package_receipt,
                 '--version', '1.0', '--install-location', str(protected / 'package-payload'), str(pkg))
-            offered = command('package', path=str(pkg), receipt=package_receipt, user=True)
-            if native_probe: receipt['security']['replayOffer']=await_offer(query,offered['task'])
+            catalog = command('software-catalog', path=str(pkg), receipt=package_receipt)
             print(json.dumps({'kind': 'desktopService', 'desktop': str(protected / 'rss-mdm-desktop'),
-                'service': receipt['artifact'], 'config': str(default_config), 'task': offered, 'journalOwner': 'agent-service'}), flush=True)
+                'service': receipt['artifact'], 'config': str(default_config), 'catalog': catalog, 'journalOwner': 'agent-service'}), flush=True)
             def effect():
                 detected = subprocess.run(['/usr/sbin/pkgutil', '--pkg-info-plist', package_receipt], capture_output=True, text=True)
                 target_file = protected / 'package-payload/fixed.txt'
@@ -1680,7 +1687,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
                         security_result(receipt['security'],name,evidence)
                     value=dict(recorded=True)
                 elif method == 'catalog':
-                    value = command('package', path=str(pkg), receipt=package_receipt, user=True)
+                    value = command('software-catalog', path=str(pkg), receipt=package_receipt)
                     receipt['scenarios']['second_unexecuted_catalog_offer'] = value
                 elif method == 'effect': value = effect()
                 elif method == 'completion':

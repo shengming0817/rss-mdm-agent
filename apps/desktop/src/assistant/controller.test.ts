@@ -1,7 +1,6 @@
 import { mount, flushPromises } from "@vue/test-utils";
 import SessionConnection from "./SessionConnection.vue";
 import Assistant from "./Assistant.vue";
-import ContextPanel from "./ContextPanel.vue";
 import ConnectionSettings from "../settings/ConnectionSettings.vue";
 import { activeStage } from "@rss-mdm-agent/ai-contract";
 import { describe, expect, it, vi } from "vitest";
@@ -12,8 +11,6 @@ import {
   type SessionView,
 } from "@rss-mdm-agent/ai-client";
 import { createAssistant, operationMessage } from "./controller";
-import { resourceOffer, offer } from "../../../../tests/self-service/support";
-import { resourceContext } from "./resource-context";
 import { fixtureSession } from "@rss-mdm-agent/ai-contract/testing";
 import fixtures from "../../../../tests/assistant/execution-fixtures.json";
 import type {
@@ -117,81 +114,6 @@ function setup(now = () => 100) {
   };
 }
 describe("assistant application ownership", () => {
-  it("loads and retries older resource target sessions without losing the explicit choice or candidate", async () => {
-    const t = setup();
-    vi.mocked(t.client.listSessions).mockResolvedValueOnce({
-      schemaVersion: 1,
-      kind: "sessionPage",
-      items: Array.from({ length: 20 }, (_, i) => ({
-        namespace: { ...t.view.namespace, sessionId: `session-${i + 1}` },
-        status: "active",
-        presentation: { title: `会话 ${i + 1}` },
-        lastActivityAtMs: i,
-      })),
-      next: "older-page",
-    });
-    await t.c.connect();
-    const candidate = resourceContext(resourceOffer()!, "s1", "anonymous")!;
-    const wrapper = mount(ContextPanel, {
-      props: {
-        wide: false,
-        selection: "",
-        "onUpdate:selection": (value: string) => {
-          void wrapper.setProps({ selection: value });
-        },
-        candidate,
-        controller: t.c,
-        chosen: false,
-        error: "",
-        notice: "",
-      },
-    });
-    await wrapper.get("select").setValue("session-1");
-    let reject!: (error: Error) => void;
-    vi.mocked(t.client.listSessions).mockImplementationOnce(
-      () =>
-        new Promise((_, fail) => {
-          reject = fail;
-        }),
-    );
-    await wrapper.get('[data-action="load-sessions"]').trigger("click");
-    expect(
-      wrapper.get('[data-action="load-sessions"]').attributes("disabled"),
-    ).toBeDefined();
-    expect(wrapper.get('[role="status"]').text()).toContain("正在读取会话");
-    reject(new Error("offline"));
-    await flushPromises();
-    expect(wrapper.get('[role="alert"]').text()).toContain("暂时无法读取会话");
-    vi.mocked(t.client.listSessions).mockResolvedValueOnce({
-      schemaVersion: 1,
-      kind: "sessionPage",
-      items: [
-        {
-          namespace: { ...t.view.namespace, sessionId: "older-session" },
-          status: "active",
-          presentation: { title: "较早会话" },
-          lastActivityAtMs: -1,
-        },
-      ],
-    });
-    await wrapper.get('[data-action="retry-sessions"]').trigger("click");
-    await flushPromises();
-    expect(t.client.listSessions).toHaveBeenLastCalledWith({
-      limit: 20,
-      continuation: "older-page",
-    });
-    expect(wrapper.get("select").element.value).toBe("session-1");
-    expect(wrapper.get(".resource-path").text()).toBe(
-      candidate.path.join(" → "),
-    );
-    expect(wrapper.findAll("option")).toHaveLength(23);
-    await wrapper.get("select").setValue("older-session");
-    await wrapper.get("form").trigger("submit");
-    expect(wrapper.emitted("choose")).toEqual([["older-session"]]);
-    expect(t.submit).not.toHaveBeenCalled();
-    wrapper.unmount();
-    t.c.dispose();
-  });
   it("keeps a failed selection save actionable through restore and retries only that selection", async () => {
     const t = setup();
     const catalog = await t.client.connections();
@@ -1292,7 +1214,7 @@ describe("resource composition ownership", () => {
     await t.c.connect();
     await t.c.select("session-1");
     t.c.draft.value = "解释版本";
-    const context = resourceContext(resourceOffer(), "s1", "anonymous")!;
+    const context = samplePageContext();
     t.c.stageContext(context);
     expect(t.submit).not.toHaveBeenCalled();
     expect(t.client.createSession).not.toHaveBeenCalled();
@@ -1311,12 +1233,12 @@ describe("resource composition ownership", () => {
     await t.c.connect();
     await t.c.select("session-1");
     t.c.draft.value = "original";
-    t.c.stageContext(resourceContext(resourceOffer(), "s1", "anonymous")!);
+    t.c.stageContext(samplePageContext());
     t.submit.mockRejectedValueOnce(new ClientError("transport_closed"));
     await t.c.prompt();
     const original = JSON.parse(JSON.stringify(t.submit.mock.calls[0][0]));
     t.c.draft.value = "next question";
-    t.c.stageContext(resourceContext(offer(), "s1", "anonymous")!);
+    t.c.stageContext(samplePageContext("另一个页面对象"));
     const next = t.c.context.value;
     await t.c.retry();
     expect(t.submit.mock.calls[1][0]).toEqual(original);
@@ -1330,7 +1252,7 @@ describe("resource composition ownership", () => {
     await t.c.connect();
     t.c.create();
     t.c.draft.value = "question";
-    t.c.stageContext(resourceContext(resourceOffer(), "s1", "anonymous")!);
+    t.c.stageContext(samplePageContext());
     vi.mocked(t.client.restore).mockImplementation(async (id) => ({
       ...structuredClone(t.view),
       namespace: { ...t.view.namespace, sessionId: id },
@@ -1361,11 +1283,11 @@ describe("resource composition ownership", () => {
     await t.c.connect();
     await t.c.select("session-1");
     t.c.draft.value = "question";
-    t.c.stageContext(resourceContext(resourceOffer(), "s1", "anonymous")!);
+    t.c.stageContext(samplePageContext());
     t.c.create();
     expect(t.c.context.value).toBeUndefined();
     await t.c.select("session-1");
-    t.c.validateContexts([], "s1");
+    t.c.validatePageContexts([]);
     expect(t.c.context.value?.stale).toBe(true);
     await t.c.prompt();
     expect(t.submit).not.toHaveBeenCalled();
@@ -1416,3 +1338,22 @@ it("invalidates page attachments in every conversation while the sidebar is clos
   expect(c.state.drafts.size).toBe(0);
 });
 import { pageContext } from "../workspace/page-context";
+
+function samplePageContext(title = "办公套件") {
+  return pageContext(
+    "software-management",
+    "软件管理",
+    [],
+    [
+      {
+        id: "published-policy",
+        title,
+        description: "已发布软件展示",
+        source: "授权目录",
+        revision: "v1",
+      },
+    ],
+    "anonymous",
+    100,
+  );
+}

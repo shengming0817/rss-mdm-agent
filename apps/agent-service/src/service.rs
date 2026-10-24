@@ -1667,6 +1667,19 @@ impl Core {
                     &command.subject,
                     command.session,
                 )),
+                Some(Request::HelperStatus {}) => {
+                    if self.stopping || self.host.local_stopped.load(Ordering::Acquire) {
+                        return Err(Error::Unavailable);
+                    }
+                    let helper = self.helpers.connect_peer(
+                        &command.subject,
+                        command.session,
+                        command.binding.as_ref().ok_or(Error::Denied)?,
+                    )?;
+                    Ok(Reply::HelperStatus {
+                        value: helper.context().clone(),
+                    })
+                }
                 Some(Request::ServiceStatus {}) => {
                     let readiness =
                         if self.stopping || self.host.local_stopped.load(Ordering::Acquire) {

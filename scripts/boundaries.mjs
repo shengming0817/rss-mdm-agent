@@ -465,17 +465,12 @@ export function checkSource(file, source) {
         "setInterval",
         "clearInterval",
       ],
-      "apps/desktop/src/self-service/controller.ts": ["crypto"],
       "apps/desktop/src/appearance.ts": [
         "navigator",
         "Promise",
         "Error",
         "setTimeout",
         "clearTimeout",
-      ],
-      "apps/desktop/src/self-service/BackendOffers.vue": [
-        "setInterval",
-        "clearInterval",
       ],
       "apps/desktop/src/assistant/controller.ts": [
         "Set",
@@ -557,8 +552,6 @@ export function checkSource(file, source) {
             name === "../software/LocalSoftwareAction.vue") ||
           (file === "apps/desktop/src/assistant/ExecutionDetails.vue" &&
             name === "../self-service/RequestOrigin.vue") ||
-          (file === "apps/desktop/src/self-service/BackendOffers.vue" &&
-            name === "../assistant/resource-context") ||
           (file === "apps/desktop/src/self-service/TaskDetail.vue" &&
             name === "../assistant/ExecutionDetails.vue")
         ) &&
@@ -894,15 +887,14 @@ export function checkTree(treeRoot = root, executable) {
     Object.keys(desktop.dependencies ?? {})
       .sort()
       .join() !==
-      "@a2ui/web_core,@rss-mdm-agent/ai-client,@rss-mdm-agent/ai-contract,@rss-mdm-agent/ai-ui-bridge,@rss-mdm-agent/execution-bindings,@rss-mdm-agent/ui,@tauri-apps/api,ajv,vue" ||
+      "@a2ui/web_core,@rss-mdm-agent/ai-client,@rss-mdm-agent/ai-contract,@rss-mdm-agent/ai-ui-bridge,@rss-mdm-agent/execution-bindings,@rss-mdm-agent/ui,@tauri-apps/api,vue" ||
     desktop.dependencies?.["@a2ui/web_core"] !== "0.11.0" ||
-    desktop.dependencies?.ajv !== "8.20.0" ||
     desktop.dependencies?.["@tauri-apps/api"] !== "2.11.1" ||
     Object.keys(desktop.optionalDependencies ?? {}).length ||
     Object.keys(desktop.peerDependencies ?? {}).length
   )
     errors.push(
-      "desktop production dependencies must be UI, public AI contract/client/bridge, generated execution bindings, pinned A2UI core, pinned Ajv schema validation, Vue and pinned Tauri core only",
+      "desktop production dependencies must be UI, public AI contract/client/bridge, generated execution bindings, pinned A2UI core, Vue and pinned Tauri core only",
     );
   const config = JSON.parse(read("apps/desktop/src-tauri/tauri.conf.json"));
   const capabilityFiles = files(

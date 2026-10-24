@@ -13,8 +13,6 @@ import SettingsGlyph from "../system-settings/SettingsGlyph.vue";
 import ConnectionCheck from "../device-tools/ConnectionCheck.vue";
 import type { NetworkCheckPort } from "../self-service/native";
 import { directoryKey } from "../self-service/directory";
-import BackendOffers from "../self-service/BackendOffers.vue";
-import type { BackendTask } from "../self-service/types";
 import PolicySelfService from "../self-service/PolicySelfService.vue";
 import type { Controller } from "../self-service/controller";
 import { systemSettingsKey } from "../system-settings/controller";
@@ -35,7 +33,6 @@ const emit = defineEmits<{
   navigation: [state: PageNavigation];
   navigate: [page: string, section?: string];
   task: [request: string];
-  askAi: [item: BackendTask, trigger: HTMLElement];
 }>();
 const query = ref("");
 const directory = inject(directoryKey, undefined);
@@ -431,12 +428,6 @@ emit("navigation", navigation);
           没有匹配的工具，请换个关键词。
         </p>
         <section aria-label="组织发布的工具">
-          <BackendOffers
-            v-if="execution"
-            :controller="execution"
-            kind="script"
-            @ask-ai="(item, trigger) => emit('askAi', item, trigger)"
-          />
           <h3>组织发布的工具</h3>
           <PolicySelfService
             ref="enterprise"

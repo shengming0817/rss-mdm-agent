@@ -5872,7 +5872,7 @@
   },
   {
     "annotations": { "openWorldHint": false, "readOnlyHint": true },
-    "description": "Current employee-authorized script tools. Policy publication, allowAi and risk are verified for this AI origin.",
+    "description": "Currently authorized self-service software, scripts and enrollment entries. Publication, allowAi and risk are verified for this AI origin.",
     "inputSchema": {
       "$defs": {
         "Id": {

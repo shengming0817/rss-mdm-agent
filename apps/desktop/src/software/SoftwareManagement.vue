@@ -13,7 +13,6 @@ import { Package, UiSearchInput } from "@rss-mdm-agent/ui";
 import type { PageNavigation } from "../workspace/page-navigation";
 import type { Controller } from "../self-service/controller";
 import type {
-  BackendTask,
   InstalledSoftware,
   LocalSoftwareAction,
   SoftwareBlock,
@@ -27,18 +26,15 @@ import {
 } from "./controller";
 import { nativeDataPort, nativeSoftwarePort } from "../self-service/native";
 import { directoryKey, policyResource } from "../self-service/directory";
-import BackendOffers from "../self-service/BackendOffers.vue";
 import "./software.css";
 const props = defineProps<{
   model?: SoftwareController;
   execution?: Controller;
   active?: boolean;
-  contextKey?: string;
 }>();
 const emit = defineEmits<{
   navigation: [state: PageNavigation];
   navigate: [page: string];
-  askAi: [item: BackendTask, trigger: HTMLElement];
 }>();
 const c = props.model ?? createSoftware(nativeDataPort(), nativeSoftwarePort());
 const s = c.state;
@@ -96,12 +92,6 @@ const filtered = computed(() =>
 );
 const current = computed(() =>
   c.installed.value.find((item) => installationKey(item) === selected.value),
-);
-const offers = computed(
-  () =>
-    props.execution?.state.snapshot?.available.filter(
-      (t) => t.presentation.summary.kind === "software",
-    ) ?? [],
 );
 const history = computed(() =>
   [...s.operations.values()].sort(
@@ -477,13 +467,6 @@ onBeforeUnmount(() => {
         kind="software"
         :filter="query"
         @changed="execution?.refresh()"
-      />
-      <BackendOffers
-        v-if="execution"
-        :controller="execution"
-        kind="software"
-        :context-key="contextKey"
-        @ask-ai="(item, trigger) => emit('askAi', item, trigger)"
       />
     </section>
     <section v-if="section === 'operations'" aria-label="本地软件操作历史">
