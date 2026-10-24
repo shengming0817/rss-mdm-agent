@@ -168,10 +168,11 @@ impl crate::service::Core {
                     .ok()
                     .filter(|r| r.closed)
                     .and_then(|r| match plan.spec().request.operation.action.as_str() {
-                        "software.detect" | "software.launch" => {
+                        crate::local_software::compile::DETECT_ACTION
+                        | crate::local_software::compile::LAUNCH_ACTION => {
                             Some(execution_lifecycle::EffectAssessment::NoEffect)
                         }
-                        "software.uninstall"
+                        crate::local_software::compile::UNINSTALL_ACTION
                             if matches!(r.detected, Some(SoftwareState::Absent {})) =>
                         {
                             Some(execution_lifecycle::EffectAssessment::Satisfied)

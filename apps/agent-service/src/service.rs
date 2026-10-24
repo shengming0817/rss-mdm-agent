@@ -17,6 +17,7 @@ mod data;
 mod policy;
 mod settings;
 pub(crate) const RESULT_CONSUMER: &str = "execution-results";
+pub(crate) const SHUTDOWN_WAIT: std::time::Duration = std::time::Duration::from_secs(28);
 mod software;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -31,11 +32,11 @@ use std::{
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExecutionConfig {
-    // Explicit non-executing fixture identity; absent from production binaries and wire.
+    // Explicit test worker identity; absent from production binaries and wire.
     #[cfg(test)]
     #[serde(skip)]
     pub(crate) worker_image_fixture:
-        Option<fn() -> Result<execution_contract::SoftwareMaterial, Error>>,
+        Option<fn(&ExecutionConfig) -> Result<execution_contract::SoftwareMaterial, Error>>,
     pub local_permissions: crate::local_permissions::Config,
     pub work_root: PathBuf,
     pub material_root: PathBuf,
@@ -2103,10 +2104,7 @@ impl execution_ipc::host::Handler for ServiceHandle {
     }
     fn stop(&mut self) -> Result<(), execution_app::Error> {
         let _ = self.call(LocalRequest::Stop, String::new(), 0, None);
-        match self
-            .completion
-            .recv_timeout(std::time::Duration::from_secs(28))
-        {
+        match self.completion.recv_timeout(SHUTDOWN_WAIT) {
             Ok(Ok(())) => Ok(()),
             _ => Err(execution_app::Error::OutcomeUnknown),
         }

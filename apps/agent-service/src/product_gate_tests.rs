@@ -4618,6 +4618,100 @@ impl Case {
 }
 #[cfg(target_os = "macos")]
 #[tokio::test]
+#[ignore = "requires root and a protected temporary directory for the real runner/journal seam"]
+async fn successful_local_software_assessment_confirms_receipts_and_releases_materials() {
+    use std::os::unix::fs::PermissionsExt;
+    let _budget = crate::scenario_budget::enter();
+    fn image(config: &ExecutionConfig) -> Result<SoftwareMaterial, agent_client::Error> {
+        plan::pin(&config.work_root.join("software-result-worker"))
+    }
+    for action in [LocalSoftwareAction::Detect, LocalSoftwareAction::Uninstall] {
+        let (mut c, mut choice) = local_software_case().await;
+        choice.action = action;
+        // Explicit physical worker fixture: only reports a typed result, never changes software.
+        let result = serde_json::to_string(&SoftwareWorkerResult {
+            native_output_bytes: 0,
+            detected: Some(SoftwareState::Absent {}),
+            closed: true,
+            diagnostics: String::new(),
+        })
+        .unwrap();
+        let worker = c
+            .service
+            .core
+            .config
+            .work_root
+            .join("software-result-worker");
+        std::fs::write(&worker, format!("#!/bin/sh\nprintf '%s\\n' '{result}'\n")).unwrap();
+        std::fs::set_permissions(&worker, std::fs::Permissions::from_mode(0o700)).unwrap();
+        c.service.core.config.worker_image_fixture = Some(image);
+        let prepared = match c
+            .local_software_call(LocalSoftwareOperation::Prepare(choice.clone()), false)
+            .await
+        {
+            Reply::SoftwarePrepared { value } => value,
+            Reply::DataFailure { reason } => panic!("prepare: {reason:?}"),
+            _ => panic!("unexpected prepare reply"),
+        };
+        assert!(matches!(
+            c.local_software_call(
+                LocalSoftwareOperation::Submit(LocalSoftwareSubmission {
+                    request: choice.request.clone(),
+                    digest: prepared.digest,
+                }),
+                false,
+            )
+            .await,
+            Reply::SoftwareStatus { .. }
+        ));
+        let status = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                c.service.core.reconcile().unwrap();
+                let status = c
+                    .service
+                    .core
+                    .app
+                    .status(&c.service.core.local_caller(), &choice.request)
+                    .unwrap();
+                if status.phase == execution_app::TaskPhase::Verified {
+                    break status;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("a successful native result must settle the original request");
+        assert_eq!(status.attempts, 1);
+        assert_eq!(
+            status.assessment,
+            Some(if action == LocalSoftwareAction::Uninstall {
+                execution_lifecycle::EffectAssessment::Satisfied
+            } else {
+                execution_lifecycle::EffectAssessment::NoEffect
+            })
+        );
+        let consumer = plan::id(RESULT_CONSUMER).unwrap();
+        c.service.core.finish_local_result(&choice.request).unwrap();
+        assert!(c
+            .service
+            .core
+            .app
+            .service_delivery(&choice.request, &consumer, 32)
+            .unwrap()
+            .is_empty());
+        assert!(
+            c.service
+                .core
+                .app
+                .service_material_fact(&choice.request, &consumer)
+                .unwrap()
+                .reclaimable
+        );
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
 #[ignore = "requires root for production material/OS identity admission; explicitly run the built test binary"]
 async fn local_software_api_stages_no_attempt_and_replays_the_original_after_lost_ack() {
     let _budget = crate::scenario_budget::enter();
@@ -5307,7 +5401,7 @@ async fn settings_desktop_cache_and_retained_task_are_bound_to_exact_context() {
     ));
 }
 
-fn fixture_worker_image() -> Result<SoftwareMaterial, agent_client::Error> {
+fn fixture_worker_image(_: &ExecutionConfig) -> Result<SoftwareMaterial, agent_client::Error> {
     plan::pin(std::path::Path::new("/bin/sh"))
 }
 

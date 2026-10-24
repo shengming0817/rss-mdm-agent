@@ -4,6 +4,10 @@ use crate::backend::plan;
 use execution_runner::Artifacts;
 use std::sync::Arc;
 
+pub(crate) const LAUNCH_ACTION: &str = "local-software.launch";
+pub(crate) const UNINSTALL_ACTION: &str = "local-software.uninstall";
+pub(crate) const DETECT_ACTION: &str = "local-software.detect";
+
 pub(crate) fn metadata(
     choice: &LocalSoftwareChoice,
     item: &InstalledSoftware,
@@ -138,9 +142,9 @@ pub(crate) fn native(
                 },
                 operation: Operation {
                     action: plan::id(match choice.action {
-                        LocalSoftwareAction::Launch => "local-software.launch",
-                        LocalSoftwareAction::Uninstall => "local-software.uninstall",
-                        LocalSoftwareAction::Detect => "local-software.detect",
+                        LocalSoftwareAction::Launch => LAUNCH_ACTION,
+                        LocalSoftwareAction::Uninstall => UNINSTALL_ACTION,
+                        LocalSoftwareAction::Detect => DETECT_ACTION,
                         _ => return Err(Error::Unsupported),
                     })?,
                     resource: plan::reference(&item.native_id, policy.revision.as_str())?,

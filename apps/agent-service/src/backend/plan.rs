@@ -394,7 +394,7 @@ pub(crate) fn worker_image(config: &crate::ExecutionConfig) -> Result<SoftwareMa
     let _ = config;
     #[cfg(test)]
     if let Some(image) = config.worker_image_fixture {
-        return image();
+        return image(config);
     }
     pin(&std::env::current_exe()?)
 }
