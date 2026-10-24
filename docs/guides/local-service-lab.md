@@ -342,23 +342,41 @@ Windows CPU 当前仅接纳单 processor group，多组系统报告 unsupported�
 
 ### Windows RSS 登录组件（x64）
 
-本机设置页的“RSS 登录”只向当前已解锁的物理控制台本地账户提供首次自助关联，需有效员工登录与后台候选策略。设置验证器后提交六位动态码；创建账户时 Windows 密码只经本机受控输入交给 SYSTEM worker，不上传后台。页面的“准备完成”不代表已应用，应刷新并核对后台应用 revision。追加关联、创建其它账户、角色变更由后台 AccountWrite 授权；本地管理员身份不提供 RSS 授权。
+Windows 登录增强使用单个 Credential Provider 和同一个受保护离线库。目标账号形态为本地 SAM、设备所属 AD 域账号、纯 Entra joined 账号；Hybrid joined、Workplace registered、MSA、信任域账号、RDP、UAC 和全入口强制 MFA 不在本次支持范围。真实支持结论须绑定目标 Windows 环境的人工验收记录；开发机测试不能证明 LogonUI 已加载或原生登录成功。
 
-Credential Provider 是独立 `windows-credential-provider` cdylib，与 Agent 静态链接同一离线因子 owner；当前仅交付源码与手工组件入口，安装包装配另行验收。在 Windows x64 构建环境使用 `cargo build --locked --release -p windows-credential-provider -p agent-service`，固定 Agent 和 DLL 的提交、摘要及签名后，将 DLL 放入 SYSTEM/管理员拥有、普通用户不可写的规范绝对路径。部署使用当前格式，旧格式在候选准入阶段拒绝，不迁移；已有当前格式部署在服务切换前核对离线库与安装身份。先由系统服务的新部署初始化 `execution.material_root/device-access`；注册不能创建或替换离线库。以 LocalSystem 主体运行：
+| 账号形态 | 关联依据 | 原生凭据与账号管理边界 |
+|---|---|---|
+| 本地 SAM | 本机域 SID、用户 SID及当前登录会话 | Windows 验证密码；可受权建号、禁用或调整本机管理员资格 |
+| AD 域账号 | 本机域加入状态、域 SID、用户 SID及当前登录会话 | Windows 决定域在线/缓存登录；不创建目录账号、不修改域组 |
+| Entra joined | 纯 Entra 加入身份、当前 CloudAP 控制台会话及其 SID/object ID | Windows 决定在线/缓存登录；不以邮件或加入设备者的姓名认领当前用户 |
+
+首次关联需有效员工会话、后台候选策略及当前已解锁的真实控制台会话。原生身份只能由 Agent 获取，前端不能指定 SID/租户。初次启用或设备加入身份发生变化后，Entra 用户须注销 Windows 再登录，使首次关联来自当前加入身份被观察之后的新会话。服务端接受关联、验证码准备完成、任务投递 ACK 与本机已应用分别显示。
+
+设置验证器后提交六位动态码；本机新账号密码只交给 SYSTEM worker，不上传后台。新建账号仅限 SAM，AD/Entra 只绑定既有账号。RSS 因子失败和 Windows 密码错误分别处理；Windows 密码到期或需更改时，使用原生系统登录/改密入口后再重试。RSS 不保存 OS 密码。
+
+离线验证先原子持久消费 TOTP，再向 Windows 提交凭据；Windows 密码错误仍消耗该时间步。TOTP 为六位、30 秒、前后一步，持久限速从第五次失败开始；进程重启、重新投递、重绑和因子轮换不能清零账号失败预算。时钟回拨拒绝动态码。恢复密钥可重复使用，只替代 RSS 因子，仍需合法 Windows 凭据；使用记录无法持久保存时本次恢复被拒绝。已确认上传的记录才会清理。后台、Agent 或 Desktop 停止不妨碍已激活因子的离线验证；停止期间尚未收到的远程撤销不能宣称在本机已生效。
+
+解绑先撤销 RSS 因子，保留撤销代际，再执行明确授权的 `Keep / Disable / Standard`。Keep 保留 OS 状态；Disable 对 SAM 禁用账号，对目录账号设置精确 SID 的本机拒绝交互登录权限；Standard 只处理该账号的本机管理员资格。目录账号处置不代表目录全局停用，不强制注销已登录会话，不扩大到 RDP。不移除整个目录组来降权单个用户；不能确认实际效果时保留失败/未知。内置恢复管理员及最后可用本地管理员受保护，重绑、因子恢复和卸载不会自动解除 OS 限制。
+
+Windows x64 NSIS 候选包含 CP DLL；其他架构及 MSI/MSIX 未装配该组件，不得据 Agent 安装成功宣称 RSS 登录可用。`--release` 对 Agent、Desktop、CP DLL 和安装包签名；运行时同时核对固定摘要、签名链及候选发布者证书指纹。候选、离线库均只支持当前格式，旧格式在切换服务/组件前拒绝，无自动迁移、双读或清库重建。拒绝升级时保留原部署及材料，由管理员通过原部署的正式退役流程处理。
+
+组件由 SYSTEM 服务在离线库初始化后从同一个固定安装候选注册；独立维修也消费已安装候选，不接受任意 DLL 路径作为另一条准入入口。新安装或 DLL 候选变化后须重启 Windows，重启前组件不宣称可用于认证。版本目录避免覆盖 LogonUI 已加载的 DLL；升级保留安装身份、限速、因子和撤销记录。
+
+以 LocalSystem 主体使用固定服务镜像执行：
 
 ```powershell
-& $Agent --device-access-component register $OfflineRoot $ServiceId $ProviderDll
+& $Agent --device-access-component register $ProtectedDeploymentConfig
 & $Agent --device-access-component health
-# 独立恢复入口，不加载 DLL；保留其它系统登录 Provider：
+# 维修不加载 DLL，保留系统登录 Provider：
 & $Agent --device-access-component disable
 & $Agent --device-access-component cleanup
 ```
 
-`$OfflineRoot` 是上述 device-access 子目录，`$ServiceId` 是部署配置的 `service_id`，`$ProviderDll` 是固定候选 DLL 的绝对路径。register 先检查既有离线库及 DLL，再发布固定 CLSID；health 核对注册、路径、摘要与库，不能证明 LogonUI 能加载。disable 只停用 RSS Provider；cleanup 删除其 COM/配置注册，保留 OS 账户与离线材料。正常设备 unmanage 会在移除程序前撤销匹配安装身份的组件注册。不要删除系统 Provider，也不安装 Credential Provider Filter。
+`register` 与安装使用同一候选/签名/安装身份校验，并要求既有当前格式离线库；不会建立或替换材料。`health` 只证明组件注册、路径、摘要及存储检查，不证明 LogonUI 加载。`disable` 持久标记维修停用；`cleanup` 再移除 COM 注册，仍保留停用标记及材料，服务重启不能自动解除维修停用。显式 register 恢复组件。不要删除系统 Provider，也不安装 Provider Filter。
 
-离线验证先持久消费 TOTP，再向 Windows 序列化密码；Windows 密码错误仍消耗该时间步。TOTP 为六位、30 秒、前后一步，持久限速从第五次失败开始；重启不能清零失败预算，时钟回拨拒绝动态码。恢复密钥可重复使用、无期限，只替代 RSS 因子，仍需正确 Windows 密码。网络或 Agent 停机不影响已激活的离线验证。解绑只移除 RSS 集成，不删除账户、数据或角色；既有角色仅在明确授权时修改，并保护最后一个可用管理员。
+普通组件卸载/禁用保留必要材料和防重放状态；正式设备退管按原有授权流程先撤销组件和本机授权，再清理材料。重新接入必须完成新的受信注册和绑定，不从旧候选恢复旧因子。
 
-目标机可在已有固定候选验收中运行 `verify-execution-windows.ps1 -Phase DeviceAccessHealth -Candidate <候选> -Config <配置> -Output <新回执目录> -ProviderDll <固定DLL> -ProviderSha256 <预先固定SHA256>`，要求 LocalSystem/x64。此阶段只记录组件健康证据。必须另在原生 LogonUI 验证首次登录/解锁、离线、错误密码后的 OTP 重放、并发消费、重启限速、时钟回拨、恢复密钥轮换、账户角色保护、卸载及故障禁用。AD/Entra/MSA、RDP、UAC 与全入口 MFA 均不在当前承诺内。开发机 macOS 不执行 Windows 构建、测试或验收。
+人工验收分别记录本地、AD、Entra joined 的 Windows 版本、架构、加入状态、固定 revision、Agent/DLL/安装包 SHA256、签名身份与结果：登录/解锁/取消/用户切换、改密、域控/IdP 不可达、后台及服务停止、OTP 并发重放、重启限速、时钟异常、持久化失败、损坏、重绑/离职、升级中断、卸载和独立维修。使用 `native-candidate.mjs freeze --windows-login <DLL>` 将 DLL 纳入固定候选；`verify-execution-windows.ps1 -Phase DeviceAccessHealth` 从该候选读取 DLL，并要求服务与 DLL 签名有效、发布者一致，仍只作组件健康记录；交互效果须人工独立观察。本轮 Windows 原生构建、签名包与实机交互留待人工执行，不作为实现 PR ready 的阻塞，不得记为通过。
 
 ### macOS Platform SSO 开发组件（Apple silicon / 26.4）
 
