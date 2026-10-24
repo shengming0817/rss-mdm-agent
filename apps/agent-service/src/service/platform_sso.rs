@@ -409,7 +409,14 @@ impl<S: IdentityProvider> DeviceService<S> {
             self.core.handle(command);
         }
         self.drive_platform_sso(commands).await?;
-        sweep_retirement(&root, self.core.access.installation)
+        let complete = sweep_retirement(&root, self.core.access.installation)?;
+        if !complete {
+            // Cleanup may outlive trust/CRL validity. Keep the existing PKI owner's bounded
+            // recovery running without reopening business admission or new registration.
+            // Process native observations first, even when the network is unavailable.
+            network(self.client.drive_pki(), &mut self.core, commands).await?;
+        }
+        Ok(complete)
     }
 }
 /// The existing owner lock serializes retirement with registering and late completion.

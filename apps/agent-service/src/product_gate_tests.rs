@@ -2480,6 +2480,104 @@ async fn fresh_revocation_and_crl_expiry_close_admission_while_pending_status_wa
     }
 }
 
+#[cfg(target_os = "macos")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn psso_drain_recovers_expired_trust_without_reopening_business_admission() {
+    let _budget = crate::scenario_budget::enter();
+    let mut c = Case::new(Some(RiskLevel::Two)).await;
+    let registration = c.service.client.registration().unwrap();
+    let now = c.service.core.host.clock.now().unwrap();
+    // Stage an elapsed, correctly signed CRL in the real persisted trust document. The
+    // production clock is unchanged; subsequent recovery must use the actual HTTPS owner.
+    let db = rusqlite::Connection::open(c._root.path.join("communication.sqlite")).unwrap();
+    let bytes: Vec<u8> = db
+        .query_row("SELECT body FROM state WHERE key='pki'", [], |r| r.get(0))
+        .unwrap();
+    let mut pki: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let expired = protocol::pki::crl(2, 0, (now - 1) as u64, &[]);
+    pki["document"]["revision"] = 2.into();
+    pki["document"]["issuers"][0]["crl"] = expired.clone().into();
+    pki["document"]["issuers"][0]["root_crl"] = expired.into();
+    pki["refresh_at"] = 0.into();
+    pki["retry_at"] = 0.into();
+    db.execute(
+        "UPDATE state SET body=?1 WHERE key='pki'",
+        [serde_json::to_vec(&pki).unwrap()],
+    )
+    .unwrap();
+    drop(db);
+    assert!(c.service.client.runtime_readiness().is_err());
+    let root = c.service.core.access.root.clone();
+    platform_private_storage::directory(&root).unwrap();
+    let source = uuid::Uuid::new_v4();
+    crate::credential_worker::state::write(&root, "device.psso-source", &serde_json::json!({
+        "context": { "tenant": c.service.client.configuration().tenant,
+            "agentRegistration": registration.registration_id, "installation": c.service.core.access.installation,
+            "origin": c.service.client.configuration().origin.origin().ascii_serialization(),
+            "kind": "device", "binding": null, "bindingGeneration": null, "generatedUid": null,
+            "bindingRevision": 0, "configuration": null },
+        "source": source, "sourceVersion": 1
+    })).unwrap();
+    crate::credential_worker::state::write(
+        &root,
+        "device.psso-observation",
+        &serde_json::json!({
+            "source": source, "sourceVersion": 1, "bindingGeneration": null, "observedAt": 1,
+            "deviceRegistered": false, "userRegistered": false
+        }),
+    )
+    .unwrap();
+    c.service.core.host.revoked.store(true, Ordering::Release);
+    c.service
+        .core
+        .host
+        .local_stopped
+        .store(true, Ordering::Release);
+    c._server.data.lock().unwrap().trust_failure = true;
+    let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
+    assert!(c.service.drain_platform_sso(&mut commands).await.is_err());
+    assert!(root.join("device.psso-source").exists());
+    let calls = c._server.data.lock().unwrap().trust_calls;
+    {
+        let mut data = c._server.data.lock().unwrap();
+        data.trust_failure = false;
+        data.trust["revision"] = 3.into();
+        let fresh = protocol::pki::crl(3, 0, 4_102_444_800, &[]);
+        data.trust["issuers"][0]["crl"] = fresh.clone().into();
+        data.trust["issuers"][0]["root_crl"] = fresh.into();
+        data.response_override = Some((
+            "/platform-sso/status".into(),
+            serde_json::json!({
+                "passwordExchange": null, "applicationObserved": false, "profileObserved": false,
+                "deviceRegistered": false, "userRegistered": false, "loginReady": false,
+                "deviceSource": null, "userSource": null, "registrationTrust": "mdm_bootstrap_pop", "hardwareAttested": false
+            }),
+        ));
+    }
+    select_pki_refresh(&c._root.path);
+    tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        loop {
+            if c.service.drain_platform_sso(&mut commands).await.unwrap() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(c._server.data.lock().unwrap().trust_calls > calls);
+    assert!(!c._server.data.lock().unwrap().psso_calls.is_empty());
+    assert!(c.service.client.runtime_readiness().is_ok());
+    assert!(c.service.core.host.revoked.load(Ordering::Acquire));
+    assert!(c.service.core.host.local_stopped.load(Ordering::Acquire));
+    assert!(!root.join("device.psso-source").exists());
+    assert_eq!(c.service.client.registration().unwrap(), registration);
+    assert!(matches!(
+        c.service.core.start_task(c.selection(false)),
+        Err(Error::Denied)
+    ));
+}
+
 #[tokio::test]
 async fn retired_installation_command_preserves_live_registration_and_journal() {
     let _budget = crate::scenario_budget::enter();

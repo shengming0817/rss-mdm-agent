@@ -145,7 +145,7 @@ async function enroll(policy: string) {
     if (result.kind !== "binding") throw new Error("response");
     clearSecret();
     message.value = mac.value
-      ? "关联已确认。请在系统设置的用户与群组中完成 Platform SSO 注册；本地密码登录继续保留。"
+      ? "关联已确认。请在系统设置的用户与群组中完成 Platform SSO 注册；登录、解锁及磁盘恢复按组织策略执行。"
       : "关联请求已确认。请刷新并完成本地验证器设置。";
   });
 }
@@ -276,9 +276,10 @@ onUnmounted(() => {
   >
     <h3>{{ mac ? "Mac Platform SSO" : "Windows RSS 登录" }}</h3>
     <p v-if="mac">
-      使用当前本地账号关联 RSS，由系统管理 Secure Enclave
-      注册与认证。本地密码登录始终保留；Secure Token、FileVault 和 SSO
-      是独立状态。
+      使用当前本地账号关联 RSS，由系统按组织配置使用 Secure Enclave 或 Password
+      注册与认证。登录窗口、锁屏和 FileVault
+      分别受策略约束；离线可用性及恢复入口需按实际配置核实。Secure
+      Token、FileVault 和 SSO 是独立状态。
     </p>
     <p v-else>
       在 RSS 登录选项中，使用 Windows

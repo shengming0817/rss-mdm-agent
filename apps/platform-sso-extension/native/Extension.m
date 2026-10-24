@@ -27,7 +27,7 @@ static NSString *field(RSSPSSOHandle *h,uint32_t key) {
 - (NSArray<ASAuthorizationProviderExtensionSigningAlgorithm> *)supportedUserSecureEnclaveKeySigningAlgorithms { return @[ASAuthorizationProviderExtensionSigningAlgorithmES256]; }
 - (NSArray<ASAuthorizationProviderExtensionEncryptionAlgorithm> *)supportedDeviceEncryptionAlgorithms { return @[ASAuthorizationProviderExtensionEncryptionAlgorithmECDHE_A256GCM]; }
 - (void)loadView {
-    NSTextField *label=[NSTextField labelWithString:@"请先在 RSS 设备访问中关联当前账号，再从系统设置完成注册。注册失败不影响本地密码登录。"];
+    NSTextField *label=[NSTextField labelWithString:@"请先在 RSS 设备访问中关联当前账号，再从系统设置完成注册。登录、解锁和恢复入口受组织策略约束；无法注册时请联系管理员。"];
     label.frame=NSMakeRect(20,20,420,80);self.view=[[NSView alloc]initWithFrame:NSMakeRect(0,0,460,120)];[self.view addSubview:label];
 }
 - (void)beginDeviceRegistrationUsingLoginManager:(ASAuthorizationProviderExtensionLoginManager *)manager options:(ASAuthorizationProviderExtensionRequestOptions)options completion:(void (^)(ASAuthorizationProviderExtensionRegistrationResult))completion {
