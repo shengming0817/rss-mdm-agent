@@ -1,4 +1,5 @@
 //! Shared local SAM identity and role checks; no RSS authorization is inferred here.
+use rss_mdm_agent_wire::runtime::{AccessAccountDisposition, AccessWindowsAuthority as Source};
 use rss_mdm_agent_wire::runtime::{AccessFailure as F, AccessRole as Role};
 use windows::{
     core::{PCWSTR, PWSTR},
@@ -9,6 +10,8 @@ use windows::{
     },
 };
 use zeroize::Zeroizing;
+#[path = "windows_directory.rs"]
+mod directory;
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain([0]).collect()
 }
@@ -81,14 +84,24 @@ fn lookup(sid: &Sid) -> Result<(String, String), F> {
     }))
 }
 pub struct Account {
+    pub source: Source,
+    pub join: String,
+    pub logon_millis: Option<i64>,
     pub domain: String,
     pub name: String,
     pub role: Role,
     pub enabled: bool,
 }
 pub fn inspect(expected: &str) -> Result<Account, F> {
+    if let Some(account) = directory::inspect(expected)? {
+        return Ok(account);
+    }
+    inspect_local(expected)
+}
+fn inspect_local(expected: &str) -> Result<Account, F> {
     rss_mdm_agent_wire::runtime::AccessAccount::Windows {
         sid: expected.into(),
+        authority: Source::Local,
     }
     .validate()
     .map_err(|_| F::AccountChanged)?;
@@ -137,6 +150,9 @@ pub fn inspect(expected: &str) -> Result<Account, F> {
         Role::Standard
     };
     Ok(Account {
+        source: Source::Local,
+        join: directory::machine_sid()?,
+        logon_millis: None,
         domain,
         name,
         role,
@@ -184,22 +200,7 @@ pub fn set_role(sid: &str, role: Role) -> Result<(), F> {
     if current.role == role {
         return Ok(());
     }
-    if role == Role::Standard {
-        // Built-in recovery administrator and the last enabled local administrator are protected.
-        if sid.ends_with("-500") {
-            return Err(F::RecoveryAccountProtected);
-        }
-        let mut recovery = false;
-        for other in administrators()?.into_iter().filter(|s| s != sid) {
-            if inspect(&other).is_ok_and(|account| account.enabled) {
-                recovery = true;
-                break;
-            }
-        }
-        if !recovery {
-            return Err(F::RecoveryAccountProtected);
-        }
-    }
+    protect_recovery(sid, role == Role::Standard)?;
     let native = Sid::parse(sid)?;
     let member = LOCALGROUP_MEMBERS_INFO_0 {
         lgrmi0_sid: native.0,
@@ -306,7 +307,7 @@ pub fn create(name: &str, password: &str) -> Result<String, F> {
     Ok(sid)
 }
 pub fn enable(sid: &str) -> Result<(), F> {
-    let account = inspect(sid)?;
+    let account = inspect_local(sid)?;
     let mut buffer = Buffer(std::ptr::null_mut());
     let name = wide(&account.name);
     if unsafe { NetUserGetInfo(PCWSTR::null(), PCWSTR(name.as_ptr()), 1, &mut buffer.0) } != 0
@@ -332,4 +333,125 @@ pub fn enable(sid: &str) -> Result<(), F> {
         return Err(F::NativeFailure);
     }
     Ok(())
+}
+
+pub fn qualified(account: &Account) -> String {
+    format!("{}\\{}", account.domain, account.name)
+}
+
+/// A verified stored identity may be used at LogonUI before a user session exists.
+pub fn verify_bound(authority: &crate::Authority) -> Result<(), F> {
+    directory::bound(authority)?;
+    if authority.source == Source::Local {
+        let current = inspect_local(&authority.sid)?;
+        if !current.enabled {
+            return Err(F::AccountChanged);
+        }
+    }
+    Ok(())
+}
+pub fn current_cloud_join() -> Result<String, F> {
+    directory::current_cloud_join()
+}
+
+fn effective_role(login: &str) -> Result<Role, F> {
+    let (_, admin) = lookup(&Sid::parse("S-1-5-32-544")?)?;
+    let mut buffer = Buffer(std::ptr::null_mut());
+    let (mut count, mut total) = (0, 0);
+    if unsafe {
+        NetUserGetLocalGroups(
+            PCWSTR::null(),
+            PCWSTR(wide(login).as_ptr()),
+            0,
+            LG_INCLUDE_INDIRECT,
+            &mut buffer.0,
+            65536,
+            &mut count,
+            &mut total,
+        )
+    } != 0
+        || count > 4096
+        || (count != 0 && buffer.0.is_null())
+    {
+        return Err(F::NativeFailure);
+    }
+    for i in 0..count as usize {
+        let name = unsafe {
+            text(
+                (*buffer.0.cast::<LOCALGROUP_USERS_INFO_0>().add(i))
+                    .lgrui0_name
+                    .0,
+            )?
+        };
+        if name.eq_ignore_ascii_case(&admin) {
+            return Ok(Role::Administrator);
+        }
+    }
+    Ok(Role::Standard)
+}
+fn protect_recovery(sid: &str, reducing: bool) -> Result<(), F> {
+    if !reducing {
+        return Ok(());
+    }
+    if sid == format!("{}-500", directory::machine_sid()?) {
+        return Err(F::RecoveryAccountProtected);
+    }
+    // A locally enabled SAM administrator remains usable when both directories are unavailable.
+    for other in administrators()?.into_iter().filter(|s| s != sid) {
+        if inspect_local(&other).is_ok_and(|a| a.enabled) {
+            return Ok(());
+        }
+    }
+    Err(F::RecoveryAccountProtected)
+}
+pub fn dispose(
+    account: &rss_mdm_agent_wire::runtime::AccessAccount,
+    disposition: AccessAccountDisposition,
+) -> Result<(), F> {
+    let rss_mdm_agent_wire::runtime::AccessAccount::Windows { sid, authority } = account else {
+        return Err(F::Unsupported);
+    };
+    account.validate().map_err(|_| F::AccountChanged)?;
+    directory::validate_source(sid, authority)?;
+    match disposition {
+        AccessAccountDisposition::Keep => Ok(()),
+        AccessAccountDisposition::Standard => set_role(sid, Role::Standard),
+        AccessAccountDisposition::Disable => {
+            protect_recovery(sid, true)?;
+            if sid.rsplit_once('-').map(|(domain, _)| domain)
+                == Some(directory::machine_sid()?.as_str())
+            {
+                let account = inspect_local(sid)?;
+                let mut buffer = Buffer(std::ptr::null_mut());
+                let name = wide(&account.name);
+                if unsafe {
+                    NetUserGetInfo(PCWSTR::null(), PCWSTR(name.as_ptr()), 1, &mut buffer.0)
+                } != 0
+                    || buffer.0.is_null()
+                {
+                    return Err(F::NativeFailure);
+                }
+                let flags = unsafe { (*buffer.0.cast::<USER_INFO_1>()).usri1_flags };
+                let info = USER_INFO_1008 {
+                    usri1008_flags: USER_ACCOUNT_FLAGS(flags.0 | UF_ACCOUNTDISABLE.0),
+                };
+                if unsafe {
+                    NetUserSetInfo(
+                        PCWSTR::null(),
+                        PCWSTR(name.as_ptr()),
+                        1008,
+                        (&info as *const USER_INFO_1008).cast(),
+                        None,
+                    )
+                } != 0
+                    || inspect_local(sid)?.enabled
+                {
+                    return Err(F::NativeFailure);
+                }
+                Ok(())
+            } else {
+                directory::deny_interactive(sid)
+            }
+        }
+    }
 }
