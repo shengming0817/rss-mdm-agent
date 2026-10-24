@@ -26,9 +26,6 @@ export function nativeHost() {
         if (currentUser.value?.generation === identity) await refreshAccount();
       }
     },
-    async export() {
-      return invoke<boolean>("ai_export_diagnostics");
-    },
   };
 }
 
@@ -65,4 +62,21 @@ export function nativeService(): ServicePort | undefined {
 
 export async function readMdmStatus(): Promise<MdmStatus> {
   return invoke<MdmStatus>("mdm_registration_status");
+}
+
+export type DiagnosticScopes = import("../self-service/types").Scopes;
+export type DiagnosticPreview = import("../self-service/types").Preview;
+export type DiagnosticPort = {
+  prepare(input: DiagnosticScopes): Promise<DiagnosticPreview>;
+  export(snapshot: string): Promise<boolean>;
+  discard(snapshot: string): Promise<void>;
+};
+export function nativeDiagnostics(): DiagnosticPort | undefined {
+  if (!isTauri()) return undefined;
+  return {
+    prepare: (input) => invoke("diagnostics_prepare", { input }),
+    export: (snapshot) => invoke("diagnostics_export", { input: { snapshot } }),
+    discard: (snapshot) =>
+      invoke("diagnostics_discard", { input: { snapshot } }),
+  };
 }

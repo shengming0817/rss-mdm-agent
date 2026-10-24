@@ -52,6 +52,14 @@ pub trait JournalPort {
         action: impl FnOnce() -> Result<T, Error>,
     ) -> Result<T, Error>;
 
+    /// Find the exact execution holding one resource; validates its stored scope and RunnerFact access.
+    /// This service-only lookup never scans execution history or grants execution permission.
+    fn resource_owner(
+        &self,
+        key: &str,
+        host: &impl JournalHost,
+    ) -> Result<Option<RequestId>, JournalError>;
+
     /// Authority actually bound to this opened journal.
     fn authority(&self) -> &Authority;
     /// Immutable decoder/execution envelope selected when this journal was opened.

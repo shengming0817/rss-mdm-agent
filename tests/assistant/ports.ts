@@ -112,7 +112,6 @@ export function createFixturePorts() {
     host: {
       read: () => rpc<HostStatus>("host"),
       restart: (generation) => rpc<HostStatus>("host-restart", { generation }),
-      export: () => rpc<boolean>("host-export"),
     },
     service: {
       async read() {

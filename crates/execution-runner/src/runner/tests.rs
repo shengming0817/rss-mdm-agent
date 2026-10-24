@@ -1167,3 +1167,94 @@ fn display_closure_receipt_does_not_erase_timeout_or_session_failure_and_rejects
         true
     ));
 }
+
+#[test]
+fn fixed_network_failure_and_signal_exit_prove_termination_without_a_success_receipt() {
+    let mut f = fixture("", vec![LaunchArg::ArtifactPath {}], 4096, 1000);
+    let mut input = f.plan.spec().clone();
+    input.launch.interpreter.profile = VersionedRef {
+        id: Id::new("native-network-check-worker").unwrap(),
+        revision: Id::new("1").unwrap(),
+    };
+    input.launch.interpreter.artifact.sha256 = Digest::new(format!(
+        "{:x}",
+        Sha256::digest(std::fs::read("/usr/bin/false").unwrap())
+    ))
+    .unwrap();
+    input.launch.argv = vec![
+        LaunchArg::Literal {
+            value: "--network-check-worker".into(),
+        },
+        LaunchArg::ArtifactPath {},
+    ];
+    let mut artifacts = f
+        .runner
+        .artifacts
+        .get(f.plan.digest().as_str())
+        .unwrap()
+        .unwrap()
+        .as_ref()
+        .clone();
+    artifacts.interpreter = "/usr/bin/false".into();
+    f.plan = FrozenExecution::freeze(input, &execution_app::test_execution_limits()).unwrap();
+    // As in fixture(), seed test-owned material directly; production registration
+    // correctly requires root-owned immutable sources, which this fixture is not.
+    f.runner = NativeRunner::new(
+        f.runner.id.clone(),
+        BTreeMap::from([(f.plan.digest().as_str().into(), artifacts)]),
+        8,
+    )
+    .unwrap();
+    let attempt = start(&f, 4096, 1000);
+    let mut facts = finish(&f, &attempt);
+    assert_eq!(facts.exit_code, Some(1));
+    assert!(facts.quiescent);
+    assert_eq!(facts.quality, OutputQuality::Failed);
+    assert!(f
+        .runner
+        .observe(
+            &f.plan,
+            &attempt,
+            ObservationStage::Termination,
+            now().unwrap()
+        )
+        .unwrap()
+        .is_some());
+    facts.exit_code = None;
+    facts.end = ProcessEnd::Cancelled;
+    *f.runner
+        .records
+        .lock()
+        .unwrap()
+        .get(&attempt)
+        .unwrap()
+        .facts
+        .lock()
+        .unwrap() = Some(facts);
+    let observation = f
+        .runner
+        .observe(
+            &f.plan,
+            &attempt,
+            ObservationStage::Termination,
+            now().unwrap(),
+        )
+        .unwrap()
+        .unwrap();
+    assert!(matches!(observation.observation, Observation::Quiescent {}));
+    assert!(f
+        .runner
+        .observe(
+            &f.plan,
+            &attempt,
+            ObservationStage::Assessment,
+            now().unwrap()
+        )
+        .unwrap()
+        .is_none());
+    let other = VersionedRef {
+        id: Id::new("native-posix-sh-file").unwrap(),
+        revision: Id::new("1").unwrap(),
+    };
+    assert!(!thread_only_worker(&other));
+}

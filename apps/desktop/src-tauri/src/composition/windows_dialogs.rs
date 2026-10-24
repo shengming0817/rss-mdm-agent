@@ -7,7 +7,7 @@ fn wide(value: impl AsRef<std::ffi::OsStr>) -> Vec<u16> {
 }
 pub fn save_dialog() -> io::Result<Option<PathBuf>> {
     let mut file = vec![0u16; 32768];
-    let name = wide("rss-ai-diagnostics.json");
+    let name = wide("rss-diagnostics.json");
     file[..name.len()].copy_from_slice(&name);
     let mut request: OPENFILENAMEW = unsafe { std::mem::zeroed() };
     request.lStructSize = size_of_val(&request) as u32;

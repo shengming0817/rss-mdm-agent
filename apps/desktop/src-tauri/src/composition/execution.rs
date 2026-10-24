@@ -388,6 +388,58 @@ impl ExecutionHandle {
             _ => Err(bad(Error::Unavailable)),
         }
     }
+    pub async fn device_diagnostics(&self) -> ui::Result<serde_json::Value> {
+        let mdm = match self.request(Request::MdmStatus {}).await.map_err(bad)? {
+            Reply::MdmStatus { value } => value,
+            _ => return Err(bad(Error::Unavailable)),
+        };
+        let registration = match self
+            .request(Request::RegistrationStatus {})
+            .await
+            .map_err(bad)?
+        {
+            Reply::RegistrationStatus { value } => value,
+            _ => return Err(bad(Error::Unavailable)),
+        };
+        Ok(
+            serde_json::json!({"platform":std::env::consts::OS,"architecture":std::env::consts::ARCH,"available":true,"mdmState":mdm.state,"mdmObservedAt":mdm.observed_at,"registrationPhase":registration.phase,"credential":registration.credential,"registered":registration.registered}),
+        )
+    }
+    pub async fn network_check(
+        &self,
+        input: NetworkCheckOperation,
+    ) -> ui::Result<execution_app::NetworkCheckResponse> {
+        if !matches!(self.origin, ClientOrigin::Desktop {}) {
+            return Err(bad(Error::Denied));
+        }
+        match self
+            .request(Request::NetworkCheck {
+                context: self.context_ref()?,
+                origin: self.origin.clone(),
+                input,
+            })
+            .await
+            .map_err(bad)?
+        {
+            Reply::NetworkDefaults { target } => {
+                Ok(execution_app::NetworkCheckResponse::Defaults(target))
+            }
+            Reply::NetworkCheck { value } => {
+                Ok(execution_app::NetworkCheckResponse::Status(Box::new(value)))
+            }
+            Reply::DataFailure { reason } => Err(ui::error(
+                match reason {
+                    DataError::InvalidInput => "network_invalid_input",
+                    DataError::NotFound => "network_not_found",
+                    DataError::Denied => "network_denied",
+                    DataError::Conflict => "network_conflict",
+                    _ => "network_unavailable",
+                },
+                "连接检查未完成，请核对目标或查询原请求",
+            )),
+            _ => Err(bad(Error::OutcomeUnknown)),
+        }
+    }
     pub async fn system_settings(
         &self,
         input: execution_contract::SettingsOperation,
@@ -746,6 +798,16 @@ impl ExecutionHandle {
         }
     }
     pub async fn cancel_task(&self, request: RequestId) -> Result<BackendTaskView, Error> {
+        if let BackendTaskView::Execution { value } = self.details(request.clone()).await? {
+            if value.action.operation.action.as_str() == "network.check" {
+                self.network_check(NetworkCheckOperation::Cancel {
+                    request: request.clone(),
+                })
+                .await
+                .map_err(|_| Error::OutcomeUnknown)?;
+                return self.details(request).await;
+            }
+        }
         match self
             .request(Request::Cancel {
                 request: request.clone(),

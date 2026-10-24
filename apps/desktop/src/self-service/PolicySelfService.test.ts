@@ -233,10 +233,7 @@ test("enum and length constraints prevent invalid confirmation; absent restores 
   expect(wrapper.find('[role="alert"]').exists()).toBe(true);
   await wrapper.find("input").setValue("Acme");
   await wrapper.find("form").trigger("submit");
-  await wrapper
-    .findAll("button")
-    .find((b) => b.text() === "确认并执行")!
-    .trigger("click");
+  expect(wrapper.find('[aria-label="人工执行确认"]').exists()).toBe(false);
   await flushPromises();
   expect(policy_invoke.mock.calls[0][0].choice.parameters).toEqual({
     mode: "safe",
@@ -456,10 +453,7 @@ test.each([undefined, 12, "   "])(
         .find((b) => b.text() === "策略 policy")!
         .trigger("click");
       await human.get("textarea").setValue(JSON.stringify("Acme"));
-      await human.get("form").trigger("submit");
-      expect(human.get('[aria-label="人工执行确认"]').text()).toContain(
-        "策略 policy",
-      );
+      expect(human.get("form").text()).toContain("策略 policy");
       expect(preparation.get("h3").text()).toBe("策略 policy");
       expect(preparation.text()).toContain("未提供");
     } finally {

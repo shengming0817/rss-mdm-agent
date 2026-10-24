@@ -47,26 +47,11 @@ export function createHostSettings(port: ReturnType<typeof nativeHost>) {
       state.busy = false;
     }
   }
-  async function exportDiagnostics() {
-    if (!port || state.busy || disposed) return;
-    state.busy = true;
-    state.message = "";
-    try {
-      const saved = await port.export();
-      if (!disposed)
-        state.message = saved ? "脱敏诊断已保存。" : "已取消导出。";
-    } catch {
-      if (!disposed) state.message = "诊断未导出，请检查保存位置后重试。";
-    } finally {
-      state.busy = false;
-    }
-  }
   return {
     state,
     available: !!port,
     refresh,
     restart,
-    exportDiagnostics,
     dispose() {
       disposed = true;
       epoch++;

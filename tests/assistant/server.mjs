@@ -265,7 +265,6 @@ export async function createFixture() {
           "/__fixture/identity",
           "/__fixture/host",
           "/__fixture/host-restart",
-          "/__fixture/host-export",
           "/__fixture/registration",
           "/__fixture/mdm-registration",
           "/__fixture/policy_directory",
@@ -303,9 +302,6 @@ export async function createFixture() {
               generation: hostStatus.generation + 1,
             };
             value = structuredClone(hostStatus);
-            break;
-          case "/__fixture/host-export":
-            value = false;
             break;
           case "/__fixture/mdm-registration":
             value = {

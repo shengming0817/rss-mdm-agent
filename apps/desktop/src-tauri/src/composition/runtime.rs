@@ -20,6 +20,7 @@ fn unavailable() -> ui::ServiceError {
 }
 pub struct DesktopRuntime {
     pub execution: ExecutionHandle,
+    pub(super) diagnostics: super::diagnostics::Store,
     pub users: Arc<std::sync::Mutex<super::users::Users>>,
     switching: Mutex<()>,
     registration_epoch: AtomicU64,
@@ -85,6 +86,7 @@ impl DesktopRuntime {
         });
         let runtime = Self {
             execution,
+            diagnostics: Default::default(),
             identity: super::identity::IdentityOwner::new(users.clone()),
             users,
             switching: Mutex::new(()),
@@ -273,6 +275,7 @@ impl DesktopRuntime {
         Ok(())
     }
     async fn revoke_locked(&self) -> ui::Result<()> {
+        self.diagnostics.invalidate();
         let previous = self.identity.snapshot().ok();
         let cleared = self.users.lock().map_err(|_| unavailable())?.clear();
         self.detach_views().await;

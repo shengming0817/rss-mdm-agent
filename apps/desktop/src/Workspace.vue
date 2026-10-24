@@ -58,6 +58,7 @@ import {
   nativeDataPort,
   nativeSoftwarePort,
   nativeSettingsPort,
+  nativeNetworkCheckPort,
 } from "./self-service/native";
 import ToolsPage from "./catalog-preview/ToolsPage.vue";
 import { createDeviceOverview, type DeviceOverviewPort } from "./home/device";
@@ -255,6 +256,8 @@ const software = createSoftware(
   !props.ready || props.fixture ? null : nativeSoftwarePort(),
 );
 provide(softwareSummaryKey, software.summary);
+const networkCheck =
+  !props.ready || props.fixture ? null : nativeNetworkCheckPort();
 const systemSettings = createSystemSettings(
   !props.ready || props.fixture ? null : nativeSettingsPort(),
   !props.ready || props.fixture ? null : nativeDataPort(),
@@ -828,6 +831,18 @@ onBeforeUnmount(() => {
           @navigate="emit('navigate', $event)"
         />
         <ToolsPage
+          :network-port="networkCheck"
+          :execution="controller"
+          :active="page === 'device-tools'"
+          @task="
+            (request: string) => {
+              if (controller) {
+                controller.state.taskId = request;
+                void controller.refresh();
+              }
+              contextualNavigate('tasks');
+            }
+          "
           @navigation="toolsPage = $event"
           v-if="ready"
           v-show="page === 'device-tools'"

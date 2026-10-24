@@ -49,12 +49,13 @@ macro_rules! commands {
             struct Command<I: schemars::JsonSchema, O: schemars::JsonSchema> { input: I, output: O }
             #[derive(schemars::JsonSchema)]
             #[allow(dead_code)]
-            struct SelfServiceCommands { $($name: Command<$input, $output>),+, appearance_snapshot: Command<(), AppearanceSnapshot>, device_overview: Command<(), execution_ipc::host::DeviceOverview> }
+            struct SelfServiceCommands { $($name: Command<$input, $output>),+, diagnostics_prepare: Command<super::diagnostics::Scopes, super::diagnostics::Preview>, diagnostics_export: Command<super::diagnostics::Selection,bool>, diagnostics_discard: Command<super::diagnostics::Selection,()>, appearance_snapshot: Command<(), AppearanceSnapshot>, device_overview: Command<(), execution_ipc::host::DeviceOverview> }
             schemars::generate::SchemaSettings::draft07().for_serialize().into_generator().into_root_schema_for::<SelfServiceCommands>()
         }
     }
 }
 commands! {
+    network_check(execution_contract::NetworkCheckOperation) -> execution_app::NetworkCheckResponse = network_check, employee = false,
     system_settings(execution_contract::SettingsOperation) -> execution_contract::SettingsResponse = system_settings, employee = false,
     device_access(execution_ipc::device_access::Operation) -> execution_ipc::device_access::Response = device_access, employee = true,
     software_prepare(execution_contract::LocalSoftwareChoice) -> execution_contract::LocalSoftwarePrepared = software_prepare, employee = false,
@@ -235,11 +236,26 @@ pub async fn ai_restart_host(
     Ok(state.restart(generation).await)
 }
 #[tauri::command]
-pub async fn ai_export_diagnostics<R: tauri::Runtime>(
+pub async fn diagnostics_prepare(
+    state: State<'_, DesktopRuntime>,
+    input: super::diagnostics::Scopes,
+) -> Result<super::diagnostics::Preview> {
+    super::diagnostics::prepare(&state, input).await
+}
+#[tauri::command]
+pub async fn diagnostics_export<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     state: State<'_, DesktopRuntime>,
+    input: super::diagnostics::Selection,
 ) -> Result<bool> {
-    super::diagnostics::export(app, state.status()).await
+    super::diagnostics::export(app, &state, input).await
+}
+#[tauri::command]
+pub fn diagnostics_discard(
+    state: State<'_, DesktopRuntime>,
+    input: super::diagnostics::Selection,
+) -> Result<()> {
+    super::diagnostics::discard(&state, &input)
 }
 
 #[tauri::command]
@@ -412,7 +428,9 @@ pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder
         agent_cancel_registration,
         ai_host_status,
         ai_restart_host,
-        ai_export_diagnostics,
+        diagnostics_prepare,
+        diagnostics_export,
+        diagnostics_discard,
         save_connection,
         test_users,
         select_test_user,
@@ -427,6 +445,7 @@ pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder
         software_read,
         software_prepare,
         system_settings,
+        network_check,
         software_submit,
         software_status,
         software_cancel,
@@ -553,13 +572,16 @@ mod tests {
             "device_overview",
             "ai_host_status",
             "ai_restart_host",
-            "ai_export_diagnostics",
+            "diagnostics_prepare",
+            "diagnostics_export",
+            "diagnostics_discard",
             "self_service_observe_software",
             "device_access",
             "software_history",
             "software_read",
             "software_prepare",
             "system_settings",
+            "network_check",
             "software_submit",
             "software_status",
             "software_cancel",

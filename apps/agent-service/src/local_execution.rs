@@ -156,8 +156,11 @@ impl crate::service::Core {
             .map_err(crate::error::app_error)?
             .filter(|p| p.finished && p.quiescent)
         {
-            let assessment = if profile == crate::collection_worker::PROFILE
-                && plan.spec().request.operation.action.as_str() == "local-query"
+            let assessment = if (profile == crate::collection_worker::PROFILE
+                && plan.spec().request.operation.action.as_str() == "local-query")
+                || (profile == crate::network_check::PROFILE
+                    && plan.spec().request.operation.action.as_str()
+                        == crate::network_check::ACTION)
             {
                 Some(execution_lifecycle::EffectAssessment::NoEffect)
             } else if profile == crate::local_software::native::PROFILE

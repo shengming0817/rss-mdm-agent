@@ -707,6 +707,15 @@ impl NativeContextSession {
     deny_unknown_fields
 )]
 pub enum Request {
+    /// Finite desktop DNS/TCP diagnostics through the existing execution owner.
+    NetworkCheck {
+        /// Current native login context.
+        context: execution_contract::NativeContextRef,
+        /// Native-attested source, restricted to Desktop by the service.
+        origin: ClientOrigin,
+        /// One finite diagnostic operation.
+        input: execution_contract::NetworkCheckOperation,
+    },
     /// Desktop-only finite local settings operation.
     Settings {
         /// Current authenticated native login context.
@@ -906,6 +915,16 @@ struct Envelope {
     rename_all_fields = "camelCase"
 )]
 pub enum Reply {
+    /// Default destination selected from the installed backend configuration.
+    NetworkDefaults {
+        /// Absent when backend configuration is unavailable; manual entry remains possible.
+        target: Option<execution_contract::NetworkTarget>,
+    },
+    /// Original diagnostic task and safe result.
+    NetworkCheck {
+        /// Existing lifecycle with bounded diagnostic evidence.
+        value: execution_app::NetworkCheckStatus,
+    },
     /// Observation and original journal status for a finite local settings request.
     Settings {
         /// Safe native projection; raw worker output remains private.

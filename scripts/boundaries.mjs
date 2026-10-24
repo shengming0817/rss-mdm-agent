@@ -10,6 +10,7 @@ const selfServiceCommands = [
   "software_read",
   "software_prepare",
   "system_settings",
+  "network_check",
   "software_submit",
   "software_status",
   "software_cancel",
@@ -50,7 +51,9 @@ const settingsCommands = [
   "agent_cancel_registration",
   "ai_host_status",
   "ai_restart_host",
-  "ai_export_diagnostics",
+  "diagnostics_prepare",
+  "diagnostics_export",
+  "diagnostics_discard",
 ];
 const userCommands = [
   "test_users",
@@ -428,6 +431,13 @@ export function checkSource(file, source) {
       ],
       "apps/desktop/src/system-settings/SettingDetail.vue": ["JSON", "Boolean"],
       "apps/desktop/src/system-settings/SystemSettings.vue": ["JSON"],
+      "apps/desktop/src/system-settings/presentation.ts": ["JSON"],
+      "apps/desktop/src/device-tools/ConnectionCheck.vue": [
+        "crypto",
+        "setInterval",
+        "clearInterval",
+      ],
+      "apps/desktop/src/settings/DiagnosticsPanel.vue": ["JSON", "Boolean"],
       "apps/desktop/src/software/controller.ts": [
         "JSON",
         "Set",
@@ -738,6 +748,20 @@ export function checkSource(file, source) {
           "(parameterSchema.value as any)?.properties",
         ],
       };
+      dataRoots["apps/desktop/src/catalog-preview/ToolsPage.vue"] = [
+        "labels",
+        "_ctx.labels",
+      ];
+      dataRoots["apps/desktop/src/device-tools/ConnectionCheck.vue"] = [
+        "labels",
+        "phases",
+        "_ctx.labels",
+        "_ctx.phases",
+      ];
+      dataRoots["apps/desktop/src/settings/DiagnosticsPanel.vue"] = [
+        "s.scopes",
+        "_ctx.s.scopes",
+      ];
       dataRoots["apps/desktop/src/system-settings/controller.ts"] = [
         "families",
       ];
@@ -1066,7 +1090,7 @@ export function checkTree(treeRoot = root, executable) {
     ipc
       .match(/commands!\s*\{([\s\S]*?)\}/)?.[1]
       .match(
-        /\b(?:self_service_\w+|software_\w+|query_\w+|data_read|device_access|system_settings)(?=\s*\()/g,
+        /\b(?:self_service_\w+|software_\w+|query_\w+|data_read|device_access|system_settings|network_check)(?=\s*\()/g,
       ) ?? [];
   if (
     JSON.stringify(commands.toSorted()) !==

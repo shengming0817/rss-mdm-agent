@@ -15,7 +15,7 @@ const props = withDefaults(
   defineProps<{
     port: SelfServicePort | null;
     records: BackendRequest[];
-    kind?: "enrollment" | "software";
+    kind?: "enrollment" | "software" | "script";
     filter?: string;
     allowNewRequests?: boolean;
     allowConfirm?: boolean;
@@ -207,6 +207,10 @@ function select(item: SelfServiceDirectoryItem) {
   choice.value = undefined;
   inputs.value = {};
   fieldErrors.value = new Map();
+}
+async function runScript() {
+  preview();
+  if (choice.value) await invoke();
 }
 function options(schema: any): unknown[] | undefined {
   return (
@@ -456,7 +460,7 @@ function presentationText(value: unknown, fallback = "未提供"): string {
     </div>
     <form
       v-if="selected && !choice && allowNewRequests !== false"
-      @submit.prevent="preview"
+      @submit.prevent="scriptTask ? runScript() : preview()"
     >
       <h3>
         {{
@@ -507,10 +511,21 @@ function presentationText(value: unknown, fallback = "未提供"): string {
         ><span v-if="fieldErrors.get(field.name)" role="alert">{{
           fieldErrors.get(field.name)
         }}</span></label
-      ><button :disabled="busy">核对执行参数</button>
+      ><template v-if="scriptTask">
+        <p>{{ selected.selfService.presentation.prerequisites }}</p>
+        <p>{{ selected.selfService.presentation.sideEffects }}</p>
+        <PolicyExecutionContext :task="selected.task" />
+        <p v-for="(source, name) in parameterSources" :key="name">
+          <template v-if="source.kind === 'fixed'"
+            >{{ name }}（固定）：{{ JSON.stringify(source.value) }}</template
+          >
+        </p> </template
+      ><button :disabled="busy">
+        {{ scriptTask ? "运行" : "核对执行参数" }}
+      </button>
     </form>
     <section
-      v-if="choice && !request && allowNewRequests !== false"
+      v-if="choice && !request && !scriptTask && allowNewRequests !== false"
       aria-label="人工执行确认"
     >
       <h3>
