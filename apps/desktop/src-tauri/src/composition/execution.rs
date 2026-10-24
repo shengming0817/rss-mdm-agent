@@ -757,6 +757,21 @@ impl ExecutionHandle {
             _ => Err(bad(Error::InvalidInput)),
         }
     }
+    pub async fn recent_tasks(
+        &self,
+        query: ui::RecentTasksQuery,
+    ) -> ui::Result<execution_app::RecentTaskPage> {
+        match self
+            .request(Request::RecentTasks {
+                before: query.before,
+            })
+            .await
+            .map_err(bad)?
+        {
+            Reply::RecentTasks { value } => Ok(value),
+            _ => Err(bad(Error::Unavailable)),
+        }
+    }
     async fn select(&self, input: BackendSelection) -> Result<TaskSubmission, Error> {
         let expected = input.clone();
         let reply = self
@@ -1219,7 +1234,26 @@ fn pending_operation(value: execution_contract::BackendRequest) -> mcp::Operatio
     }
 }
 
-/// Ask the protected installation owner to start this configured login's helper.
+fn helper_is_ready(
+    reply: Result<Reply, Error>,
+    expected: &execution_ipc::helper::UserContext,
+) -> Result<bool, Error> {
+    match reply {
+        Ok(Reply::HelperStatus { value })
+            if value.subject == expected.subject
+                && value.session == expected.session
+                && value.binding == expected.binding
+                && expected.work_root.canonicalize().ok().as_ref() == Some(&value.work_root) =>
+        {
+            Ok(true)
+        }
+        Ok(Reply::Unavailable) | Err(Error::Unavailable | Error::OutcomeUnknown) => Ok(false),
+        Ok(_) => Err(Error::Denied),
+        Err(error) => Err(error),
+    }
+}
+
+/// Reuse the verified current helper or ask its installation owner to start it.
 pub fn install_user_helper() -> Result<(), Error> {
     use std::{
         collections::BTreeMap,
@@ -1260,6 +1294,18 @@ pub fn install_user_helper() -> Result<(), Error> {
         .map_err(|_| Error::Denied)?
         .verify_image(&pin.service.path)
         .map_err(|_| Error::Denied)?;
+    let expected = execution_ipc::helper::UserContext {
+        subject: subject.clone(),
+        session: execution_ipc::host::current_session()?,
+        binding: execution_ipc::host::current_session_binding()?,
+        work_root: pin.helper_work_roots[&subject].clone(),
+    };
+    if helper_is_ready(
+        ServiceClient::installed().and_then(|client| client.request(Request::HelperStatus {})),
+        &expected,
+    )? {
+        return Ok(());
+    }
     let mut child = Command::new(&pin.service.path)
         .arg("--installation")
         .arg("install")
@@ -1312,6 +1358,58 @@ fn data_error(error: mcp::ServiceError) -> ui::ServiceError {
 #[cfg(test)]
 mod selection_tests {
     use super::*;
+
+    #[test]
+    fn helper_reuse_requires_every_current_native_coordinate_and_a_real_helper_reply() {
+        let root = std::env::temp_dir().join(format!("rss-helper-proof-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let expected = execution_ipc::helper::UserContext {
+            subject: "501".into(),
+            session: 42,
+            binding: Id::new("current-login").unwrap(),
+            work_root: root.clone(),
+        };
+        let mut verified = expected.clone();
+        verified.work_root = root.canonicalize().unwrap();
+        assert!(helper_is_ready(
+            Ok(Reply::HelperStatus {
+                value: verified.clone()
+            }),
+            &expected
+        )
+        .unwrap());
+        for field in 0..4 {
+            let mut foreign = verified.clone();
+            match field {
+                0 => foreign.subject = "502".into(),
+                1 => foreign.session += 1,
+                2 => foreign.binding = Id::new("retired-login").unwrap(),
+                _ => foreign.work_root = root.join("foreign"),
+            }
+            assert!(matches!(
+                helper_is_ready(Ok(Reply::HelperStatus { value: foreign }), &expected),
+                Err(Error::Denied)
+            ));
+        }
+        assert!(!helper_is_ready(Ok(Reply::Unavailable), &expected).unwrap());
+        assert!(!helper_is_ready(Err(Error::OutcomeUnknown), &expected).unwrap());
+        assert!(matches!(
+            helper_is_ready(Ok(Reply::Rejected), &expected),
+            Err(Error::Denied)
+        ));
+        assert!(matches!(
+            helper_is_ready(
+                Ok(Reply::ServiceStatus {
+                    value: execution_ipc::host::ServiceStatus::new(
+                        execution_ipc::host::Readiness::Ready
+                    )
+                }),
+                &expected
+            ),
+            Err(Error::Denied)
+        ));
+        std::fs::remove_dir(root).unwrap();
+    }
 
     #[test]
     fn lost_selection_reply_recovers_original_request_and_confirmation() {

@@ -5,17 +5,27 @@ export function createDeviceOverview(port?: DeviceOverviewPort) {
   const state = shallowReactive<{
     value: DeviceOverview | null;
     loading: boolean;
-  }>({ value: null, loading: false });
+    error: string;
+    readAt: number | null;
+  }>({ value: null, loading: false, error: "", readAt: null });
   let disposed = false;
   async function refresh() {
     if (!port || disposed || state.loading) return;
     state.loading = true;
     try {
       const value = await port.read();
-      if (!disposed) state.value = value;
+      if (!disposed) {
+        state.value = value;
+        state.readAt = Date.now();
+        state.error = "";
+      }
     } catch {
       // A failed read must not leave an old OS account/address looking current.
-      if (!disposed) state.value = null;
+      if (!disposed) {
+        state.value = null;
+        state.error = "设备概览读取失败";
+        state.readAt = null;
+      }
     } finally {
       if (!disposed) state.loading = false;
     }

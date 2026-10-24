@@ -108,12 +108,15 @@ watch(
   },
   { immediate: true },
 );
-watch(currentUser, () => {
-  ++epoch;
-  active = false;
-  value.value = undefined;
-  error.value = "用户已切换，请在当前会话重新读取。";
-});
+watch(
+  () => currentUser.value?.generation,
+  () => {
+    ++epoch;
+    active = false;
+    value.value = undefined;
+    error.value = "用户已切换，请在当前会话重新读取。";
+  },
+);
 const polling = setInterval(() => {
   now.value = Date.now();
   if (props.visible && (!value.value || !ended(value.value))) void refresh();

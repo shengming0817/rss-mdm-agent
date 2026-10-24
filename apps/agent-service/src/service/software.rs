@@ -245,17 +245,16 @@ impl Core {
         {
             return Err(Error::Denied);
         }
-        if mutating {
-            if self.stopping
+        let original: NativeContextRef = parameter(&frozen, "local-software-context")?;
+        if original != *context {
+            return Err(Error::Identity);
+        }
+        if mutating
+            && (self.stopping
                 || self.host.local_stopped.load(Ordering::Acquire)
-                || command.binding.as_ref() != Some(&session.session)
-            {
-                return Err(Error::Denied);
-            }
-            let original: NativeContextRef = parameter(&frozen, "local-software-context")?;
-            if original != *context {
-                return Err(Error::Identity);
-            }
+                || command.binding.as_ref() != Some(&session.session))
+        {
+            return Err(Error::Denied);
         }
         Ok(frozen)
     }
@@ -294,12 +293,16 @@ impl Core {
                     if !matches {
                         continue;
                     }
-                    let frozen = self.local_software_input(
+                    let frozen = match self.local_software_input(
                         command,
                         context,
                         &details.status.operation_request_id,
                         false,
-                    )?;
+                    ) {
+                        Ok(frozen) => frozen,
+                        Err(Error::Identity | Error::Denied) => continue,
+                        Err(error) => return Err(error),
+                    };
                     if let Reply::SoftwareStatus { value } = self.software_status(&frozen)? {
                         items.push(value);
                     }

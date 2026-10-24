@@ -20,6 +20,7 @@
     "allow-ai-operation-submit",
     "allow-self-service-policy-status",
     "allow-self-service-observe-software",
+    "allow-self-service-recent-tasks",
     "allow-self-service-snapshot",
     "allow-self-service-execute",
     "allow-self-service-confirm",

@@ -1680,27 +1680,28 @@ export type SettingsEffect =
 
 export interface SelfServiceCommands {
   ai_operation_submit: Command16;
-  appearance_snapshot: Command25;
+  appearance_snapshot: Command26;
   data_read: Command10;
   device_access: Command3;
-  device_overview: Command26;
-  diagnostics_discard: Command24;
-  diagnostics_export: Command23;
-  diagnostics_prepare: Command22;
+  device_overview: Command27;
+  diagnostics_discard: Command25;
+  diagnostics_export: Command24;
+  diagnostics_prepare: Command23;
   network_check: Command;
   query_cancel: Command12;
   query_directory: Command9;
   query_status: Command12;
   query_submit: Command11;
-  self_service_cancel: Command21;
-  self_service_confirm: Command20;
-  self_service_execute: Command20;
+  self_service_cancel: Command22;
+  self_service_confirm: Command21;
+  self_service_execute: Command21;
   self_service_observe_software: Command13;
   self_service_policy_confirm: Command17;
   self_service_policy_directory: Command14;
   self_service_policy_invoke: Command15;
   self_service_policy_status: Command18;
-  self_service_snapshot: Command19;
+  self_service_recent_tasks: Command19;
+  self_service_snapshot: Command20;
   software_cancel: Command6;
   software_history: Command7;
   software_prepare: Command4;
@@ -2182,9 +2183,9 @@ export interface VersionedRef {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command25".
+ * via the `definition` "Command26".
  */
-export interface Command25 {
+export interface Command26 {
   input: null;
   output: AppearanceSnapshot;
 }
@@ -2489,9 +2490,9 @@ export interface SetupTask {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command26".
+ * via the `definition` "Command27".
  */
-export interface Command26 {
+export interface Command27 {
   input: null;
   output: DeviceOverview;
 }
@@ -2530,9 +2531,9 @@ export interface DeviceAttributes {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command24".
+ * via the `definition` "Command25".
  */
-export interface Command24 {
+export interface Command25 {
   input: Selection;
   output: null;
 }
@@ -2545,17 +2546,17 @@ export interface Selection {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command23".
+ * via the `definition` "Command24".
  */
-export interface Command23 {
+export interface Command24 {
   input: Selection;
   output: boolean;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command22".
+ * via the `definition` "Command23".
  */
-export interface Command22 {
+export interface Command23 {
   input: Scopes;
   output: Preview;
 }
@@ -2994,9 +2995,9 @@ export interface QuerySubmit {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command21".
+ * via the `definition` "Command22".
  */
-export interface Command21 {
+export interface Command22 {
   input: ActionRef;
   output: BackendTaskView;
 }
@@ -3234,9 +3235,9 @@ export interface ValidityWindow {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command20".
+ * via the `definition` "Command21".
  */
-export interface Command20 {
+export interface Command21 {
   input: BackendSelection;
   output: TaskSubmission;
 }
@@ -3485,6 +3486,53 @@ export interface TaskRunState {
  * via the `definition` "Command19".
  */
 export interface Command19 {
+  input: RecentTasksQuery;
+  output: RecentTaskPage;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "RecentTasksQuery".
+ */
+export interface RecentTasksQuery {
+  before: string | null;
+}
+/**
+ * Bounded discovery page; an empty authorized page may still have a continuation.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "RecentTaskPage".
+ */
+export interface RecentTaskPage {
+  /**
+   * Latest activities, in descending durable journal order.
+   */
+  items: RecentTask[];
+  /**
+   * Exclusive receipt sequence encoded as decimal text, avoiding JavaScript rounding.
+   */
+  next: string | null;
+}
+/**
+ * One original request's latest durable activity, without audit or execution inputs.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "RecentTask".
+ */
+export interface RecentTask {
+  /**
+   * Current authorized lifecycle and frozen public facts.
+   */
+  details: ExecutionTaskDetails;
+  /**
+   * Trusted journal receipt time; never a renderer timestamp.
+   */
+  recordedAtUnixMs: number;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Command20".
+ */
+export interface Command20 {
   input: SnapshotQuery;
   output: Snapshot;
 }

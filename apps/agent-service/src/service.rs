@@ -1667,6 +1667,19 @@ impl Core {
                     &command.subject,
                     command.session,
                 )),
+                Some(Request::HelperStatus {}) => {
+                    if self.stopping || self.host.local_stopped.load(Ordering::Acquire) {
+                        return Err(Error::Unavailable);
+                    }
+                    let helper = self.helpers.connect_peer(
+                        &command.subject,
+                        command.session,
+                        command.binding.as_ref().ok_or(Error::Denied)?,
+                    )?;
+                    Ok(Reply::HelperStatus {
+                        value: helper.context().clone(),
+                    })
+                }
                 Some(Request::ServiceStatus {}) => {
                     let readiness =
                         if self.stopping || self.host.local_stopped.load(Ordering::Acquire) {
@@ -1692,6 +1705,34 @@ impl Core {
                     | Request::RegistrationContext {}
                     | Request::ImportRegistration { .. },
                 ) => Ok(Reply::Rejected),
+                Some(Request::RecentTasks { before }) => {
+                    let cursor = before
+                        .as_deref()
+                        .map(|value| {
+                            let parsed = value.parse::<u64>().map_err(|_| Error::Protocol)?;
+                            if parsed == 0 || parsed.to_string() != value {
+                                return Err(Error::Protocol);
+                            }
+                            Ok(parsed)
+                        })
+                        .transpose()?;
+                    let mut value = self
+                        .app
+                        .service_recent_tasks(cursor, 64)
+                        .map_err(crate::error::app_error)?;
+                    value.items.retain(|item| {
+                        let request = &item.details.action.request_id;
+                        self.can_read(request, &command.subject).unwrap_or(false)
+                            && self
+                                .policy_readable(
+                                    request,
+                                    &command.subject,
+                                    command.binding.as_ref(),
+                                )
+                                .unwrap_or(false)
+                    });
+                    Ok(Reply::RecentTasks { value })
+                }
                 Some(Request::Tasks { after }) => {
                     let mut value = self
                         .app

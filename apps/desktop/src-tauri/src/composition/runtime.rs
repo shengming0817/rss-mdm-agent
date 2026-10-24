@@ -534,8 +534,49 @@ impl DesktopRuntime {
             return Ok(());
         }
         let Some(mut account) = self.identity.session()? else {
-            return Ok(());
+            let Some(expected) = &before.execution_binding else {
+                return Ok(());
+            };
+            let _switch = self.switching.lock().await;
+            if self
+                .identity
+                .snapshot()
+                .map_or(true, |current| current.generation != before.generation)
+            {
+                return Ok(());
+            }
+            let result = self
+                .execution
+                .bind_context(
+                    execution_ipc::host::NativeContextSession {
+                        access: execution_ipc::host::NativeAccess::Device {},
+                        generation: execution_contract::Id::new(before.generation.as_str())
+                            .map_err(|_| unavailable())?,
+                        expires_at_unix_ms: u64::MAX,
+                    },
+                    Some(
+                        execution_contract::Id::new(expected.as_str())
+                            .map_err(|_| unavailable())?,
+                    ),
+                )
+                .await;
+            return match result {
+                Ok(binding) if binding.id.as_str() == expected.as_str() => Ok(()),
+                Ok(_) => {
+                    self.retire_locked().await?;
+                    Err(ui::error(
+                        "binding_invalidated",
+                        "设备绑定已变化，请重新进入工作区",
+                    ))
+                }
+                Err(error) if matches!(error.code, "binding_invalidated" | "binding_conflict") => {
+                    self.retire_locked().await?;
+                    Err(error)
+                }
+                Err(error) => Err(error),
+            };
         };
+
         let verified = account.verify().await;
         let _switch = self.switching.lock().await;
         if self

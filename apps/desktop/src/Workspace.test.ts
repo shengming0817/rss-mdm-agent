@@ -1,76 +1,58 @@
 import { policyFixturePort } from "../../../tests/self-service/support";
-import { DOMWrapper, mount, flushPromises } from "@vue/test-utils";
+import { mount, flushPromises } from "@vue/test-utils";
 import { it, expect, vi } from "vitest";
 import Workspace from "./Workspace.vue";
 import Assistant from "./assistant/Assistant.vue";
-import SelfService from "./self-service/SelfService.vue";
-import { resourceOffer, snapshot } from "../../../tests/self-service/support";
+import Tasks from "./self-service/Tasks.vue";
+import { snapshot } from "../../../tests/self-service/support";
 import { createHostSettings } from "./settings/controller";
 
-it("requires explicit conversation selection, keeps one view and preserves staged context on close", async () => {
+it("attaches the current page to one shared assistant and preserves question text when the sidebar closes", async () => {
   const w = mount(Workspace, {
     attachTo: document.body,
     props: {
       ready: true,
       busy: false,
-      page: "software",
+      page: "software-management",
       host: createHostSettings(undefined),
       selfServicePort: {
         ...policyFixturePort,
-        snapshot: vi
-          .fn()
-          .mockResolvedValue({ ...snapshot(), available: [resourceOffer()] }),
+        snapshot: vi.fn().mockResolvedValue(snapshot()),
         execute: vi.fn(),
         confirm: vi.fn(),
         cancel: vi.fn(),
       },
     },
   });
-  const resource = w.getComponent(SelfService);
-  await flushPromises();
-  const resourceTrigger = resource.get('[data-action="resource-details"]');
-  await resourceTrigger.trigger("click");
-  await flushPromises();
-  expect(document.activeElement).toBe(
-    resource.get(".resource-details h3").element,
-  );
-  await resource.get(".resource-details button").trigger("click");
-  await flushPromises();
-  expect(document.activeElement).toBe(resourceTrigger.element);
-  await resourceTrigger.trigger("click");
-  await flushPromises();
-  await resource.get('[data-action="ask-ai"]').trigger("click");
-  await flushPromises();
-  const drawer = new DOMWrapper(
-    document.querySelector('[role=\"dialog\"][aria-label=\"资源上下文 AI\"]')!,
-  );
-  expect(drawer.text()).toContain("办公套件");
   const c = w.getComponent(Assistant).props("controller");
-  expect(c.context.value).toBeUndefined();
-  expect(
-    drawer.get('[data-action="choose-conversation"]').attributes("disabled"),
-  ).toBeDefined();
-  await drawer.get("select").setValue("new");
-  await drawer.get('[data-action="choose-conversation"]').trigger("click");
-  await flushPromises();
-  expect(w.findAllComponents(Assistant)).toHaveLength(1);
-  expect(c.context.value!.path).toEqual([
-    "软件中心",
-    "未提供分类",
-    "办公套件",
-    "软件详情",
-  ]);
-  c.draft.value = "我的问题";
-  await drawer.get('[aria-label^="关闭"]').trigger("click");
-  await flushPromises();
-  expect(
-    !!document.querySelector('[role="dialog"][aria-label="资源上下文 AI"]'),
-  ).toBe(false);
-  expect(c.draft.value).toBe("我的问题");
-  expect(c.context.value).toBeDefined();
-  await w.setProps({ page: "assistant" });
-  expect(w.getComponent(Assistant).props("controller")).toBe(c);
-  w.unmount();
+  try {
+    await flushPromises();
+    c.draft.value = "我的问题";
+    await w.get(".workspace-assistant-entry").trigger("click");
+    await flushPromises();
+    expect(w.findAllComponents(Assistant)).toHaveLength(1);
+    expect(c.context.value?.scope).toBe("page");
+    expect(c.context.value?.path[0]).toBe("软件管理");
+    await w
+      .get('.page-assistant-panel [data-action="history-conversations"]')
+      .trigger("click");
+    await flushPromises();
+    await w.get('[aria-label="固定历史会话"]').trigger("click");
+    await w.get('[aria-label="关闭电脑助手侧栏"]').trigger("click");
+    await flushPromises();
+    expect(w.find(".page-assistant-panel").exists()).toBe(false);
+    expect(c.draft.value).toBe("我的问题");
+    expect(c.context.value).toBeDefined();
+    await w.get(".workspace-assistant-entry").trigger("click");
+    await flushPromises();
+    expect(w.find(".conversation-history-panel").exists()).toBe(false);
+    expect(c.draft.value).toBe("我的问题");
+    await w.get('[aria-label="关闭电脑助手侧栏"]').trigger("click");
+    await w.setProps({ page: "assistant" });
+    expect(w.getComponent(Assistant).props("controller")).toBe(c);
+  } finally {
+    w.unmount();
+  }
   expect(c.state.drafts.size).toBe(0);
 });
 
@@ -118,7 +100,7 @@ it("uses one content header, a sidebar brand and a main welcome without remounti
     ).toBeDefined();
     await assistant.get('[data-action="suggest-prompt"]').trigger("click");
     expect(c.draft.value).toBe("已有草稿");
-    await w.setProps({ page: "software" });
+    await w.setProps({ page: "software-management" });
     await w.setProps({ page: "assistant" });
     expect(w.getComponent(Assistant).get("textarea").element).toBe(input);
   } finally {
@@ -126,24 +108,18 @@ it("uses one content header, a sidebar brand and a main welcome without remounti
   }
 });
 
-it("changes the same assistant to compact resource presentation and stages suggestions only in its draft", async () => {
+it("keeps one composer while the page assistant stages a suggestion and returns to the main conversation", async () => {
   const execute = vi.fn();
-  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
-    width: 1100,
-    height: 760,
-  } as DOMRect);
   const w = mount(Workspace, {
     attachTo: document.body,
     props: {
       ready: true,
       busy: false,
-      page: "software",
+      page: "software-management",
       host: createHostSettings(undefined),
       selfServicePort: {
         ...policyFixturePort,
-        snapshot: vi
-          .fn()
-          .mockResolvedValue({ ...snapshot(), available: [resourceOffer()] }),
+        snapshot: vi.fn().mockResolvedValue(snapshot()),
         execute,
         confirm: vi.fn(),
         cancel: vi.fn(),
@@ -152,36 +128,24 @@ it("changes the same assistant to compact resource presentation and stages sugge
   });
   try {
     await flushPromises();
-    const view = w.getComponent(Assistant);
-    const c = view.props("controller");
-    const input = view.get("textarea").element;
+    const view = w.getComponent(Assistant),
+      c = view.props("controller"),
+      input = view.get("textarea").element;
     const prompt = vi.spyOn(c, "prompt");
-    await w.get('[data-action="resource-details"]').trigger("click");
-    expect(execute).not.toHaveBeenCalled();
-    await w.get('[data-action="ask-ai"]').trigger("click");
-    await flushPromises();
-    const panel = new DOMWrapper(
-      document.querySelector(
-        '[role=\"dialog\"][aria-label=\"资源上下文 AI\"]',
-      )!,
-    );
-    await panel.get("select").setValue("new");
-    await panel.get('[data-action="choose-conversation"]').trigger("click");
+    await w.get(".workspace-assistant-entry").trigger("click");
     await flushPromises();
     expect(view.props("presentation")).toBe("context");
-    expect(view.text()).not.toContain("有什么可以帮你？");
     expect(view.get("textarea").element).toBe(input);
     await view.get('[data-action="suggest-prompt"]').trigger("click");
-    expect(c.draft.value).toContain("资源");
+    expect(c.draft.value).toContain("页面");
     expect(prompt).not.toHaveBeenCalled();
     expect(execute).not.toHaveBeenCalled();
-    await panel.get('[aria-label^="关闭"]').trigger("click");
-    await flushPromises();
+    await w.get('[aria-label="在 AI 页面继续"]').trigger("click");
     await w.setProps({ page: "assistant" });
+    await flushPromises();
     expect(view.props("presentation")).toBe("main");
     expect(view.get("textarea").element).toBe(input);
-    expect(c.context.value?.path[2]).toBe("办公套件");
-    expect(c.draft.value).toContain("资源");
+    expect(c.context.value?.path[0]).toBe("软件管理");
   } finally {
     w.unmount();
   }
@@ -218,9 +182,6 @@ it("opens system settings separately from application settings and preserves ass
   expect(w.find(".page-assistant-panel").exists()).toBe(true);
   expect(w.emitted("navigate")?.at(-1)).toEqual(["system-settings"]);
 
-  expect(w.getComponent(SelfService).props("controller").state.page).not.toBe(
-    "system-settings",
-  );
   await w.setProps({ page: "assistant" });
   expect(w.getComponent(Assistant).props("controller")).toBe(assistant);
   expect(assistant.draft.value).toBe("保留这个问题");
@@ -240,7 +201,7 @@ it("keeps navigation and account access after login failure without displaying a
     await flushPromises();
     expect(w.find(".workspace-primary-navigation").exists()).toBe(true);
     expect(w.find(".workspace-settings-footer").exists()).toBe(true);
-    expect(w.findComponent(SelfService).exists()).toBe(false);
+    expect(w.findComponent(Tasks).exists()).toBe(false);
     expect(w.findComponent(Assistant).exists()).toBe(false);
     expect(w.get(".workspace-page-header h1").text()).toBe("设置");
   } finally {

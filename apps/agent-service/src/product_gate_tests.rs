@@ -399,6 +399,34 @@ async fn production_preparation_applies_the_risk_matrix_and_human_has_no_gate() 
 }
 
 #[tokio::test]
+async fn helper_status_never_claims_readiness_without_a_verified_current_helper() {
+    let _budget = crate::scenario_budget::enter();
+    let mut c = Case::new(None).await;
+    for (stopping, binding) in [
+        (false, None),
+        (false, Some(c.selection.binding.clone())),
+        (true, Some(c.selection.binding.clone())),
+    ] {
+        c.service.core.stopping = stopping;
+        let (reply, receive) = tokio::sync::oneshot::channel();
+        c.service.core.handle(Command {
+            fence_epoch: 0,
+            request: LocalRequest::operation(execution_ipc::host::Request::HelperStatus {}),
+            subject: c.selection.subject.clone(),
+            session: c.selection.session,
+            binding,
+            reply,
+        });
+        assert!(matches!(
+            receive.await.unwrap(),
+            Reply::Rejected | Reply::Unavailable
+        ));
+        assert!(c.service.core.policy_commands.is_empty());
+        assert!(c._server.data.lock().unwrap().invocations.is_empty());
+    }
+}
+
+#[tokio::test]
 async fn one_desktop_confirmation_retains_ai_origin_and_cannot_be_replaced_by_start() {
     let _budget = crate::scenario_budget::enter();
     let mut c = Case::new(Some(RiskLevel::Two)).await;
@@ -1333,6 +1361,18 @@ impl Case {
             self.selection.subject.clone(),
             self.selection.binding.clone(),
         )
+    }
+    async fn recent_call(&mut self, before: Option<String>) -> Reply {
+        let (reply, receive) = tokio::sync::oneshot::channel();
+        self.service.core.handle(Command {
+            fence_epoch: self.service.core.fences.current(&self.scope()).unwrap(),
+            subject: self.selection.subject.clone(),
+            session: self.selection.session,
+            binding: Some(self.selection.binding.clone()),
+            reply,
+            request: LocalRequest::operation(execution_ipc::host::Request::RecentTasks { before }),
+        });
+        receive.await.unwrap()
     }
     async fn policy_call(&mut self, request: execution_ipc::host::Request) -> Reply {
         let (reply, receive) = tokio::sync::oneshot::channel();
@@ -2426,12 +2466,20 @@ async fn software_self_service_binds_signed_policy_and_native_context() {
             .run_as,
         target: step.target.clone(),
     };
-    c._server.data.lock().unwrap().self_service_directory =
-        Some(wire::SelfServiceDirectoryResponse {
+    {
+        let mut data = c._server.data.lock().unwrap();
+        data.self_service_directory = Some(wire::SelfServiceDirectoryResponse {
             items: vec![directory.clone()],
             next_cursor: None,
             as_of: c._server.time.now().unwrap(),
         });
+        data.self_service_software = Some(protocol::self_service_software::Template {
+            spec: (**spec).clone(),
+        });
+        data.offer = None;
+        data.explicit_offers = true;
+        data.invocation_reply_lost = true;
+    }
     let choice = PolicyChoice {
         request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
         policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
@@ -2472,34 +2520,9 @@ async fn software_self_service_binds_signed_policy_and_native_context() {
         .unwrap()
         .1
         .clone();
-    {
-        let mut data = c._server.data.lock().unwrap();
-        let wire::TaskPayload::Software(mut spec) = data.offer.as_ref().unwrap().payload.clone()
-        else {
-            panic!("software")
-        };
-        spec.task_id = accepted.run_id;
-        data.task = accepted.run_id;
-        spec.authorization = wire::TaskAuthorization::SelfService {
-            request_id: accepted.request_id,
-            subject: wire::SelfServiceSubject::User {
-                user: wire::SelfServiceUser {
-                    tenant_id: data.tenant,
-                    instance_id: crate::protocol_test_support::SERVICE_ID,
-                    principal_id: uuid::Uuid::from_u128(3),
-                },
-            },
-            source: wire::SelfServiceCaller::Ai,
-            policy_id: directory.policy_id,
-            policy_revision: directory.policy_revision,
-            policy_version: directory.policy_version,
-            allow_ai: true,
-            risk_level: 2,
-            confirmed: true,
-        };
-        data.offer = Some(data.signed(wire::TaskPayload::Software(spec)));
-        data.explicit_offers = true;
-    }
+    assert_eq!(accepted.request_id.to_string(), choice.request.as_str());
+    assert_eq!(c._server.data.lock().unwrap().self_service_offers.len(), 1);
+    assert_eq!(c._server.data.lock().unwrap().invocations.len(), 1);
     let offer = c.service.client.claim().await.unwrap().offer.unwrap();
     c.service.bind_policy_offer(&offer).unwrap();
     let bound = c
@@ -4830,6 +4853,11 @@ async fn local_software_api_stages_no_attempt_and_replays_the_original_after_los
             reason: DataError::Denied
         }
     ));
+    c.employee("fresh-software-history-context").await;
+    assert!(
+        matches!(c.local_software_call(LocalSoftwareOperation::History(SoftwareHistoryQuery{after:None,limit:64}),false).await,
+        Reply::SoftwareHistory{value} if value.items.is_empty())
+    );
 }
 #[cfg(target_os = "macos")]
 #[tokio::test]
@@ -5559,6 +5587,16 @@ async fn network_check_replay_and_cancel_keep_the_original_sqlite_plan_and_login
         .app
         .stage_execution(&c.service.core.local_caller(), &frozen)
         .unwrap();
+    let Reply::RecentTasks { value } = c.recent_call(None).await else {
+        panic!("recent tasks");
+    };
+    assert!(
+        value
+            .items
+            .iter()
+            .any(|item| item.details.action.request_id == request
+                && item.details.status.attempts == 0)
+    );
     use execution_ipc::host::Request;
     let call = |context, input| Request::NetworkCheck {
         context,
@@ -5590,6 +5628,14 @@ async fn network_check_replay_and_cancel_keep_the_original_sqlite_plan_and_login
         matches!(c.policy_call(call(c.context(),NetworkCheckOperation::Cancel {request:request.clone()})).await,Reply::NetworkCheck {value} if value.status.phase==execution_app::TaskPhase::Cancelled && value.status.attempts==0)
     );
     c.employee("network-retired-owner").await;
+    let Reply::RecentTasks { value } = c.recent_call(None).await else {
+        panic!("recent tasks");
+    };
+    assert!(value
+        .items
+        .iter()
+        .all(|item| item.details.action.request_id != request));
+
     assert!(matches!(
         c.policy_call(call(c.context(), NetworkCheckOperation::Status { request }))
             .await,
@@ -5597,4 +5643,27 @@ async fn network_check_replay_and_cancel_keep_the_original_sqlite_plan_and_login
             reason: DataError::Denied
         }
     ));
+}
+
+#[tokio::test]
+async fn recent_activity_rejects_invalid_cursors_without_creating_work() {
+    let _budget = crate::scenario_budget::enter();
+    let mut c = Case::new(None).await;
+    assert!(
+        matches!(c.recent_call(None).await, Reply::RecentTasks{value} if value.items.is_empty() && value.next.is_none())
+    );
+    for cursor in ["0", "-1", "01", "not-a-cursor"] {
+        assert!(matches!(
+            c.recent_call(Some(cursor.into())).await,
+            Reply::Rejected
+        ));
+    }
+    assert!(c
+        .service
+        .core
+        .app
+        .service_tasks(None, 64)
+        .unwrap()
+        .items
+        .is_empty());
 }

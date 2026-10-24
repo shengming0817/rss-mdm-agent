@@ -7,15 +7,14 @@ const navigation = (component: Pick<VueWrapper, "emitted">) =>
 import Workspace from "../Workspace.vue";
 import Assistant from "../assistant/Assistant.vue";
 import ConversationList from "../assistant/ConversationList.vue";
-import SoftwareManagement from "../catalog-preview/SoftwareManagement.vue";
-import ToolsPage from "../catalog-preview/ToolsPage.vue";
+import SoftwareManagement from "../software/SoftwareManagement.vue";
+import ToolsPage from "../device-tools/ToolsPage.vue";
 import SystemSettings from "../system-settings/SystemSettings.vue";
 import AccountMenu from "./AccountMenu.vue";
 import Settings from "../settings/Settings.vue";
 import WorkspaceSearch from "./WorkspaceSearch.vue";
 import { createHostSettings } from "../settings/controller";
-import { softwarePreviewKey } from "../catalog-preview/software-preview";
-import { createSoftwarePreview } from "../../../../tests/assistant/software-preview";
+import { fixtureLocalPorts } from "../../../../tests/assistant/local-ports";
 async function setup(page = "assistant", fixture = false) {
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
     new DOMRect(0, 0, 1100, 760),
@@ -27,9 +26,9 @@ async function setup(page = "assistant", fixture = false) {
       busy: false,
       page,
       fixture,
+      localPorts: fixtureLocalPorts(),
       host: createHostSettings(undefined),
     },
-    global: { provide: { [softwarePreviewKey]: createSoftwarePreview() } },
   });
   await flushPromises();
   return w;
@@ -119,12 +118,11 @@ it("restores each module subsection and category, while ancestor breadcrumbs exp
     await flushPromises();
     await root("软件管理").trigger("click");
     expect(software.section).toBe("installed");
-    software.openSection("category:创意设计");
+    software.openSection("enterprise");
     await root("软件管理").trigger("click");
-    expect(software.section).toBe("category:创意设计");
-    expect(
-      software.sections.filter((item) => item.group === "按类别浏览"),
-    ).toHaveLength(5);
+    expect(navigation(w.getComponent(SoftwareManagement)).section).toBe(
+      "enterprise",
+    );
     const tools = navigation(w.getComponent(ToolsPage));
     tools.openSection("系统维护");
     await root("工具中心").trigger("click");
@@ -241,12 +239,19 @@ it("opens the same conversation on the right, follows page resources and keeps d
     expect(c.context.value?.scope).toBe("page");
     expect(c.context.value?.text).toContain("软件管理");
     const nav = navigation(w.getComponent(SoftwareManagement));
-    await nav.openSection("notes");
+    await nav.openResource!(
+      "notes",
+      nav.searchEntries!.find((item) => item.id === "notes")!.revision,
+    );
+    await w.getComponent(Assistant).props("controller").removeContext();
+    await w.get('[aria-label="附加当前页面上下文"]').trigger("click");
     await flushPromises();
     expect(c.context.value?.text).toContain("Notes");
     await w.setProps({ page: "system-settings" });
     await navigation(w.getComponent(SystemSettings)).openSection("network");
     await flushPromises();
+    expect(c.context.value?.stale).toBe(false);
+    await w.get('[aria-label="附加当前页面上下文"]').trigger("click");
     expect(c.context.value?.text).toContain("系统设置");
     expect(c.context.value?.text).toContain("网络");
     expect(c.draft.value).toBe("尚未发送的问题");
@@ -313,6 +318,7 @@ it("keeps secondary navigation with its current page after search and settings a
     await w.get(".sidebar-cycle").trigger("click");
     await w.get(".sidebar-cycle").trigger("click");
     w.getComponent(WorkspaceSearch).vm.$emit("select", {
+      kind: "section",
       page: "system-settings",
       id: "network",
     });

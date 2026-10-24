@@ -121,7 +121,14 @@ test.each([
         .findAll("button")
         .find((b) => b.text() === "Policy")!
         .trigger("click");
-      await human.get("form").trigger("submit");
+      const noEval = vi.spyOn(globalThis, "Function").mockImplementation(() => {
+        throw Error("CSP disallows eval");
+      });
+      try {
+        await human.get("form").trigger("submit");
+      } finally {
+        noEval.mockRestore();
+      }
       const confirmation = human.get('[aria-label="人工执行确认"]');
       for (const text of expected) {
         expect(confirmation.text()).toContain(text);
@@ -182,7 +189,7 @@ test("remounted history queries its original UUID and does not invoke again", as
   expect(wrapper.text()).not.toContain("目标设备 / OS 账号");
 });
 
-test("enum and length constraints prevent invalid confirmation; absent restores editing", async () => {
+test("native form constraints prevent invalid submission; absent restores editing", async () => {
   const item = (
     record("fixture").action as Extract<
       BackendRequest["action"],
@@ -227,10 +234,16 @@ test("enum and length constraints prevent invalid confirmation; absent restores 
     "full",
   ]);
   await wrapper.find("select").setValue(JSON.stringify("safe"));
+  expect(wrapper.find("input").attributes("minlength")).toBe("2");
+  expect(wrapper.find("input").attributes("maxlength")).toBe("4");
   await wrapper.find("input").setValue("x");
+  const invalidForm = vi
+    .spyOn(wrapper.get("form").element, "checkValidity")
+    .mockReturnValueOnce(false);
   await wrapper.find("form").trigger("submit");
+  invalidForm.mockRestore();
   expect(wrapper.find('[aria-label="人工执行确认"]').exists()).toBe(false);
-  expect(wrapper.find('[role="alert"]').exists()).toBe(true);
+  expect(policy_invoke).not.toHaveBeenCalled();
   await wrapper.find("input").setValue("Acme");
   await wrapper.find("form").trigger("submit");
   expect(wrapper.find('[aria-label="人工执行确认"]').exists()).toBe(false);
@@ -264,7 +277,7 @@ test("retiring enterprise ingress clears parameters/errors and ignores its late 
   if (item.task.kind !== "script") throw Error("script");
   item.task.parameterSchema = {
     type: "object",
-    properties: { name: { type: "string", minLength: 2 } },
+    properties: { name: { type: "integer" } },
     required: ["name"],
   };
   let resolveOld!: (value: unknown) => void;
@@ -290,7 +303,7 @@ test("retiring enterprise ingress clears parameters/errors and ignores its late 
       .findAll("button")
       .find((b) => b.text() === "Policy")!
       .trigger("click");
-    await wrapper.get("input").setValue("x");
+    await wrapper.get("textarea").setValue("invalid JSON");
     await wrapper.get("form").trigger("submit");
     expect(wrapper.find('[role="alert"]').exists()).toBe(true);
     await wrapper

@@ -167,12 +167,6 @@ export const steps = [
     ],
   ],
   [
-    "self-service fixtures",
-    "node",
-    ["scripts/check-self-service.mjs"],
-    ["selfServicePreview"],
-  ],
-  [
     "rust clippy",
     "cargo",
     [

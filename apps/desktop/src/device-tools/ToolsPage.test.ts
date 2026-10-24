@@ -141,3 +141,55 @@ it("retains the original network request across navigation, pauses hidden pollin
     vi.useRealTimers();
   }
 });
+
+it("keeps the original manual tool request across hidden-page navigation after a lost receipt", async () => {
+  const record = policyRecord();
+  if (record.action.kind !== "policy") throw Error("policy");
+  const item = record.action.directory;
+  const invoke = vi.fn(async (_input: { choice: { request: string } }) => {
+    throw Error("reply lost");
+  });
+  const port = {
+    ...policyFixturePort,
+    policy_directory: async () => ({
+      items: [item],
+      nextCursor: null,
+      asOf: 1,
+    }),
+    policy_invoke: invoke,
+    snapshot: async () => snapshot(),
+    execute: vi.fn(),
+    confirm: vi.fn(),
+    cancel: vi.fn(),
+  };
+  const execution = createController(port);
+  const w = mount(ToolsPage, { props: { execution, active: true } });
+  try {
+    await flushPromises();
+    const view = w.getComponent(PolicySelfService);
+    await view
+      .findAll("button")
+      .find((b) => b.text() === "Published tool")!
+      .trigger("click");
+    await view.get("form").trigger("submit");
+    await flushPromises();
+    expect(invoke).toHaveBeenCalledTimes(1);
+    const request = invoke.mock.calls[0][0].choice.request;
+    await w.setProps({ active: false });
+    await w.setProps({ active: true });
+    await flushPromises();
+    expect(w.getComponent(PolicySelfService).element).toBe(view.element);
+    expect(view.text()).toContain(request);
+    expect(view.find("form").exists()).toBe(false);
+    expect(invoke).toHaveBeenCalledTimes(1);
+  } finally {
+    w.unmount();
+    execution.dispose();
+  }
+});
+import {
+  policyRecord,
+  policyFixturePort,
+  snapshot,
+} from "../../../../tests/self-service/support";
+import { createController } from "../self-service/controller";

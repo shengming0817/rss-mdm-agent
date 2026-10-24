@@ -18,7 +18,6 @@
     "@rss-mdm-agent/ai-ui-bridge": "workspace:*",
     "@rss-mdm-agent/ai-contract": "workspace:*",
     "@rss-mdm-agent/execution-bindings": "workspace:*",
-    "ajv": "8.20.0",
     "@a2ui/web_core": "0.11.0"
   },
   "devDependencies": {

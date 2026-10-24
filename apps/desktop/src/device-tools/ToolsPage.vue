@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, computed, nextTick, ref, inject } from "vue";
+import { reactive, computed, nextTick, ref, inject, onMounted } from "vue";
 import {
   Activity,
   Terminal,
@@ -8,10 +8,11 @@ import {
   ChevronRight,
   UiSearchInput,
 } from "@rss-mdm-agent/ui";
-import "./style.css";
+import "../workspace/catalog.css";
 import SettingsGlyph from "../system-settings/SettingsGlyph.vue";
 import ConnectionCheck from "../device-tools/ConnectionCheck.vue";
 import type { NetworkCheckPort } from "../self-service/native";
+import { directoryKey } from "../self-service/directory";
 import PolicySelfService from "../self-service/PolicySelfService.vue";
 import type { Controller } from "../self-service/controller";
 import { systemSettingsKey } from "../system-settings/controller";
@@ -34,6 +35,11 @@ const emit = defineEmits<{
   task: [request: string];
 }>();
 const query = ref("");
+const directory = inject(directoryKey, undefined);
+const enterprise = ref<InstanceType<typeof PolicySelfService>>();
+onMounted(() => {
+  if (directory && !directory.state.asOf) void directory.load();
+});
 const sections = [
   { id: "全部", title: "全部工具" },
   { id: "连接与网络", title: "连接与网络" },
@@ -69,6 +75,7 @@ function openSection(id: string) {
 
 const category = ref("全部");
 const selected = ref("");
+const requested = ref("");
 const heading = ref<HTMLElement>();
 const listing = ref<HTMLElement>();
 const tools = [
@@ -167,32 +174,87 @@ async function back() {
     .find((button) => button.dataset.tool === id)
     ?.focus();
 }
-emit(
-  "navigation",
-  reactive({
-    reset,
-    openSection,
-    section,
-    sections,
-    path,
-    resources: computed(() =>
-      (current.value ? [current.value] : filtered.value).map((item) => ({
-        id: item.id,
-        title: item.title,
-        description: item.description,
-        status: item.foot,
-        source: "工具目录",
-      })),
-    ),
-    searchEntries: computed(() =>
-      tools.map((e) => ({ id: e.id, title: e.title })),
-    ),
-    setQuery: (value: string) => {
-      query.value = value;
-      selected.value = "";
+const navigation = reactive({
+  reset,
+  openSection,
+  section,
+  sections,
+  path,
+  resources: computed(() =>
+    !current.value && enterprise.value?.resource
+      ? [enterprise.value.resource]
+      : (current.value ? [current.value] : filtered.value).map((item) => ({
+          id: item.id,
+          title: item.title,
+          description: item.description,
+          status: item.foot,
+          source: "工具目录",
+        })),
+  ),
+  searchEntries: computed(() => [
+    ...tools.map((e) => ({
+      id: e.id,
+      title: e.title,
+      revision: "builtin-tools-v1",
+    })),
+    ...(directory?.state.items
+      .filter((item) => item.task.kind === "script")
+      .map((item) => ({
+        id: `policy:${item.policyId}`,
+        title:
+          typeof item.selfService.presentation.displayName === "string"
+            ? item.selfService.presentation.displayName
+            : item.policyId,
+        revision: JSON.stringify([
+          item.policyId,
+          item.policyRevision,
+          item.policyVersion,
+        ]),
+      })) ?? []),
+  ]),
+  async openRequest(request: string) {
+    selected.value = "network";
+    requested.value = request;
+    await nextTick();
+  },
+  async openResource(id: string, revision: string) {
+    if (
+      tools.some((item) => item.id === id) &&
+      revision === "builtin-tools-v1"
+    ) {
+      await inspect(id);
+      return true;
+    }
+    const item = directory?.state.items.find(
+      (item) =>
+        item.task.kind === "script" &&
+        `policy:${item.policyId}` === id &&
+        JSON.stringify([
+          item.policyId,
+          item.policyRevision,
+          item.policyVersion,
+        ]) === revision,
+    );
+    if (!item) return false;
+    selected.value = "";
+    await nextTick();
+    return enterprise.value?.openPolicy(item.policyId) ?? false;
+  },
+  search: computed(() => ({
+    loading: !!directory?.state.loading,
+    complete: !!directory?.state.complete,
+    hasMore: !!directory?.state.next,
+    error: directory?.state.error ?? "",
+    loadMore: async () => {
+      await directory?.load(true);
     },
-  }),
-);
+  })),
+  setQuery: (value: string) => {
+    query.value = value;
+    selected.value = "";
+  },
+});
+emit("navigation", navigation);
 </script>
 <template>
   <section class="catalog-preview design-page" aria-label="工具中心">
@@ -324,7 +386,7 @@ emit(
             <ChevronRight :size="14" aria-hidden="true" />
           </button></article
       ></template>
-      <template v-else>
+      <section v-show="!current">
         <div class="design-hero tools-editorial">
           <div>
             <span class="design-eyebrow">A LITTLE CARE, A BETTER DAY</span>
@@ -368,7 +430,7 @@ emit(
         <section aria-label="组织发布的工具">
           <h3>组织发布的工具</h3>
           <PolicySelfService
-            v-if="active"
+            ref="enterprise"
             :port="execution?.port ?? null"
             :records="execution?.state.snapshot?.preparations ?? []"
             kind="script"
@@ -386,8 +448,9 @@ emit(
             查看诊断信息 ↗
           </button>
         </div>
-      </template>
+      </section>
       <ConnectionCheck
+        :initial-request="requested"
         v-show="current?.id === 'network'"
         :port="networkPort ?? null"
         :active="active && current?.id === 'network'"

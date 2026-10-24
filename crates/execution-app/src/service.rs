@@ -1280,6 +1280,35 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
             next: page.next,
         })
     }
+    /// Internal owner activity read; product ingress must additionally enforce current subject authorization.
+    pub fn service_recent_tasks(
+        &self,
+        before: Option<u64>,
+        limit: usize,
+    ) -> Result<crate::RecentTaskPage, Error> {
+        if !(1..=128).contains(&limit) || self.host.service_binding()? != self.binding {
+            return Err(Error::Denied);
+        }
+        let page = self
+            .journal
+            .recent_requests(before, limit, &self.adapter(None, None))?;
+        let next = page.next.map(|value| value.to_string());
+        let items = page
+            .items
+            .into_iter()
+            .map(|record| {
+                Ok(crate::RecentTask {
+                    recorded_at_unix_ms: record.recorded_at_unix_ms,
+                    details: self.details_for(
+                        None,
+                        &record.request,
+                        ExecutionAccess::RunnerFact,
+                    )?,
+                })
+            })
+            .collect::<Result<_, Error>>()?;
+        Ok(crate::RecentTaskPage { items, next })
+    }
     /// Authorized bounded task page for this exact actor and device.
     pub fn tasks(
         &self,

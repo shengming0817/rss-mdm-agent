@@ -119,6 +119,7 @@ fn main() {
             "software_submit",
             "software_status",
             "software_cancel",
+            "self_service_recent_tasks",
             "self_service_snapshot",
             "self_service_execute",
             "self_service_confirm",

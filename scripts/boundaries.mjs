@@ -20,6 +20,7 @@ const selfServiceCommands = [
   "query_submit",
   "query_status",
   "query_cancel",
+  "self_service_recent_tasks",
   "self_service_snapshot",
   "self_service_execute",
   "self_service_confirm",
@@ -390,12 +391,22 @@ export function checkSource(file, source) {
       globals.add("Error");
     const assistantGlobals = {
       "apps/desktop/src/workspace/page-context.ts": ["JSON"],
+      "apps/desktop/src/workspace/identity.ts": ["JSON"],
+      "apps/desktop/src/home/Home.vue": ["JSON"],
+      "apps/desktop/src/self-service/directory.ts": ["Set", "Symbol", "JSON"],
+      "apps/desktop/src/self-service/activity.ts": ["Set", "Symbol"],
+      "apps/desktop/src/software/SoftwareManagement.vue": [
+        "JSON",
+        "document",
+        "HTMLElement",
+      ],
+      "apps/desktop/src/device-tools/ToolsPage.vue": ["JSON"],
       "apps/desktop/src/assistant/operation-ui/NodeView.ts": [
         "Symbol",
         "document",
         "Set",
       ],
-      "apps/desktop/src/App.vue": ["setInterval", "clearInterval"],
+      "apps/desktop/src/App.vue": ["document", "setInterval", "clearInterval"],
       "apps/desktop/src/settings/DeviceAccess.vue": ["Promise", "crypto"],
       "apps/desktop/src/settings/MdmRegistration.vue": [
         "Promise",
@@ -407,6 +418,8 @@ export function checkSource(file, source) {
         "clearInterval",
       ],
       "apps/desktop/src/Workspace.vue": [
+        "JSON",
+        "document",
         "HTMLElement",
         "ResizeObserver",
         "setInterval",
@@ -415,6 +428,7 @@ export function checkSource(file, source) {
       "apps/desktop/src/assistant/resource-context.ts": ["JSON"],
       "apps/desktop/src/self-service/PolicyPreparation.vue": ["JSON"],
       "apps/desktop/src/self-service/PolicySelfService.vue": [
+        "defineExpose",
         "JSON",
         "crypto",
         "Set",
@@ -439,6 +453,8 @@ export function checkSource(file, source) {
       ],
       "apps/desktop/src/settings/DiagnosticsPanel.vue": ["JSON", "Boolean"],
       "apps/desktop/src/software/controller.ts": [
+        "setInterval",
+        "clearInterval",
         "JSON",
         "Set",
         "Promise",
@@ -449,17 +465,12 @@ export function checkSource(file, source) {
         "setInterval",
         "clearInterval",
       ],
-      "apps/desktop/src/self-service/controller.ts": ["crypto"],
       "apps/desktop/src/appearance.ts": [
         "navigator",
         "Promise",
         "Error",
         "setTimeout",
         "clearTimeout",
-      ],
-      "apps/desktop/src/self-service/SelfService.vue": [
-        "setInterval",
-        "clearInterval",
       ],
       "apps/desktop/src/assistant/controller.ts": [
         "Set",
@@ -541,8 +552,6 @@ export function checkSource(file, source) {
             name === "../software/LocalSoftwareAction.vue") ||
           (file === "apps/desktop/src/assistant/ExecutionDetails.vue" &&
             name === "../self-service/RequestOrigin.vue") ||
-          (file === "apps/desktop/src/self-service/SelfService.vue" &&
-            name === "../assistant/resource-context") ||
           (file === "apps/desktop/src/self-service/TaskDetail.vue" &&
             name === "../assistant/ExecutionDetails.vue")
         ) &&
@@ -748,7 +757,7 @@ export function checkSource(file, source) {
           "(parameterSchema.value as any)?.properties",
         ],
       };
-      dataRoots["apps/desktop/src/catalog-preview/ToolsPage.vue"] = [
+      dataRoots["apps/desktop/src/device-tools/ToolsPage.vue"] = [
         "labels",
         "_ctx.labels",
       ];
@@ -761,6 +770,13 @@ export function checkSource(file, source) {
       dataRoots["apps/desktop/src/settings/DiagnosticsPanel.vue"] = [
         "s.scopes",
         "_ctx.s.scopes",
+      ];
+      dataRoots["apps/desktop/src/home/Home.vue"] = [
+        "taskPhase",
+        "_ctx.taskPhase",
+      ];
+      dataRoots["apps/desktop/src/system-settings/facts.ts"] = [
+        "qualityLabels",
       ];
       dataRoots["apps/desktop/src/system-settings/controller.ts"] = [
         "families",
@@ -871,15 +887,14 @@ export function checkTree(treeRoot = root, executable) {
     Object.keys(desktop.dependencies ?? {})
       .sort()
       .join() !==
-      "@a2ui/web_core,@rss-mdm-agent/ai-client,@rss-mdm-agent/ai-contract,@rss-mdm-agent/ai-ui-bridge,@rss-mdm-agent/execution-bindings,@rss-mdm-agent/ui,@tauri-apps/api,ajv,vue" ||
+      "@a2ui/web_core,@rss-mdm-agent/ai-client,@rss-mdm-agent/ai-contract,@rss-mdm-agent/ai-ui-bridge,@rss-mdm-agent/execution-bindings,@rss-mdm-agent/ui,@tauri-apps/api,vue" ||
     desktop.dependencies?.["@a2ui/web_core"] !== "0.11.0" ||
-    desktop.dependencies?.ajv !== "8.20.0" ||
     desktop.dependencies?.["@tauri-apps/api"] !== "2.11.1" ||
     Object.keys(desktop.optionalDependencies ?? {}).length ||
     Object.keys(desktop.peerDependencies ?? {}).length
   )
     errors.push(
-      "desktop production dependencies must be UI, public AI contract/client/bridge, generated execution bindings, pinned A2UI core, pinned Ajv schema validation, Vue and pinned Tauri core only",
+      "desktop production dependencies must be UI, public AI contract/client/bridge, generated execution bindings, pinned A2UI core, Vue and pinned Tauri core only",
     );
   const config = JSON.parse(read("apps/desktop/src-tauri/tauri.conf.json"));
   const capabilityFiles = files(

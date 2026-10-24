@@ -230,6 +230,13 @@ pub trait JournalPort {
         limit: usize,
         host: &impl JournalHost,
     ) -> Result<Vec<execution_contract::RequestId>, JournalError>;
+    /// Bounded newest-per-request owner scan over existing business receipts, excluding trust refreshes.
+    fn recent_requests(
+        &self,
+        before: Option<u64>,
+        limit: usize,
+        host: &impl JournalHost,
+    ) -> Result<crate::RecentRequestPage, JournalError>;
     /// Read the execution confirmation under the caller's existing operation access.
     /// Missing is distinct from corrupt/unavailable storage; this does not grant result access.
     fn execution_confirmation_state(

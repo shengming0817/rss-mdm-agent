@@ -45,7 +45,7 @@ const item: InstalledSoftware = {
 };
 const page: SoftwarePage = {
   query,
-  collectedAt: 1000,
+  collectedAt: Math.floor(Date.now() / 1000),
   quality: "complete",
   enumerationComplete: true,
   stale: false,

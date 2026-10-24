@@ -58,3 +58,9 @@ pub enum PolicyStatus {
         value: Box<rss_mdm_agent_wire::runtime::SelfServiceStatus>,
     },
 }
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RecentTasksQuery {
+    pub before: Option<String>,
+}

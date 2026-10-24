@@ -713,3 +713,80 @@ impl Store {
         Ok(requests)
     }
 }
+
+impl Store {
+    /// Uses the existing receipt indexes; no parallel history or persistent projection.
+    pub(crate) fn sql_recent_requests(
+        &self,
+        before: Option<u64>,
+        limit: usize,
+        host: &impl JournalHost,
+    ) -> Result<RecentRequestPage, Error> {
+        if limit == 0 || limit > 128 {
+            return Err(Error::InvalidInput);
+        }
+        let before = before.map(integer).transpose()?.unwrap_or(i64::MAX);
+        let tx = self.conn.unchecked_transaction()?;
+        crate::database::ensure_current(&tx, &self.authority, self.limits)?;
+        // Scan a fixed receipt window before filtering or de-duplicating: hot tasks and trust
+        // refreshes cannot turn a page read into an unbounded history walk.
+        let sql = format!("SELECT r.sequence,{},e.request_id,e.scope,r.kind FROM receipts r LEFT JOIN executions e ON e.scope=r.scope WHERE r.sequence<?1 ORDER BY r.sequence DESC LIMIT ?2", bounded_blob("r.body", self.limits.max_record_bytes));
+        let mut statement = tx.prepare(&sql)?;
+        let rows = statement.query_map(params![before, limit as i64], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })?;
+        let mut items = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut scanned = 0;
+        let mut last = None;
+        for row in rows {
+            let (sequence, bytes, request, key, kind) = row?;
+            scanned += 1;
+            last = Some(u64::try_from(sequence).map_err(|_| Error::Corrupt)?);
+            let (Some(request), Some(key)) = (request, key) else {
+                continue;
+            };
+            if kind == "trust" || !seen.insert(request.clone()) {
+                continue;
+            }
+            let receipt: Receipt = decode(&bytes, self.limits.max_record_bytes)?;
+            let plan_bytes: Vec<u8> = tx.query_row(
+                &format!(
+                    "SELECT {} FROM executions WHERE scope=?1",
+                    bounded_blob("plan", self.limits.input.max_input_bytes)
+                ),
+                [&key],
+                |row| row.get(0),
+            )?;
+            let spec = execution_contract::decode_execution(&plan_bytes, &self.limits.input)
+                .map_err(|_| Error::Corrupt)?;
+            let plan =
+                FrozenExecution::freeze(spec, &self.limits.input).map_err(|_| Error::Corrupt)?;
+            let scope = Scope::from_input(&plan);
+            self.check_scope(&scope)?;
+            if receipt.scope != scope
+                || receipt.sequence != sequence as u64
+                || scope.interaction_subject().as_str() != key
+                || plan.spec().request.request_id.as_str() != request
+            {
+                return Err(Error::Corrupt);
+            }
+            authorize(host, Access::RunnerFact, &scope, None)?;
+            items.push(RecentRequest {
+                request: plan.spec().request.request_id.clone(),
+                sequence: receipt.sequence,
+                recorded_at_unix_ms: receipt.occurred_at_unix_ms,
+            });
+        }
+        Ok(RecentRequestPage {
+            items,
+            next: (scanned == limit).then_some(last).flatten(),
+        })
+    }
+}

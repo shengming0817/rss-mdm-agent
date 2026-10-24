@@ -231,3 +231,22 @@ pub enum SoftwareDeploymentSummary {
     /// Provisioning for future users; existing registrations are unchanged.
     FutureUsers,
 }
+
+/// One original request's latest durable activity, without audit or execution inputs.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentTask {
+    /// Trusted journal receipt time; never a renderer timestamp.
+    pub recorded_at_unix_ms: u64,
+    /// Current authorized lifecycle and frozen public facts.
+    pub details: ExecutionTaskDetails,
+}
+/// Bounded discovery page; an empty authorized page may still have a continuation.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RecentTaskPage {
+    /// Latest activities, in descending durable journal order.
+    pub items: Vec<RecentTask>,
+    /// Exclusive receipt sequence encoded as decimal text, avoiding JavaScript rounding.
+    pub next: Option<String>,
+}

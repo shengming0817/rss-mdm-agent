@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from "vue";
 import { currentUser } from "../test-users";
 import { nativePort } from "../self-service/native";
 import TaskDetail from "../self-service/TaskDetail.vue";
@@ -36,7 +36,7 @@ function executionOwner() {
     (props.agentReady && currentUser.value ? nativePort() : null)
   );
 }
-const port = ref(executionOwner());
+const port = shallowRef(executionOwner());
 let timer: ReturnType<typeof setInterval> | undefined;
 let epoch = 0;
 let disposed = false;

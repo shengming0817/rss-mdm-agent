@@ -810,3 +810,21 @@ pub struct ServiceMaterialChanges<C> {
     /// All committed changes through this checkpoint were inspected.
     pub complete: bool,
 }
+
+/// Internal owner-only activity cursor, authenticated before exposure to product callers.
+pub struct RecentRequest {
+    /// Original business request.
+    pub request: execution_contract::RequestId,
+    /// Exclusive durable order.
+    pub sequence: u64,
+    /// Trusted receipt time.
+    pub recorded_at_unix_ms: u64,
+}
+
+/// A bounded raw receipt scan; the continuation advances even when no activity is visible.
+pub struct RecentRequestPage {
+    /// At most one latest encountered activity per request in this scan.
+    pub items: Vec<RecentRequest>,
+    /// Exclusive last scanned receipt, including filtered records.
+    pub next: Option<u64>,
+}

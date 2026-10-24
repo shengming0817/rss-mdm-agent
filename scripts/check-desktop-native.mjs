@@ -383,24 +383,15 @@ const navigate = async (name) => {
     await openAgentSettings("AI 与连接");
     return;
   }
-  if (["软件中心", "请求与任务"].includes(name)) {
+  if (name === "请求与任务") {
     if (visualOnly) {
       await fixtureControls();
-      await browser.execute(
-        (value) => {
-          const select = document.querySelector('[aria-label="原有业务验证"]');
-          select.value = value;
-          select.dispatchEvent(new Event("change", { bubbles: true }));
-        },
-        name === "软件中心" ? "software" : "tasks",
-      );
-      await wait(() =>
-        browser.execute(
-          () =>
-            document.querySelector(".self-service")?.getClientRects().length >
-            0,
-        ),
-      );
+      await browser.execute(() => {
+        const select = document.querySelector('[aria-label="业务页面"]');
+        select.value = "tasks";
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      await wait(() => browser.$(".task-records").isDisplayed());
     } else {
       await openAgentSettings("运行与诊断");
       await click("执行服务记录");
@@ -608,6 +599,24 @@ const verifyUnknownFence = async () => {
   );
 };
 
+const originalRequest = (row) =>
+  row.action.kind === "policy"
+    ? row.action.choice.request
+    : row.action.offer.request;
+const originalRequests = (reply) =>
+  new Set([
+    ...reply.value.items.map((row) => row.action.requestId),
+    ...reply.preparations.map(originalRequest),
+  ]);
+const openPageAssistant = async () => {
+  await browser
+    .$('.workspace-assistant-entry[aria-label="打开电脑助手"]')
+    .click();
+  await wait(() =>
+    browser.$(".page-assistant-panel .composer textarea").isDisplayed(),
+  );
+  await wait(() => browser.$(".resource-context").isDisplayed());
+};
 const task = async () => {
   const reply = await serviceCall("query");
   const request = fixture.facts.request;
@@ -616,7 +625,7 @@ const task = async () => {
   );
   if (existing) return { plan: existing.action, snapshot: existing.status };
   const pending = reply.preparations.find(
-    (row) => row.offer.request === request,
+    (row) => originalRequest(row) === request,
   );
   return (
     pending && {
@@ -927,6 +936,7 @@ try {
   }
   await wait(() => {
     assert.equal(child.exitCode, null, logs.slice(-3000));
+    assert.equal(child.signalCode, null, logs.slice(-3000));
     return receipt && (visualOnly || hostStatus);
   }, 600000);
   assert.equal(receipt.nonceSha256, sha256(nonce));
@@ -1144,21 +1154,10 @@ try {
     await browser.saveScreenshot(
       join(reports, "desktop-native-start-default.png"),
     );
-    await navigate("软件中心");
-    mark("visual resource details and assistant context");
-    await wait(() =>
-      browser.execute(() =>
-        [...document.querySelectorAll('[data-action="resource-details"]')].some(
-          (el) => el.getClientRects().length > 0 && !el.closest("[inert]"),
-        ),
-      ),
-    );
-    await browser.$('[data-action="resource-details"]').click();
-    await click("询问 AI");
-    await wait(() => browser.$(".context-panel select").isDisplayed());
-    await selectValue(await browser.$(".context-panel select"), "new");
-    await click("继续到所选会话");
-    await wait(() => browser.$(".resource-context").isDisplayed());
+    await navigate("软件管理");
+    mark("visual page assistant with installed-software facts");
+    await click("已安装", '//*[@aria-label="软件视图"]');
+    await openPageAssistant();
     await browser.saveScreenshot(
       join(reports, "desktop-native-context-default.png"),
     );
@@ -1227,7 +1226,7 @@ try {
         await browser.saveScreenshot(join(reports, screenshot));
         result.visual.push({ kind, screenshot, ...metrics });
       };
-      await click("关闭资源上下文 AI");
+      await click("关闭电脑助手侧栏");
       await navigate("AI 助手");
       await click("新会话");
       if (await browser.$('[aria-label="移除上下文"]').isExisting())
@@ -1335,13 +1334,9 @@ try {
           ]) {
             mark(`native visual context ${theme} ${width}×${height}`);
             await browser.setWindowSize(width, height);
-            await navigate("软件中心");
-            await browser.$('[data-action="resource-details"]').click();
-            await click("询问 AI");
-            await wait(() => browser.$(".context-panel select").isDisplayed());
-            await selectValue(await browser.$(".context-panel select"), "new");
-            await click("继续到所选会话");
-            await wait(() => browser.$(".resource-context").isDisplayed());
+            await navigate("软件管理");
+            await click("已安装", '//*[@aria-label="软件视图"]');
+            await openPageAssistant();
             await browser
               .$(".composer textarea")
               .setValue(`保留原生草稿 ${theme} ${width}`);
@@ -1362,7 +1357,7 @@ try {
                 () =>
                   document.activeElement !==
                     document.querySelector(".composer textarea") &&
-                  !!document.activeElement?.closest(".context-panel"),
+                  !!document.activeElement?.closest(".page-assistant-panel"),
               ),
             );
             key(48, true);
@@ -1373,18 +1368,15 @@ try {
                   document.querySelector(".composer textarea"),
               ),
             );
-            if (width < 1440) {
-              key(53);
-            } else await click("关闭资源上下文 AI");
+            await click("关闭电脑助手侧栏");
             mark(`native context close focus ${theme} ${width}`);
             await wait(() =>
               browser.execute(
                 () =>
-                  !document.querySelector(
-                    '[role="dialog"][aria-label="资源上下文 AI"][open], aside[aria-label="资源上下文 AI"]',
-                  ) &&
-                  document.activeElement?.getAttribute("data-action") ===
-                    "ask-ai",
+                  !document.querySelector(".page-assistant-panel") &&
+                  document.activeElement?.classList.contains(
+                    "workspace-assistant-entry",
+                  ),
               ),
             );
             mark(`native context return to main ${theme} ${width}`);
@@ -1776,8 +1768,10 @@ try {
     );
     mark("left primary navigation shares the persistent sidebar theme");
     await browser.setWindowSize(480, 400);
-    await wait(() => browser.$('[aria-label="打开主导航"]').isDisplayed());
-    await browser.$('[aria-label="打开主导航"]').click();
+    await wait(() =>
+      browser.$('.sidebar-cycle[aria-label="打开主导航"]').isDisplayed(),
+    );
+    await browser.$('.sidebar-cycle[aria-label="打开主导航"]').click();
     const navigation = await browser.execute(() => {
       const el = document.querySelector('[role="dialog"][aria-label="主导航"]');
       const rect = el.getBoundingClientRect();
@@ -1814,13 +1808,18 @@ try {
     result.checks.push("left-navigation-consistent-style");
     mark("human action enters the service without a backend confirmation gate");
     await browser.setWindowSize(1100, 760);
-    await navigate("软件中心");
+    await navigate("软件管理");
+    await click("企业软件", '//*[@aria-label="软件视图"]');
+    assert.equal(originalRequests(await serviceCall("query")).size, 0);
+    const published = serviceReady.catalog;
     await wait(() =>
-      browser.$('[data-action="resource-details"]').isDisplayed(),
+      browser
+        .$(`[data-policy-id="${published.policyId}"] button`)
+        .isDisplayed(),
     );
-    await browser.$('[data-action="resource-details"]').click();
-    await click("确认此操作");
-    await click("确认并执行");
+    await browser.$(`[data-policy-id="${published.policyId}"] button`).click();
+    await click("核对执行参数", '//*[contains(@class,"software-production")]');
+    await click("确认并执行", '//*[contains(@class,"software-production")]');
     await wait(async () =>
       (await serviceCall("query")).value.items.some(
         (row) => row.status.attempts === 1,
@@ -1856,29 +1855,25 @@ try {
     await permission(false);
     await text("完成 CANCEL_REJECT");
     assert.equal((await task()).snapshot.cancelRequested, false);
-    assert.equal(
-      (await serviceCall("query")).value.items.length +
-        (await serviceCall("query")).preparations.length,
-      1,
-    );
+    assert.equal(originalRequests(await serviceCall("query")).size, 1);
     mark("read the original executed task through its product card");
     await prompt("GOLDEN_READ 读取状态");
     await text("完成 READ");
-    await text("查看设备操作");
-    await click("查看设备操作");
+    await navigate("请求与任务");
     await wait(() =>
-      browser.$('[role="dialog"][data-state="open"]').isDisplayed(),
+      browser.$(".task-records .execution-records > button").isDisplayed(),
     );
-    // Native Escape closes the actual execution inspector and restores its trigger.
-    key(53);
-    await wait(
-      async () =>
-        !(await browser.$('[role="dialog"][data-state="open"]').isExisting()),
+    await browser.$(".task-records .execution-records > button").click();
+    await wait(() =>
+      browser.$('.task-detail[aria-label="任务详情"]').isDisplayed(),
     );
-    assert.equal(
-      await browser.execute(() => document.activeElement?.textContent?.trim()),
-      "查看设备操作",
+    assert.ok(
+      (await browser.$(".task-detail").getText()).includes(
+        fixture.facts.request,
+      ),
     );
+    assert.equal(originalRequests(await serviceCall("query")).size, 1);
+    await navigate("AI 助手");
     await prompt("GOLDEN_CANCEL_ALLOW 允许取消请求");
     await permission(true);
     await text("完成 CANCEL_ALLOW");
@@ -1894,7 +1889,7 @@ try {
       "cancel-allow-reject",
       "reads-without-approval",
       "human-without-backend-confirmation",
-      "trusted-execution-card",
+      "human-original-journal-detail",
     );
     mark("manual history position survives a new reply");
     await browser.$(".assistant-timeline article:first-child").scrollIntoView();
@@ -1920,8 +1915,10 @@ try {
     result.checks.push("manual-scroll-preserved", "jump-to-latest");
     mark("narrow layout, native focus and scrolling");
     await browser.setWindowSize(480, 400);
-    await wait(() => browser.$('[aria-label="打开主导航"]').isDisplayed());
-    await browser.$('[aria-label="打开主导航"]').click();
+    await wait(() =>
+      browser.$('.sidebar-cycle[aria-label="打开主导航"]').isDisplayed(),
+    );
+    await browser.$('.sidebar-cycle[aria-label="打开主导航"]').click();
     assert.equal(
       await browser.execute(() => {
         const r = document
@@ -1939,7 +1936,7 @@ try {
       async () =>
         !(await browser.$('[role="dialog"][data-state="open"]').isExisting()),
     );
-    await browser.$('[aria-label="打开主导航"]').click();
+    await browser.$('.sidebar-cycle[aria-label="打开主导航"]').click();
     assert.equal(
       await browser.execute(
         () =>
@@ -2044,36 +2041,49 @@ try {
       1,
       "all first-chat operations share one session",
     );
-    mark("resource context in the same native conversation at three sizes");
-    // The first offer belongs to its original journal request. Publish a new fixed signed
-    // offer for catalogue interaction, without executing it or replacing that first request.
-    result.catalogOffer = await serviceCall("catalog");
-    await wait(async () =>
-      (await serviceCall("query")).available.some(
-        (offer) => offer.task === result.catalogOffer.task,
-      ),
-    );
+    mark("page context in the same native conversation at three sizes");
+    result.completion = await serviceCall("completion", {
+      request: fixture.facts.request,
+    });
+    // Inspect the same published resource through a distinct AI-origin request.
+    // An uncertain original execution remains intact; do not clear or resubmit it.
+    result.catalog = serviceReady.catalog;
+    fixture.facts.catalog = result.catalog;
     assert.equal((await task()).snapshot.attempts, 1);
     mark(
-      "reject a distinct fixed task without creating another execution intent",
+      "a distinct software request requires human confirmation before any Start",
     );
-    await prompt("GOLDEN_DENY 拒绝新的操作");
-    await text("完成 DENY");
-    assert.notEqual(fixture.facts.deniedRequest, fixture.facts.request);
-    const afterRejection = await serviceCall("query");
-    assert.equal(
-      afterRejection.value.items.length + afterRejection.preparations.length,
-      2,
-    );
+    await prompt("GOLDEN_REVIEW 新操作必须等待本人确认");
+    await text("完成 REVIEW");
+    assert.notEqual(fixture.facts.reviewRequest, fixture.facts.request);
+    const afterReview = await serviceCall("query");
+    assert.equal(originalRequests(afterReview).size, 2);
     assert.equal((await task()).snapshot.attempts, 1);
-    assert.equal(
-      afterRejection.preparations.find(
-        (row) => row.offer.request === fixture.facts.deniedRequest,
-      )?.failure,
-      "riskUnknown",
+    const pendingReview = afterReview.preparations.find(
+      (row) => originalRequest(row) === fixture.facts.reviewRequest,
     );
+    assert.equal(pendingReview?.state, "awaitingConfirmation");
+    assert.equal(pendingReview?.risk?.level, "two");
+    assert.equal(pendingReview?.confirmation, null);
     assert.equal((await serviceCall("status")).startRequests, 1);
-    result.checks.push("ai-unknown-risk-blocked-without-start");
+    result.checks.push("ai-risk-two-waits-for-human-without-start");
+    await text("查看设备操作");
+    await click("查看设备操作");
+    await wait(() =>
+      browser.$('[role="dialog"][data-state="open"]').isDisplayed(),
+    );
+    // Native Escape closes the actual execution inspector and restores its trigger.
+    key(53);
+    await wait(
+      async () =>
+        !(await browser.$('[role="dialog"][data-state="open"]').isExisting()),
+    );
+    assert.equal(
+      await browser.execute(() => document.activeElement?.textContent?.trim()),
+      "查看设备操作",
+    );
+    result.checks.push("ai-original-operation-inspector");
+
     const proposalsBeforeContext = fixture.facts.proposals.length;
     for (const [width, height] of [
       [1100, 760],
@@ -2088,39 +2098,18 @@ try {
           width < 900,
         ),
       );
-      await navigate("软件中心");
+      await navigate("软件管理");
+      await click("企业软件", '//*[@aria-label="软件视图"]');
+      await click("刷新任务", '//*[contains(@class,"software-production")]');
       await wait(() =>
-        browser.$('[data-action="resource-details"]').isDisplayed(),
+        browser
+          .$(
+            '//*[contains(@class,"software-production")]//button[normalize-space(.)="刷新任务"]',
+          )
+          .isEnabled(),
       );
-      await browser.$('[data-action="resource-details"]').click();
-      await click("询问 AI");
-      await wait(() => browser.$(".context-panel select").isDisplayed());
-      assert.equal(
-        await browser.$('[data-action="choose-conversation"]').isEnabled(),
-        false,
-      );
-      const session = await browser.execute(
-        () =>
-          [...document.querySelector(".context-panel select").options].find(
-            (option) => option.value && option.value !== "new",
-          ).value,
-      );
-      await selectValue(await browser.$(".context-panel select"), session);
-      await click("继续到所选会话");
-      await wait(() => browser.$(".resource-context").isDisplayed());
-      if (width < 1440) {
-        mark(
-          `resource context ${width}×${height}: configuration stays in Agent settings`,
-        );
-        assert.equal(
-          await browser.$(".connection-trigger").isExisting(),
-          false,
-        );
-        assert.equal(
-          await browser.$('[aria-label="更多"]').isExisting(),
-          false,
-        );
-      }
+      await openPageAssistant();
+      assert.equal(await browser.$(".connection-trigger").isExisting(), false);
       assert.equal(
         await browser.execute(
           () => document.querySelectorAll(".assistant").length,
@@ -2157,11 +2146,12 @@ try {
         await browser.saveScreenshot(
           join(reports, "desktop-native-context-wide.png"),
         );
-      await click("关闭资源上下文 AI");
+      await click("关闭电脑助手侧栏");
       await wait(() =>
-        browser.execute(
-          () =>
-            document.activeElement?.getAttribute("data-action") === "ask-ai",
+        browser.execute(() =>
+          document.activeElement?.classList.contains(
+            "workspace-assistant-entry",
+          ),
         ),
       );
       await navigate("AI 助手");
@@ -2179,10 +2169,10 @@ try {
       "context inquiry does not execute tools",
     );
     result.checks.push(
-      "resource-context-explicit-selection",
-      "resource-context-same-session",
-      "resource-context-provider-payload",
-      "resource-context-three-sizes",
+      "page-context-explicit-attachment",
+      "page-context-same-session",
+      "page-context-provider-payload",
+      "page-context-three-sizes",
     );
     const readAppearance = () =>
       browser.execute(() => ({
