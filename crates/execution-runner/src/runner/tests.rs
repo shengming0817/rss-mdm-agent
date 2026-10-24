@@ -1197,7 +1197,14 @@ fn fixed_network_failure_and_signal_exit_prove_termination_without_a_success_rec
         .clone();
     artifacts.interpreter = "/usr/bin/false".into();
     f.plan = FrozenExecution::freeze(input, &execution_app::test_execution_limits()).unwrap();
-    f.runner.artifacts.register(&f.plan, artifacts).unwrap();
+    // As in fixture(), seed test-owned material directly; production registration
+    // correctly requires root-owned immutable sources, which this fixture is not.
+    f.runner = NativeRunner::new(
+        f.runner.id.clone(),
+        BTreeMap::from([(f.plan.digest().as_str().into(), artifacts)]),
+        8,
+    )
+    .unwrap();
     let attempt = start(&f, 4096, 1000);
     let mut facts = finish(&f, &attempt);
     assert_eq!(facts.exit_code, Some(1));

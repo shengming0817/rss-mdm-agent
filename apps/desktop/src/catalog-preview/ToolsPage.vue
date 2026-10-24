@@ -220,14 +220,23 @@ emit(
           </div>
           <section v-if="current.id === 'space'" aria-label="磁盘使用情况">
             <p>可用 {{ facts.storageFree }} GB · {{ facts.storageDetail }}</p>
+            <p v-if="systemSettings?.state.errors.get('storage')" role="alert">
+              {{ systemSettings.state.errors.get("storage") }}
+            </p>
             <p>
               清理范围由组织发布的工具说明。当前页面提供空间查看；请在工具目录选择已授权的清理脚本。
             </p>
             <button
-              :disabled="!systemSettings"
+              :disabled="
+                !systemSettings || systemSettings.state.busy.has('storage')
+              "
               @click="systemSettings?.load('storage', true)"
             >
-              刷新空间信息</button
+              {{
+                systemSettings?.state.busy.has("storage")
+                  ? "正在刷新空间信息…"
+                  : "刷新空间信息"
+              }}</button
             ><button @click="back">查看组织发布的工具</button>
           </section>
           <ConnectionCheck
@@ -238,11 +247,20 @@ emit(
           />
           <section v-if="current.id === 'network'" aria-label="网络与代理事实">
             <p>{{ facts.network }} · {{ facts.networkDetail }}</p>
+            <p v-if="systemSettings?.state.errors.get('network')" role="alert">
+              {{ systemSettings.state.errors.get("network") }}
+            </p>
             <button
-              :disabled="!systemSettings"
+              :disabled="
+                !systemSettings || systemSettings.state.busy.has('network')
+              "
               @click="systemSettings?.load('network', true)"
             >
-              刷新网络状态
+              {{
+                systemSettings?.state.busy.has("network")
+                  ? "正在刷新网络状态…"
+                  : "刷新网络状态"
+              }}
             </button>
             <template
               v-if="systemSettings?.state.observations.get('network')?.snapshot"
