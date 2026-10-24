@@ -396,10 +396,10 @@ const navigate = async (name) => {
       );
       await wait(() =>
         browser.execute(
-          () =>
-            document
-              .querySelector(".software-production, .task-records")
-              ?.getClientRects().length > 0,
+          (selector) =>
+            (document.querySelector(selector)?.getClientRects().length ?? 0) >
+            0,
+          name === "软件中心" ? ".software-production" : ".task-records",
         ),
       );
     } else {

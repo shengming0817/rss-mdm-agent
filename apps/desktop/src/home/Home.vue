@@ -127,7 +127,13 @@ const addressesOpen = ref(false);
         <span class="stat-label"
           ><Package :size="17" aria-hidden="true" />我的应用</span
         ><strong
-          >{{ softwareRead ? installed.length : "—" }}<em>个已安装</em></strong
+          >{{
+            softwareRead
+              ? summary?.complete
+                ? installed.length
+                : `已加载 ${installed.length}`
+              : "—"
+          }}<em>{{ summary?.complete ? "个已安装" : "项安装观察" }}</em></strong
         ><small>{{
           softwareRead
             ? `${summary?.complete ? "完整清单" : "部分或过期清单"} · 当前加载 ${installed.length} 项 · ${updates ?? "—"} 个固定更新候选`

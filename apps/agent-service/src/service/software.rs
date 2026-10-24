@@ -294,12 +294,16 @@ impl Core {
                     if !matches {
                         continue;
                     }
-                    let frozen = self.local_software_input(
+                    let frozen = match self.local_software_input(
                         command,
                         context,
                         &details.status.operation_request_id,
                         false,
-                    )?;
+                    ) {
+                        Ok(frozen) => frozen,
+                        Err(Error::Identity | Error::Denied) => continue,
+                        Err(error) => return Err(error),
+                    };
                     if let Reply::SoftwareStatus { value } = self.software_status(&frozen)? {
                         items.push(value);
                     }

@@ -20,6 +20,7 @@ const selfServiceCommands = [
   "query_submit",
   "query_status",
   "query_cancel",
+  "self_service_recent_tasks",
   "self_service_snapshot",
   "self_service_execute",
   "self_service_confirm",
@@ -391,7 +392,8 @@ export function checkSource(file, source) {
     const assistantGlobals = {
       "apps/desktop/src/workspace/page-context.ts": ["JSON"],
       "apps/desktop/src/workspace/identity.ts": ["JSON"],
-      "apps/desktop/src/self-service/directory.ts": ["Set", "Symbol"],
+      "apps/desktop/src/home/Home.vue": ["JSON"],
+      "apps/desktop/src/self-service/directory.ts": ["Set", "Symbol", "JSON"],
       "apps/desktop/src/self-service/activity.ts": ["Set", "Symbol"],
       "apps/desktop/src/software/SoftwareManagement.vue": [
         "JSON",
@@ -416,6 +418,7 @@ export function checkSource(file, source) {
         "clearInterval",
       ],
       "apps/desktop/src/Workspace.vue": [
+        "JSON",
         "document",
         "HTMLElement",
         "ResizeObserver",
@@ -774,6 +777,13 @@ export function checkSource(file, source) {
       dataRoots["apps/desktop/src/settings/DiagnosticsPanel.vue"] = [
         "s.scopes",
         "_ctx.s.scopes",
+      ];
+      dataRoots["apps/desktop/src/home/Home.vue"] = [
+        "taskPhase",
+        "_ctx.taskPhase",
+      ];
+      dataRoots["apps/desktop/src/system-settings/facts.ts"] = [
+        "qualityLabels",
       ];
       dataRoots["apps/desktop/src/system-settings/controller.ts"] = [
         "families",

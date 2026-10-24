@@ -1,4 +1,4 @@
-import { flushPromises, shallowMount } from "@vue/test-utils";
+import { flushPromises, mount, shallowMount } from "@vue/test-utils";
 import { expect, it, vi } from "vitest";
 import MdmRegistration from "./MdmRegistration.vue";
 import type { SelfServicePort } from "../self-service/types";
@@ -212,3 +212,43 @@ it("invalidates hidden work, resumes on activation and stops polling after unmou
     vi.useRealTimers();
   }
 });
+
+it("shares the workspace directory owner instead of creating a proxied transport directory", async () => {
+  const read = vi.fn(async () => ({ items: [], nextCursor: null, asOf: 1 }));
+  const owner = {
+    ...policyFixturePort,
+    policy_directory: read,
+    snapshot: async () => ({
+      available: [],
+      preparations: [],
+      requests: [],
+      selected: null,
+      next: null,
+    }),
+    execute: vi.fn(),
+    confirm: vi.fn(),
+    cancel: vi.fn(),
+  } as SelfServicePort;
+  const catalog = createDirectory(owner);
+  await catalog.load();
+  const w = mount(MdmRegistration, {
+    props: {
+      fixture: true,
+      executionPort: owner,
+      servicePort: {
+        mdmStatus: async () => ({ state: "unenrolled" as const }),
+      },
+    },
+    global: { provide: { [directoryKey as symbol]: catalog } },
+  });
+  try {
+    await flushPromises();
+    expect(w.getComponent(PolicySelfService).text()).toContain("MDM 注册");
+    expect(read).toHaveBeenCalledTimes(1);
+  } finally {
+    w.unmount();
+    catalog.dispose();
+  }
+});
+import { createDirectory, directoryKey } from "../self-service/directory";
+import { policyFixturePort } from "../../../../tests/self-service/support";

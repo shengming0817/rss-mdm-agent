@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import type { Controller } from "./controller";
 import TaskDetail from "./TaskDetail.vue";
+import PolicySelfService from "./PolicySelfService.vue";
 import PolicyPreparation from "./PolicyPreparation.vue";
 const props = defineProps<{ controller: Controller }>();
 const c = props.controller,
@@ -150,7 +151,7 @@ function failureLabel(value: string) {
       </section>
       <PolicyPreparation
         v-for="pending in s.snapshot.preparations.filter(
-          (p) => p.action.kind !== 'offered',
+          (p) => p.action.kind === 'softwareRead',
         )"
         :key="
           pending.action.kind === 'offered'
@@ -158,6 +159,13 @@ function failureLabel(value: string) {
             : pending.action.choice.request
         "
         :record="pending"
+      />
+      <PolicySelfService
+        :port="c.port"
+        :records="s.snapshot.preparations"
+        kind="all"
+        :allow-new-requests="false"
+        @changed="c.refresh"
       />
       <section class="execution-records" aria-label="执行记录">
         <h3 v-if="s.snapshot.requests.length">执行记录</h3>

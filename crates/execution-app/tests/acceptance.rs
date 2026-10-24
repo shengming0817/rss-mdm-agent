@@ -3113,6 +3113,12 @@ fn recent_tasks_follow_durable_activity_not_uuid_and_survive_reopen() {
             first.spec().request.request_id.clone()
         ]
     );
+    assert!(app
+        .service_recent_tasks(None, 64)
+        .unwrap()
+        .items
+        .iter()
+        .all(|item| item.recorded_at_unix_ms == 1000));
     let before = db.count("receipts");
     app.service_recent_tasks(None, 64).unwrap();
     assert_eq!(db.count("receipts"), before);

@@ -119,10 +119,10 @@ export function createSoftware(
           s.page.enumerationComplete &&
           !s.error,
       ),
-    read:
-      state.directoryComplete &&
-      state.sources.length > 0 &&
-      state.sources.every((s) => !!s.page),
+    read: state.sources.some(
+      (s) =>
+        s.page && ["complete", "partial", "truncated"].includes(s.page.quality),
+    ),
     loading: state.loading || state.sources.some((s) => s.busy),
     error: state.error || state.sources.find((s) => s.error)?.error || "",
     collectedAt: state.sources.reduce<number | null>(

@@ -54,40 +54,6 @@ function operationLabel(value: string) {
       return "未知操作";
   }
 }
-function stateLabel(value: string) {
-  switch (value) {
-    case "awaitingConfirmation":
-      return "等待本人确认";
-    case "ready":
-      return "待执行";
-    case "submitting":
-      return "准备执行";
-    case "failed":
-      return "准备失败；没有创建新尝试";
-    case "cancelled":
-      return "已撤销";
-    default:
-      return "状态未知";
-  }
-}
-function failureLabel(value: string) {
-  switch (value) {
-    case "riskUnknown":
-      return "后台未提供可信风险等级，AI 操作已拒绝";
-    case "riskBlocked":
-      return "后台风险策略禁止 AI 执行此操作";
-    case "preparationFailed":
-      return "本机条件或后台 Start 未满足";
-    case "interrupted":
-      return "服务中断，未重新执行";
-    case "expired":
-      return "原任务已过期";
-    case "revoked":
-      return "后台授权已撤销";
-    default:
-      return "状态未知";
-  }
-}
 </script>
 <template>
   <section class="backend-offers" aria-label="当前已签名任务">

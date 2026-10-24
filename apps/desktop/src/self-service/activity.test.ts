@@ -55,3 +55,18 @@ it("retains failed page cursors and detects a repeated continuation", async () =
   expect(c.state.next).toBe("10");
   c.dispose();
 });
+
+it("refreshes the first page after loading more without treating its next cursor as a cycle", async () => {
+  const recent = vi
+    .fn()
+    .mockResolvedValueOnce({ items: [], next: "10" })
+    .mockResolvedValueOnce({ items: [], next: "5" })
+    .mockResolvedValueOnce({ items: [], next: "10" });
+  const c = createActivity({ recent_tasks: recent });
+  await c.load();
+  await c.load(true);
+  await c.load();
+  expect(c.state.error).toBe("");
+  expect(c.state.next).toBe("10");
+  c.dispose();
+});

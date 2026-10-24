@@ -26,12 +26,12 @@ export function createDirectory(
       after = append ? state.next : null;
     state.loading = true;
     try {
-      if (visited.size >= 2048) throw Error("capacity");
+      if (append && visited.size >= 2048) throw Error("capacity");
       const page = await port.policy_directory({ after });
       if (!active || call !== epoch) return;
       if (
         page.nextCursor &&
-        (page.nextCursor === after || visited.has(page.nextCursor))
+        (page.nextCursor === after || (append && visited.has(page.nextCursor)))
       )
         throw Error("cursor");
       if (!append) {

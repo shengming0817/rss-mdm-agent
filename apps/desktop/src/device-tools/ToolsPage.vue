@@ -440,7 +440,6 @@ emit("navigation", navigation);
           <h3>组织发布的工具</h3>
           <PolicySelfService
             ref="enterprise"
-            v-if="active"
             :port="execution?.port ?? null"
             :records="execution?.state.snapshot?.preparations ?? []"
             kind="script"

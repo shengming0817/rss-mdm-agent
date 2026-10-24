@@ -4842,6 +4842,11 @@ async fn local_software_api_stages_no_attempt_and_replays_the_original_after_los
             reason: DataError::Denied
         }
     ));
+    c.employee("fresh-software-history-context").await;
+    assert!(
+        matches!(c.local_software_call(LocalSoftwareOperation::History(SoftwareHistoryQuery{after:None,limit:64}),false).await,
+        Reply::SoftwareHistory{value} if value.items.is_empty())
+    );
 }
 #[cfg(target_os = "macos")]
 #[tokio::test]

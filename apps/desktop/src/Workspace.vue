@@ -180,7 +180,7 @@ const searchState = computed(() => {
     hasMore: states.some((value) => value!.hasMore),
     error: states
       .map((value) => value!.error)
-      .filter(Boolean)
+      .filter((value) => !!value)
       .join(" · "),
   };
 });
@@ -476,20 +476,18 @@ const homeResources = computed(() => {
         summary.collectedAt == null ? 0 : (summary.collectedAt + 300) * 1000,
       verified: summary.read && !summary.error,
     },
-    ...activity.state.items
-      .slice(0, 6)
-      .map((item) => ({
-        id: item.details.action.requestId,
-        title: item.details.action.operation.action,
-        description: item.details.status.phase,
-        source: "原任务 journal",
-        revision: JSON.stringify([
-          item.details.action.contentDigest,
-          item.details.status,
-        ]),
-        collectedAt: item.recordedAtUnixMs,
-        verified: !activity.state.error,
-      })),
+    ...activity.state.items.slice(0, 6).map((item) => ({
+      id: item.details.action.requestId,
+      title: item.details.action.operation.action,
+      description: item.details.status.phase,
+      source: "原任务 journal",
+      revision: JSON.stringify([
+        item.details.action.contentDigest,
+        item.details.status,
+      ]),
+      collectedAt: item.recordedAtUnixMs,
+      verified: !activity.state.error,
+    })),
   ];
 });
 const pageContexts = computed(() =>
@@ -1148,7 +1146,7 @@ onBeforeUnmount(() => {
           v-show="!ready || page === 'settings'"
           :host="host"
           :service-port="servicePort"
-          :self-service-port="selfServicePort"
+          :self-service-port="controller?.port ?? selfServicePort"
           :device="device.state.value"
           :fixture="fixture"
           :active="!ready || page === 'settings'"

@@ -23,7 +23,9 @@ export function createActivity(
       if (!active || call !== epoch) return;
       if (
         page.next &&
-        (page.next === before || seen.has(page.next) || seen.size >= 2048)
+        (page.next === before ||
+          (append && seen.has(page.next)) ||
+          (append && seen.size >= 2048))
       )
         throw Error("cursor");
       if (!append) seen.clear();

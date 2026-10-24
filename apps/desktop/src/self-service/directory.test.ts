@@ -41,3 +41,18 @@ it("does not publish a retired subject's late directory and preserves the retry 
   expect(c.state.next).toBeNull();
   expect(c.state.items).toEqual([]);
 });
+
+it("starts a fresh discovery after a paged traversal without reusing its visited cursor set", async () => {
+  const read = vi
+    .fn()
+    .mockResolvedValueOnce({ items: [], nextCursor: "1", asOf: 1 })
+    .mockResolvedValueOnce({ items: [], nextCursor: "2", asOf: 1 })
+    .mockResolvedValueOnce({ items: [], nextCursor: "1", asOf: 2 });
+  const c = createDirectory({ policy_directory: read });
+  await c.load();
+  await c.load(true);
+  await c.load();
+  expect(c.state.error).toBe("");
+  expect(c.state.next).toBe("1");
+  c.dispose();
+});

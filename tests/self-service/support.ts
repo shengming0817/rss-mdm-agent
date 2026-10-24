@@ -76,3 +76,61 @@ export const policyFixturePort: Pick<
     throw new Error("fixture detector not configured");
   },
 };
+
+/** A minimal authorized script request for UI request recovery journeys. */
+export function policyRecord(
+  request = "original-policy",
+): import("../../apps/desktop/src/self-service/types").BackendRequest {
+  return {
+    action: {
+      kind: "policy",
+      choice: {
+        request,
+        policyId: "policy",
+        policyRevision: 1,
+        policyVersion: "version",
+        parameters: {},
+      },
+      locator: { after: null },
+      directory: {
+        policyId: "policy",
+        policyRevision: 1,
+        policyVersion: "version",
+        subject: { kind: "device" },
+        task: {
+          kind: "script",
+          runAs: "system",
+          resource: { id: "r", version: "1", variant: "macos" },
+          parameterSchema: { type: "object" },
+          parameterSources: {},
+        },
+        selfService: {
+          published: true,
+          allowAi: true,
+          riskLevel: 1,
+          presentation: {
+            displayName: "Published tool",
+            description: "Read state",
+          },
+        },
+      },
+      access: { kind: "device" },
+      expiresAtUnixMs: Date.now() + 60_000,
+      runId: null,
+      offer: null,
+    },
+    trigger: {
+      kind: "human",
+      osSession: {
+        device: "d",
+        account: { platform: "macos", subject: "501" },
+        session: "login",
+      },
+    },
+    risk: null,
+    confirmation: null,
+    revision: 1,
+    state: "awaitingConfirmation",
+    failure: null,
+  };
+}
