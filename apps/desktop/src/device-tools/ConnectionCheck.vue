@@ -191,7 +191,9 @@ onBeforeUnmount(() => {
       <p>
         {{ (value ? phases[value.status.phase] : undefined) ?? "提交结果待查询"
         }}{{
-          value?.status.cancelRequested ? " · 已请求取消，正在核实终止" : ""
+          value?.status.cancelRequested && !finished
+            ? " · 已请求取消，正在核实终止"
+            : ""
         }}
       </p>
       <button :disabled="busy" @click="call('status')">查询原请求</button>
@@ -202,6 +204,12 @@ onBeforeUnmount(() => {
         取消检查
       </button>
       <button @click="emit('task', request)">查看原任务</button>
+      <p
+        v-if="finished && !value?.result && value?.status.phase !== 'cancelled'"
+        role="alert"
+      >
+        检查未取得完整结果，请查看原任务。
+      </p>
       <template v-if="value?.result">
         <p>
           {{ value.result.target.host }}:{{ value.result.target.port }} ·
