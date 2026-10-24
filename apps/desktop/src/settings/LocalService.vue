@@ -192,9 +192,7 @@ onUnmounted(() => {
       {{
         view.status.readiness.phase === "ready"
           ? "已连接，执行服务就绪。"
-          : view.status.readiness.phase === "registrationRequired"
-            ? "已连接，尚未完成可信注册。"
-            : "已连接，执行服务暂未就绪。已有设备身份保留，请查看诊断后重新查询。"
+          : "已连接，执行服务暂未就绪。已有设备身份保留，请查看诊断后重新查询。"
       }}
     </p>
     <p v-else>服务不可用或对端认证未通过，请检查服务状态与访问许可。</p>

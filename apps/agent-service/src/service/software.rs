@@ -11,12 +11,25 @@ fn text<'a>(row: &'a Value, key: &str) -> Option<&'a str> {
         .filter(|v| !v.is_empty())
 }
 impl Core {
-    fn software_policy(&self) -> Result<crate::local_software::Policy, Error> {
+    fn select_local_software(
+        &self,
+        item: &InstalledSoftware,
+        row: &Value,
+        action: LocalSoftwareAction,
+    ) -> Result<crate::local_software::native::Target, Error> {
+        #[cfg(test)]
+        if let Some(select) = self.local_target_fixture {
+            return Ok(select(item));
+        }
+        crate::local_software::native::select(item, row, action)
+    }
+
+    pub(super) fn software_policy(&self) -> Result<crate::local_permissions::Policy, Error> {
         #[cfg(test)]
         if let Some(open) = self.local_policy_fixture {
-            return open(&self.config.local_software);
+            return open(&self.config.local_permissions);
         }
-        crate::local_software::Policy::open(&self.config.local_software)
+        crate::local_permissions::Policy::open(&self.config.local_permissions)
     }
     pub(super) fn read_software(
         &mut self,
@@ -136,7 +149,7 @@ pub(super) fn software_item(
 }
 
 impl Core {
-    fn software_initiator(
+    pub(super) fn software_initiator(
         &self,
         command: &Command,
         origin: &ClientOrigin,
@@ -144,7 +157,7 @@ impl Core {
         let binding = command.binding.as_ref().ok_or(Error::Denied)?;
         self.require_origin_context(&command.subject, binding, origin)?;
         let os_session = OsSessionRef {
-            device: self.host.binding.device.clone(),
+            device: self.host.root.device.clone(),
             account: OsAccountRef {
                 platform: plan::platform()?,
                 subject: plan::id(&command.subject)?,
@@ -215,7 +228,7 @@ impl Core {
         self.data_context(command, context)?;
         let frozen = self
             .app
-            .frozen_input(&self.caller(), request)
+            .frozen_input(&self.local_caller(), request)
             .map_err(map_app_error)?;
         let session = match &frozen.spec().request.initiator {
             Initiator::Human { os_session } | Initiator::Ai { os_session, .. } => os_session,
@@ -228,7 +241,7 @@ impl Core {
             .as_str()
             .starts_with("local-software:")
             || session.account.subject.as_str() != command.subject
-            || session.device != self.host.binding.device
+            || session.device != self.host.root.device
         {
             return Err(Error::Denied);
         }
@@ -309,7 +322,7 @@ impl Core {
                 let initiator = self.software_initiator(command, origin)?;
                 if self
                     .app
-                    .has_service_execution(&choice.request, &self.host.binding.device)
+                    .has_service_execution(&choice.request, &self.host.root.device)
                     .map_err(map_app_error)?
                 {
                     let frozen =
@@ -334,8 +347,8 @@ impl Core {
                 {
                     return Err(Error::Denied);
                 }
-                if choice.action == LocalSoftwareAction::Update && !policy.rules.allow_user_update {
-                    return Err(Error::Denied);
+                if choice.action == LocalSoftwareAction::Update {
+                    return Err(Error::Unsupported);
                 }
                 let helper = if matches!(item.scope, DataScope::User { .. })
                     || choice.action == LocalSoftwareAction::Launch
@@ -348,43 +361,21 @@ impl Core {
                 } else {
                     None
                 };
-                let (frozen, artifacts) = if let Some(recipe) =
-                    policy.rules.recipe(&item, choice.action)
-                {
-                    let work_root = helper
-                        .as_ref()
-                        .map(|h| h.context().work_root.clone())
-                        .unwrap_or_else(|| self.config.work_root.clone());
-                    crate::local_software::compile::recipe(
-                        recipe,
-                        choice,
-                        &item,
-                        &self.host.binding,
-                        &self.host.actor,
-                        initiator,
-                        context,
-                        &policy,
-                        self.host.clock.millis()?,
-                        helper,
-                        work_root,
-                    )?
-                } else {
-                    let target = crate::local_software::native::select(&item, &row, choice.action)?;
-                    crate::local_software::compile::native(
-                        target,
-                        choice,
-                        &item,
-                        &self.host.binding,
-                        &self.host.actor,
-                        initiator,
-                        context,
-                        &policy,
-                        self.host.clock.millis()?,
-                        &self.config,
-                        &mut self.material_root,
-                        helper,
-                    )?
-                };
+                let target = self.select_local_software(&item, &row, choice.action)?;
+                let (frozen, artifacts) = crate::local_software::compile::native(
+                    target,
+                    choice,
+                    &item,
+                    &self.host.root,
+                    &self.host.local_actor,
+                    initiator,
+                    context,
+                    &policy,
+                    self.host.clock.millis()?,
+                    &self.config,
+                    &mut self.material_root,
+                    helper,
+                )?;
                 policy.current()?;
                 self.data_context(command, context)?;
                 self.host
@@ -397,7 +388,7 @@ impl Core {
                 );
                 let fences = self.fences.clone();
                 let _fence = fences.admit(&scope, command.fence_epoch)?;
-                let staged = self.app.stage_execution(&self.caller(), &frozen);
+                let staged = self.app.stage_execution(&self.local_caller(), &frozen);
                 // Preparation has no running attempt. Keep the canonical input in the journal;
                 // submission reconstructs and rechecks materials instead of pinning registry capacity.
                 self.host
@@ -419,7 +410,7 @@ impl Core {
                 }
                 let before = self
                     .app
-                    .status(&self.caller(), &submit.request)
+                    .status(&self.local_caller(), &submit.request)
                     .map_err(map_app_error)?;
                 // Once admitted, reconciliation owns recovery. No source refresh can start it again.
                 if before.attempts > 0 || before.cancel_requested || before.admission.is_some() {
@@ -441,10 +432,8 @@ impl Core {
                 {
                     return Err(Error::Denied);
                 }
-                if preview.choice.action == LocalSoftwareAction::Update
-                    && !policy.rules.allow_user_update
-                {
-                    return Err(Error::Denied);
+                if preview.choice.action == LocalSoftwareAction::Update {
+                    return Err(Error::Unsupported);
                 }
                 let helper = if matches!(frozen.spec().run_as, RunAs::User { .. }) {
                     Some(self.helpers.connect_peer(
@@ -455,32 +444,22 @@ impl Core {
                 } else {
                     None
                 };
-                let artifacts = if frozen.spec().launch.interpreter.profile.id.as_str()
-                    == crate::local_software::native::PROFILE
+                if frozen.spec().launch.interpreter.profile.id.as_str()
+                    != crate::local_software::native::PROFILE
+                    || !crate::local_software::native::allowed(&policy.rules, preview.choice.action)
                 {
-                    if !crate::local_software::native::allowed(&policy.rules, preview.choice.action)
-                    {
-                        return Err(Error::Denied);
-                    }
-                    let original: crate::local_software::native::Target =
-                        parameter(&frozen, "local-software-native")?;
-                    if crate::local_software::native::select(&item, &row, preview.choice.action)?
-                        != original
-                    {
-                        return Err(Error::Conflict);
-                    }
-                    crate::local_software::compile::native_materials(&frozen, &self.config, helper)?
-                } else {
-                    let recipe = policy
-                        .rules
-                        .recipe(&item, preview.choice.action)
-                        .ok_or(Error::Unsupported)?;
-                    let root = helper
-                        .as_ref()
-                        .map(|h| h.context().work_root.clone())
-                        .unwrap_or_else(|| self.config.work_root.clone());
-                    crate::local_software::compile::materials(&frozen, recipe, helper, root)?
-                };
+                    return Err(Error::Denied);
+                }
+                let original: crate::local_software::native::Target =
+                    parameter(&frozen, "local-software-native")?;
+                if self.select_local_software(&item, &row, preview.choice.action)? != original {
+                    return Err(Error::Conflict);
+                }
+                let artifacts = crate::local_software::compile::native_materials(
+                    &frozen,
+                    &self.config,
+                    helper,
+                )?;
                 if self
                     .host
                     .materials
@@ -512,12 +491,12 @@ impl Core {
                 let result = (|| {
                     let status = self
                         .app
-                        .request_execution(&self.caller(), &frozen)
+                        .request_execution(&self.local_caller(), &frozen)
                         .map_err(map_app_error)?;
                     if status.phase == execution_app::TaskPhase::ConfirmationRequired {
                         self.app
                             .confirm_execution(
-                                &self.caller(),
+                                &self.local_caller(),
                                 &submit.request,
                                 &submit.digest,
                                 true,
@@ -537,7 +516,7 @@ impl Core {
                 let frozen = self.local_software_input(command, context, &query.request, false)?;
                 if matches!(input, LocalSoftwareOperation::Cancel(_)) {
                     self.app
-                        .cancel(&self.caller(), &query.request)
+                        .cancel(&self.local_caller(), &query.request)
                         .map_err(map_app_error)?;
                 }
                 self.app.reconcile(&query.request).map_err(map_app_error)?;
@@ -570,7 +549,7 @@ impl Core {
                 prepared: software_preview(frozen)?,
                 execution: self
                     .app
-                    .status(&self.caller(), &frozen.spec().request.request_id)
+                    .status(&self.local_caller(), &frozen.spec().request.request_id)
                     .map_err(map_app_error)?,
             },
         })
@@ -608,7 +587,7 @@ fn software_preview(frozen: &FrozenExecution) -> Result<LocalSoftwarePrepared, E
 fn software_actions(
     item: &InstalledSoftware,
     row: &Value,
-    rules: Option<&crate::local_software::Rules>,
+    rules: Option<&crate::local_permissions::Restrictions>,
     usable: bool,
 ) -> Vec<SoftwareActionView> {
     let native = match item.kind {
@@ -641,14 +620,12 @@ fn software_actions(
     ]
     .into_iter()
     .map(|action| {
-        let recipe = rules.and_then(|r| r.recipe(item, action));
         let reason = if !usable {
             Some(SoftwareBlock::ObservationUnavailable)
         } else if let Some(rules) = rules {
             if action == LocalSoftwareAction::Uninstall
                 && item.kind == InstalledSoftwareKind::Application
                 && matches!(item.scope, DataScope::Device)
-                && recipe.is_none()
                 && text(row, "location").is_none_or(|p| {
                     std::path::Path::new(p).parent() != Some(std::path::Path::new("/Applications"))
                 })
@@ -661,14 +638,11 @@ fn software_actions(
                 )
             {
                 Some(SoftwareBlock::Protected)
-            } else if (action == LocalSoftwareAction::Update && !rules.allow_user_update)
-                || (action == LocalSoftwareAction::Launch && !rules.allow_launch)
-                || (action == LocalSoftwareAction::Uninstall
-                    && recipe.is_none()
-                    && !rules.allow_native_uninstall)
+            } else if (action == LocalSoftwareAction::Launch && !rules.allow_launch)
+                || (action == LocalSoftwareAction::Uninstall && !rules.allow_native_uninstall)
             {
                 Some(SoftwareBlock::RuleDisabled)
-            } else if action == LocalSoftwareAction::Update && recipe.is_none() {
+            } else if action == LocalSoftwareAction::Update {
                 Some(SoftwareBlock::UpdateUnknown)
             } else if action == LocalSoftwareAction::Launch
                 && !matches!(
@@ -677,8 +651,8 @@ fn software_actions(
                 )
             {
                 Some(SoftwareBlock::NoGui)
-            } else if recipe.is_none() && !native {
-                Some(SoftwareBlock::RecipeUnavailable)
+            } else if !native {
+                Some(SoftwareBlock::Unsupported)
             } else {
                 None
             }
@@ -689,7 +663,7 @@ fn software_actions(
             action,
             available: reason.is_none(),
             reason,
-            target_version: recipe.and_then(|r| r.target_version.clone()),
+            target_version: None,
         }
     })
     .collect()

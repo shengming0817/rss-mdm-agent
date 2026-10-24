@@ -1381,7 +1381,7 @@ def main():
                           installation_id=str(uuid.uuid4()), installation_artifact=hashlib.sha256(args.binary.read_bytes()).hexdigest(),
                           state_root=str(protected / 'state'),
                           helper_work_roots={str(os.geteuid()): str(helper_root)},
-                          execution=dict(work_root=str(protected / 'work'), material_root=str(protected / 'materials'),
+                          execution=dict(local_permissions=dict(policyFile=str(protected / 'local-permissions.json')), work_root=str(protected / 'work'), material_root=str(protected / 'materials'),
                                          interpreters=[], managers=[], processes=8))
         setup = lab / 'install.py'
         setup.write_text(inspect.getsource(copy_candidate) + inspect.getsource(instrument_service_diagnostics) + '''import hashlib,json,os,re,shutil,subprocess

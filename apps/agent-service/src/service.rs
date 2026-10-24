@@ -15,6 +15,9 @@ use execution_runner::{MaterialRegistry, NativeRunner};
 use rss_mdm_agent_wire::runtime as wire;
 mod data;
 mod policy;
+mod settings;
+pub(crate) const RESULT_CONSUMER: &str = "execution-results";
+pub(crate) const SHUTDOWN_WAIT: std::time::Duration = std::time::Duration::from_secs(28);
 mod software;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -25,11 +28,19 @@ use std::{
     },
 };
 
+#[cfg(test)]
+type WorkerImageFixture =
+    fn(&ExecutionConfig) -> Result<execution_contract::SoftwareMaterial, Error>;
+
 /// Explicit local execution resources from the protected deployment configuration.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExecutionConfig {
-    pub local_software: crate::local_software::LocalSoftwareConfig,
+    // Explicit test worker identity; absent from production binaries and wire.
+    #[cfg(test)]
+    #[serde(skip)]
+    pub(crate) worker_image_fixture: Option<WorkerImageFixture>,
+    pub local_permissions: crate::local_permissions::Config,
     pub work_root: PathBuf,
     pub material_root: PathBuf,
     pub interpreters: Vec<Interpreter>,
@@ -132,7 +143,8 @@ pub struct DeviceService<S: IdentityProvider = DeviceSecrets> {
     pub(crate) installation: Option<crate::deployment::Deployment>,
 }
 impl<S: IdentityProvider> DeviceService<S> {
-    /// Open an already registered device. Create/open selection never follows an error fallback.
+    /// Open the installation execution owner, independently from enterprise registration.
+    /// Create/open selection never follows an error fallback.
     pub fn open(
         client: Client<S, SystemClock>,
         journal: &Path,
@@ -140,6 +152,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         config: ExecutionConfig,
         clock: SystemClock,
         helpers: UserResources,
+        installation: uuid::Uuid,
     ) -> Result<Self, Error> {
         Self::assemble(
             client,
@@ -149,10 +162,12 @@ impl<S: IdentityProvider> DeviceService<S> {
             clock,
             helpers,
             execution_runner::staging::MaterialRoot::open,
+            installation,
         )
     }
     // The only production caller supplies MaterialRoot::open. Unit preparation fixtures
     // select an explicit fixture constructor without changing dispatch or journal ownership.
+    #[allow(clippy::too_many_arguments)] // Explicit installation, journal and OS resource owners.
     fn assemble(
         mut client: Client<S, SystemClock>,
         journal: &Path,
@@ -166,6 +181,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             &Path,
         )
             -> Result<execution_runner::staging::MaterialRoot, execution_app::Error>,
+        installation: uuid::Uuid,
     ) -> Result<Self, Error> {
         if config.interpreters.len() > 8 || config.processes == 0 || config.processes > 128 {
             return Err(Error::Configuration);
@@ -180,11 +196,20 @@ impl<S: IdentityProvider> DeviceService<S> {
         }
         client.set_profiles(profiles)?;
         platform_private_storage::validate(&config.work_root)?;
-        let (binding, actor) = plan::context(
+        let (root, local_actor) = crate::local_execution::binding(
             client.configuration().service_id,
             client.configuration().tenant,
-            &client.registration()?,
+            installation,
         )?;
+        let (binding, actor) = match client.registration() {
+            Ok(registration) => plan::context(
+                client.configuration().service_id,
+                client.configuration().tenant,
+                &registration,
+            )?,
+            Err(Error::Identity) => (root.clone(), local_actor.clone()),
+            Err(error) => return Err(error),
+        };
         let materials = MaterialRegistry::new(client.configuration().limits.pending_tasks)
             .map_err(crate::error::app_error)?;
         let runner = NativeRunner::with_materials(
@@ -193,14 +218,29 @@ impl<S: IdentityProvider> DeviceService<S> {
             config.processes,
         )
         .map_err(crate::error::app_error)?;
+        let namespaces = client
+            .execution_profiles()?
+            .iter()
+            .map(|profile| {
+                plan::context(
+                    client.configuration().service_id,
+                    client.configuration().tenant,
+                    profile,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let host = EnterpriseHost {
             binding,
+            root,
+            local_actor,
+            namespaces,
             actor,
             clock,
             materials,
             subject: execution_ipc::host::current_subject().map_err(crate::error::app_error)?,
             current: Arc::new(Mutex::new(None)),
-            local_query: Arc::new(Mutex::new(None)),
+            local_read: Arc::new(Mutex::new(None)),
+            local_settings: Arc::new(Mutex::new(None)),
             local_software: Arc::new(Mutex::new(None)),
             local_stopped: Arc::new(AtomicBool::new(false)),
             identity_until: client.runtime_gate(),
@@ -219,24 +259,32 @@ impl<S: IdentityProvider> DeviceService<S> {
         let owner = execution_contract::Digest::new(format!(
             "{:x}",
             Sha256::digest(
-                serde_json::to_vec(&(&host.binding.authority, &host.binding.device))
+                serde_json::to_vec(&(&host.root.authority, &host.root.device))
                     .map_err(|_| Error::Configuration)?
             )
         ))
         .map_err(|_| Error::Configuration)?;
         let material_root = open_materials(&config.material_root, &owner, journal)
             .map_err(crate::error::app_error)?;
-        let mut data =
-            crate::collected_data::Data::new(client.collected_store()?, client.output_policy()?);
+        let mut data = crate::collected_data::Data::new(
+            client.collected_store_for_installation(installation)?,
+            client.output_policy()?,
+        );
+        data.bind_enterprise(
+            matches!(
+                host.binding.authority,
+                execution_contract::Authority::Enterprise { .. }
+            )
+            .then_some(&host.binding.authority),
+        )?;
         if let Err(error) = data.install_local() {
             eprintln!("agent_collected_data: {error}");
         }
         let output = client.output_policy()?;
-        let telemetry = if client
-            .registration()?
-            .capabilities
-            .contains(&wire::Capability::TelemetryCollectV1)
-        {
+        let telemetry = if client.registration().is_ok_and(|r| {
+            r.capabilities
+                .contains(&wire::Capability::TelemetryCollectV1)
+        }) {
             Some(crate::telemetry::Telemetry::open(&client)?)
         } else {
             None
@@ -254,6 +302,8 @@ impl<S: IdentityProvider> DeviceService<S> {
                 access,
                 #[cfg(test)]
                 local_policy_fixture: None,
+                #[cfg(test)]
+                local_target_fixture: None,
                 telemetry,
                 data,
                 app,
@@ -278,7 +328,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 policy_commands: Default::default(),
                 psso: platform_sso::State::default(),
             },
-            bridge: ExecutionBridge::new(plan::id("backend-results")?, output),
+            bridge: ExecutionBridge::new(plan::id(RESULT_CONSUMER)?, output),
             waiting: None,
             next_network: std::time::Instant::now(),
             next_enrollment: std::time::Instant::now(),
@@ -292,7 +342,11 @@ impl<S: IdentityProvider> DeviceService<S> {
         &mut self,
         commands: &mut tokio::sync::mpsc::Receiver<Command>,
     ) -> Result<(), Error> {
-        if let Some(deployment) = self.installation.clone() {
+        if let Some(deployment) = self
+            .installation
+            .clone()
+            .filter(|_| self.client.registration().is_ok())
+        {
             if let Some(permit) = self.client.accepted_unmanage(deployment.installation_id)? {
                 self.core.host.revoked.store(true, Ordering::Release);
                 self.core.revoke_preparations()?;
@@ -313,13 +367,35 @@ impl<S: IdentityProvider> DeviceService<S> {
         while let Ok(command) = commands.try_recv() {
             self.core.handle(command);
         }
+        if !self.core.stopping {
+            self.drive_platform_sso(commands).await?;
+        }
+        self.drive_policy(commands).await?;
+        self.observe_mdm(commands).await?;
+        self.reclaim_owner_step();
+        if self.client.registration().is_err() {
+            self.core.reconcile()?;
+            if std::time::Instant::now() >= self.next_enrollment {
+                self.next_enrollment =
+                    std::time::Instant::now() + std::time::Duration::from_secs(2);
+                if let Some(deployment) = &self.installation {
+                    self.client
+                        .prepare_managed_enrollment(deployment.capabilities())?;
+                }
+                if self.client.has_pending_enrollment()? {
+                    network(self.client.drive_pki(), &mut self.core, commands).await?;
+                }
+            }
+            if self.client.registration().is_err() {
+                return Ok(());
+            }
+        }
+        self.activate_enterprise()?;
         self.update_identity_gate();
         if self.core.stopping {
             return Ok(());
         }
-        self.drive_platform_sso(commands).await?;
         self.core.step_telemetry();
-        self.reclaim_owner_step();
         if std::time::Instant::now() >= self.next_enrollment {
             self.core.access.prune();
             let access_ready = self.waiting.as_ref().is_some_and(|(offer, _)| {
@@ -632,25 +708,6 @@ impl<S: IdentityProvider> DeviceService<S> {
             }
         }
         self.recovering = false;
-        let now = i64::try_from(crate::wall()? / 1000).map_err(|_| Error::Clock)?;
-        if self
-            .core
-            .mdm
-            .observed_at
-            .is_none_or(|at| now.saturating_sub(at) >= 30)
-        {
-            let expected = self.client.native_enrollment_origin()?;
-            let observed = network(
-                async { Ok(crate::mdm_state::observe(expected.as_deref()).await) },
-                &mut self.core,
-                commands,
-            )
-            .await?;
-            self.core.mdm = execution_ipc::host::MdmStatus {
-                state: observed,
-                observed_at: Some(now),
-            };
-        }
         if let Some(observed_at) = self.core.mdm.observed_at {
             if self.core.mdm_reported != Some(self.core.mdm.state)
                 && self
@@ -720,21 +777,13 @@ impl<S: IdentityProvider> DeviceService<S> {
                     Error::CredentialRevoked | Error::CredentialRetired | Error::CertificateExpired
                 ) {
                     self.core.host.revoked.store(true, Ordering::Release);
-                    let stop_local =
-                        matches!(e, Error::CredentialRevoked | Error::CredentialRetired);
-                    if stop_local {
-                        self.core.host.local_stopped.store(true, Ordering::Release);
-                    }
                     self.core
                         .app
                         .stop_active_matching(128, |plan| {
-                            stop_local
-                                || !plan
-                                    .spec()
-                                    .policy
-                                    .id
-                                    .as_str()
-                                    .starts_with("local-software:")
+                            matches!(
+                                plan.spec().request.authority,
+                                execution_contract::Authority::Enterprise { .. }
+                            )
                         })
                         .map_err(crate::error::app_error)?;
                 }
@@ -985,12 +1034,77 @@ impl<S: IdentityProvider> DeviceService<S> {
             completion,
         })
     }
+    async fn observe_mdm(
+        &mut self,
+        commands: &mut tokio::sync::mpsc::Receiver<Command>,
+    ) -> Result<(), Error> {
+        let now = i64::try_from(crate::wall()? / 1000).map_err(|_| Error::Clock)?;
+        if self
+            .core
+            .mdm
+            .observed_at
+            .is_none_or(|at| now.saturating_sub(at) >= 30)
+        {
+            let expected = self.client.native_enrollment_origin()?;
+            let observed = network(
+                async { Ok(crate::mdm_state::observe(expected.as_deref()).await) },
+                &mut self.core,
+                commands,
+            )
+            .await?;
+            self.core.mdm = execution_ipc::host::MdmStatus {
+                state: observed,
+                observed_at: Some(now),
+            };
+        }
+        Ok(())
+    }
+    fn activate_enterprise(&mut self) -> Result<(), Error> {
+        let registration = self.client.registration()?;
+        let (binding, actor) = plan::context(
+            self.client.configuration().service_id,
+            self.client.configuration().tenant,
+            &registration,
+        )?;
+        if binding == self.core.host.binding {
+            return Ok(());
+        }
+        self.core.data.bind_enterprise(Some(&binding.authority))?;
+        self.core.host.binding = binding;
+        self.core.host.actor = actor;
+        self.core.host.namespaces = self
+            .client
+            .execution_profiles()?
+            .iter()
+            .map(|profile| {
+                plan::context(
+                    self.client.configuration().service_id,
+                    self.client.configuration().tenant,
+                    profile,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        *self.core.host.current.lock().map_err(|_| Error::Storage)? = None;
+        self.core
+            .app
+            .replace_host(self.core.host.clone())
+            .map_err(map_app_error)?;
+        if registration
+            .capabilities
+            .contains(&wire::Capability::TelemetryCollectV1)
+        {
+            self.core.telemetry = Some(crate::telemetry::Telemetry::open(&self.client)?);
+        }
+        Ok(())
+    }
     fn update_identity_gate(&mut self) {
         if let Some(deployment) = &self.installation {
-            if !matches!(
-                self.client.accepted_unmanage(deployment.installation_id),
-                Ok(None)
-            ) {
+            if self.client.registration().is_ok()
+                && matches!(
+                    self.client.accepted_unmanage(deployment.installation_id),
+                    Ok(Some(_))
+                )
+            {
                 self.core.host.revoked.store(true, Ordering::Release);
                 self.core.host.local_stopped.store(true, Ordering::Release);
                 return;
@@ -1013,12 +1127,10 @@ impl<S: IdentityProvider> DeviceService<S> {
                 }
                 self.release_waiting();
                 if let Err(error) = self.core.app.stop_active_matching(128, |plan| {
-                    !plan
-                        .spec()
-                        .policy
-                        .id
-                        .as_str()
-                        .starts_with("local-software:")
+                    matches!(
+                        plan.spec().request.authority,
+                        execution_contract::Authority::Enterprise { .. }
+                    )
                 }) {
                     eprintln!("agent_revoke_stop: {error}");
                 }
@@ -1039,12 +1151,15 @@ impl<S: IdentityProvider> DeviceService<S> {
         } else {
             Ok(())
         };
+        let previews = self.core.cancel_settings_previews();
         let commands = self
             .core
             .app
-            .stop_active(128)
+            .service_shutdown(128)
             .map_err(crate::error::app_error);
         commands?;
+        previews?;
+        self.core.reconcile()?;
         telemetry.map(|_| ())
     }
 }
@@ -1070,7 +1185,10 @@ pub(crate) struct Core {
     pub(crate) access: access::State,
     // Explicit test-owned authority source, absent from every production build and IPC DTO.
     #[cfg(test)]
-    pub(crate) local_policy_fixture: Option<crate::local_software::FixturePolicyReader>,
+    pub(crate) local_policy_fixture: Option<crate::local_permissions::FixturePolicyReader>,
+    #[cfg(test)]
+    pub(crate) local_target_fixture:
+        Option<fn(&execution_contract::InstalledSoftware) -> crate::local_software::native::Target>,
     telemetry: Option<crate::telemetry::Telemetry>,
     data: crate::collected_data::Data,
     pub(crate) app: ExecutionApp<EnterpriseHost, NativeRunner, execution_sqlite::Store>,
@@ -1107,12 +1225,10 @@ impl Core {
             self.revoke_preparations()?;
             self.app
                 .stop_active_matching(128, |plan| {
-                    !plan
-                        .spec()
-                        .policy
-                        .id
-                        .as_str()
-                        .starts_with("local-software:")
+                    matches!(
+                        plan.spec().request.authority,
+                        execution_contract::Authority::Enterprise { .. }
+                    )
                 })
                 .map_err(map_app_error)?;
         }
@@ -1132,8 +1248,15 @@ impl Core {
             self.app
                 .reconcile(request)
                 .map_err(crate::error::app_error)?;
-            if let Err(error) = self.capture_data(request) {
-                eprintln!("agent_collected_data: {error}");
+            let settings = self.capture_settings(request);
+            let data = self.capture_data(request);
+            match (settings, data) {
+                (Ok(()), Ok(())) => {
+                    if let Err(error) = self.finish_local_result(request) {
+                        eprintln!("agent_local_result: {error}");
+                    }
+                }
+                (Err(error), _) | (_, Err(error)) => eprintln!("agent_local_projection: {error}"),
             }
         }
         self.recovery_cursor = page.next;
@@ -1411,7 +1534,7 @@ impl Core {
         use execution_contract::{BackendTrigger, Initiator, RunAs};
         let input = self
             .app
-            .frozen_input(&self.caller(), request)
+            .frozen_input(&self.request_caller(request)?, request)
             .map_err(crate::error::app_error)?;
         Ok(match &input.spec().request.initiator {
             Initiator::Backend {
@@ -1427,12 +1550,7 @@ impl Core {
                 _ => true,
             },
             Initiator::Human { os_session } | Initiator::Ai { os_session, .. } => {
-                input
-                    .spec()
-                    .policy
-                    .id
-                    .as_str()
-                    .starts_with("local-software:")
+                input.spec().request.authority == self.host.root.authority
                     && os_session.account.subject.as_str() == subject
             }
             _ => false,
@@ -1443,6 +1561,18 @@ impl Core {
             eprintln!("agent_identity_gate: {error}");
         }
         use execution_ipc::host::{Reply, Request};
+        if let Some(Request::Settings {
+            context,
+            origin,
+            input,
+        }) = command.request.as_operation()
+        {
+            let reply = self
+                .settings_operation(&command, context, origin, input)
+                .unwrap_or_else(data::failure);
+            let _ = command.reply.send(reply);
+            return;
+        }
         if matches!(
             command.request.as_operation(),
             Some(Request::PlatformSso { .. })
@@ -1484,6 +1614,8 @@ impl Core {
             command.request.as_operation(),
             Some(
                 execution_ipc::host::Request::Data { .. }
+                    | Request::RequestRegistration {}
+                    | Request::ImportRegistration { .. }
                     | Request::DeviceAccess { .. }
                     | Request::LocalSoftware { .. }
                     | Request::BindContext { .. }
@@ -1507,8 +1639,9 @@ impl Core {
         let reply = (|| -> Result<Reply, Error> {
             match command.request.into_operation() {
                 Some(
-                    Request::PlatformSso { .. }
-                    | Request::Data { .. }
+                    Request::Data { .. }
+                    | Request::Settings { .. }
+                    | Request::PlatformSso { .. }
                     | Request::DeviceAccess { .. }
                     | Request::SoftwareRead { .. }
                     | Request::LocalSoftware { .. }
@@ -1531,11 +1664,12 @@ impl Core {
                     command.session,
                 )),
                 Some(Request::ServiceStatus {}) => {
-                    let readiness = if !self.host.identity_ready() {
-                        execution_ipc::host::Readiness::NotReady
-                    } else {
-                        execution_ipc::host::Readiness::Ready
-                    };
+                    let readiness =
+                        if self.stopping || self.host.local_stopped.load(Ordering::Acquire) {
+                            execution_ipc::host::Readiness::NotReady
+                        } else {
+                            execution_ipc::host::Readiness::Ready
+                        };
                     Ok(Reply::ServiceStatus {
                         value: {
                             let mut value = execution_ipc::host::ServiceStatus::new(readiness);
@@ -1557,7 +1691,7 @@ impl Core {
                 Some(Request::Tasks { after }) => {
                     let mut value = self
                         .app
-                        .tasks(&self.caller(), after.as_ref(), 64)
+                        .service_tasks(after.as_ref(), 64)
                         .map_err(crate::error::app_error)?;
                     value.items.retain(|item| {
                         self.can_read(&item.action.request_id, &command.subject)
@@ -1646,7 +1780,7 @@ impl Core {
                     Ok(Reply::Status {
                         value: self
                             .app
-                            .status(&self.caller(), &request)
+                            .status(&self.request_caller(&request)?, &request)
                             .map_err(crate::error::app_error)?,
                     })
                 }
@@ -1669,7 +1803,7 @@ impl Core {
                     Ok(Reply::Details {
                         value: Box::new(
                             self.app
-                                .task_details(&self.caller(), &request)
+                                .task_details(&self.request_caller(&request)?, &request)
                                 .map_err(crate::error::app_error)?,
                         ),
                     })
@@ -1824,6 +1958,13 @@ pub struct ServiceHandle {
     registration: Arc<Mutex<execution_ipc::host::RegistrationStatus>>,
 }
 impl ServiceHandle {
+    pub(crate) fn registration_request(
+        &self,
+        request: execution_ipc::host::Request,
+    ) -> execution_ipc::host::Reply {
+        self.call(LocalRequest::operation(request), String::new(), 0, None)
+    }
+    #[cfg(test)]
     pub(crate) fn service_status(&self) -> execution_ipc::host::Reply {
         self.call(
             LocalRequest::operation(execution_ipc::host::Request::ServiceStatus {}),
@@ -1966,10 +2107,7 @@ impl execution_ipc::host::Handler for ServiceHandle {
     }
     fn stop(&mut self) -> Result<(), execution_app::Error> {
         let _ = self.call(LocalRequest::Stop, String::new(), 0, None);
-        match self
-            .completion
-            .recv_timeout(std::time::Duration::from_secs(5))
-        {
+        match self.completion.recv_timeout(SHUTDOWN_WAIT) {
             Ok(Ok(())) => Ok(()),
             _ => Err(execution_app::Error::OutcomeUnknown),
         }
@@ -2135,7 +2273,7 @@ pub(crate) fn assemble_journal<H: execution_app::AppHost, R: execution_app::Runn
     host.reliable_now()?;
     let journal = match startup {
         ProductionStartup::Create => {
-            execution_sqlite::Store::initialize_production(path, binding.authority, limits)?
+            execution_sqlite::Store::initialize_production(path, binding.authority.clone(), limits)?
         }
         ProductionStartup::Open => {
             match execution_sqlite::Store::open(path, &binding.authority, limits)? {
@@ -2145,6 +2283,14 @@ pub(crate) fn assemble_journal<H: execution_app::AppHost, R: execution_app::Runn
                 }
             }
         }
+    };
+    let journal = if matches!(
+        binding.authority,
+        execution_contract::Authority::Local { .. }
+    ) {
+        journal.into_installation_owner()?
+    } else {
+        journal
     };
     ExecutionApp::new(journal, host, runner, config)
 }

@@ -70,7 +70,9 @@ impl FrozenExecution {
         // Consumers see the same normalized values whose bytes were hashed.
         let spec = serde_json::from_slice(&bytes)
             .map_err(|_| ContractError::new(ErrorKind::Encoding, Field::Document, Rule::Syntax))?;
-        Ok(Self { spec, digest })
+        let frozen = Self { spec, digest };
+        frozen.exclusive_resource_keys()?;
+        Ok(frozen)
     }
     /// Borrow the immutable normalized plan. Mutating a clone requires a new freeze and digest.
     pub fn spec(&self) -> &ExecutionInput {

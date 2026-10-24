@@ -138,7 +138,7 @@ pub(crate) fn compile_read(
     let finish_by_unix_ms = compiled_at_ms
         .checked_add(seconds * 1000)
         .ok_or(Error::Clock)?;
-    let image = plan::pin(&std::env::current_exe()?)?;
+    let image = plan::worker_image(config)?;
     let input = crate::collection_worker::Input {
         read: read.clone(),
         finish_by_unix_ms,
@@ -229,7 +229,10 @@ pub(crate) fn compile_read(
         },
         &plan::storage_limits().input,
     )
-    .map_err(|_| Error::Untrusted)?;
+    .map_err(|error| {
+        eprintln!("agent_native_plan: {error}");
+        Error::Untrusted
+    })?;
     Ok((
         frozen,
         Artifacts {

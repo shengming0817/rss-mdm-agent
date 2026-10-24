@@ -22,8 +22,7 @@ it("requests one fixed machine registration and refreshes its original public pr
     return state;
   });
   const port: ServicePort = {
-    read: async () =>
-      structuredClone(serviceViews.registrationRequired) as ServiceView,
+    read: async () => structuredClone(serviceViews.ready) as ServiceView,
     registration: async () => state,
     requestRegistration: request,
     mdmStatus: async () => ({ state: "unknown" }),
@@ -62,8 +61,7 @@ it("stops an explicit registration wait without starting another machine request
     });
   });
   const port: ServicePort = {
-    read: async () =>
-      structuredClone(serviceViews.registrationRequired) as ServiceView,
+    read: async () => structuredClone(serviceViews.ready) as ServiceView,
     registration: async () => ({
       phase: "unregistered",
       registered: false,
@@ -131,9 +129,7 @@ it("removes stale registration facts after the local service becomes unavailable
 
 it("automatically recovers registration facts after a temporary read failure without starting another request", async () => {
   vi.useFakeTimers();
-  const read = vi
-    .fn()
-    .mockResolvedValue(structuredClone(serviceViews.registrationRequired));
+  const read = vi.fn().mockResolvedValue(structuredClone(serviceViews.ready));
   const request = vi.fn();
   const port: ServicePort = {
     read,
@@ -240,8 +236,7 @@ it("routes registration handoff recovery through the shared native account owner
     .mockResolvedValue(undefined);
   accountApi.accountBinding.value = "binding_unknown";
   const read = vi.fn(
-    async () =>
-      structuredClone(serviceViews.registrationRequired) as ServiceView,
+    async () => structuredClone(serviceViews.ready) as ServiceView,
   );
   const port: ServicePort = {
     read,

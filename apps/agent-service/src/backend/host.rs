@@ -19,12 +19,16 @@ pub(crate) struct BackendPermit {
 #[derive(Clone)]
 pub(crate) struct EnterpriseHost {
     pub binding: ServiceBinding,
+    pub root: ServiceBinding,
+    pub local_actor: ActorId,
+    pub namespaces: Vec<(ServiceBinding, ActorId)>,
     pub actor: ActorId,
     pub clock: SystemClock,
     pub materials: MaterialRegistry,
     pub subject: String,
     pub current: Arc<Mutex<Option<Arc<BackendPermit>>>>,
-    pub local_query: Arc<Mutex<Option<FrozenExecution>>>,
+    pub local_settings: Arc<Mutex<Option<crate::local_settings::Permit>>>,
+    pub local_read: Arc<Mutex<Option<crate::local_execution::ReadPermit>>>,
     pub local_software: Arc<Mutex<Option<Arc<crate::local_software::Permit>>>>,
     pub local_stopped: Arc<std::sync::atomic::AtomicBool>,
     pub identity_until: agent_client::RuntimeGate,
@@ -67,29 +71,54 @@ impl AuthorityVerifier for EnterpriseHost {
         plan: &FrozenExecution,
         _: &AttemptId,
     ) -> Result<AuthorityFacts, VerificationError> {
-        if let Some(permit) = self
-            .local_software
-            .lock()
-            .map_err(|_| VerificationError::Subject)?
-            .as_ref()
+        let p = plan.spec();
+        if p.request.authority == self.root.authority
+            && matches!(p.request.authority, Authority::Local { .. })
         {
             if self
                 .local_stopped
                 .load(std::sync::atomic::Ordering::Acquire)
+                || p.request.actor != self.local_actor
+                || p.request.target.device != self.root.device
             {
                 return Err(VerificationError::Subject);
             }
             let now = self.clock.millis().map_err(|_| VerificationError::Clock)?;
-            permit
-                .verify(plan, now)
+            let software = self
+                .local_software
+                .lock()
                 .map_err(|_| VerificationError::Subject)?;
-            let p = plan.spec();
+            let read = self
+                .local_read
+                .lock()
+                .map_err(|_| VerificationError::Subject)?;
+            let settings = self
+                .local_settings
+                .lock()
+                .map_err(|_| VerificationError::Subject)?;
+            let risk = if let Some(permit) = settings.as_ref() {
+                permit
+                    .verify(plan, now)
+                    .map_err(|_| VerificationError::Subject)?
+            } else if let Some(permit) = software.as_ref().filter(|v| v.matches(plan)) {
+                permit
+                    .verify(plan, now)
+                    .map_err(|_| VerificationError::Subject)?;
+                RiskLevel::Two
+            } else if let Some(permit) = read.as_ref() {
+                permit
+                    .verify(plan, now)
+                    .map_err(|_| VerificationError::Subject)?;
+                RiskLevel::One
+            } else {
+                return Err(VerificationError::Subject);
+            };
             return Ok(AuthorityFacts {
                 verified_origin: p.request.initiator.clone(),
-                risk: Some(RiskLevel::Two),
+                risk: Some(risk),
                 subject: SubjectFacts {
-                    authority: self.binding.authority.clone(),
-                    actor: self.actor.clone(),
+                    authority: self.root.authority.clone(),
+                    actor: self.local_actor.clone(),
                     validity: p.validity,
                     budget: p.budget,
                 },
@@ -101,36 +130,6 @@ impl AuthorityVerifier for EnterpriseHost {
                     effect: RuleEffect::Allow,
                 }],
                 now_unix_ms: now,
-                verification_revision: p.policy.clone(),
-                fresh_until_unix_ms: p.validity.expires_at_unix_ms,
-            });
-        }
-        if self.identity_ready()
-            && self
-                .local_query
-                .lock()
-                .map_err(|_| VerificationError::Subject)?
-                .as_ref()
-                .is_some_and(|p| p.digest() == plan.digest())
-        {
-            let p = plan.spec();
-            return Ok(AuthorityFacts {
-                verified_origin: p.request.initiator.clone(),
-                risk: Some(RiskLevel::One),
-                subject: SubjectFacts {
-                    authority: self.binding.authority.clone(),
-                    actor: self.actor.clone(),
-                    validity: p.validity,
-                    budget: p.budget,
-                },
-                delegation: None,
-                policy: p.policy.clone(),
-                rules: vec![Rule {
-                    id: p.policy.id.clone(),
-                    template: plan.clone(),
-                    effect: RuleEffect::Allow,
-                }],
-                now_unix_ms: self.clock.millis().map_err(|_| VerificationError::Clock)?,
                 verification_revision: p.policy.clone(),
                 fresh_until_unix_ms: p.validity.expires_at_unix_ms,
             });
@@ -181,20 +180,49 @@ impl AppHost for EnterpriseHost {
         if execution_ipc::host::current_subject()? != self.subject {
             return Err(Error::Unbound);
         }
-        Ok(self.binding.clone())
+        Ok(self.root.clone())
+    }
+    fn binding_for_authority(&self, authority: &Authority) -> Result<ServiceBinding, Error> {
+        self.service_binding()?;
+        if authority == &self.root.authority {
+            return Ok(self.root.clone());
+        }
+        if let Some((binding, _)) = self
+            .namespaces
+            .iter()
+            .find(|(b, _)| &b.authority == authority)
+        {
+            return Ok(binding.clone());
+        }
+        Err(Error::Denied)
+    }
+    fn binding_for_actor(&self, actor: &ActorId) -> Result<ServiceBinding, Error> {
+        if actor == &self.local_actor {
+            return Ok(self.root.clone());
+        }
+        if let Some((binding, _)) = self.namespaces.iter().find(|(_, a)| a == actor) {
+            return Ok(binding.clone());
+        }
+        Err(Error::Denied)
+    }
+    fn owns_device(&self, device: &DeviceId) -> Result<bool, Error> {
+        Ok(device == &self.root.device || self.namespaces.iter().any(|(b, _)| &b.device == device))
     }
     fn authorize(
         &self,
         caller: &RequestContext,
         r: AccessRequest<'_>,
     ) -> Result<(), execution_app::JournalError> {
-        if caller.actor != self.actor {
+        if caller.actor != r.scope.actor {
             return Err(execution_app::JournalError::Denied);
         }
         self.authorize_service(r)
     }
     fn authorize_service(&self, r: AccessRequest<'_>) -> Result<(), execution_app::JournalError> {
-        if r.scope.authority != self.binding.authority || r.scope.actor != self.actor {
+        let binding = self
+            .binding_for_actor(&r.scope.actor)
+            .map_err(|_| execution_app::JournalError::Denied)?;
+        if r.scope.authority != binding.authority {
             return Err(execution_app::JournalError::Denied);
         }
         Ok(())
@@ -205,6 +233,7 @@ impl AppHost for EnterpriseHost {
             .map_err(|_| execution_app::JournalError::Clock)
     }
     fn capabilities(&self, plan: &FrozenExecution) -> Result<CapabilitySnapshot, Error> {
+        let binding = self.binding_for_authority(&plan.spec().request.authority)?;
         self.materials.inspect(plan)?;
         let now = self.reliable_now()?;
         let p = plan.spec();
@@ -212,8 +241,8 @@ impl AppHost for EnterpriseHost {
             verified_at_unix_ms: now,
             fresh_until_unix_ms: now + 1000,
             environment: EnvironmentSnapshot {
-                authority: self.binding.authority.clone(),
-                device: self.binding.device.clone(),
+                authority: binding.authority,
+                device: binding.device,
                 source: p.policy.clone(),
                 platform: Some(p.request.target.platform),
                 interpreters: inventory(vec![p.launch.interpreter.clone()]),
@@ -249,9 +278,11 @@ impl AppHost for EnterpriseHost {
         self.service_binding()
             .map_err(|_| execution_app::JournalError::Trust)?;
         let input = plan.spec();
-        if input.request.authority != self.binding.authority
-            || input.request.actor != self.actor
-            || input.request.target.device != self.binding.device
+        let binding = self
+            .binding_for_actor(&input.request.actor)
+            .map_err(|_| execution_app::JournalError::Trust)?;
+        if input.request.authority != binding.authority
+            || input.request.target.device != binding.device
         {
             return Err(execution_app::JournalError::Trust);
         }

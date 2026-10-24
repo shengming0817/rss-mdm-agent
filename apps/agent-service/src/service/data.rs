@@ -45,13 +45,7 @@ impl Core {
             &command.subject,
             login_binding_id(command.binding.as_ref().ok_or(Error::Denied)?),
         )?;
-        let mut items = self.data.directory(&command.subject)?;
-        if !self.host.identity_ready() {
-            for item in &mut items {
-                item.available = false;
-                item.reason = Some(DataQuality::Expired);
-            }
-        }
+        let items = self.data.directory(&command.subject)?;
         Ok(items)
     }
 
@@ -78,16 +72,17 @@ impl Core {
         let _admission = fences.admit(&scope, command.fence_epoch)?;
         *self
             .host
-            .local_query
+            .local_read
             .lock()
-            .map_err(|_| Error::Unavailable)? = Some(frozen.clone());
+            .map_err(|_| Error::Unavailable)? =
+            Some(crate::local_execution::ReadPermit::new(frozen.clone())?);
         let result = self
             .app
-            .request_execution(&self.caller(), frozen)
+            .request_execution(&self.local_caller(), frozen)
             .map_err(map_app_error);
         *self
             .host
-            .local_query
+            .local_read
             .lock()
             .map_err(|_| Error::Unavailable)? = None;
         result
@@ -97,12 +92,12 @@ impl Core {
         for request in self.data.input_requests()? {
             if self
                 .app
-                .has_service_execution(&request, &self.host.binding.device)
+                .has_service_execution(&request, &self.request_device(&request)?)
                 .map_err(map_app_error)?
             {
                 let status = self
                     .app
-                    .status(&self.caller(), &request)
+                    .status(&self.request_caller(&request)?, &request)
                     .map_err(map_app_error)?;
                 if !matches!(
                     status.phase,
@@ -133,12 +128,12 @@ impl Core {
         let request = &input.spec().request.request_id;
         if self
             .app
-            .has_service_execution(request, &self.host.binding.device)
+            .has_service_execution(request, &input.spec().request.target.device)
             .map_err(map_app_error)?
         {
             let status = self
                 .app
-                .status(&self.caller(), request)
+                .status(&self.request_caller(request)?, request)
                 .map_err(map_app_error)?;
             if status.process.is_none()
                 && matches!(
@@ -216,7 +211,7 @@ impl Core {
     ) -> Result<QueryStatus, Error> {
         let status = self
             .app
-            .status(&self.caller(), request)
+            .status(&self.request_caller(request)?, request)
             .map_err(map_app_error)?;
         use execution_app::TaskPhase::*;
         let phase = match status.phase {
@@ -324,9 +319,6 @@ impl<S: IdentityProvider> DeviceService<S> {
                 if parsed.is_nil() || parsed.to_string() != submit.request.as_str() {
                     return Err(Error::Protocol);
                 }
-                if !self.core.host.identity_ready() {
-                    return Err(Error::Denied);
-                }
                 let history = self.core.data.history()?;
                 let mut retained = history.len();
                 for (old, _) in history {
@@ -339,13 +331,13 @@ impl<S: IdentityProvider> DeviceService<S> {
                     let terminal = if self
                         .core
                         .app
-                        .has_service_execution(&old, &self.core.host.binding.device)
+                        .has_service_execution(&old, &self.core.request_device(&old)?)
                         .map_err(map_app_error)?
                     {
                         matches!(
                             self.core
                                 .app
-                                .status(&self.core.caller(), &old)
+                                .status(&self.core.request_caller(&old)?, &old)
                                 .map_err(map_app_error)?
                                 .phase,
                             execution_app::TaskPhase::Cancelled
@@ -384,13 +376,13 @@ impl<S: IdentityProvider> DeviceService<S> {
                     let running = if self
                         .core
                         .app
-                        .has_service_execution(&original, &self.core.host.binding.device)
+                        .has_service_execution(&original, &self.core.request_device(&original)?)
                         .map_err(map_app_error)?
                     {
                         let status = self
                             .core
                             .app
-                            .status(&self.core.caller(), &original)
+                            .status(&self.core.request_caller(&original)?, &original)
                             .map_err(map_app_error)?;
                         !matches!(
                             status.phase,
@@ -454,7 +446,10 @@ impl<S: IdentityProvider> DeviceService<S> {
                     if !submit.parameters.is_empty() {
                         return Err(Error::Protocol);
                     }
-                    let d = self.core.data.definition(&submit.query, &command.subject)?;
+                    let d = self
+                        .core
+                        .data
+                        .local_definition(&submit.query, &command.subject)?;
                     if !d.descriptor.available {
                         return Err(Error::Unsupported);
                     }
@@ -470,7 +465,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                     if self
                         .core
                         .app
-                        .has_service_execution(&submit.request, &self.core.host.binding.device)
+                        .has_service_execution(&submit.request, &self.core.host.root.device)
                         .map_err(map_app_error)?
                     {
                         let previous = self.core.data.association(
@@ -497,7 +492,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                     read.deadline =
                         start_until + i64::from(read.plan.spec().budget.timeout_seconds);
                     let os_session = OsSessionRef {
-                        device: self.core.host.binding.device.clone(),
+                        device: self.core.host.root.device.clone(),
                         account: OsAccountRef {
                             platform: plan::platform()?,
                             subject: plan::id(&command.subject)?,
@@ -553,8 +548,8 @@ impl<S: IdentityProvider> DeviceService<S> {
                         },
                         plan::reference("local-native-query", "1")?,
                         start_until,
-                        &self.core.host.binding,
-                        &self.core.host.actor,
+                        &self.core.host.root,
+                        &self.core.host.local_actor,
                         (&self.core.config, &mut self.core.material_root),
                         helper,
                     )?;
@@ -612,7 +607,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                     if matches!(input, DataOperation::Cancel(_)) {
                         self.core
                             .app
-                            .cancel(&self.core.caller(), &query.request)
+                            .cancel(&self.core.local_caller(), &query.request)
                             .map_err(map_app_error)?;
                     }
                     self.core

@@ -150,6 +150,7 @@ impl Store {
             Start::Replay(r) => return Ok(CommitOutcome::AlreadyCommitted(r)),
             Start::New(w) => w,
         };
+        crate::backend_requests::reserve_request(&w.tx, &scope)?;
         // A preview and a submission register the same immutable aggregate under distinct
         // operation IDs. Only the first call for each operation returns Applied. The receipt
         // remains the durable acceptance boundary even if the later initial attempt fails.
@@ -460,7 +461,7 @@ impl Store {
                     op.as_str()
                 ],
             )?;
-            crate::software::claim(&w.tx, &plan, attempt_id)?;
+            crate::resources::claim(&w.tx, &plan, attempt_id)?;
             audit.consumptions = consume(&w, &plan, attempt_id, &gate, &h)?;
             audit.event.as_mut().expect("plan audit").decision = Decision::Admitted {};
         }
@@ -484,7 +485,7 @@ impl Store {
         ) {
             audit.reason = AuditReason::Lifecycle(evaluation.directive);
         }
-        crate::software::settle(&w.tx, &plan, next, w.limits)?;
+        crate::resources::settle(&w.tx, &plan, next, w.limits)?;
         let reserve = terminal_reserve(current.snapshot(), next, reserve, &event);
         let changed = w.tx.execute("UPDATE executions SET snapshot=?1,revision=?2,reserve=?3 WHERE scope=?4 AND revision=?5",
             params![w.bounded(next)?, integer(next.revision)?, reserve, scope.interaction_subject().as_str(), integer(transition.expected_revision())?])?;

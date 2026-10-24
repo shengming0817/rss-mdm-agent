@@ -17,12 +17,6 @@ fn main() {
         ("disconnected", ServiceView::Unavailable),
         ("mismatch", ServiceView::Mismatch),
         (
-            "registrationRequired",
-            ServiceView::Connected {
-                status: sample(Readiness::RegistrationRequired),
-            },
-        ),
-        (
             "notReady",
             ServiceView::Connected {
                 status: sample(Readiness::NotReady),

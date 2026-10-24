@@ -98,7 +98,7 @@ pub fn initialize() -> Result<Deployment, Error> {
                 .as_bytes(),
         )?;
     }
-    crate::local_software::initialize(&next.execution.local_software)?;
+    crate::local_permissions::initialize(&next.execution.local_permissions)?;
     publish(&config, &json(&next)?)?;
     Deployment::load(&config)
 }

@@ -1,6 +1,6 @@
 //! Bounded local projections in the existing communication database.
 //! ref: rusqlite 0.32.1 src/transaction.rs (atomic bounded writes).
-use crate::{store::decode, Client, Clock, Error, IdentityProvider};
+use crate::{store::decode, wire, Client, Clock, Error, IdentityProvider};
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde_json::Value;
 
@@ -14,6 +14,57 @@ pub struct CollectedStore {
 }
 const PREFIX: &str = "local-data/";
 impl<S: IdentityProvider, C: Clock> Client<S, C> {
+    /// Retain server-verified registration profiles solely for journal recovery and cleanup.
+    /// This history never authorizes a new task or relaxes current runtime identity checks.
+    pub fn execution_profiles(&mut self) -> Result<Vec<wire::BindingProfile>, Error> {
+        let mut profiles: Vec<wire::BindingProfile> =
+            self.store.get("execution-profiles")?.unwrap_or_default();
+        if let Ok(current) = self.registration() {
+            if !profiles.iter().any(|p| {
+                p.registration_id == current.registration_id && p.generation == current.generation
+            }) {
+                if profiles.len() >= 32 {
+                    return Err(Error::Capacity);
+                }
+                profiles.push(current);
+                self.store.put("execution-profiles", &profiles)?;
+            }
+        }
+        Ok(profiles)
+    }
+    /// Local results bind to the protected installation and remain available before registration.
+    pub fn collected_store_for_installation(
+        &self,
+        installation: uuid::Uuid,
+    ) -> Result<CollectedStore, Error> {
+        if installation.is_nil() {
+            return Err(Error::Configuration);
+        }
+        let cfg = &self.store.cfg;
+        let path = self.store.root.join("communication.sqlite");
+        platform_private_storage::validate_sqlite_file(&path)?;
+        let conn = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        conn.busy_timeout(std::time::Duration::from_millis(50))?;
+        conn.execute_batch("PRAGMA trusted_schema=OFF; PRAGMA synchronous=FULL;")?;
+        conn.pragma_update(None, "max_page_count", cfg.limits.database_pages)?;
+        use sha2::{Digest as _, Sha256};
+        let namespace = format!(
+            "{PREFIX}installation/{:x}/",
+            Sha256::digest(
+                serde_json::to_vec(&(cfg.service_id, cfg.tenant, installation))
+                    .map_err(|_| Error::Protocol)?
+            )
+        );
+        Ok(CollectedStore {
+            _lease: Some(self.store._lock.clone()),
+            conn,
+            namespace,
+            bytes: (cfg.limits.cache_bytes / 4)
+                .min(u64::from(cfg.limits.database_pages) * 4096 / 4)
+                .min(16 * 1024 * 1024) as usize,
+            records: cfg.limits.pending_tasks.saturating_mul(32).clamp(32, 1024),
+        })
+    }
     /// Open a narrow adapter under the already held namespace lease, without network I/O.
     pub fn collected_store(&self) -> Result<CollectedStore, Error> {
         let cfg = &self.store.cfg;
@@ -26,7 +77,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         use sha2::{Digest as _, Sha256};
         let registration = self.registration()?;
         let namespace = format!(
-            "{PREFIX}{:x}/",
+            "{PREFIX}enterprise/{:x}/",
             Sha256::digest(
                 serde_json::to_vec(&(
                     cfg.tenant,
@@ -38,7 +89,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             )
         );
         conn.execute(
-            "DELETE FROM state WHERE key GLOB 'local-data/*' AND substr(key,1,length(?1))<>?1",
+            "DELETE FROM state WHERE key GLOB 'local-data/enterprise/*' AND substr(key,1,length(?1))<>?1",
             [&namespace],
         )?;
         Ok(CollectedStore {

@@ -55,6 +55,7 @@ macro_rules! commands {
     }
 }
 commands! {
+    system_settings(execution_contract::SettingsOperation) -> execution_contract::SettingsResponse = system_settings, employee = false,
     device_access(execution_ipc::device_access::Operation) -> execution_ipc::device_access::Response = device_access, employee = true,
     software_prepare(execution_contract::LocalSoftwareChoice) -> execution_contract::LocalSoftwarePrepared = software_prepare, employee = false,
     software_submit(execution_contract::LocalSoftwareSubmission) -> execution_app::LocalSoftwareStatus = software_submit, employee = false,
@@ -425,6 +426,7 @@ pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder
         software_history,
         software_read,
         software_prepare,
+        system_settings,
         software_submit,
         software_status,
         software_cancel,
@@ -557,6 +559,7 @@ mod tests {
             "software_history",
             "software_read",
             "software_prepare",
+            "system_settings",
             "software_submit",
             "software_status",
             "software_cancel",

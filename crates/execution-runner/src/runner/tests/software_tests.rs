@@ -128,7 +128,7 @@ fn unknown_detector_activity_keeps_real_exit_and_cannot_skip_to_mutation() {
     let sqlite = rusqlite::Connection::open(f.root.join("software.sqlite")).unwrap();
     assert_eq!(
         sqlite
-            .query_row("SELECT count(*) FROM software_claims", [], |r| r
+            .query_row("SELECT count(*) FROM resource_claims", [], |r| r
                 .get::<_, i64>(0))
             .unwrap(),
         1
@@ -410,7 +410,7 @@ fn main() {
         let sqlite = rusqlite::Connection::open(database).unwrap();
         assert_eq!(
             sqlite
-                .query_row("SELECT count(*) FROM software_claims", [], |r| r
+                .query_row("SELECT count(*) FROM resource_claims", [], |r| r
                     .get::<_, i64>(0))
                 .unwrap(),
             0

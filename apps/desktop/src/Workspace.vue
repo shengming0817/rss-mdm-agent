@@ -47,10 +47,18 @@ import {
 import SelfService from "./self-service/SelfService.vue";
 import Home from "./home/Home.vue";
 import SystemSettings from "./system-settings/SystemSettings.vue";
+import {
+  createSystemSettings,
+  systemSettingsKey,
+} from "./system-settings/controller";
 import SoftwarePreviewPage from "./catalog-preview/SoftwareManagement.vue";
 import SoftwareManagement from "./software/SoftwareManagement.vue";
 import { createSoftware, softwareSummaryKey } from "./software/controller";
-import { nativeDataPort, nativeSoftwarePort } from "./self-service/native";
+import {
+  nativeDataPort,
+  nativeSoftwarePort,
+  nativeSettingsPort,
+} from "./self-service/native";
 import ToolsPage from "./catalog-preview/ToolsPage.vue";
 import { createDeviceOverview, type DeviceOverviewPort } from "./home/device";
 import { nativeDeviceOverview } from "./home/native";
@@ -247,6 +255,16 @@ const software = createSoftware(
   !props.ready || props.fixture ? null : nativeSoftwarePort(),
 );
 provide(softwareSummaryKey, software.summary);
+const systemSettings = createSystemSettings(
+  !props.ready || props.fixture ? null : nativeSettingsPort(),
+  !props.ready || props.fixture ? null : nativeDataPort(),
+);
+provide(systemSettingsKey, systemSettings);
+onBeforeUnmount(() => systemSettings.dispose());
+onMounted(() => {
+  for (const section of ["network", "storage", "power"] as const)
+    void systemSettings.load(section);
+});
 onBeforeUnmount(() => software.dispose());
 const controller = props.ready
   ? createController(props.selfServicePort ?? nativePort(), preview)

@@ -48,9 +48,6 @@ export interface ServiceStatus {
         phase: "ready";
       }
     | {
-        phase: "registrationRequired";
-      }
-    | {
         phase: "notReady";
       };
   /**

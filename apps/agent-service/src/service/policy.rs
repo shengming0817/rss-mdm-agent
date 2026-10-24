@@ -487,7 +487,11 @@ impl<S: IdentityProvider> DeviceService<S> {
                 Err(error)
                     if matches!(
                         command.request.as_operation(),
-                        Some(Request::Data { .. } | Request::LocalSoftware { .. })
+                        Some(
+                            Request::Data { .. }
+                                | Request::LocalSoftware { .. }
+                                | Request::Settings { .. }
+                        )
                     ) =>
                 {
                     super::data::failure(error)
@@ -613,6 +617,30 @@ impl<S: IdentityProvider> DeviceService<S> {
         let Some(request) = command.request.as_operation() else {
             return Err(Error::Protocol);
         };
+        match request {
+            Request::RequestRegistration {} => {
+                let deployment = self.installation.as_ref().ok_or(Error::Configuration)?;
+                self.client
+                    .prepare_authorization(deployment.capabilities())?;
+                self.next_enrollment = std::time::Instant::now();
+                return Ok(Reply::RegistrationStatus {
+                    value: crate::registration::project(self.client.enrollment_status()?),
+                });
+            }
+            Request::ImportRegistration { file } => {
+                let deployment = self.installation.as_ref().ok_or(Error::Configuration)?;
+                self.client.prepare_configuration(
+                    file.clone(),
+                    crate::installation::installer_format(deployment)?,
+                    deployment.capabilities(),
+                )?;
+                self.next_enrollment = std::time::Instant::now();
+                return Ok(Reply::RegistrationStatus {
+                    value: crate::registration::project(self.client.enrollment_status()?),
+                });
+            }
+            _ => {}
+        }
         if let Request::DeviceAccess {
             context,
             origin,
@@ -622,6 +650,16 @@ impl<S: IdentityProvider> DeviceService<S> {
             return self
                 .access_command(command, context, origin, input, commands)
                 .await;
+        }
+        if let Request::Settings {
+            context,
+            origin,
+            input,
+        } = request
+        {
+            return self
+                .core
+                .settings_operation(command, context, origin, input);
         }
         if let Request::LocalSoftware {
             context,

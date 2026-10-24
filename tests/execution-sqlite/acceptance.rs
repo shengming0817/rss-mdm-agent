@@ -712,7 +712,7 @@ fn unknown_schema_is_rejected_without_modifying_the_database() {
         Store::open(&db.path, &plan().spec().request.authority, limits()),
         Ok(OpenOutcome::UnsupportedSchema {
             found: 98,
-            supported: 1
+            supported: 2
         })
     ));
     assert!(Store::initialize_test(
@@ -723,7 +723,7 @@ fn unknown_schema_is_rejected_without_modifying_the_database() {
     .is_err());
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
     assert_eq!(db.count("attempts"), 1);
-    assert_eq!(db.count("software_claims"), 1);
+    assert_eq!(db.count("resource_claims"), 1);
     assert_eq!(db.count("software_progress"), 1);
 }
 
@@ -741,7 +741,7 @@ fn newer_schema_is_diagnostics_only_and_corrupt_database_is_never_reinitialized(
         Store::open(&db.path, &plan().spec().request.authority, limits()).unwrap(),
         OpenOutcome::UnsupportedSchema {
             found: 99,
-            supported: 1
+            supported: 2
         }
     ));
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
@@ -2663,7 +2663,7 @@ fn software_checkpoints_commit_atomically_and_survive_reopen_without_replay() {
         Err(JournalError::InvalidInput)
     ));
     assert_eq!(db.count("attempts"), 1);
-    assert_eq!(db.count("software_claims"), 1);
+    assert_eq!(db.count("resource_claims"), 1);
 }
 #[test]
 fn software_checkpoint_rejects_other_attempt_and_bounded_corrupt_body() {
@@ -2757,7 +2757,7 @@ fn second_software_request_cannot_steal_unresolved_claim() {
         Err(JournalError::Busy)
     ));
     assert_eq!(db.count("attempts"), 1);
-    assert_eq!(db.count("software_claims"), 1);
+    assert_eq!(db.count("resource_claims"), 1);
 }
 
 #[test]
@@ -2828,7 +2828,7 @@ fn simultaneous_software_requests_have_one_committed_resource_owner() {
         1
     );
     assert_eq!(db.count("attempts"), 1);
-    assert_eq!(db.count("software_claims"), 1);
+    assert_eq!(db.count("resource_claims"), 1);
 }
 
 #[test]
@@ -2954,7 +2954,7 @@ fn committed_steps_preserve_reboot_facts_and_claims_when_detection_changes() {
     store
         .record_software_progress(&host.scope(), &progress, &host)
         .unwrap();
-    assert_eq!(db.count("software_claims"), 1);
+    assert_eq!(db.count("resource_claims"), 1);
 }
 
 #[test]
@@ -3090,7 +3090,7 @@ fn exe_uninstall_present_before_and_unknown_native_end_are_not_desired_or_cleanu
             .software,
         Some(SoftwareDiagnostic::DetectionUnavailable)
     );
-    assert_eq!(db.count("software_claims"), 1);
+    assert_eq!(db.count("resource_claims"), 1);
 }
 
 fn resource_closure_host(mode: u8) -> TestHost {
@@ -3190,7 +3190,7 @@ fn standalone_image_detection_and_pkg_removal_have_no_image_resource_phases() {
 }
 
 #[test]
-fn failed_software_claims_require_resource_closure_even_after_reopen() {
+fn failed_resource_claims_require_resource_closure_even_after_reopen() {
     for mode in 0..3 {
         let image = mode != 0;
         let ordinary_uninstall = mode == 2;
@@ -3345,7 +3345,7 @@ fn failed_software_claims_require_resource_closure_even_after_reopen() {
             .unwrap();
         drop(store);
         let mut store = db.open();
-        assert_eq!(db.count("software_claims"), if image { 1 } else { 0 });
+        assert_eq!(db.count("resource_claims"), if image { 1 } else { 0 });
         if image {
             assert_eq!(
                 store
@@ -3369,7 +3369,7 @@ fn failed_software_claims_require_resource_closure_even_after_reopen() {
             store
                 .record_software_progress(&host.scope(), &progress, &host)
                 .unwrap();
-            assert_eq!(db.count("software_claims"), 1);
+            assert_eq!(db.count("resource_claims"), 1);
             progress.checkpoints.push(SoftwareCheckpoint::CleanupEnd {
                 step,
                 sequence,
@@ -3388,7 +3388,7 @@ fn failed_software_claims_require_resource_closure_even_after_reopen() {
                 .unwrap()
                 .closed(&host.plan));
             assert_eq!(
-                db.count("software_claims"),
+                db.count("resource_claims"),
                 0,
                 "late cleanup must settle the already terminated attempt atomically"
             );

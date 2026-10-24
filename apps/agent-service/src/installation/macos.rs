@@ -3,6 +3,18 @@
 use super::*;
 use std::os::unix::fs::MetadataExt;
 const LABEL: &str = "com.rss-mdm.agent.execution";
+const EXIT_TIMEOUT_SECS: u64 = 35;
+const STOP_TIMEOUT: Duration = Duration::from_secs(45);
+fn require_exit_budget(job: &plist::Dictionary) -> Result<(), Error> {
+    if job
+        .get("ExitTimeOut")
+        .and_then(plist::Value::as_unsigned_integer)
+        != Some(EXIT_TIMEOUT_SECS)
+    {
+        return Err(Error::Configuration);
+    }
+    Ok(())
+}
 fn label(system: bool) -> String {
     format!("{LABEL}{}", if system { "" } else { ".user" })
 }
@@ -108,11 +120,16 @@ fn stop_endpoint(endpoint: &str) -> Result<(), Error> {
     let Some(pid) = registered(endpoint)? else {
         return Ok(());
     };
-    command(
+    let deadline = Instant::now() + STOP_TIMEOUT;
+    let (status, _) = utility_with_timeout(
         Path::new("/bin/launchctl"),
         &["bootout".into(), endpoint.into()],
+        STOP_TIMEOUT,
     )?;
-    let deadline = Instant::now() + Duration::from_secs(15);
+    if !status.success() {
+        outcome::native_failure(status.code());
+        return Err(Error::Unavailable);
+    }
     loop {
         let live = pid != 0 && unsafe { libc::kill(pid as i32, 0) } == 0;
         if registered(endpoint)?.is_none() && !live {
@@ -127,6 +144,14 @@ fn stop_endpoint(endpoint: &str) -> Result<(), Error> {
 fn write_job(system: bool, binary: &Path, config: &Path) -> Result<(), Error> {
     let path = plist_path(system);
     public_directory(path.parent().ok_or(Error::Configuration)?)?;
+    let dict = job(system, binary, config);
+    let mut bytes = Vec::new();
+    plist::Value::Dictionary(dict)
+        .to_writer_xml(&mut bytes)
+        .map_err(|_| Error::Configuration)?;
+    write_new(&path, &bytes)
+}
+fn job(system: bool, binary: &Path, config: &Path) -> plist::Dictionary {
     let mut dict = plist::Dictionary::new();
     dict.insert("Label".into(), label(system).into());
     dict.insert(
@@ -143,13 +168,9 @@ fn write_job(system: bool, binary: &Path, config: &Path) -> Result<(), Error> {
     dict.insert("MachServices".into(), services.into());
     dict.insert("RunAtLoad".into(), true.into());
     dict.insert("KeepAlive".into(), false.into());
-    dict.insert("ExitTimeOut".into(), 15u64.into());
+    dict.insert("ExitTimeOut".into(), EXIT_TIMEOUT_SECS.into());
     dict.insert("ProcessType".into(), "Background".into());
-    let mut bytes = Vec::new();
-    plist::Value::Dictionary(dict)
-        .to_writer_xml(&mut bytes)
-        .map_err(|_| Error::Configuration)?;
-    write_new(&path, &bytes)
+    dict
 }
 pub(super) fn register(system: bool, binary: &Path, config: &Path) -> Result<(), Error> {
     let deployment = Deployment::load(config)?;
@@ -165,7 +186,7 @@ pub(super) fn register(system: bool, binary: &Path, config: &Path) -> Result<(),
     let path = plist_path(system);
     let endpoint = endpoint(system)?;
     if path.exists() {
-        read_job(system, binary, config)?;
+        require_exit_budget(&read_job(system, binary, config)?)?;
     } else if system {
         write_job(true, binary, config)?;
     } else {
@@ -197,7 +218,7 @@ pub(super) fn register(system: bool, binary: &Path, config: &Path) -> Result<(),
     if system {
         let helper = plist_path(false);
         if helper.exists() {
-            read_job(false, binary, config)?;
+            require_exit_budget(&read_job(false, binary, config)?)?;
         } else if !deployment.helper_work_roots.is_empty() {
             write_job(false, binary, config)?;
         }
@@ -541,6 +562,25 @@ fn cleanup_arguments(carrier: &Path, original: &Path, cleanup: &Path) -> Vec<Str
 #[cfg(test)]
 mod retirement_tests {
     use super::*;
+    #[test]
+    fn launchd_budget_covers_service_stop_and_rejects_short_existing_jobs() {
+        assert!(Duration::from_secs(EXIT_TIMEOUT_SECS) > crate::service::SHUTDOWN_WAIT);
+        assert!(STOP_TIMEOUT > Duration::from_secs(EXIT_TIMEOUT_SECS));
+        for system in [false, true] {
+            let mut rendered = job(system, Path::new("/service"), Path::new("/configuration"));
+            require_exit_budget(&rendered).unwrap();
+            rendered.insert("ExitTimeOut".into(), 15u64.into());
+            assert!(matches!(
+                require_exit_budget(&rendered),
+                Err(Error::Configuration)
+            ));
+            rendered.remove("ExitTimeOut");
+            assert!(matches!(
+                require_exit_budget(&rendered),
+                Err(Error::Configuration)
+            ));
+        }
+    }
     #[test]
     fn retirement_finalizer_retains_retry_entry_on_failure_and_uses_exact_paths() {
         let root = std::env::temp_dir().join(format!("carrier-{}", uuid::Uuid::new_v4()));

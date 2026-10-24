@@ -34,6 +34,23 @@ pub struct CapabilitySnapshot {
 pub trait AppHost: AuthorityVerifier {
     /// Establish/recheck the device authority; production failure cannot select Test identity.
     fn service_binding(&self) -> Result<ServiceBinding, Error>;
+    /// Resolve an independently retained execution namespace under this physical owner.
+    /// Ordinary hosts remain bound to exactly one authority.
+    fn binding_for_authority(&self, authority: &Authority) -> Result<ServiceBinding, Error> {
+        let binding = self.service_binding()?;
+        if &binding.authority != authority {
+            return Err(Error::Denied);
+        }
+        Ok(binding)
+    }
+    /// Resolve a trusted actor's namespace before an execution input exists.
+    fn binding_for_actor(&self, _actor: &ActorId) -> Result<ServiceBinding, Error> {
+        self.service_binding()
+    }
+    /// Whether a device belongs to an independently verified namespace of this owner.
+    fn owns_device(&self, device: &DeviceId) -> Result<bool, Error> {
+        Ok(&self.service_binding()?.device == device)
+    }
     /// Current read/write/answer/admin access for an independently verified caller.
     fn authorize(
         &self,
@@ -112,6 +129,12 @@ pub enum ObservationStage {
 }
 /// Trusted bounded runner seam. Only dispatch may start work; observations never replay it.
 pub trait RunnerPort {
+    /// Keep the original physical owners alive for their bounded stop/cleanup protocol.
+    /// Unsupported adapters cannot imply a completed shutdown.
+    fn shutdown(&self) -> Result<(), Error> {
+        Err(Error::OutcomeUnknown)
+    }
+
     /// Close only original frozen software resources, including after cancellation or expiry.
     /// This permission cannot start or repeat an install, upgrade, removal or detector.
     fn resume_software_cleanup(&self, _resume: SoftwareCleanupResume) -> Result<(), Error> {

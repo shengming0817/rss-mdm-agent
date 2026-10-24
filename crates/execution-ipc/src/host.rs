@@ -2,9 +2,9 @@
 use execution_contract::{Digest, Id, RequestId, VersionedRef};
 use serde::{Deserialize, Serialize};
 /// Current desktop/system IPC. No negotiation or legacy parser exists.
-pub const IPC_VERSION: u8 = 3;
+pub const IPC_VERSION: u8 = 4;
 /// Current protected installation document format.
-pub const DEPLOYMENT_VERSION: u32 = 4;
+pub const DEPLOYMENT_VERSION: u32 = 5;
 
 /// Read-only native state, independent from Agent identity and policy authorization.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
@@ -21,8 +21,6 @@ pub struct MdmStatus {
 pub enum Readiness {
     /// Existing device owner is open and driving recovery/work.
     Ready,
-    /// A trusted installation is provably never initialized.
-    RegistrationRequired,
     /// Existing state must be inspected; it must not be reset or re-registered.
     NotReady,
 }
@@ -709,6 +707,15 @@ impl NativeContextSession {
     deny_unknown_fields
 )]
 pub enum Request {
+    /// Desktop-only finite local settings operation.
+    Settings {
+        /// Current authenticated native login context.
+        context: execution_contract::NativeContextRef,
+        /// Attested source; AI cannot submit this interface.
+        origin: ClientOrigin,
+        /// Closed read, change or native navigation intent.
+        input: execution_contract::SettingsOperation,
+    },
     /// Only the separately pinned native extension may use this route.
     PlatformSso {
         /// Bounded registration operation; never accepts a caller-selected local account.
@@ -899,6 +906,11 @@ struct Envelope {
     rename_all_fields = "camelCase"
 )]
 pub enum Reply {
+    /// Observation and original journal status for a finite local settings request.
+    Settings {
+        /// Safe native projection; raw worker output remains private.
+        value: execution_contract::SettingsResponse,
+    },
     /// Reply only to an authenticated Platform SSO extension.
     PlatformSso {
         /// Bounded result containing no private keys.

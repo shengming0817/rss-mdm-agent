@@ -59,10 +59,12 @@ impl JournalPort for Store {
     }
     fn backend_requests(
         &self,
+        authority: &Authority,
         actor: &execution_contract::ActorId,
         host: &impl JournalHost,
     ) -> Result<Vec<BackendRequest>, JournalError> {
-        self.sql_backend_requests(actor, host).map_err(Into::into)
+        self.sql_backend_requests(authority, actor, host)
+            .map_err(Into::into)
     }
     fn backend_request(
         &self,

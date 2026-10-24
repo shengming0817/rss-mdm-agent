@@ -84,7 +84,7 @@ pub(crate) fn supports(target: &Target, action: LocalSoftwareAction) -> bool {
         ),
     }
 }
-pub(crate) fn allowed(rules: &Rules, action: LocalSoftwareAction) -> bool {
+pub(crate) fn allowed(rules: &Restrictions, action: LocalSoftwareAction) -> bool {
     match action {
         LocalSoftwareAction::Launch => rules.allow_launch,
         LocalSoftwareAction::Uninstall => rules.allow_native_uninstall,

@@ -337,7 +337,7 @@ fn newer_schema_retains_read_only_startup_diagnostic() {
     };
     assert_eq!(
         format!("{error:?}"),
-        "UnsupportedSchema { found: 999, supported: 1 }"
+        "UnsupportedSchema { found: 999, supported: 2 }"
     );
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
     assert_eq!(runner.dispatch_count(), 0);
@@ -1421,13 +1421,13 @@ fn reconcile_checkpoint_after_storage_failures(
     assert_eq!(pending.lock().unwrap().as_ref(), Some(&requested));
     assert_eq!(db.count("software_progress"), 1);
     assert_eq!(persisted_progress(), original_progress);
-    assert_eq!(db.count("software_claims"), 1);
+    assert_eq!(db.count("resource_claims"), 1);
     db.sql().execute_batch("DROP TRIGGER fail_progress_write; CREATE TABLE progress_fault(id INTEGER REFERENCES receipts(sequence) DEFERRABLE INITIALLY DEFERRED); CREATE TRIGGER fail_progress_commit AFTER UPDATE ON software_progress BEGIN INSERT INTO progress_fault VALUES(-1); END;").unwrap();
     assert_eq!(app.reconcile(request), Err(Error::OutcomeUnknown));
     assert_eq!(pending.lock().unwrap().as_ref(), Some(&requested));
     assert_eq!(db.count("software_progress"), 1);
     assert_eq!(persisted_progress(), original_progress);
-    assert_eq!(db.count("software_claims"), 1);
+    assert_eq!(db.count("resource_claims"), 1);
     db.sql()
         .execute_batch("DROP TRIGGER fail_progress_commit; DROP TABLE progress_fault")
         .unwrap();
@@ -1532,7 +1532,7 @@ fn software_application_commits_boundaries_before_ack_and_never_replays_unknown_
         .any(|e| e.reference.revision.as_str() == "software-sequence"));
     let sql = rusqlite::Connection::open(&db.path).unwrap();
     assert_eq!(
-        sql.query_row("SELECT count(*) FROM software_claims", [], |r| r
+        sql.query_row("SELECT count(*) FROM resource_claims", [], |r| r
             .get::<_, i64>(0))
             .unwrap(),
         1
@@ -1557,7 +1557,7 @@ fn software_application_commits_boundaries_before_ack_and_never_replays_unknown_
         1
     );
     assert_eq!(
-        sql.query_row("SELECT count(*) FROM software_claims", [], |r| r
+        sql.query_row("SELECT count(*) FROM resource_claims", [], |r| r
             .get::<_, i64>(0))
             .unwrap(),
         1
@@ -1634,7 +1634,7 @@ fn software_application_commits_boundaries_before_ack_and_never_replays_unknown_
     assert_eq!(process.total_output_bytes, 33);
     assert_eq!(process.exit_code, Some(3010));
     assert_eq!(
-        sql.query_row("SELECT count(*) FROM software_claims", [], |r| r
+        sql.query_row("SELECT count(*) FROM resource_claims", [], |r| r
             .get::<_, i64>(0))
             .unwrap(),
         0
@@ -1676,7 +1676,7 @@ fn run_software_cleanup_recovery(restart_without_capture: bool) {
         *live.lock().unwrap() = Some(original_capture.clone());
     }
     reconcile_cleanup_progress(&mut app, &pending, &plan, &progress);
-    assert_eq!(db.count("software_claims"), 1);
+    assert_eq!(db.count("resource_claims"), 1);
     let snapshot = || {
         let body: Vec<u8> = db
             .sql()
@@ -1713,7 +1713,7 @@ fn run_software_cleanup_recovery(restart_without_capture: bool) {
         });
         progress.elapsed_ms += 1;
         reconcile_cleanup_progress(&mut app, &pending, &plan, &progress);
-        assert_eq!(db.count("software_claims"), 1);
+        assert_eq!(db.count("resource_claims"), 1);
         progress.checkpoints.push(SoftwareCheckpoint::CleanupEnd {
             step,
             sequence,
@@ -1724,7 +1724,7 @@ fn run_software_cleanup_recovery(restart_without_capture: bool) {
         progress.elapsed_ms += 10;
         progress.output_bytes += bytes;
         let status = reconcile_cleanup_progress(&mut app, &pending, &plan, &progress);
-        assert_eq!(db.count("software_claims"), if closed { 0 } else { 1 });
+        assert_eq!(db.count("resource_claims"), if closed { 0 } else { 1 });
         assert_cleanup_status(
             &snapshot().attempt.unwrap(),
             &original_attempt,
@@ -2118,7 +2118,7 @@ fn completed_step_cannot_become_sequence_exit_after_restart() {
             1
         );
         assert_eq!(
-            sql.query_row("SELECT count(*) FROM software_claims", [], |r| r
+            sql.query_row("SELECT count(*) FROM resource_claims", [], |r| r
                 .get::<_, i64>(0))
                 .unwrap(),
             if complete_sequence { 0 } else { 1 }
@@ -2374,7 +2374,7 @@ fn unknown_schema_reports_exact_versions_and_keeps_bytes() {
     };
     assert_eq!(
         error.to_string(),
-        "execution database schema 4 is unsupported; required schema 1; preserve the existing database; initialization and automatic migration are disabled"
+        "execution database schema 4 is unsupported; required schema 2; preserve the existing database; initialization and automatic migration are disabled"
     );
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
 }
@@ -2706,6 +2706,31 @@ fn backend_preparation_is_durable_bound_and_never_dispatches_without_start() {
     };
     app.record_backend_request(&caller(), None, &original)
         .unwrap();
+    // Both preparation and execution reserve UUIDs atomically across actor scopes.
+    let other = execution_app::RequestContext {
+        actor: execution_contract::ActorId::new("other-actor").unwrap(),
+    };
+    let mut occupied = plan().spec().clone();
+    occupied.request.request_id = original.action.request().clone();
+    occupied.request.actor = other.actor.clone();
+    let occupied = FrozenExecution::freeze(occupied, &test_execution_limits()).unwrap();
+    assert!(matches!(
+        app.stage_execution(&other, &occupied),
+        Err(execution_app::Error::Conflict)
+    ));
+    let mut local = plan().spec().clone();
+    local.request.request_id = request("local-before-backend");
+    let local = FrozenExecution::freeze(local, &test_execution_limits()).unwrap();
+    app.stage_execution(&caller(), &local).unwrap();
+    let mut collision = original.clone();
+    let PreparedAction::Offered { offer } = &mut collision.action else {
+        unreachable!()
+    };
+    offer.request = local.spec().request.request_id.clone();
+    assert!(matches!(
+        app.record_backend_request(&other, None, &collision),
+        Err(execution_app::Error::Conflict)
+    ));
     assert_eq!(runner.dispatch_count(), 0);
     assert_eq!(db.count("attempts"), 0);
     drop(app);
@@ -2988,4 +3013,63 @@ fn staged_input_survives_reopen_without_admission_and_submits_only_once() {
     assert_eq!(app.request_execution(&caller(), &p).unwrap().attempts, 1);
     assert_eq!(app.request_execution(&caller(), &p).unwrap().attempts, 1);
     assert_eq!(runner.dispatch_count(), 1);
+}
+
+#[test]
+fn exact_physical_claims_survive_owner_reopen_and_release_only_after_quiescence() {
+    let db = Database::new();
+    let mut first_host = TestHost::new();
+    let mut input = plan().spec().clone();
+    input.request.parameters.insert(
+        "exclusive-resources".into(),
+        InputValue::Literal {
+            value: serde_json::json!(["settings:display"]),
+        },
+    );
+    let first = FrozenExecution::freeze(input.clone(), &test_execution_limits()).unwrap();
+    first_host.template = first.clone();
+    let runner = DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
+    let mut owner = open(&db, first_host.clone(), runner.clone(), false);
+    assert_eq!(
+        owner.request_execution(&caller(), &first).unwrap().attempts,
+        1
+    );
+    input.request.request_id = request("second-resource-request");
+    let second = FrozenExecution::freeze(input, &test_execution_limits()).unwrap();
+    let mut second_host = TestHost::new();
+    second_host.template = second.clone();
+    let second_runner =
+        DeterministicTestRunner::new(id("second-runner"), TestScenario::Wait, 16).unwrap();
+    let mut other = reopen_app(
+        &db.path,
+        second_host,
+        second_runner.clone(),
+        AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    assert!(matches!(
+        other.request_execution(&caller(), &second),
+        Err(Error::Unavailable)
+    ));
+    assert_eq!(second_runner.dispatch_count(), 0);
+    assert_eq!(
+        other
+            .status(&caller(), &second.spec().request.request_id)
+            .unwrap()
+            .attempts,
+        0
+    );
+    drop(owner);
+    let mut owner = reopen_app(&db.path, first_host, runner, AppConfig::test_defaults(1)).unwrap();
+    owner
+        .cancel(&caller(), &first.spec().request.request_id)
+        .unwrap();
+    assert_eq!(db.count("resource_claims"), 1);
+    owner.reconcile(&first.spec().request.request_id).unwrap();
+    assert_eq!(db.count("resource_claims"), 0);
+    let status = other.request_execution(&caller(), &second).unwrap();
+    assert_eq!(status.attempts, 1);
+    assert_eq!(second_runner.dispatch_count(), 1);
+    other.request_execution(&caller(), &second).unwrap();
+    assert_eq!(second_runner.dispatch_count(), 1);
 }

@@ -28,6 +28,7 @@ pub(crate) struct Association {
 }
 #[derive(Serialize, Deserialize)]
 struct Published {
+    enterprise: Option<Digest>,
     locator: PolicyLocator,
     generated_uid: Option<String>,
     descriptor: QueryDescriptor,
@@ -39,9 +40,15 @@ struct Published {
 }
 #[derive(Serialize, Deserialize)]
 struct PolicyRead {
+    enterprise: Option<Digest>,
     descriptor: QueryDescriptor,
     generated_uid: Option<String>,
     seen_at: u64,
+}
+#[derive(Serialize, Deserialize)]
+struct Observed {
+    enterprise: Option<Digest>,
+    descriptor: QueryDescriptor,
 }
 fn account_uid(subject: &str) -> Result<Option<String>, Error> {
     if subject == "0" {
@@ -57,6 +64,8 @@ pub(crate) struct Data {
     store: CollectedStore,
     redactor: CredentialRedactor,
     pinned: std::collections::BTreeSet<Id>,
+    local_reads: BTreeMap<Id, ReadPlan>,
+    enterprise: Option<Digest>,
 }
 pub(crate) fn digest(value: &impl Serialize) -> Result<Digest, Error> {
     Digest::new(format!(
@@ -90,6 +99,23 @@ fn domain(q: &w::NativeQueryDefinition) -> Option<&'static str> {
             w::MacosHardwareSection::Network => "hardware.network",
             w::MacosHardwareSection::Battery => "hardware.battery",
         },
+        System {
+            query:
+                w::NativeSystemQuery::MacosSecurity {
+                    section: w::MacosSecuritySection::Filevault,
+                }
+                | w::NativeSystemQuery::WindowsBitlocker,
+        } => "security.encryption",
+        System {
+            query:
+                w::NativeSystemQuery::MacosSecurity {
+                    section: w::MacosSecuritySection::Firewall,
+                }
+                | w::NativeSystemQuery::WindowsFirewall,
+        } => "security.firewall",
+        System {
+            query: w::NativeSystemQuery::WindowsDefender,
+        } => "security.protection",
         WindowsPerformance { .. } | MacosPerformance { .. } => "performance",
         WindowsSoftware | MacosApplications { .. } => "software.installations",
         MacosPkgReceipts {} => "software.receipts",
@@ -108,7 +134,14 @@ fn domain(q: &w::NativeQueryDefinition) -> Option<&'static str> {
                 "Win32_ComputerSystemProduct" => ("hardware.identity", &["UUID"]),
                 "Win32_BIOS" => ("hardware.firmware", &["SerialNumber", "SMBIOSBIOSVersion"]),
                 "Win32_DiskDrive" => ("hardware.disks", &["DeviceID", "Model", "Size"]),
-                "Win32_OperatingSystem" => ("hardware.os", &["Caption", "Version", "BuildNumber"]),
+                "Win32_LogicalDisk" => (
+                    "hardware.volumes",
+                    &["DeviceID", "Size", "FreeSpace", "DriveType"],
+                ),
+                "Win32_OperatingSystem" => (
+                    "hardware.os",
+                    &["Caption", "Version", "BuildNumber", "SystemDrive"],
+                ),
                 _ => return None,
             };
             if properties.keys().any(|k| !allowed.contains(&k.as_str())) {
@@ -136,7 +169,7 @@ fn domain(q: &w::NativeQueryDefinition) -> Option<&'static str> {
         {
             "hardware.os"
         }
-        // Generic registry/WMI and security recipes have no default local read grant.
+        // Generic registry/WMI and all other security recipes have no default local read grant.
         // A future mapping must name the exact typed properties and their access boundary.
         _ => return None,
     })
@@ -160,6 +193,7 @@ fn mapped_field(q: &w::NativeQueryDefinition, key: &str) -> Option<String> {
             ("Win32_OperatingSystem", "Caption") => "hardware.os.name",
             ("Win32_OperatingSystem", "Version") => "hardware.os.version",
             ("Win32_OperatingSystem", "BuildNumber") => "hardware.os.build",
+            ("Win32_OperatingSystem", "SystemDrive") => "hardware.os.system_drive",
             _ => return None,
         },
         WindowsRegistry { values, .. } => match values.get(key)?.name.as_str() {
@@ -273,7 +307,13 @@ impl Data {
             store,
             redactor,
             pinned: Default::default(),
+            local_reads: Default::default(),
+            enterprise: None,
         }
+    }
+    pub fn bind_enterprise(&mut self, authority: Option<&Authority>) -> Result<(), Error> {
+        self.enterprise = authority.map(digest).transpose()?;
+        Ok(())
     }
     pub fn protect(
         &mut self,
@@ -281,13 +321,50 @@ impl Data {
     ) -> Result<(), Error> {
         self.redactor.protect_user_session(value)
     }
+    pub fn settings_read(
+        &self,
+        subject: &str,
+        session: &Id,
+        section: SettingsSection,
+    ) -> Result<Option<SettingsSnapshot>, Error> {
+        self.store
+            .read(&format!(
+                "settings/{}/{section:?}",
+                digest(&(subject, session, account_uid(subject)?))?.as_str()
+            ))?
+            .map(decode)
+            .transpose()
+    }
+    pub fn settings_write(
+        &mut self,
+        subject: &str,
+        session: &Id,
+        snapshot: &SettingsSnapshot,
+    ) -> Result<(), Error> {
+        // Reconciliation revisits retained tasks in UUID order, not observation order.
+        if self
+            .settings_read(subject, session, snapshot.section)?
+            .is_some_and(|current| current.collected_at_unix_ms >= snapshot.collected_at_unix_ms)
+        {
+            return Ok(());
+        }
+        self.store.write(
+            &format!(
+                "settings/{}/{:?}",
+                digest(&(subject, session, account_uid(subject)?))?.as_str(),
+                snapshot.section
+            ),
+            &encode(snapshot)?,
+        )
+    }
     pub fn history_limit(&self) -> usize {
         (self.store.limits().0 / (128 * 1024))
             .min(self.store.limits().1.saturating_sub(self.pinned.len()) / 4)
             .clamp(1, 32)
     }
-    pub fn pin(&mut self, query: &QueryRef) {
+    pub fn pin(&mut self, query: &QueryRef, read: &ReadPlan) {
         self.pinned.insert(query.id.clone());
+        self.local_reads.insert(query.id.clone(), read.clone());
     }
     fn scan(&self, prefix: &str) -> Result<Vec<(String, Value)>, Error> {
         let mut values = Vec::new();
@@ -321,6 +398,21 @@ impl Data {
         active_inputs: &std::collections::BTreeSet<RequestId>,
         active_policies: &std::collections::BTreeSet<String>,
     ) -> Result<(), Error> {
+        let current_settings = contexts
+            .iter()
+            .map(|(subject, session, _)| {
+                digest(&(subject, session, account_uid(subject)?))
+                    .map(|id| format!("settings/{}/", id.as_str()))
+            })
+            .collect::<Result<Vec<_>, Error>>()?;
+        for (key, _) in self.scan("settings/")? {
+            if !current_settings
+                .iter()
+                .any(|prefix| key.starts_with(prefix))
+            {
+                self.store.remove(&key)?;
+            }
+        }
         let protected = self
             .scan("request/")?
             .into_iter()
@@ -356,6 +448,7 @@ impl Data {
             let d: Definition = decode(value)?;
             if subject(&d.read).is_some_and(|owner| !visible(&d.read, owner)) {
                 self.pinned.remove(&d.descriptor.reference.id);
+                self.local_reads.remove(&d.descriptor.reference.id);
                 if !protected.contains(&d.descriptor.reference.id) {
                     self.store.remove(&key)?;
                     self.store
@@ -377,7 +470,8 @@ impl Data {
         }
         let mut observed = Vec::new();
         for (key, value) in self.scan("observed/")? {
-            let d: QueryDescriptor = decode(value)?;
+            let metadata: Observed = decode(value)?;
+            let d = metadata.descriptor;
             if !active_policies.contains(d.reference.id.as_str()) {
                 let latest: Option<CollectedData> = self
                     .store
@@ -486,13 +580,16 @@ impl Data {
                 .read(&format!("published/{}", a.query.id.as_str()))?
                 .ok_or(Error::NotFound)?,
         )?;
-        if published.subject != a.subject
+        if published.enterprise != self.enterprise
+            || self.enterprise.is_none()
+            || published.subject != a.subject
             || published.descriptor.reference != a.query
             || published.generated_uid != account_uid(&a.subject)?
         {
             return Err(Error::Denied);
         }
         let metadata = PolicyRead {
+            enterprise: self.enterprise.clone(),
             descriptor: published.descriptor,
             generated_uid: published.generated_uid,
             seen_at: now(),
@@ -551,7 +648,10 @@ impl Data {
         };
         self.store.write(
             &format!("observed/{}", reference.id.as_str()),
-            &encode(&descriptor)?,
+            &encode(&Observed {
+                enterprise: self.enterprise.clone(),
+                descriptor,
+            })?,
         )?;
         let mut value = empty(reference, None, DataQuality::Failed);
         value.collected_at = Some(u64::try_from(at / 1_000_000).map_err(|_| Error::Clock)?);
@@ -602,7 +702,10 @@ impl Data {
         session: &Id,
         context: &NativeContextRef,
     ) -> Result<QueryDescriptor, Error> {
-        let revision = policy_revision(&item, subject)?;
+        let revision = digest(&(
+            self.enterprise.as_ref().ok_or(Error::Identity)?,
+            policy_revision(&item, subject)?,
+        ))?;
         let reference = QueryRef {
             id: crate::backend::plan::id(format!("policy:{}", revision.as_str()))?,
             revision,
@@ -647,6 +750,7 @@ impl Data {
         self.store.write(
             &format!("published/{}", descriptor.reference.id.as_str()),
             &encode(&Published {
+                enterprise: self.enterprise.clone(),
                 locator,
                 generated_uid: account_uid(subject)?,
                 descriptor: descriptor.clone(),
@@ -674,10 +778,19 @@ impl Data {
             return Ok(None);
         };
         let p: Published = decode(value)?;
-        if p.subject != subject || &p.session != session || &p.context != context {
+        if p.enterprise != self.enterprise
+            || self.enterprise.is_none()
+            || p.subject != subject
+            || &p.session != session
+            || &p.context != context
+        {
             return Err(Error::Denied);
         }
-        if policy_revision(&p.item, subject)? != query.revision {
+        if digest(&(
+            self.enterprise.as_ref().ok_or(Error::Identity)?,
+            policy_revision(&p.item, subject)?,
+        ))? != query.revision
+        {
             return Err(Error::Conflict);
         }
         Ok(Some((p.item, p.locator)))
@@ -699,11 +812,15 @@ impl Data {
             self.policy_read(&query, caller)?;
         }
         if query.id.as_str().starts_with("telemetry:") {
-            let d: QueryDescriptor = decode(
+            let observed: Observed = decode(
                 self.store
                     .read(&format!("observed/{}", query.id.as_str()))?
                     .ok_or(Error::Unavailable)?,
             )?;
+            if observed.enterprise != self.enterprise || self.enterprise.is_none() {
+                return Err(Error::Denied);
+            }
+            let d = observed.descriptor;
             if d.reference != query {
                 return Err(Error::Conflict);
             }
@@ -793,6 +910,15 @@ impl Data {
         )?;
         Ok(definition)
     }
+    pub fn local_definition(&self, query: &QueryRef, caller: &str) -> Result<Definition, Error> {
+        let mut definition = self.definition(query, caller)?;
+        definition.read = self
+            .local_reads
+            .get(&query.id)
+            .cloned()
+            .ok_or(Error::Denied)?;
+        Ok(definition)
+    }
     pub fn definition(&self, query: &QueryRef, caller: &str) -> Result<Definition, Error> {
         let definition: Definition = decode(
             self.store
@@ -814,8 +940,12 @@ impl Data {
         loop {
             let page = self.store.page("definition/", after.as_deref(), 128)?;
             for (_, v) in &page {
-                let d: Definition = decode(v.clone())?;
+                let mut d: Definition = decode(v.clone())?;
                 if visible(&d.read, caller) {
+                    if !self.pinned.contains(&d.descriptor.reference.id) {
+                        d.descriptor.available = false;
+                        d.descriptor.reason = Some(DataQuality::Denied);
+                    }
                     result.push(d.descriptor);
                 }
             }
@@ -825,7 +955,10 @@ impl Data {
             after = page.last().map(|(k, _)| k.clone());
         }
         for (_, v) in self.store.page("observed/", None, 128)? {
-            result.push(decode(v)?);
+            let observed: Observed = decode(v)?;
+            if observed.enterprise == self.enterprise && self.enterprise.is_some() {
+                result.push(observed.descriptor);
+            }
         }
         for (_, value) in self.scan("policy-read/")? {
             let meta: PolicyRead = decode(value)?;
@@ -930,6 +1063,9 @@ impl Data {
                 .read(&format!("policy-read/{}", query.id.as_str()))?
                 .ok_or(Error::Denied)?,
         )?;
+        if metadata.enterprise != self.enterprise || self.enterprise.is_none() {
+            return Err(Error::Denied);
+        }
         if metadata.descriptor.reference != *query {
             return Err(Error::Conflict);
         }

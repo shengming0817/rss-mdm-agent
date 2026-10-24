@@ -270,8 +270,10 @@ impl Candidate {
                 interactive: true,
             },
             execution: ExecutionConfig {
-                local_software: crate::local_software::LocalSoftwareConfig {
-                    policy_file: base.join("software-policy.json"),
+                #[cfg(test)]
+                worker_image_fixture: None,
+                local_permissions: crate::local_permissions::Config {
+                    policy_file: base.join("local-permissions.json"),
                 },
                 work_root: base.join("work"),
                 material_root: base.join("materials"),
@@ -339,6 +341,13 @@ pub(crate) fn installer_format(
 }
 /// Every native utility uses a fixed absolute path and bounded execution; output is never logged.
 fn utility(path: &Path, args: &[OsString]) -> Result<(std::process::ExitStatus, Vec<u8>), Error> {
+    utility_with_timeout(path, args, Duration::from_secs(20))
+}
+fn utility_with_timeout(
+    path: &Path,
+    args: &[OsString],
+    timeout: Duration,
+) -> Result<(std::process::ExitStatus, Vec<u8>), Error> {
     if !path.is_absolute() {
         return Err(Error::Configuration);
     }
@@ -356,7 +365,7 @@ fn utility(path: &Path, args: &[OsString]) -> Result<(std::process::ExitStatus, 
             .read_to_end(&mut bytes)
             .map(|_| bytes)
     });
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + timeout;
     let status = loop {
         if let Some(status) = child.try_wait()? {
             break status;

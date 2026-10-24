@@ -13,10 +13,17 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         if self.host.service_binding()? != self.binding {
             return Err(Error::Unbound);
         }
-        if &self.binding.device != device {
+        if !self.host.owns_device(device)? {
             return Err(Error::Denied);
         }
-        Ok(self.journal.contains_request(request)?)
+        if !self.journal.contains_request(request)? {
+            return Ok(false);
+        }
+        let input = self.service_frozen_input(request)?;
+        if &input.spec().request.target.device != device {
+            return Err(Error::Denied);
+        }
+        Ok(true)
     }
     /// Device-owner delivery with independent evidence permission. Not a UI/AI endpoint.
     pub fn service_delivery(

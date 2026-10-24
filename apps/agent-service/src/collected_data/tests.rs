@@ -1,6 +1,22 @@
 use super::*;
 use crate::protocol_test_support::{Root, Server};
 use agent_client::OpenMode;
+fn projection<S: agent_client::IdentityProvider, C: agent_client::Clock>(
+    client: &agent_client::Client<S, C>,
+) -> Data {
+    let mut data = Data::new(
+        client.collected_store().unwrap(),
+        client.output_policy().unwrap(),
+    );
+    let (binding, _) = crate::backend::plan::context(
+        client.configuration().service_id,
+        client.configuration().tenant,
+        &client.registration().unwrap(),
+    )
+    .unwrap();
+    data.bind_enterprise(Some(&binding.authority)).unwrap();
+    data
+}
 fn id(s: &str) -> Id {
     Id::new(s).unwrap()
 }
@@ -94,10 +110,7 @@ async fn native_projection_survives_reopen_is_local_and_preserves_quality_and_re
     let root = Root::new();
     let mut client = server.client(&root, OpenMode::Create);
     server.register(&mut client).await;
-    let mut data = Data::new(
-        client.collected_store().unwrap(),
-        client.output_policy().unwrap(),
-    );
+    let mut data = projection(&client);
     let plan = read_plan();
     let query = data.register(plan.clone()).unwrap().descriptor.reference;
     let request = RequestId::new("11111111-1111-4111-a111-111111111111").unwrap();
@@ -132,10 +145,7 @@ async fn native_projection_survives_reopen_is_local_and_preserves_quality_and_re
     )
     .unwrap();
     drop(data); // No backend result read or upload receipt is involved.
-    let mut data = Data::new(
-        client.collected_store().unwrap(),
-        client.output_policy().unwrap(),
-    );
+    let mut data = projection(&client);
     let result = data.read(&read, "501", &session, 111).unwrap();
     assert_eq!(result.quality, DataQuality::Complete);
     assert!(result.stale);
@@ -166,10 +176,7 @@ async fn pagination_is_bound_to_snapshot_and_budget_without_turning_reads_into_c
     let root = Root::new();
     let mut client = server.client(&root, OpenMode::Create);
     server.register(&mut client).await;
-    let mut data = Data::new(
-        client.collected_store().unwrap(),
-        client.output_policy().unwrap(),
-    );
+    let mut data = projection(&client);
     let query = data.register(read_plan()).unwrap().descriptor.reference;
     let mut value = empty(query.clone(), None, DataQuality::Complete);
     value.collected_at = Some(100);
@@ -235,13 +242,10 @@ async fn metadata_is_bounded_titles_survive_capture_and_published_inputs_remain_
     let root = Root::new();
     let mut client = server.client(&root, OpenMode::Create);
     server.register(&mut client).await;
-    let mut data = Data::new(
-        client.collected_store().unwrap(),
-        client.output_policy().unwrap(),
-    );
+    let mut data = projection(&client);
     let read = read_plan();
     let definition = data.register(read.clone()).unwrap();
-    data.pin(&definition.descriptor.reference);
+    data.pin(&definition.descriptor.reference, &definition.read);
     data.native(read.clone(), None, &evidence(&read, true), 100_000)
         .unwrap();
     assert_eq!(
@@ -325,10 +329,7 @@ async fn reused_numeric_uid_cannot_discover_or_read_an_old_accounts_collection()
     let root = Root::new();
     let mut client = server.client(&root, OpenMode::Create);
     server.register(&mut client).await;
-    let mut data = Data::new(
-        client.collected_store().unwrap(),
-        client.output_policy().unwrap(),
-    );
+    let mut data = projection(&client);
     let caller = execution_ipc::host::current_subject().unwrap();
     let mut read = read_plan();
     let mut spec: w::NativePlanSpec = read.plan.clone().into();
@@ -390,10 +391,7 @@ async fn telemetry_ack_removes_delivery_but_preserves_the_normalized_local_proje
     .into();
     let observation = spool.append(&c, at, values, "boot-fixture").unwrap();
     let normalized = spool.observation(&c, observation).unwrap().values;
-    let mut data = Data::new(
-        client.collected_store().unwrap(),
-        client.output_policy().unwrap(),
-    );
+    let mut data = projection(&client);
     data.periodic(
         c.payload(),
         &evidence(&read_plan(), true),
@@ -415,10 +413,7 @@ async fn telemetry_ack_removes_delivery_but_preserves_the_normalized_local_proje
     spool.acknowledge(&pending, &receipt).unwrap();
     assert_eq!(spool.summary().unwrap().pending, 0);
     drop(data);
-    let data = Data::new(
-        client.collected_store().unwrap(),
-        client.output_policy().unwrap(),
-    );
+    let data = projection(&client);
     let result = data
         .read(
             &DataRead {
@@ -445,10 +440,7 @@ async fn declared_domains_and_windows_fields_match_the_same_local_display_contra
     let root = Root::new();
     let mut client = server.client(&root, OpenMode::Create);
     server.register(&mut client).await;
-    let mut data = Data::new(
-        client.collected_store().unwrap(),
-        client.output_policy().unwrap(),
-    );
+    let mut data = projection(&client);
     // Pure wire/mapper validation on this host; this is not Windows execution evidence.
     data.install_platform(Platform::Windows).unwrap();
     let entries = data.directory("501").unwrap();
@@ -506,10 +498,7 @@ async fn minimum_record_quota_reclaims_metadata_and_reserves_new_query_capacity(
     )
     .unwrap();
     server.register(&mut client).await;
-    let mut data = Data::new(
-        client.collected_store().unwrap(),
-        client.output_policy().unwrap(),
-    );
+    let mut data = projection(&client);
     data.install_platform(Platform::Macos).unwrap();
     assert_eq!(data.store.limits().1, 32);
     let context = NativeContextRef {
@@ -569,10 +558,7 @@ async fn a_later_native_projection_failure_rolls_back_the_batch_and_recovers_aft
     let root = Root::new();
     let mut client = server.client(&root, OpenMode::Create);
     server.register(&mut client).await;
-    let mut data = Data::new(
-        client.collected_store().unwrap(),
-        client.output_policy().unwrap(),
-    );
+    let mut data = projection(&client);
     let mut read = read_plan();
     let mut spec: w::NativePlanSpec = read.plan.clone().into();
     let mut cpu = spec.queries["arbitrarySourceName"].clone();
@@ -637,10 +623,7 @@ async fn a_later_native_projection_failure_rolls_back_the_batch_and_recovers_aft
         .unwrap();
     drop(conn);
     let client = server.client(&root, OpenMode::Existing);
-    let mut data = Data::new(
-        client.collected_store().unwrap(),
-        client.output_policy().unwrap(),
-    );
+    let mut data = projection(&client);
     let recovered = data.remembered(&request).unwrap().unwrap();
     data.native(recovered, Some(request.clone()), &process, 100_000)
         .unwrap();
@@ -672,10 +655,7 @@ async fn authorized_policy_data_survives_context_retirement_and_reopen_without_e
     let root = Root::new();
     let mut client = server.client(&root, OpenMode::Create);
     server.register(&mut client).await;
-    let mut data = Data::new(
-        client.collected_store().unwrap(),
-        client.output_policy().unwrap(),
-    );
+    let mut data = projection(&client);
     let subject = execution_ipc::host::current_subject().unwrap();
     let old_session = id("login/old");
     let old_context = NativeContextRef {
@@ -736,10 +716,7 @@ async fn authorized_policy_data_survives_context_retirement_and_reopen_without_e
     drop(data);
     drop(client);
     let client = server.client(&root, OpenMode::Existing);
-    let mut data = Data::new(
-        client.collected_store().unwrap(),
-        client.output_policy().unwrap(),
-    );
+    let mut data = projection(&client);
     data.maintain(&[], &Default::default(), &Default::default())
         .unwrap();
     let session = id("login/new");
@@ -794,4 +771,72 @@ async fn authorized_policy_data_survives_context_retirement_and_reopen_without_e
     metadata.generated_uid = Some(uuid::Uuid::new_v4().to_string());
     data.store.write(&key, &encode(&metadata).unwrap()).unwrap();
     assert!(data.policy_read(&query, &subject).is_err());
+}
+
+#[tokio::test]
+async fn observed_backend_definitions_never_create_or_replace_compiled_local_rules() {
+    let _budget = crate::scenario_budget::enter();
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let mut data = projection(&client);
+    let first = data.register(read_plan()).unwrap();
+    assert!(data.definition(&first.descriptor.reference, "501").is_ok());
+    assert!(matches!(
+        data.local_definition(&first.descriptor.reference, "501"),
+        Err(Error::Denied)
+    ));
+    assert!(
+        !data
+            .directory("501")
+            .unwrap()
+            .into_iter()
+            .find(|d| d.reference == first.descriptor.reference)
+            .unwrap()
+            .available
+    );
+    data.pin(&first.descriptor.reference, &first.read);
+    let mut changed = first.read.clone();
+    changed.deadline = 999_999;
+    changed.execution.context_revision = 99;
+    let observed = data.register(changed).unwrap();
+    assert_eq!(observed.descriptor.reference, first.descriptor.reference);
+    let local = data
+        .local_definition(&first.descriptor.reference, "501")
+        .unwrap();
+    assert_eq!(
+        local.read.execution.context_revision,
+        first.read.execution.context_revision
+    );
+    assert_eq!(local.read.deadline, first.read.deadline);
+}
+
+#[tokio::test]
+async fn old_settings_tasks_cannot_replace_a_newer_observation() {
+    let _budget = crate::scenario_budget::enter();
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let mut data = projection(&client);
+    let session = id("settings-session");
+    let mut value = SettingsSnapshot {
+        section: SettingsSection::Network,
+        revision: Digest::new("a".repeat(64)).unwrap(),
+        collected_at_unix_ms: 200,
+        source: "fixture native".into(),
+        targets: vec![],
+    };
+    data.settings_write("0", &session, &value).unwrap();
+    value.collected_at_unix_ms = 100;
+    value.revision = Digest::new("b".repeat(64)).unwrap();
+    data.settings_write("0", &session, &value).unwrap();
+    assert_eq!(
+        data.settings_read("0", &session, SettingsSection::Network)
+            .unwrap()
+            .unwrap()
+            .collected_at_unix_ms,
+        200
+    );
 }

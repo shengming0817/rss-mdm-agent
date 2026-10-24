@@ -69,7 +69,11 @@ pub(crate) fn context(
             },
             device: DeviceId::new(&r.device_id).map_err(|_| Error::Protocol)?,
         },
-        ActorId::new(format!("registration:{}", r.registration_id)).map_err(|_| Error::Protocol)?,
+        ActorId::new(format!(
+            "registration:{}:{}",
+            r.registration_id, r.generation
+        ))
+        .map_err(|_| Error::Protocol)?,
     ))
 }
 pub(crate) fn script_profile(profile: wire::ExecutorProfile) -> Result<ScriptProfile, Error> {
@@ -382,4 +386,15 @@ pub(crate) fn pin(path: &Path) -> Result<SoftwareMaterial, Error> {
         path: path.to_str().ok_or(Error::Configuration)?.into(),
         artifact: reference,
     })
+}
+
+/// Production always pins its installed service image. Unit tests may explicitly supply
+/// a protected, non-native fixture image to test journal/API semantics without OS effects.
+pub(crate) fn worker_image(config: &crate::ExecutionConfig) -> Result<SoftwareMaterial, Error> {
+    let _ = config;
+    #[cfg(test)]
+    if let Some(image) = config.worker_image_fixture {
+        return image(config);
+    }
+    pin(&std::env::current_exe()?)
 }

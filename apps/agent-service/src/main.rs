@@ -49,6 +49,10 @@ fn run() -> Result<(), Error> {
             let code = agent_service::access_worker::run(std::path::Path::new(path))?;
             std::process::exit(code);
         }
+        if mode == "--settings-worker" {
+            let code = agent_service::local_settings::run(std::path::Path::new(path))?;
+            std::process::exit(code);
+        }
         if mode == "--local-software-worker" {
             let code = agent_service::local_software::native::run(std::path::Path::new(path))?;
             std::process::exit(code);

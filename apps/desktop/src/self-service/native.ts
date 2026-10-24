@@ -3,6 +3,8 @@ import { userGeneration } from "../test-users";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type {
   SelfServicePort,
+  SettingsOperation,
+  SettingsResponse,
   SoftwarePort,
   DataAccessPort,
   Snapshot,
@@ -71,4 +73,14 @@ export function nativeDeviceAccessPort(): DeviceAccessPort | null {
   if (!isTauri()) return null;
   const generation = userGeneration();
   return (input) => invoke("device_access", { input, generation });
+}
+
+/** Finite desktop settings; no equivalent AI write tool is registered. */
+export function nativeSettingsPort():
+  | ((input: SettingsOperation) => Promise<SettingsResponse>)
+  | null {
+  if (!isTauri()) return null;
+  const generation = userGeneration();
+  return (input) =>
+    invoke<SettingsResponse>("system_settings", { input, generation });
 }
