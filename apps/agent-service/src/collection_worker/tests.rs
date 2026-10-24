@@ -129,7 +129,19 @@ fn registry_values_are_typed_exact_and_not_expanded() {
     );
     assert!(registry(w::RegistryType::Dword, 11, &[0; 8]).is_err());
     assert!(registry(w::RegistryType::Dword, 4, &[0; 3]).is_err());
-    assert!(registry(w::RegistryType::Sz, 1, &utf16("unterminated")).is_err());
+    for text in ["", "unterminated", "%ProgramFiles%\\RSS"] {
+        for kind in [1, 2] {
+            assert_eq!(software_string(kind, &utf16(text)).unwrap(), text);
+        }
+    }
+    assert_eq!(registry(w::RegistryType::Sz, 1, &utf16("unterminated")).unwrap(), json!("unterminated"));
+    assert!(software_string(4, &0u32.to_le_bytes()).is_err());
+    assert!(software_string(1, &[1]).is_err());
+    assert!(software_string(1, &utf16("one\0two")).is_err());
+    assert!(software_string(1, &[0, 0xd8]).is_err());
+    for state in [0, 1, 6] { assert!(!package_installed(state).unwrap()); }
+    assert!(package_installed(2).unwrap());
+    assert!(package_installed(3).is_err());
     assert!(registry(w::RegistryType::Sz, 1, &[0, 0xd8, 0, 0]).is_err());
 }
 #[test]

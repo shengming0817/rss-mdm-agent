@@ -57,6 +57,14 @@ pub(super) fn value(
     name: &str,
     kind: w::RegistryType,
 ) -> Result<serde_json::Value, Status> {
+    let (actual, bytes) = raw_value(key, name)?;
+    super::super::values::registry(kind, actual, &bytes)
+}
+pub(super) fn software_string(key: &Key, name: &str) -> Result<String, Status> {
+    let (actual, bytes) = raw_value(key, name)?;
+    super::super::values::software_string(actual, &bytes)
+}
+fn raw_value(key: &Key, name: &str) -> Result<(u32, Vec<u8>), Status> {
     let name = wide(name);
     let mut size = 0;
     let mut typ = REG_VALUE_TYPE::default();
@@ -94,7 +102,7 @@ pub(super) fn value(
         return Err(Status::Invalid);
     }
     bytes.truncate(size as usize);
-    super::super::values::registry(kind, typ.0, &bytes)
+    Ok((typ.0, bytes))
 }
 pub(super) fn names(key: &Key, budget: &Budget, max: usize) -> Result<Vec<String>, Status> {
     let mut names = Vec::new();

@@ -392,18 +392,20 @@ pub(crate) fn worker_image(config: &crate::ExecutionConfig) -> Result<SoftwareMa
 pub(crate) fn environment(
     input: &BTreeMap<String, String>,
 ) -> Result<BTreeMap<EnvironmentKey, InputValue>, Error> {
-    let values = input.clone();
     #[cfg(windows)]
-    let values = {
-        let mut values = values;
-        values.insert(
-            "SystemRoot".into(),
-            crate::os_version::system_root()?
-                .into_string()
-                .map_err(|_| Error::Configuration)?,
-        );
-        values
-    };
+    let system_root = Some(crate::os_version::system_root()?.into_string().map_err(|_| Error::Configuration)?);
+    #[cfg(not(windows))]
+    let system_root = None;
+    freeze_environment(input, system_root)
+}
+
+fn freeze_environment(
+    input: &BTreeMap<String, String>, system_root: Option<String>,
+) -> Result<BTreeMap<EnvironmentKey, InputValue>, Error> {
+    let mut values = input.clone();
+    if let Some(system_root) = system_root {
+        values.insert("SystemRoot".into(), system_root);
+    }
     values
         .into_iter()
         .map(|(key, value)| {
@@ -415,4 +417,17 @@ pub(crate) fn environment(
             ))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod environment_tests {
+    use super::*;
+    #[test]
+    fn native_startup_value_is_frozen_without_inheriting_host_environment() {
+        let input = BTreeMap::from([("RSS_PARAM_NAME".into(), "value".into()), ("SystemRoot".into(), "foreign".into())]);
+        let result = freeze_environment(&input, Some("C:\\Windows".into())).unwrap();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[&EnvironmentKey::new("SystemRoot").unwrap()], InputValue::Literal {value: "C:\\Windows".into()});
+        assert_eq!(result[&EnvironmentKey::new("RSS_PARAM_NAME").unwrap()], InputValue::Literal {value: "value".into()});
+    }
 }
