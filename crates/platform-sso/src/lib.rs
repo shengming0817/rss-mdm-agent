@@ -29,6 +29,9 @@ pub struct Context {
     pub binding: Option<Uuid>,
     pub binding_generation: Option<i64>,
     pub generated_uid: Option<String>,
+    /// Exact admitted configuration revision; zero only for device scope.
+    pub binding_revision: i64,
+    pub configuration: Option<w::LoginConfiguration>,
 }
 impl Context {
     pub fn validate(&self) -> Result<(), Error> {
@@ -40,13 +43,20 @@ impl Context {
             w::Kind::Device
                 if self.binding.is_none()
                     && self.binding_generation.is_none()
-                    && self.generated_uid.is_none() =>
+                    && self.generated_uid.is_none()
+                    && self.binding_revision == 0
+                    && self.configuration.is_none() =>
             {
                 Ok(())
             }
             w::Kind::User
                 if self.binding.is_some_and(|v| !v.is_nil())
                     && self.binding_generation.is_some_and(|v| v > 0)
+                    && self.binding_revision > 0
+                    && self
+                        .configuration
+                        .as_ref()
+                        .is_some_and(|c| c.validate().is_ok())
                     && self
                         .generated_uid
                         .as_deref()
@@ -92,25 +102,44 @@ pub struct Registration {
     pub source_id: Uuid,
     pub source_version: i64,
     pub client_id: Uuid,
-    pub signing_key: w::PublicKey,
+    pub authentication: w::AuthenticationMode,
+    /// Device key for Password; user key for Secure Enclave.
+    pub proof_key: w::PublicKey,
+    pub signing_key: Option<w::PublicKey>,
     pub encryption_key: w::PublicKey,
 }
 impl Registration {
     pub fn prepare(
         context: Context,
         response: &w::BootstrapResponse,
-        signing_key: w::PublicKey,
+        authentication: w::AuthenticationMode,
+        proof_key: w::PublicKey,
         encryption_key: w::PublicKey,
         now: i64,
     ) -> Result<Self, Error> {
         context.check_bootstrap(response, now)?;
-        signing_key.key_id().map_err(|_| Error::Protocol)?;
+        if context
+            .configuration
+            .as_ref()
+            .is_some_and(|c| c.authentication != authentication)
+        {
+            return Err(Error::Identity);
+        }
+        proof_key.key_id().map_err(|_| Error::Protocol)?;
+        let signing_key =
+            if context.kind == w::Kind::User && authentication == w::AuthenticationMode::Password {
+                None
+            } else {
+                Some(proof_key.clone())
+            };
         encryption_key.key_id().map_err(|_| Error::Protocol)?;
         Ok(Self {
             context,
             source_id: response.source_id,
             source_version: response.source_version,
             client_id: response.client_id,
+            authentication,
+            proof_key,
             signing_key,
             encryption_key,
         })
@@ -136,7 +165,7 @@ impl Registration {
                 .expires_at
                 .min(now.saturating_add(w::NONCE_SECONDS)),
         }
-        .signing_input(&self.signing_key)
+        .signing_input(&self.proof_key)
         .map_err(|_| Error::Protocol)
     }
     pub fn accepts(&self, receipt: &w::RegistrationReceipt) -> bool {
@@ -153,11 +182,17 @@ impl Registration {
             w::Kind::User => (status.user_registered, &status.user_source),
         };
         registered
+            && (self.authentication != w::AuthenticationMode::Password
+                || self.context.kind == w::Kind::Device
+                || (status.device_registered
+                    && status.device_source.as_ref().is_some_and(|d| {
+                        !d.revoked && d.signing_key.as_ref() == Some(&self.proof_key)
+                    })))
             && source.as_ref().is_some_and(|s| {
                 !s.revoked
                     && s.id == self.source_id
                     && s.version == self.source_version
-                    && s.signing_key.as_ref() == Some(&self.signing_key)
+                    && s.signing_key == self.signing_key
                     && s.encryption_key == self.encryption_key
             })
     }
@@ -170,6 +205,18 @@ impl Registration {
         now: i64,
     ) -> Result<String, Error> {
         self.context.validate()?;
+        if self
+            .context
+            .configuration
+            .as_ref()
+            .is_none_or(|c| c.authentication != self.authentication)
+            || (self.authentication == w::AuthenticationMode::Password
+                && self.signing_key.is_some())
+            || (self.authentication == w::AuthenticationMode::SecureEnclave
+                && self.signing_key.as_ref() != Some(&self.proof_key))
+        {
+            return Err(Error::Identity);
+        }
         let endpoints = w::Endpoints::new(&self.context.origin, self.context.tenant)
             .map_err(|_| Error::Identity)?;
         if self.context.kind != w::Kind::User
@@ -192,7 +239,7 @@ impl Registration {
             iat: now,
             exp: now.saturating_add(120),
         }
-        .signing_input(&self.signing_key)
+        .signing_input(&self.proof_key)
         .map_err(|_| Error::Protocol)
     }
 }
@@ -231,6 +278,7 @@ pub struct LocalBinding {
     pub revision: i64,
     pub generated_uid: String,
     pub enabled: bool,
+    pub configuration: w::LoginConfiguration,
 }
 impl LocalBinding {
     pub fn matches_identity(
@@ -247,6 +295,7 @@ impl LocalBinding {
             && self.generated_uid == account
             && self.binding_generation > 0
             && self.revision > 0
+            && self.configuration.validate().is_ok()
             && !self.binding.is_nil()
     }
 }
@@ -296,6 +345,8 @@ mod tests {
             binding: Some(Uuid::from_u128(5)),
             binding_generation: Some(1),
             generated_uid: Some(Uuid::from_u128(6).to_string()),
+            binding_revision: 1,
+            configuration: Some(w::LoginConfiguration::default()),
         };
         let bootstrap = w::BootstrapResponse {
             id: Uuid::from_u128(7),
@@ -314,6 +365,88 @@ mod tests {
             y: "jbOoWZbgDFTEfLa1O_7ZuJy3R8d2XAw0CHWUKmJLsbU".into(),
         };
         (context, bootstrap, key)
+    }
+    #[test]
+    fn password_registration_uses_device_proof_without_registering_a_user_key() {
+        let (mut context, challenge, key) = sample();
+        context.configuration = Some(w::LoginConfiguration {
+            authentication: w::AuthenticationMode::Password,
+            password_provider: Some(Uuid::new_v4()),
+            ..w::LoginConfiguration::default()
+        });
+        assert!(Registration::prepare(
+            context.clone(),
+            &challenge,
+            w::AuthenticationMode::SecureEnclave,
+            key.clone(),
+            key.clone(),
+            1000
+        )
+        .is_err());
+        let registration = Registration::prepare(
+            context,
+            &challenge,
+            w::AuthenticationMode::Password,
+            key.clone(),
+            key.clone(),
+            1000,
+        )
+        .unwrap();
+        assert!(registration.signing_key.is_none());
+        assert!(registration.proof(&challenge, 1000).is_ok());
+        let mut status = w::Status {
+            password_exchange: None,
+            application_observed: true,
+            profile_observed: true,
+            device_registered: true,
+            user_registered: true,
+            login_ready: false,
+            device_source: Some(w::SourceStatus {
+                id: Uuid::new_v4(),
+                version: 1,
+                revoked: false,
+                signing_key: Some(key.clone()),
+                encryption_key: key.clone(),
+            }),
+            user_source: Some(w::SourceStatus {
+                id: registration.source_id,
+                version: 1,
+                revoked: false,
+                signing_key: None,
+                encryption_key: key,
+            }),
+            registration_trust: w::RegistrationTrust::MdmBootstrapPop,
+            hardware_attested: false,
+        };
+        assert!(registration.recovered(&status));
+        status.device_source.as_mut().unwrap().revoked = true;
+        assert!(!registration.recovered(&status));
+        let url = format!("{}/browser/complete", challenge.endpoints.base);
+        assert!(registration
+            .browser_input(&url, "nonce", &"a".repeat(43), 1000)
+            .is_ok());
+    }
+    #[test]
+    fn old_metadata_is_rejected_without_inventing_a_mode_or_revision() {
+        let (context, challenge, key) = sample();
+        let registration = Registration::prepare(
+            context,
+            &challenge,
+            w::AuthenticationMode::SecureEnclave,
+            key.clone(),
+            key,
+            1000,
+        )
+        .unwrap();
+        let mut encoded = serde_json::to_value(&registration).unwrap();
+        encoded["context"]
+            .as_object_mut()
+            .unwrap()
+            .remove("bindingRevision");
+        assert!(serde_json::from_value::<Registration>(encoded).is_err());
+        let mut encoded = serde_json::to_value(&registration).unwrap();
+        encoded.as_object_mut().unwrap().remove("authentication");
+        assert!(serde_json::from_value::<Registration>(encoded).is_err());
     }
     #[test]
     fn delayed_teardown_never_selects_a_replacement_and_lost_receipt_recovers() {
@@ -367,8 +500,15 @@ mod tests {
     #[test]
     fn unknown_registration_outcome_requires_exact_current_keys_and_version() {
         let (context, challenge, key) = sample();
-        let registration =
-            Registration::prepare(context, &challenge, key.clone(), key.clone(), 1000).unwrap();
+        let registration = Registration::prepare(
+            context,
+            &challenge,
+            w::AuthenticationMode::SecureEnclave,
+            key.clone(),
+            key.clone(),
+            1000,
+        )
+        .unwrap();
         let mut status = w::Status {
             password_exchange: None,
             application_observed: true,
@@ -400,8 +540,15 @@ mod tests {
     #[test]
     fn browser_proof_cannot_cross_origin_or_target_and_never_uses_device_scope() {
         let (context, challenge, key) = sample();
-        let mut registration =
-            Registration::prepare(context, &challenge, key.clone(), key, 1000).unwrap();
+        let mut registration = Registration::prepare(
+            context,
+            &challenge,
+            w::AuthenticationMode::SecureEnclave,
+            key.clone(),
+            key,
+            1000,
+        )
+        .unwrap();
         let url = format!("{}/browser/complete", challenge.endpoints.base);
         let token = "a".repeat(43);
         assert!(registration
@@ -426,8 +573,15 @@ mod tests {
     fn registration_proof_binds_challenge_and_rejects_late_reuse() {
         use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
         let (context, challenge, key) = sample();
-        let registration =
-            Registration::prepare(context, &challenge, key.clone(), key, 1000).unwrap();
+        let registration = Registration::prepare(
+            context,
+            &challenge,
+            w::AuthenticationMode::SecureEnclave,
+            key.clone(),
+            key,
+            1000,
+        )
+        .unwrap();
         let input = registration.proof(&challenge, 1000).unwrap();
         let claims: w::RegistrationClaims = serde_json::from_slice(
             &URL_SAFE_NO_PAD

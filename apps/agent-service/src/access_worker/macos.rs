@@ -400,7 +400,7 @@ fn apply(input: &Input) -> Result<Effect, Error> {
                 binding.enabled = false;
                 binding.binding_generation = task.binding_generation;
                 binding.revision = task.revision;
-                state::write(&input.root, &name, &binding)?;
+                crate::service::platform_sso::save_binding(&input.root, &binding)?;
             }
             return Ok(Effect::Unbound {
                 disposition: *disposition,
@@ -441,9 +441,8 @@ fn apply(input: &Input) -> Result<Effect, Error> {
             account: identity.clone(),
         },
     )?;
-    state::write(
+    crate::service::platform_sso::save_binding(
         &input.root,
-        &crate::service::platform_sso::binding_name(&account.generated_uid)?,
         &platform_sso::LocalBinding {
             installation: input.installation,
             tenant: task.tenant_id,
@@ -454,6 +453,7 @@ fn apply(input: &Input) -> Result<Effect, Error> {
             revision: task.revision,
             generated_uid: account.generated_uid.clone(),
             enabled: configuration.enabled,
+            configuration: configuration.mac.clone().ok_or(Error::Unsupported)?,
         },
     )?;
     Ok(Effect::Applied {

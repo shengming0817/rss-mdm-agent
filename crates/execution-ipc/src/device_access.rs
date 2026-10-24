@@ -111,6 +111,10 @@ pub enum Response {
 #[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct MacStatus {
+    /// Desired signed policy, not proof of native profile application.
+    pub configuration: Option<rss_mdm_agent_wire::platform_sso::LoginConfiguration>,
+    /// Server password exchange only; never proof of local password or keychain synchronization.
+    pub password_exchange: Option<rss_mdm_agent_wire::platform_sso::PasswordExchangeStatus>,
     /// Installed extension passed image and signing identity checks.
     pub extension_installed: bool,
     /// Server shared-device registration fact.

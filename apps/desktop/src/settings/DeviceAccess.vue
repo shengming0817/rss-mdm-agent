@@ -310,7 +310,13 @@ onUnmounted(() => {
         管理员组配置修改后，已有会话的权限需注销并重新登录才会刷新。
       </p>
       <p v-if="macStatus" role="status">
-        扩展：{{
+        模式：{{
+          macStatus.configuration?.authentication === "password"
+            ? "Password"
+            : macStatus.configuration
+              ? "Secure Enclave"
+              : "待同步配置"
+        }}； 扩展：{{
           macStatus.extensionInstalled ? "已验证安装" : "未安装或需修复"
         }}； 设备注册：{{
           macStatus.deviceRegistered === null
@@ -337,6 +343,21 @@ onUnmounted(() => {
               ? "已观察"
               : "未注册"
         }}。
+      </p>
+      <p
+        v-if="macStatus?.configuration?.authentication === 'password'"
+        role="status"
+      >
+        密码交换：{{
+          macStatus.passwordExchange?.state === "succeeded"
+            ? "服务端已验证"
+            : macStatus.passwordExchange?.state === "rejected"
+              ? "凭据被拒绝"
+              : macStatus.passwordExchange?.state === "unavailable"
+                ? "服务暂不可用"
+                : "尚无确定结果"
+        }}。 本地密码与登录钥匙串同步仍须分别核实；请从系统设置的 Platform SSO
+        入口完成注册或修复。离线本地改密不会自动更新组织密码。
       </p>
       <p v-if="failure" role="alert">{{ failure }}</p>
       <p v-if="message" role="status">{{ message }}</p>

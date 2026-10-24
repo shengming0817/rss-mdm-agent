@@ -1343,6 +1343,8 @@ async fn installation_owner_replies_to_platform_sso_before_enterprise_registrati
             reply,
             request: LocalRequest::operation(execution_ipc::host::Request::PlatformSso {
                 input: execution_ipc::platform_sso::Operation::Bootstrap {
+                    authentication:
+                        rss_mdm_agent_wire::platform_sso::AuthenticationMode::SecureEnclave,
                     scope: rss_mdm_agent_wire::platform_sso::Kind::Device,
                 },
             }),

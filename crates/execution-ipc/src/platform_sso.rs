@@ -15,6 +15,8 @@ pub enum Operation {
     Bootstrap {
         #[doc = "Device or current native user scope."]
         scope: w::Kind,
+        /// Method supplied by the Apple system callback, checked against the signed policy.
+        authentication: w::AuthenticationMode,
     },
     /// Submit proof for a challenge issued to this native peer.
     Register {

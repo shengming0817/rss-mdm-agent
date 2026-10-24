@@ -22,7 +22,7 @@ static NSString *field(RSSPSSOHandle *h,uint32_t key) {
 @end
 @implementation RSSPlatformSSO
 - (ASAuthorizationProviderExtensionPlatformSSOProtocolVersion)protocolVersion { return ASAuthorizationProviderExtensionPlatformSSOProtocolVersion1_0; }
-- (ASAuthorizationProviderExtensionSupportedGrantTypes)supportedGrantTypes { return ASAuthorizationProviderExtensionSupportedGrantTypesJWTBearer; }
+- (ASAuthorizationProviderExtensionSupportedGrantTypes)supportedGrantTypes { return ASAuthorizationProviderExtensionSupportedGrantTypesJWTBearer | ASAuthorizationProviderExtensionSupportedGrantTypesPassword; }
 - (NSArray<ASAuthorizationProviderExtensionSigningAlgorithm> *)supportedDeviceSigningAlgorithms { return @[ASAuthorizationProviderExtensionSigningAlgorithmES256]; }
 - (NSArray<ASAuthorizationProviderExtensionSigningAlgorithm> *)supportedUserSecureEnclaveKeySigningAlgorithms { return @[ASAuthorizationProviderExtensionSigningAlgorithmES256]; }
 - (NSArray<ASAuthorizationProviderExtensionEncryptionAlgorithm> *)supportedDeviceEncryptionAlgorithms { return @[ASAuthorizationProviderExtensionEncryptionAlgorithmECDHE_A256GCM]; }
@@ -35,10 +35,12 @@ static NSString *field(RSSPSSOHandle *h,uint32_t key) {
 }
 - (void)beginUserRegistrationUsingLoginManager:(ASAuthorizationProviderExtensionLoginManager *)manager userName:(NSString *)name authenticationMethod:(ASAuthorizationProviderExtensionAuthenticationMethod)method options:(ASAuthorizationProviderExtensionRequestOptions)options completion:(void (^)(ASAuthorizationProviderExtensionRegistrationResult))completion {
     (void)name;
-    if (method!=ASAuthorizationProviderExtensionAuthenticationMethodUserSecureEnclaveKey) { completion(ASAuthorizationProviderExtensionRegistrationResultFailedNoRetry);return; }
+    if (method!=manager.authenticationMethod || (method!=ASAuthorizationProviderExtensionAuthenticationMethodUserSecureEnclaveKey && method!=ASAuthorizationProviderExtensionAuthenticationMethodPassword)) { completion(ASAuthorizationProviderExtensionRegistrationResultFailedNoRetry);return; }
     [self registerUsing:manager user:YES options:options completion:completion];
 }
 - (void)registerUsing:(ASAuthorizationProviderExtensionLoginManager *)manager user:(BOOL)user options:(ASAuthorizationProviderExtensionRequestOptions)options completion:(void (^)(ASAuthorizationProviderExtensionRegistrationResult))completion {
+    ASAuthorizationProviderExtensionAuthenticationMethod method=manager.authenticationMethod;
+    if(method!=ASAuthorizationProviderExtensionAuthenticationMethodPassword && method!=ASAuthorizationProviderExtensionAuthenticationMethodUserSecureEnclaveKey){completion(ASAuthorizationProviderExtensionRegistrationResultFailedNoRetry);return;}
     if (self.registrationCompletion || self.authorization) { completion(ASAuthorizationProviderExtensionRegistrationResultFailed);return; }
     if([NSUserDefaults.standardUserDefaults dictionaryForKey:@"inflight"].count)RSSQueueInflight(NSUserDefaults.standardUserDefaults);
     if(RSSPendingRetirements(NSUserDefaults.standardUserDefaults).count) {
@@ -48,18 +50,18 @@ static NSString *field(RSSPSSOHandle *h,uint32_t key) {
     const NSUInteger supported=ASAuthorizationProviderExtensionRequestOptionsUserInteractionEnabled|ASAuthorizationProviderExtensionRequestOptionsRegistrationRepair|ASAuthorizationProviderExtensionRequestOptionsRegistrationSharedDeviceKeys|ASAuthorizationProviderExtensionRequestOptionsUserKeyInvalid;
     if (options & ~supported) { completion(ASAuthorizationProviderExtensionRegistrationResultFailedNoRetry);return; }
     if ((options & ASAuthorizationProviderExtensionRequestOptionsUserKeyInvalid) && !user) { completion(ASAuthorizationProviderExtensionRegistrationResultFailedNoRetry);return; }
-    if (user && (options & ASAuthorizationProviderExtensionRequestOptionsUserKeyInvalid)) [manager resetUserSecureEnclaveKey];
+    if (user && method==ASAuthorizationProviderExtensionAuthenticationMethodUserSecureEnclaveKey && (options & ASAuthorizationProviderExtensionRequestOptionsUserKeyInvalid)) [manager resetUserSecureEnclaveKey];
     self.manager=manager;self.registrationCompletion=completion;NSUInteger generation=++self.generation;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,30*NSEC_PER_SEC),dispatch_get_main_queue(), ^{
         [self finishRegistration:generation result:ASAuthorizationProviderExtensionRegistrationResultFailed];
     });
-    SecKeyRef signing=[manager copyKeyForKeyType:user ? ASAuthorizationProviderExtensionKeyTypeUserSecureEnclaveKey : ASAuthorizationProviderExtensionKeyTypeCurrentDeviceSigning];
+    SecKeyRef signing=[manager copyKeyForKeyType:user && method==ASAuthorizationProviderExtensionAuthenticationMethodUserSecureEnclaveKey ? ASAuthorizationProviderExtensionKeyTypeUserSecureEnclaveKey : ASAuthorizationProviderExtensionKeyTypeCurrentDeviceSigning];
     SecKeyRef encryption=[manager copyKeyForKeyType:ASAuthorizationProviderExtensionKeyTypeCurrentDeviceEncryption];
     NSData *signingPoint=publicPoint(signing),*encryptionPoint=publicPoint(encryption);
     if (encryption) CFRelease(encryption);
     if (!signingPoint || !encryptionPoint) { if(signing)CFRelease(signing);[self finishRegistration:generation result:ASAuthorizationProviderExtensionRegistrationResultFailed];return; }
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
-        int32_t beginStatus=-1;RSSPSSOHandle *handle=rss_psso_begin(user?1:0,signingPoint.bytes,encryptionPoint.bytes,&beginStatus);
+        int32_t beginStatus=-1;RSSPSSOHandle *handle=rss_psso_begin(user?1:0,(uint32_t)method,signingPoint.bytes,encryptionPoint.bytes,&beginStatus);
         // Serialize publication with ConfigurationRemoved before any Register can leave the process.
         __block BOOL submit=NO;
         dispatch_sync(dispatch_get_main_queue(), ^{
@@ -136,7 +138,7 @@ static NSString *field(RSSPSSOHandle *h,uint32_t key) {
         RSSQueueRetirements(NSUserDefaults.standardUserDefaults);
         if(request.loginManager) {
             request.loginManager.ssoTokens=nil;
-            [request.loginManager resetUserSecureEnclaveKey];
+            if(request.loginManager.authenticationMethod==ASAuthorizationProviderExtensionAuthenticationMethodUserSecureEnclaveKey)[request.loginManager resetUserSecureEnclaveKey];
         }
         self.authorization=request;NSUInteger generation=++self.generation;
         [self retireUsing:request.loginManager completion:^(BOOL done){
@@ -154,12 +156,15 @@ static NSString *field(RSSPSSOHandle *h,uint32_t key) {
     NSString *body=[[NSString alloc]initWithData:request.httpBody encoding:NSUTF8StringEncoding];
     NSString *token=manager.ssoTokens[@"access_token"];
     if(![token isKindOfClass:NSString.class] || !body){[manager userNeedsReauthenticationWithCompletion:^(NSError *e){}];[request completeWithError:failure()];return;}
-    SecKeyRef signing=[manager copyKeyForKeyType:ASAuthorizationProviderExtensionKeyTypeUserSecureEnclaveKey];
-    if(!signing){[request completeWithError:failure()];return;}
+    ASAuthorizationProviderExtensionAuthenticationMethod method=manager.authenticationMethod;
+    if(method!=ASAuthorizationProviderExtensionAuthenticationMethodPassword && method!=ASAuthorizationProviderExtensionAuthenticationMethodUserSecureEnclaveKey){[request completeWithError:failure()];return;}
+    SecKeyRef signing=[manager copyKeyForKeyType:method==ASAuthorizationProviderExtensionAuthenticationMethodPassword ? ASAuthorizationProviderExtensionKeyTypeCurrentDeviceSigning : ASAuthorizationProviderExtensionKeyTypeUserSecureEnclaveKey];
+    NSData *signingPoint=publicPoint(signing);
+    if(!signingPoint){if(signing)CFRelease(signing);[request completeWithError:failure()];return;}
     self.authorization=request;NSUInteger generation=++self.generation;
     NSString *issuer=manager.loginConfiguration.issuer;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
-        char *bytes=rss_psso_browser(metadata.UTF8String,issuer.UTF8String,request.url.absoluteString.UTF8String,body.UTF8String,token.UTF8String,signMessage,(void *)signing);CFRelease(signing);
+        char *bytes=rss_psso_browser((uint32_t)method,signingPoint.bytes,metadata.UTF8String,issuer.UTF8String,request.url.absoluteString.UTF8String,body.UTF8String,token.UTF8String,signMessage,(void *)signing);CFRelease(signing);
         NSData *encoded=bytes?[NSData dataWithBytes:bytes length:strlen(bytes)]:nil;rss_psso_string_free(bytes);
         dispatch_async(dispatch_get_main_queue(), ^{
             if(generation!=self.generation || self.authorization!=request)return;

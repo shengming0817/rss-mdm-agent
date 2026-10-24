@@ -588,6 +588,10 @@ export type Operation =
 export type Response =
   | {
       /**
+       * Desired signed policy, not proof of native profile application.
+       */
+      configuration: LoginConfiguration | null;
+      /**
        * Server shared-device registration fact.
        */
       deviceRegistered: boolean | null;
@@ -612,6 +616,10 @@ export type Response =
        * Native observation UTC milliseconds.
        */
       observedAt: number | null;
+      /**
+       * Server password exchange only; never proof of local password or keychain synchronization.
+       */
+      passwordExchange: PasswordExchangeStatus | null;
       /**
        * Server user-registration fact.
        */
@@ -727,6 +735,32 @@ export type Response =
       kind: "prepared";
     };
 /**
+ * Device-wide login mode; every user on one Mac consumes the same system profile.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "AuthenticationMode".
+ */
+export type AuthenticationMode = "secure_enclave" | "password";
+/**
+ * An explicit platform login policy, independent for login, unlock and FileVault.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "LoginPolicy".
+ */
+export type LoginPolicy = "local" | "attempt" | "require";
+/**
+ * A server-side Password exchange result, independent from OS application facts.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "PasswordExchangeState".
+ */
+export type PasswordExchangeState =
+  | "verifying"
+  | "succeeded"
+  | "rejected"
+  | "unavailable"
+  | "unknown";
+/**
  * Current credential-provider installation observation.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -798,20 +832,6 @@ export type AccessWindowsAuthority =
  * via the `definition` "AccessAccountDisposition".
  */
 export type AccessAccountDisposition = "keep" | "disable" | "standard";
-/**
- * Device-wide login mode; every user on one Mac consumes the same system profile.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "AuthenticationMode".
- */
-export type AuthenticationMode = "secure_enclave" | "password";
-/**
- * An explicit platform login policy, independent for login, unlock and FileVault.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "LoginPolicy".
- */
-export type LoginPolicy = "local" | "attempt" | "require";
 /**
  * Requested account privilege. Absence preserves an existing account's privilege.
  *
@@ -2423,6 +2443,62 @@ export interface Command3 {
   output: Response;
 }
 /**
+ * Business configuration compiled into one device-wide System profile. No deployment secrets.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "LoginConfiguration".
+ */
+export interface LoginConfiguration {
+  /**
+   * Chosen native authentication method.
+   */
+  authentication: AuthenticationMode;
+  /**
+   * Policy for Apple silicon FileVault unlock.
+   */
+  filevault: LoginPolicy;
+  /**
+   * Policy for the login window.
+   */
+  login: LoginPolicy;
+  /**
+   * Exact local maintenance account short names excluded from platform login policy.
+   */
+  maintenanceAccounts: string[];
+  /**
+   * Explicit offline allowance, in seconds; never synthesized by the server.
+   */
+  offlineGraceSeconds: number | null;
+  /**
+   * Configured password provider identity; required only in Password mode.
+   */
+  passwordProvider: string | null;
+  /**
+   * Explicit allowance for unregistered accounts, in seconds.
+   */
+  registrationGraceSeconds: number | null;
+  /**
+   * Policy for screen unlock.
+   */
+  unlock: LoginPolicy;
+}
+/**
+ * Bounded diagnostic coordinates; contains no password, proof or token.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "PasswordExchangeStatus".
+ */
+export interface PasswordExchangeStatus {
+  /**
+   * Original server nonce identity.
+   */
+  attemptId: string;
+  /**
+   * Confirmed local state of this attempt.
+   */
+  state: PasswordExchangeState;
+}
+/**
  * Safe employee-facing binding projection. This is not a login credential.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -2501,46 +2577,6 @@ export interface AccessConfiguration {
    * Explicit admitted Windows account authorities.
    */
   windowsAccounts: AccessWindowsKind[];
-}
-/**
- * Business configuration compiled into one device-wide System profile. No deployment secrets.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "LoginConfiguration".
- */
-export interface LoginConfiguration {
-  /**
-   * Chosen native authentication method.
-   */
-  authentication: AuthenticationMode;
-  /**
-   * Policy for Apple silicon FileVault unlock.
-   */
-  filevault: LoginPolicy;
-  /**
-   * Policy for the login window.
-   */
-  login: LoginPolicy;
-  /**
-   * Exact local maintenance account short names excluded from platform login policy.
-   */
-  maintenanceAccounts: string[];
-  /**
-   * Explicit offline allowance, in seconds; never synthesized by the server.
-   */
-  offlineGraceSeconds: number | null;
-  /**
-   * Configured password provider identity; required only in Password mode.
-   */
-  passwordProvider: string | null;
-  /**
-   * Explicit allowance for unregistered accounts, in seconds.
-   */
-  registrationGraceSeconds: number | null;
-  /**
-   * Policy for screen unlock.
-   */
-  unlock: LoginPolicy;
 }
 /**
  * Apple account facts are separate from PSSO registration and Secure Enclave keys.
