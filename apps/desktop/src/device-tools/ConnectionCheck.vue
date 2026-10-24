@@ -142,7 +142,10 @@ watch(
 watch(
   () => props.active,
   (active) => {
-    if (active && !request.value) void defaults();
+    if (active) {
+      if (request.value) void call("status");
+      else void defaults();
+    }
   },
   { immediate: true },
 );

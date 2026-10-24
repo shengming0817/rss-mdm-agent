@@ -239,12 +239,6 @@ emit(
               }}</button
             ><button @click="back">查看组织发布的工具</button>
           </section>
-          <ConnectionCheck
-            v-if="current.id === 'network'"
-            :port="networkPort ?? null"
-            :active="active"
-            @task="emit('task', $event)"
-          />
           <section v-if="current.id === 'network'" aria-label="网络与代理事实">
             <p>{{ facts.network }} · {{ facts.networkDetail }}</p>
             <p v-if="systemSettings?.state.errors.get('network')" role="alert">
@@ -393,6 +387,12 @@ emit(
           </button>
         </div>
       </template>
+      <ConnectionCheck
+        v-show="current?.id === 'network'"
+        :port="networkPort ?? null"
+        :active="active && current?.id === 'network'"
+        @task="emit('task', $event)"
+      />
     </div>
   </section>
 </template>
