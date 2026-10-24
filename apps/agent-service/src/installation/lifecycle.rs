@@ -369,7 +369,6 @@ fn refresh(
     preserved(&old, &next)?;
     if current.exists() {
         Deployment::load_persistent(config)?;
-        persistent(current, config)?;
     }
     persistent(candidate, next_config)?;
     outcome::phase("refresh-quiescence")?;
