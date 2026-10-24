@@ -2278,6 +2278,77 @@ fn select_pki_refresh(root: &std::path::Path) {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn device_context_binding_does_not_wait_for_background_pki_http() {
+    use execution_ipc::host::{Handler, NativeAccess, NativeContextSession, PeerPolicy, Request};
+    let _budget = crate::scenario_budget::enter();
+    let mut c = Case::new(None).await;
+    c.service.waiting = None;
+    c._server.data.lock().unwrap().registration_failure = true;
+    assert_eq!(
+        c.service.client.renew_certificate().await.unwrap_err(),
+        Error::Unavailable
+    );
+    let pause = Arc::new(tokio::sync::Notify::new());
+    c._server.data.lock().unwrap().status_pause = Some(pause.clone());
+    select_pki_refresh(&c._root.path);
+    let subject = c.selection.subject.clone();
+    let session = c.selection.session;
+    let binding = c.selection.binding.clone();
+    let policy = PeerPolicy {
+        images: vec![c.service.core.config.interpreters[0].image.clone()],
+        subjects: vec![subject.clone()],
+        interactive: false,
+    };
+    let mut owner = c.service.spawn(policy, None).unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while !c._server.data.lock().unwrap().status_waiting {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let (send, mut receive) = tokio::sync::oneshot::channel();
+    let worker = tokio::task::spawn_blocking(move || {
+        assert!(matches!(
+            owner.call(
+                LocalRequest::operation(Request::RevokeContext {}),
+                subject.clone(),
+                session,
+                Some(binding.clone())
+            ),
+            Reply::ContextRevoked
+        ));
+        let reply = owner.call(
+            LocalRequest::operation(Request::BindContext {
+                value: NativeContextSession {
+                    access: NativeAccess::Device {},
+                    generation: plan::id("device-during-background-http").unwrap(),
+                    expires_at_unix_ms: u64::MAX,
+                },
+                expected: None,
+            }),
+            subject,
+            session,
+            Some(binding),
+        );
+        let _ = send.send(reply);
+        owner.stop().unwrap();
+    });
+    let immediate = tokio::time::timeout(std::time::Duration::from_secs(1), &mut receive).await;
+    pause.notify_waiters();
+    let (before_release, reply) = match immediate {
+        Ok(reply) => (true, reply.unwrap()),
+        Err(_) => (false, receive.await.unwrap()),
+    };
+    worker.await.unwrap();
+    assert!(
+        before_release,
+        "device login waited for unrelated background HTTP"
+    );
+    assert!(matches!(reply, Reply::ContextBound { .. }));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn fresh_revocation_and_crl_expiry_close_admission_while_pending_status_waits() {
     let _budget = crate::scenario_budget::enter();
     for revocation in [true, false] {

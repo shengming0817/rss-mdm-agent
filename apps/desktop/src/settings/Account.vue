@@ -289,7 +289,7 @@ async function tabKeys(event: KeyboardEvent) {
             autocomplete="username"
             placeholder="工作邮箱或企业账号"
             maxlength="256"
-            :disabled="loading || !available || unresolved"
+            :disabled="loading || !available"
           />
           <div class="label-line">
             <label :for="`${uid}-password`">密码</label
@@ -307,7 +307,7 @@ async function tabKeys(event: KeyboardEvent) {
               autocomplete="current-password"
               placeholder="输入账号密码"
               maxlength="16384"
-              :disabled="loading || !available || unresolved"
+              :disabled="loading || !available"
             /><button
               type="button"
               :aria-label="reveal ? '隐藏密码' : '显示密码'"
@@ -324,10 +324,7 @@ async function tabKeys(event: KeyboardEvent) {
               :disabled="loading"
             />我同意将此设备注册到组织，允许组织管理工作应用与设备配置。</label
           >
-          <button
-            class="login-primary"
-            :disabled="loading || !available || unresolved"
-          >
+          <button class="login-primary" :disabled="loading || !available">
             {{
               loading
                 ? "正在安全登录…"

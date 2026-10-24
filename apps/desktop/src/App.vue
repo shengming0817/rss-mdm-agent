@@ -50,8 +50,8 @@ const users = ref<TestUser[]>([]),
   loading = ref(!!props.environment || accountEnabled),
   message = ref(""),
   accountMessage = ref("");
-const page = ref(accountEnabled ? "settings" : "home");
-const loginOpen = ref(accountEnabled);
+const page = ref("home");
+const loginOpen = ref(false);
 const content = ref<HTMLElement>();
 const host = createHostSettings(
   props.environment ? props.environment.host : nativeHost(),
@@ -63,11 +63,12 @@ async function refresh() {
     users.value = (await loadTestUsers()).users;
     if (selectedUser.value) loginOpen.value = false;
     await refreshAccount();
+    if (!selectedUser.value) await enterGuest();
     if (selectedUser.value) loginOpen.value = false;
     if (selectedUser.value && page.value === "settings" && loading.value)
       page.value = "assistant";
-  } catch {
-    message.value = "无法读取测试用户记录";
+  } catch (error) {
+    accountMessage.value = accountErrorMessage(error);
   } finally {
     loading.value = false;
   }
@@ -125,9 +126,9 @@ function showLogin() {
 async function guest() {
   if (props.environment) {
     selectedUser.value = await props.environment.identity.read();
-    loginOpen.value = false;
-    page.value = "home";
   } else await accountAction(enterGuest);
+  loginOpen.value = false;
+  page.value = "home";
 }
 async function focusSettings() {
   await nextTick();
@@ -142,8 +143,7 @@ async function focusSettings() {
     ?.focus({ preventScroll: true });
 }
 async function navigate(id: string) {
-  page.value = accountEnabled && !selectedUser.value ? "settings" : id;
-  if (page.value === "settings" && id !== "settings") await focusSettings();
+  page.value = id;
 }
 watch(selectedUser, (next, previous) => {
   if (accountEnabled && previous && !next) {
