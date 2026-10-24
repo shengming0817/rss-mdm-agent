@@ -1334,6 +1334,18 @@ impl Case {
             self.selection.binding.clone(),
         )
     }
+    async fn recent_call(&mut self, before: Option<String>) -> Reply {
+        let (reply, receive) = tokio::sync::oneshot::channel();
+        self.service.core.handle(Command {
+            fence_epoch: self.service.core.fences.current(&self.scope()).unwrap(),
+            subject: self.selection.subject.clone(),
+            session: self.selection.session,
+            binding: Some(self.selection.binding.clone()),
+            reply,
+            request: LocalRequest::operation(execution_ipc::host::Request::RecentTasks { before }),
+        });
+        receive.await.unwrap()
+    }
     async fn policy_call(&mut self, request: execution_ipc::host::Request) -> Reply {
         let (reply, receive) = tokio::sync::oneshot::channel();
         self.service.core.enqueue_policy(Command {
@@ -5559,6 +5571,16 @@ async fn network_check_replay_and_cancel_keep_the_original_sqlite_plan_and_login
         .app
         .stage_execution(&c.service.core.local_caller(), &frozen)
         .unwrap();
+    let Reply::RecentTasks { value } = c.recent_call(None).await else {
+        panic!("recent tasks");
+    };
+    assert!(
+        value
+            .items
+            .iter()
+            .any(|item| item.details.action.request_id == request
+                && item.details.status.attempts == 0)
+    );
     use execution_ipc::host::Request;
     let call = |context, input| Request::NetworkCheck {
         context,
@@ -5590,6 +5612,14 @@ async fn network_check_replay_and_cancel_keep_the_original_sqlite_plan_and_login
         matches!(c.policy_call(call(c.context(),NetworkCheckOperation::Cancel {request:request.clone()})).await,Reply::NetworkCheck {value} if value.status.phase==execution_app::TaskPhase::Cancelled && value.status.attempts==0)
     );
     c.employee("network-retired-owner").await;
+    let Reply::RecentTasks { value } = c.recent_call(None).await else {
+        panic!("recent tasks");
+    };
+    assert!(value
+        .items
+        .iter()
+        .all(|item| item.details.action.request_id != request));
+
     assert!(matches!(
         c.policy_call(call(c.context(), NetworkCheckOperation::Status { request }))
             .await,
@@ -5597,4 +5627,27 @@ async fn network_check_replay_and_cancel_keep_the_original_sqlite_plan_and_login
             reason: DataError::Denied
         }
     ));
+}
+
+#[tokio::test]
+async fn recent_activity_rejects_invalid_cursors_without_creating_work() {
+    let _budget = crate::scenario_budget::enter();
+    let mut c = Case::new(None).await;
+    assert!(
+        matches!(c.recent_call(None).await, Reply::RecentTasks{value} if value.items.is_empty() && value.next.is_none())
+    );
+    for cursor in ["0", "-1", "01", "not-a-cursor"] {
+        assert!(matches!(
+            c.recent_call(Some(cursor.into())).await,
+            Reply::Rejected
+        ));
+    }
+    assert!(c
+        .service
+        .core
+        .app
+        .service_tasks(None, 64)
+        .unwrap()
+        .items
+        .is_empty());
 }

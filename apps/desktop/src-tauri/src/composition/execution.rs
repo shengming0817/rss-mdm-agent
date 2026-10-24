@@ -757,6 +757,21 @@ impl ExecutionHandle {
             _ => Err(bad(Error::InvalidInput)),
         }
     }
+    pub async fn recent_tasks(
+        &self,
+        query: ui::RecentTasksQuery,
+    ) -> ui::Result<execution_app::RecentTaskPage> {
+        match self
+            .request(Request::RecentTasks {
+                before: query.before,
+            })
+            .await
+            .map_err(bad)?
+        {
+            Reply::RecentTasks { value } => Ok(value),
+            _ => Err(bad(Error::Unavailable)),
+        }
+    }
     async fn select(&self, input: BackendSelection) -> Result<TaskSubmission, Error> {
         let expected = input.clone();
         let reply = self

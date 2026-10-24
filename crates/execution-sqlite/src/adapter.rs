@@ -230,6 +230,15 @@ impl JournalPort for Store {
         self.sql_service_requests(after, limit, host)
             .map_err(Into::into)
     }
+    fn recent_requests(
+        &self,
+        before: Option<u64>,
+        limit: usize,
+        host: &impl JournalHost,
+    ) -> Result<RecentRequestPage, JournalError> {
+        self.sql_recent_requests(before, limit, host)
+            .map_err(Into::into)
+    }
     fn execution_confirmation_state(
         &self,
         input: &execution_contract::FrozenExecution,

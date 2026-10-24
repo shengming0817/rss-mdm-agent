@@ -245,16 +245,16 @@ impl Core {
         {
             return Err(Error::Denied);
         }
+        let original: NativeContextRef = parameter(&frozen, "local-software-context")?;
+        if original != *context {
+            return Err(Error::Identity);
+        }
         if mutating {
             if self.stopping
                 || self.host.local_stopped.load(Ordering::Acquire)
                 || command.binding.as_ref() != Some(&session.session)
             {
                 return Err(Error::Denied);
-            }
-            let original: NativeContextRef = parameter(&frozen, "local-software-context")?;
-            if original != *context {
-                return Err(Error::Identity);
             }
         }
         Ok(frozen)

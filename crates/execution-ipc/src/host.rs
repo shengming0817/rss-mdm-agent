@@ -865,6 +865,11 @@ pub enum Request {
         /// Exclusive journal page cursor.
         after: Option<RequestId>,
     },
+    /// Bounded latest activities from the existing journal, under current peer authorization.
+    RecentTasks {
+        /// Exclusive receipt sequence, decimal text from the previous page.
+        before: Option<String>,
+    },
     /// Select the precise backend offer. This is a user action, not an enterprise approval.
     StartTask {
         /// Deterministic request from the displayed offer.
@@ -1052,6 +1057,11 @@ pub enum Reply {
         available: Vec<execution_contract::BackendTask>,
         /// Recent preparation records retained in the same journal.
         preparations: Vec<execution_contract::BackendRequest>,
+    },
+    /// Authorized newest-per-request activities, with current safe task facts.
+    RecentTasks {
+        /// Bounded page; empty does not imply end of discovery.
+        value: execution_app::RecentTaskPage,
     },
     /// User selection accepted; this does not assert dispatch or installation.
     Queued {

@@ -339,6 +339,36 @@ impl Core {
         subject: &str,
         binding: Option<&Id>,
     ) -> Result<bool, Error> {
+        let frozen = self
+            .app
+            .service_frozen_input(request)
+            .map_err(map_app_error)?;
+        if frozen.spec().request.authority == self.host.root.authority {
+            for key in [
+                "local-software-context",
+                "local-settings-context",
+                "network-check-context",
+            ] {
+                if let Some(InputValue::Literal { value }) =
+                    frozen.spec().request.parameters.get(key)
+                {
+                    let expected: NativeContextRef =
+                        serde_json::from_value(value.clone()).map_err(|_| Error::Untrusted)?;
+                    return Ok(self.contexts.values().any(|current| {
+                        current.scope.subject == subject
+                            && Some(&current.scope.binding) == binding
+                            && current.context == expected
+                            && current.ready
+                            && self.fences.current(&current.scope).ok() == Some(current.epoch)
+                            && self
+                                .host
+                                .clock
+                                .millis()
+                                .is_ok_and(|now| now < current.expires_at_unix_ms)
+                    }));
+                }
+            }
+        }
         let Some(record) = self
             .app
             .backend_request(&self.caller(), request)

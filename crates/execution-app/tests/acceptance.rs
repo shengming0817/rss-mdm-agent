@@ -3073,3 +3073,60 @@ fn exact_physical_claims_survive_owner_reopen_and_release_only_after_quiescence(
     other.request_execution(&caller(), &second).unwrap();
     assert_eq!(second_runner.dispatch_count(), 1);
 }
+
+#[test]
+fn recent_tasks_follow_durable_activity_not_uuid_and_survive_reopen() {
+    let db = Database::new();
+    let host = TestHost::new();
+    let runner = DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
+    let mut app = open(&db, host.clone(), runner.clone(), false);
+    let make = |name: &str| {
+        let mut spec = plan().spec().clone();
+        spec.request.request_id = request(name);
+        FrozenExecution::freeze(spec, &test_execution_limits()).unwrap()
+    };
+    let first = make("z-first");
+    let second = make("a-second");
+    app.stage_execution(&caller(), &first).unwrap();
+    app.stage_execution(&caller(), &second).unwrap();
+    let mut found = Vec::new();
+    let mut cursor = None;
+    for _ in 0..64 {
+        let page = app.service_recent_tasks(cursor, 1).unwrap();
+        for item in page.items {
+            if !found
+                .iter()
+                .any(|request| request == &item.details.action.request_id)
+            {
+                found.push(item.details.action.request_id);
+            }
+        }
+        cursor = page.next.map(|v| v.parse().unwrap());
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert_eq!(
+        found,
+        vec![
+            second.spec().request.request_id.clone(),
+            first.spec().request.request_id.clone()
+        ]
+    );
+    let before = db.count("receipts");
+    app.service_recent_tasks(None, 64).unwrap();
+    assert_eq!(db.count("receipts"), before);
+    drop(app);
+    let mut app = open(&db, host.clone(), runner, true);
+    assert_eq!(app.service_recent_tasks(None, 64).unwrap().items.len(), 2);
+    app.cancel(&caller(), &first.spec().request.request_id)
+        .unwrap();
+    let recent = app.service_recent_tasks(None, 64).unwrap();
+    assert_eq!(recent.items.len(), 2);
+    assert_eq!(
+        recent.items[0].details.action.request_id,
+        first.spec().request.request_id
+    );
+    host.state.lock().unwrap().runner_facts = false;
+    assert!(app.service_recent_tasks(None, 64).is_err());
+}
