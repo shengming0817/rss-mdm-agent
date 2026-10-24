@@ -21,6 +21,7 @@ function put(
       fields,
       quality: "complete",
       stale: false,
+      collectedAt: Math.floor(controller.state.now / 1000),
     } as unknown as CollectedData,
   });
 }
@@ -68,6 +69,17 @@ it("uses the system volume's shared APFS container without summing unrelated dis
     storageUsed: 75,
   });
   expect(homeFacts(controller).storageDetail).toContain("系统卷所属容器");
+});
+
+it("reports the age of the APFS container that supplied capacity", () => {
+  put("volume", "hardware.volumes", [
+    { system_volume: true, container_id: "shared" },
+  ]);
+  put("container", "hardware.containers", [
+    { id: "shared", size_bytes: 1000, free_bytes: 500 },
+  ]);
+  controller.state.facts.get("container")!.value.stale = true;
+  expect(homeFacts(controller).storageDetail).toContain("观察已过期");
 });
 
 it("reports old native power state even when the battery collection is fresh", () => {

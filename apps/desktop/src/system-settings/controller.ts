@@ -12,6 +12,7 @@ import type {
 export type SettingsPort = (
   input: SettingsOperation,
 ) => Promise<SettingsResponse>;
+const queryMaxAgeSeconds = 300;
 const sections: SettingsSection[] = [
   "network",
   "display",
@@ -62,12 +63,24 @@ export function createSystemSettings(
   });
   let active = true,
     epoch = 0;
+  function ageFact(value: CollectedData) {
+    const at = value.collectedAt;
+    if (
+      at == null ||
+      at * 1000 > state.now ||
+      state.now - at * 1000 > queryMaxAgeSeconds * 1000
+    )
+      value.stale = true;
+  }
   const relevant = (section: SettingsSection) =>
     state.sources.filter((s) =>
       s.domains.some((d) => families[section].some((p) => d.startsWith(p))),
     );
   const timer = setInterval(() => {
-    if (active) state.now = Date.now();
+    if (active) {
+      state.now = Date.now();
+      for (const entry of state.facts.values()) ageFact(entry.value);
+    }
   }, 250);
   const message = (error: unknown) => {
     const code =
@@ -149,10 +162,12 @@ export function createSystemSettings(
           selection: { kind: "query", query: source.reference },
           after: null,
           limit: 128,
-          maxAgeSeconds: 300,
+          maxAgeSeconds: queryMaxAgeSeconds,
         });
-        if (active && call === epoch)
+        if (active && call === epoch) {
+          ageFact(value);
           state.facts.set(source.reference.id, { source, value });
+        }
       }),
     );
   }
