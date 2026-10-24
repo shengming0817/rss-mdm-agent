@@ -258,6 +258,8 @@ fn execute(task: uuid::Uuid, package_entry: bool) -> Result<(), Error> {
         Err(e) => return Err(e.into()),
     }
     if r.phase == Phase::Prepared {
+        #[cfg(target_os = "macos")]
+        crate::service::platform_sso::uninstall_preflight(d)?;
         outcome::phase("retirement-quiescence")?;
         // A blocked desktop is a retryable precondition, not a completed worker.
         platform::quiescent(d, &config)?;

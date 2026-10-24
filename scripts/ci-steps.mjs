@@ -150,6 +150,15 @@ export const steps = [
   ["rust fmt", "cargo", ["fmt", "--all", "--", "--check"]],
   ["rust build", "cargo", ["build", "--workspace", "--locked"]],
   ["rust test", "cargo", ["test", "--workspace", "--locked"]],
+  ...(process.platform === "darwin" && process.arch === "arm64"
+    ? [
+        [
+          "Platform SSO native ABI",
+          "node",
+          ["scripts/build-platform-sso.mjs", "--verify-abi"],
+        ],
+      ]
+    : []),
   [
     "native driver authentication",
     "cargo",

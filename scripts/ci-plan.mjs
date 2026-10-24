@@ -66,6 +66,8 @@ export function planSteps(steps, impact) {
     if (impact.full || always.has(name)) selected = true;
     else if (anyCode.has(name)) selected = impact.packages.length > 0;
     else if (name === "workspace build inputs") selected = nodes.size > 0;
+    else if (name === "Platform SSO native ABI")
+      selected = impact.rustPackages.includes("platform-sso-extension");
     else if (name === "Windows collector pure logic")
       selected = impact.rustPackages.includes("agent-service");
     else if (name.startsWith("rust "))
