@@ -11,6 +11,7 @@ name = "rss-execution-service"
 path = "src/main.rs"
 
 [dependencies]
+platform-sso = { path = "../../crates/platform-sso" }
 data-encoding = "=2.11.1"
 device-access = { path = "../../crates/device-access" }
 time = "=0.3.55"

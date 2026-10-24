@@ -513,6 +513,20 @@ export type DataScope =
  */
 export type Operation =
   | {
+      kind: "prepareMac";
+      /**
+       * New account password, held only until native consumption.
+       */
+      password: string;
+      /**
+       * Exact retained signed task.
+       */
+      task: string;
+    }
+  | {
+      kind: "macStatus";
+    }
+  | {
       /**
        * Policy cursor.
        */
@@ -569,6 +583,37 @@ export type Operation =
  * via the `definition` "Response".
  */
 export type Response =
+  | {
+      /**
+       * Server shared-device registration fact.
+       */
+      deviceRegistered: boolean | null;
+      /**
+       * Installed extension passed image and signing identity checks.
+       */
+      extensionInstalled: boolean;
+      kind: "macStatus";
+      /**
+       * Current server login admission, not a completed login.
+       */
+      loginReady: boolean | null;
+      /**
+       * System observation from the authenticated extension.
+       */
+      nativeDeviceRegistered: boolean | null;
+      /**
+       * System user-registration observation.
+       */
+      nativeUserRegistered: boolean | null;
+      /**
+       * Native observation UTC milliseconds.
+       */
+      observedAt: number | null;
+      /**
+       * Server user-registration fact.
+       */
+      userRegistered: boolean | null;
+    }
   | {
       /**
        * Cursor for the next policy scan.

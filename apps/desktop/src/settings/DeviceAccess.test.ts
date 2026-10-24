@@ -88,3 +88,44 @@ it("clears shown material when its native port owner changes", async () => {
   expect(wrapper.html()).not.toContain("OLDSECRET");
   wrapper.unmount();
 });
+it("Mac setup uses native password preparation and keeps backend and system facts separate", async () => {
+  const port = vi.fn<DeviceAccessPort>(async (input) => {
+    if (input.kind === "directory") return directory;
+    if (input.kind === "tasks") return { kind: "tasks", tasks: [task] };
+    if (input.kind === "macStatus")
+      return {
+        kind: "macStatus",
+        extensionInstalled: true,
+        deviceRegistered: true,
+        userRegistered: true,
+        loginReady: true,
+        nativeDeviceRegistered: null,
+        nativeUserRegistered: null,
+        observedAt: null,
+      };
+    if (input.kind === "prepareMac") return { kind: "prepared" };
+    throw new Error("Windows factor flow must not run on Mac");
+  });
+  const wrapper = mount(DeviceAccess, { props: { port, platform: "macos" } });
+  await flushPromises();
+  expect(wrapper.text()).toContain("尚需实际登录确认");
+  expect(wrapper.text()).toContain("暂无系统回执");
+  await wrapper
+    .findAll("button")
+    .find((b) => b.text() === "设置本机账号密码")!
+    .trigger("click");
+  await wrapper.find('input[type="password"]').setValue("transient-password");
+  await wrapper.find("form").trigger("submit");
+  await flushPromises();
+  expect(port.mock.calls.some(([input]) => input.kind === "prepareMac")).toBe(
+    true,
+  );
+  expect(
+    port.mock.calls.some(
+      ([input]) => input.kind === "prepare" || input.kind === "confirmFactor",
+    ),
+  ).toBe(false);
+  expect(wrapper.find("form").exists()).toBe(false);
+  expect(wrapper.html()).not.toContain("transient-password");
+  wrapper.unmount();
+});

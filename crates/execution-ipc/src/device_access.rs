@@ -12,6 +12,16 @@ use zeroize::Zeroizing;
     deny_unknown_fields
 )]
 pub enum Operation {
+    /// Prepare a signed Mac account creation without Windows factor material.
+    PrepareMac {
+        /// Exact retained signed task.
+        task: Uuid,
+        /// New account password, held only until native consumption.
+        #[schemars(with = "String")]
+        password: Zeroizing<String>,
+    },
+    /// Read separate extension, server and native observations for the current account.
+    MacStatus {},
     /// Discover eligible first-enrollment policies and own binding states.
     Directory {
         /// Policy cursor.
@@ -63,6 +73,8 @@ pub struct SetupTask {
     deny_unknown_fields
 )]
 pub enum Response {
+    /// Diagnostic facts do not authorize login or prove a complete application SSO flow.
+    MacStatus(MacStatus),
     /// Backend-owned safe discovery result.
     Directory(w::AccessDirectory),
     /// Challenge retained in native memory; nonce is not sent to the renderer.
@@ -89,4 +101,24 @@ pub enum Response {
     },
     /// Setup saved; the existing task runner must still apply and report its effect.
     Prepared {},
+}
+
+/// Independent PSSO observations; absent values mean unavailable, never successful.
+#[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MacStatus {
+    /// Installed extension passed image and signing identity checks.
+    pub extension_installed: bool,
+    /// Server shared-device registration fact.
+    pub device_registered: Option<bool>,
+    /// Server user-registration fact.
+    pub user_registered: Option<bool>,
+    /// Current server login admission, not a completed login.
+    pub login_ready: Option<bool>,
+    /// System observation from the authenticated extension.
+    pub native_device_registered: Option<bool>,
+    /// System user-registration observation.
+    pub native_user_registered: Option<bool>,
+    /// Native observation UTC milliseconds.
+    pub observed_at: Option<u64>,
 }

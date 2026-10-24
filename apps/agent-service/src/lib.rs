@@ -178,3 +178,11 @@ pub mod credential_worker;
 pub fn telemetry_probe() -> Result<serde_json::Value, Error> {
     telemetry::performance::probe()
 }
+
+/// Root-only bounded Platform SSO lifecycle entry for installation tooling.
+pub fn platform_sso_component(
+    deployment: &deployment::Deployment,
+    args: &[std::ffi::OsString],
+) -> Result<(), Error> {
+    service::platform_sso::component(deployment, args)
+}

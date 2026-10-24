@@ -163,6 +163,7 @@ pub(crate) fn profile(profile: &VersionedRef) -> Result<(), Error> {
             "native-local-software-worker",
             "native-settings-worker",
             "native-collection-worker",
+            "native-device-access-worker",
         ]
         .contains(&profile.id.as_str()))
     {
@@ -185,6 +186,13 @@ pub(crate) fn arguments(
         };
     }
     let path = script.to_str().ok_or(Error::InvalidInput)?;
+    if profile.id.as_str() == "native-device-access-worker" {
+        return if args == ["--device-access-worker", path] {
+            Ok(())
+        } else {
+            Err(Error::Denied)
+        };
+    }
     if profile.id.as_str() == "native-collection-worker" {
         return if args == ["--collection-worker", path] {
             Ok(())

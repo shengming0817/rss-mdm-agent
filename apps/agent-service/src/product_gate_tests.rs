@@ -1274,6 +1274,59 @@ async fn running_owner_publishes_current_credential_and_safe_status_without_exec
     assert!(matches!(reply, Reply::ServiceStatus { value } if value.readiness == Readiness::Ready));
 }
 
+#[tokio::test]
+async fn installation_owner_replies_to_platform_sso_before_enterprise_registration() {
+    let _budget = crate::scenario_budget::enter();
+    let c = Case::new(None).await;
+    let root = protocol::Root::new();
+    let clock = SystemClock::new().unwrap();
+    let client = Client::open(
+        &root.path,
+        c._server.config(),
+        OpenMode::Create,
+        c._server.secrets.clone(),
+        clock.clone(),
+    )
+    .unwrap();
+    let mut config = c.service.core.config.clone();
+    config.work_root = root.path.clone();
+    config.material_root = root.path.join("materials");
+    platform_private_storage::directory(&config.material_root).unwrap();
+    let mut service = DeviceService::assemble(
+        client,
+        &root.path.join("execution.sqlite"),
+        ProductionStartup::Create,
+        config,
+        clock,
+        c.service.core.helpers.clone(),
+        execution_runner::staging::MaterialRoot::open_fixture,
+        uuid::Uuid::new_v4(),
+    )
+    .unwrap();
+    assert!(service.client.registration().is_err());
+    let (reply, mut receive) = tokio::sync::oneshot::channel();
+    let (sender, mut commands) = tokio::sync::mpsc::channel(1);
+    sender
+        .send(Command {
+            fence_epoch: 0,
+            subject: c.selection.subject.clone(),
+            session: c.selection.session,
+            binding: Some(c.selection.binding.clone()),
+            reply,
+            request: LocalRequest::operation(execution_ipc::host::Request::PlatformSso {
+                input: execution_ipc::platform_sso::Operation::Bootstrap {
+                    scope: rss_mdm_agent_wire::platform_sso::Kind::Device,
+                },
+            }),
+        })
+        .await
+        .unwrap();
+    service.drive(&mut commands).await.unwrap();
+    assert!(matches!(receive.try_recv(), Ok(Reply::Rejected)));
+    assert!(service.core.psso.commands.is_empty());
+    assert!(service.client.registration().is_err());
+}
+
 impl Case {
     fn scope(&self) -> crate::service::policy::SessionKey {
         crate::service::policy::SessionKey::new(

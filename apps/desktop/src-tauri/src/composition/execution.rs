@@ -484,6 +484,26 @@ impl ExecutionHandle {
         if !matches!(self.origin, ClientOrigin::Desktop {}) {
             return Err(bad(Error::Denied));
         }
+        #[cfg(target_os = "macos")]
+        if matches!(
+            input,
+            execution_ipc::device_access::Operation::Begin(_)
+                | execution_ipc::device_access::Operation::Confirm { .. }
+                | execution_ipc::device_access::Operation::PrepareMac { .. }
+        ) {
+            let present = tauri::async_runtime::spawn_blocking(|| {
+                unsafe extern "C" {
+                    fn rss_device_access_presence() -> i32;
+                }
+                // SAFETY: synchronous native UI gate returns no credentials or retained pointers.
+                unsafe { rss_device_access_presence() == 1 }
+            })
+            .await
+            .map_err(|_| bad(Error::Denied))?;
+            if !present {
+                return Err(bad(Error::Denied));
+            }
+        }
         match self
             .request(Request::DeviceAccess {
                 context: self.context_ref()?,

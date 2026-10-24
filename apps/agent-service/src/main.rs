@@ -90,6 +90,12 @@ fn run() -> Result<(), Error> {
         return Ok(());
     }
     let deployment = Deployment::load(&path)?;
+    if args
+        .first()
+        .is_some_and(|a| a == "--platform-sso-component")
+    {
+        return agent_service::platform_sso_component(&deployment, &args[1..]);
+    }
     if let [mode, target] = args.as_slice() {
         if mode == "--import-software-credential" {
             use std::io::Read;

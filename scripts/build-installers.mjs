@@ -17,6 +17,10 @@ import { cargoTargetDir } from "./cargo-target.mjs";
 import { runtimeTreeSha256 } from "./ai-host-artifacts.mjs";
 import { sourceEvidence } from "./native-evidence.mjs";
 import { msiSource, msixManifest } from "./windows-packages.mjs";
+import {
+  buildPlatformSso,
+  containerEntitlements,
+} from "./build-platform-sso.mjs";
 import { organizationConfiguration } from "./desktop-organization.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const args = process.argv.slice(2);
@@ -137,7 +141,7 @@ const output = join(root, ".local-ci-runs/installers", target, id);
 rmSync(output, { recursive: true, force: true });
 mkdirSync(output, { recursive: true });
 const suffix = windows ? ".exe" : "";
-const sign = (file) => {
+const sign = (file, entitlements) => {
   if (windows) {
     if (release)
       run(process.env.RSS_SIGNTOOL ?? "signtool.exe", [
@@ -164,13 +168,14 @@ const sign = (file) => {
           (() => {
             throw Error("RSS_MACOS_APP_SIGNING_IDENTITY required");
           })())
-        : "-",
+        : (process.env.RSS_MACOS_DEVELOPMENT_SIGNING_IDENTITY ?? "-"),
+      ...(entitlements ? ["--entitlements", entitlements] : []),
       ...(release
         ? [
             "--options",
             "runtime",
             "--timestamp",
-            "--preserve-metadata=entitlements",
+            ...(entitlements ? [] : ["--preserve-metadata=entitlements"]),
           ]
         : []),
       file,
@@ -245,7 +250,7 @@ cpSync(
   service,
 );
 sign(service);
-let desktop, packagedRuntime;
+let desktop, packagedRuntime, psso;
 if (windows) {
   desktop = join(payload, "rss-mdm-desktop.exe");
   cpSync(join(cargoTargetDir(root), "release/rss-mdm-desktop.exe"), desktop);
@@ -260,7 +265,17 @@ if (windows) {
   );
   desktop = join(app, "Contents/MacOS/rss-mdm-desktop");
   packagedRuntime = join(app, "Contents/Resources/ai-host-runtime");
-  sign(app);
+  psso = buildPlatformSso({
+    output: join(app, "Contents/PlugIns/RSSPlatformSSO.appex"),
+    identity: release
+      ? process.env.RSS_MACOS_APP_SIGNING_IDENTITY
+      : (process.env.RSS_MACOS_DEVELOPMENT_SIGNING_IDENTITY ?? "-"),
+    release: true,
+  });
+  sign(
+    app,
+    containerEntitlements(app, join(output, "container-entitlements.plist")),
+  );
 }
 if (windows) sign(desktop);
 const installed = windows
@@ -293,6 +308,13 @@ function image(path) {
   return result;
 }
 const candidate = {
+  platform_sso: psso?.teamId
+    ? {
+        extension: image(psso.binary),
+        origin: desktopConfiguration.origin,
+        teamId: psso.teamId,
+      }
+    : null,
   version: 1,
   format,
   product_version: version,

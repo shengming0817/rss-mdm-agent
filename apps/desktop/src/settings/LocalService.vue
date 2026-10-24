@@ -324,10 +324,11 @@ onUnmounted(() => {
     v-if="
       native &&
       view?.phase === 'connected' &&
-      view.status.platform === 'windows'
+      ['windows', 'macos'].includes(view.status.platform)
     "
     :ready="agentReady"
     :active="active"
+    :platform="view?.phase === 'connected' ? view.status.platform : undefined"
   />
   <MdmRegistration
     v-if="native"

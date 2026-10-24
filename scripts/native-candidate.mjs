@@ -34,10 +34,25 @@ function image(path) {
 }
 export function freezeCandidate(
   root,
-  { service, backend, desktop, securityProbe, untrustedProbe, runtime },
+  {
+    service,
+    backend,
+    desktop,
+    securityProbe,
+    untrustedProbe,
+    platformSso,
+    runtime,
+  },
 ) {
   const binaries = Object.fromEntries(
-    Object.entries({ service, backend, desktop, securityProbe, untrustedProbe })
+    Object.entries({
+      service,
+      backend,
+      desktop,
+      securityProbe,
+      untrustedProbe,
+      platformSso,
+    })
       .filter(([, path]) => path)
       .map(([name, path]) => [name, image(path)]),
   );

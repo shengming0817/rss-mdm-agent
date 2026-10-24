@@ -1,4 +1,5 @@
 pub(crate) mod access;
+pub(crate) mod platform_sso;
 use crate::error::app_error as map_app_error;
 use crate::{
     backend::{self, host::EnterpriseHost, offered, plan, ExecutionBridge},
@@ -321,6 +322,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 fences,
                 credential_leases: Default::default(),
                 policy_commands: Default::default(),
+                psso: platform_sso::State::default(),
             },
             bridge: ExecutionBridge::new(plan::id(RESULT_CONSUMER)?, output),
             waiting: None,
@@ -360,6 +362,9 @@ impl<S: IdentityProvider> DeviceService<S> {
         }
         while let Ok(command) = commands.try_recv() {
             self.core.handle(command);
+        }
+        if !self.core.stopping {
+            self.drive_platform_sso(commands).await?;
         }
         self.drive_policy(commands).await?;
         self.observe_mdm(commands).await?;
@@ -977,6 +982,12 @@ impl<S: IdentityProvider> DeviceService<S> {
         if let Some(policy) = &helper_policy {
             policy.validate().map_err(crate::error::app_error)?;
         }
+        let psso_image = self
+            .installation
+            .as_ref()
+            .and_then(|d| d.platform_sso.as_ref())
+            .filter(|v| v.verify().is_ok())
+            .map(|v| v.extension.clone());
         let fences = self.core.fences.clone();
         let (sender, mut commands) = tokio::sync::mpsc::channel(32);
         let finished = Arc::new(AtomicBool::new(false));
@@ -1013,6 +1024,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             fences,
             policy,
             helper_policy,
+            psso_image,
             finished,
             registration,
             completion,
@@ -1192,6 +1204,7 @@ pub(crate) struct Core {
     fences: Arc<policy::Fences>,
     credential_leases: std::collections::BTreeMap<RequestId, Arc<zeroize::Zeroizing<String>>>,
     policy_commands: policy::Commands,
+    psso: platform_sso::State,
 }
 impl Core {
     fn step_telemetry(&mut self) {
@@ -1556,6 +1569,17 @@ impl Core {
             let _ = command.reply.send(reply);
             return;
         }
+        if matches!(
+            command.request.as_operation(),
+            Some(Request::PlatformSso { .. })
+        ) {
+            if self.psso.commands.len() < 8 {
+                self.psso.commands.push_back(command);
+            } else {
+                let _ = command.reply.send(Reply::Unavailable);
+            }
+            return;
+        }
         if let Some(Request::SoftwareRead {
             context,
             origin,
@@ -1613,6 +1637,7 @@ impl Core {
                 Some(
                     Request::Data { .. }
                     | Request::Settings { .. }
+                    | Request::PlatformSso { .. }
                     | Request::DeviceAccess { .. }
                     | Request::SoftwareRead { .. }
                     | Request::LocalSoftware { .. }
@@ -1923,6 +1948,7 @@ pub struct ServiceHandle {
     fences: Arc<policy::Fences>,
     policy: execution_ipc::host::PeerPolicy,
     helper_policy: Option<execution_ipc::host::PeerPolicy>,
+    psso_image: Option<installation_security::Artifact>,
     finished: Arc<AtomicBool>,
     completion: std::sync::mpsc::Receiver<Result<(), Error>>,
     registration: Arc<Mutex<execution_ipc::host::RegistrationStatus>>,
@@ -2026,6 +2052,9 @@ impl execution_ipc::host::Handler for ServiceHandle {
                 }
             }
         }
+        if let Some(image) = &self.psso_image {
+            policy.images.push(image.clone());
+        }
         Some(policy)
     }
     fn register_helper(
@@ -2044,7 +2073,15 @@ impl execution_ipc::host::Handler for ServiceHandle {
         peer: &execution_ipc::host::Peer,
         request: execution_ipc::host::Request,
     ) -> execution_ipc::host::Reply {
-        match peer.authenticate(&self.policy) {
+        let authenticated = if matches!(request, execution_ipc::host::Request::PlatformSso { .. }) {
+            self.psso_image
+                .as_ref()
+                .ok_or(execution_app::Error::Denied)
+                .and_then(|image| peer.authenticate_extension(image))
+        } else {
+            peer.authenticate(&self.policy)
+        };
+        match authenticated {
             Ok(subject) => match peer.session_binding() {
                 Ok(binding) => self.call(
                     LocalRequest::operation(request),

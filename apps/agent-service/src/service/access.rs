@@ -35,7 +35,15 @@ impl State {
                 device_access::Store::open(&root, installation).map_err(|_| Error::Storage)?;
             }
         }
-        #[cfg(not(windows))]
+        #[cfg(target_os = "macos")]
+        {
+            if create {
+                platform_private_storage::directory(&root)?;
+            } else {
+                platform_private_storage::PrivateDirectory::open(&root)?;
+            }
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
         let _ = create;
         Ok(Self {
             installation,
@@ -49,7 +57,10 @@ impl State {
     pub fn prune(&mut self) {
         self.setups
             .retain(|_, setup| setup.owner.validate(&self.fences).is_ok());
-        self.passwords.retain(|id, _| self.setups.contains_key(id));
+        self.passwords.retain(|_, password| {
+            password.owner.validate(&self.fences).is_ok()
+                && password.bytes.lock().is_ok_and(|v| v.is_some())
+        });
         self.challenges
             .retain(|_, challenge| challenge.owner.validate(&self.fences).is_ok());
     }
@@ -74,6 +85,20 @@ impl State {
         }
         if matches!(task.action, w::AccessAction::Create { .. }) {
             self.password(task)?;
+        }
+        #[cfg(target_os = "macos")]
+        if let w::AccessAction::Apply {
+            account: w::AccessAccount::Macos { generated_uid },
+            configuration,
+        } = &task.action
+        {
+            if configuration.enabled
+                && crate::access_worker::macos::inspect(&generated_uid.to_string(), false)?
+                    .secure_token
+                    != 1
+            {
+                self.password(task)?;
+            }
         }
         Ok(())
     }
@@ -199,9 +224,38 @@ fn console(subject: &str, session: u32, binding: &execution_contract::Id) -> Res
         }
         Ok(())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    {
+        execution_ipc::macos_identity::verify_console(subject, session, binding)
+            .map_err(super::helper_error)?;
+        crate::account_identity::generated_uid(subject)?.ok_or(Error::Identity)?;
+        Ok(())
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     {
         let _ = (subject, session, binding);
+        Err(Error::Unsupported)
+    }
+}
+fn local_account(subject: &str) -> Result<w::AccessAccount, Error> {
+    #[cfg(windows)]
+    {
+        Ok(w::AccessAccount::Windows {
+            sid: subject.into(),
+        })
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Ok(w::AccessAccount::Macos {
+            generated_uid: Uuid::parse_str(
+                &crate::account_identity::generated_uid(subject)?.ok_or(Error::Identity)?,
+            )
+            .map_err(|_| Error::Identity)?,
+        })
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
+    {
+        let _ = subject;
         Err(Error::Unsupported)
     }
 }
@@ -219,19 +273,21 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
         if spec.principal_id != principal.principal_id
             || spec.instance_id != principal.instance_id
             || spec.tenant_id != principal.tenant_id
-            || spec.platform != w::TaskPlatform::Windows
-            || !matches!(spec.windows, Some(w::AccessWindowsPlan::Initialize { .. }))
+            || spec.platform
+                != if cfg!(target_os = "macos") {
+                    w::TaskPlatform::Macos
+                } else {
+                    w::TaskPlatform::Windows
+                }
+            || (spec.platform == w::TaskPlatform::Windows
+                && !matches!(spec.windows, Some(w::AccessWindowsPlan::Initialize { .. })))
             || spec.expires_at <= (crate::wall()? / 1000) as i64
             || self.client.association(task)?.is_some()
         {
             return Err(Error::Denied);
         }
-        if let w::AccessAction::Apply {
-            account: w::AccessAccount::Windows { sid },
-            ..
-        } = &spec.action
-        {
-            if sid != subject {
+        if let w::AccessAction::Apply { account, .. } = &spec.action {
+            if *account != local_account(subject)? {
                 return Err(Error::Denied);
             }
         }
@@ -271,6 +327,35 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
         owner.validate(&self.core.access.fences)?;
         self.core.access.prune();
         let output = match input {
+            Op::PrepareMac { task, password } => {
+                let spec = self.access_task(*task, &user, &owner.subject)?;
+                if spec.platform != w::TaskPlatform::Macos
+                    || !matches!(
+                        spec.action,
+                        w::AccessAction::Create { .. } | w::AccessAction::Apply { .. }
+                    )
+                    || password.is_empty()
+                    || password.len() > 1024
+                    || password.chars().any(char::is_control)
+                {
+                    return Err(Error::Denied);
+                }
+                self.core.access.passwords.insert(
+                    *task,
+                    Arc::new(Password {
+                        owner: Owner {
+                            expires: owner.expires.min(crate::wall()?.saturating_add(30_000)),
+                            ..owner.clone()
+                        },
+                        fences: self.core.access.fences.clone(),
+                        task: *task,
+                        attempt: spec.attempt_id,
+                        bytes: Mutex::new(Some(Zeroizing::new(password.as_bytes().to_vec()))),
+                    }),
+                );
+                Out::Prepared {}
+            }
+            Op::MacStatus {} => Out::MacStatus(self.mac_access_status(command, commands).await?),
             Op::Directory { after } => Out::Directory(
                 super::network(
                     self.client.access_directory(&proof, *after),
@@ -292,9 +377,7 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
                 owner.validate(&self.core.access.fences)?;
                 if challenge.local_session
                     != (w::AccessLocalSession {
-                        account: w::AccessAccount::Windows {
-                            sid: owner.subject.clone(),
-                        },
+                        account: local_account(&owner.subject)?,
                         session_id: super::login_binding_id(&owner.binding),
                     })
                 {
@@ -356,6 +439,9 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
                 Out::Tasks { tasks }
             }
             Op::Prepare { task } => {
+                if cfg!(target_os = "macos") {
+                    return Err(Error::Unsupported);
+                }
                 self.access_task(*task, &user, &owner.subject)?;
                 if self.core.access.setups.len() >= 8 && !self.core.access.setups.contains_key(task)
                 {
@@ -408,6 +494,9 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
                 code,
                 password,
             } => {
+                if cfg!(target_os = "macos") {
+                    return Err(Error::Unsupported);
+                }
                 let spec = self.access_task(*task, &user, &owner.subject)?;
                 let setup = self
                     .core

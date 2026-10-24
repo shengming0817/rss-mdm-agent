@@ -10,6 +10,8 @@ use std::{
 };
 #[cfg(any(windows, test))]
 mod engine;
+#[cfg(target_os = "macos")]
+pub(crate) mod macos;
 #[cfg(test)]
 mod tests;
 #[cfg(windows)]
@@ -146,12 +148,15 @@ pub fn run(path: &Path) -> Result<i32, Error> {
     let input: Input = serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)?;
     input.task.validate()?;
     if input.task.permit != w::TaskPermit::Start
-        || input.task.platform != w::TaskPlatform::Windows
+        || input.task.platform
+            != if cfg!(target_os = "macos") {
+                w::TaskPlatform::Macos
+            } else {
+                w::TaskPlatform::Windows
+            }
         || !matches!(
             input.run_as,
-            RunAs::System {
-                platform: execution_contract::Platform::Windows
-            }
+            RunAs::System { platform } if platform == if cfg!(target_os="macos") { execution_contract::Platform::Macos } else { execution_contract::Platform::Windows }
         )
         || !matches!(input.session, SessionRequirement::NotRequired {})
     {
@@ -164,7 +169,9 @@ pub fn run(path: &Path) -> Result<i32, Error> {
         .map_err(crate::error::app_error)?;
     #[cfg(windows)]
     let result = engine::execute(&input, &mut windows::NativeWindows)?;
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    let result = macos::execute(&input)?;
+    #[cfg(not(any(windows, target_os = "macos")))]
     let result = report(
         &input.task,
         w::AccessEffect::Failed {
@@ -181,7 +188,7 @@ pub(crate) fn retire(
     task: &w::AccessTaskSpec,
 ) -> Result<(), Error> {
     let root = plan_root(plan)?;
-    let installation = match plan.spec().request.parameters.get("access-installation") {
+    let installation: uuid::Uuid = match plan.spec().request.parameters.get("access-installation") {
         Some(execution_contract::InputValue::Literal { value }) => {
             serde_json::from_value(value.clone()).map_err(|_| Error::Untrusted)?
         }
@@ -191,10 +198,13 @@ pub(crate) fn retire(
     if stored_result(&root, task)?.is_some_and(|r| matches!(r.effect, w::AccessEffect::Unknown)) {
         return Err(Error::Conflict);
     }
+    #[cfg(windows)]
     device_access::Store::open(&root, installation)
         .map_err(|_| Error::Storage)?
         .retire_candidate(task.task_id)
         .map_err(|_| Error::Storage)?;
+    #[cfg(not(windows))]
+    let _ = installation;
     for suffix in ["prepared", "escrow", "ack", "creation", "result"] {
         state::remove(&root, &name(task, suffix))?;
     }

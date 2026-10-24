@@ -42,6 +42,7 @@ pub use windows::worker;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Candidate {
+    pub platform_sso: Option<crate::deployment::PlatformSsoConfiguration>,
     pub version: u8,
     pub format: rss_mdm_agent_wire::enroll::configuration::InstallerFormat,
     pub product_version: String,
@@ -92,6 +93,8 @@ impl Candidate {
         }
         let candidate: Self = serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
         if candidate.version != 1
+            || serde_json::to_value(&candidate.platform_sso).ok()
+                != serde_json::to_value(&deployment.platform_sso).ok()
             || candidate.service.path != deployment.service.path
             || candidate.service_id != deployment.service_id
             || candidate.connections != deployment.connections
@@ -160,6 +163,13 @@ impl Candidate {
         {
             return Err(Error::Configuration);
         }
+        if let Some(psso) = &self.platform_sso {
+            if !psso.extension.path.starts_with(&self.root)
+                || self.target != Target::current().map_err(|_| Error::Unsupported)?
+            {
+                return Err(Error::Configuration);
+            }
+        }
         self.format()?;
         Ok(())
     }
@@ -170,6 +180,9 @@ impl Candidate {
             self.target
                 .verify_image(&image.path)
                 .map_err(|_| Error::Identity)?;
+        }
+        if let Some(psso) = &self.platform_sso {
+            psso.verify()?;
         }
         installation_security::protected(&self.runtime_root).map_err(|_| Error::Identity)?;
         installation_security::runtime::verify(
@@ -237,6 +250,7 @@ impl Candidate {
             interactive: true,
         };
         Ok(Deployment {
+            platform_sso: self.platform_sso.clone(),
             service_id: self.service_id,
             connections: self.connections.clone(),
             software_read_grants: vec![],
