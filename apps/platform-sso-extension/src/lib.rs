@@ -67,6 +67,8 @@ fn begin(scope: u32, signing: &[u8], encryption: &[u8]) -> Result<Handle, i32> {
         challenge.endpoints.jwks.clone(),
         challenge.login_user_name.clone(),
         metadata,
+        w::LOGIN_TYPE.into(),
+        w::ASSERTION_TYPE.into(),
     ]
     .into_iter()
     .map(CString::new)

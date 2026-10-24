@@ -12,4 +12,4 @@ char *rss_psso_browser(const char *, const char *, const char *, const char *, c
 void rss_psso_string_free(char *);
 int32_t rss_psso_observe(const char *, bool, bool);
 int32_t rss_psso_unregister(const char *);
-enum { RSSClient, RSSIssuer, RSSAudience, RSSNonce, RSSToken, RSSJwks, RSSLoginName, RSSMetadata };
+enum { RSSClient, RSSIssuer, RSSAudience, RSSNonce, RSSToken, RSSJwks, RSSLoginName, RSSMetadata, RSSLoginType, RSSAssertionType };

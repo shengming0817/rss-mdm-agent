@@ -2,6 +2,7 @@
 // Its ephemeral test key is never used by the shipped extension or a registration.
 #import "bridge.h"
 #import "Signing.h"
+#import "Retirement.h"
 #include <assert.h>
 static NSString *encode(NSData *data) {
     return [[[data base64EncodedStringWithOptions:0] stringByReplacingOccurrencesOfString:@"+" withString:@"-"] stringByReplacingOccurrencesOfString:@"/" withString:@"_"];
@@ -32,5 +33,17 @@ int main(void) { @autoreleasepool {
     assert(SecKeyVerifySignature(publicKeyRef,kSecKeyAlgorithmECDSASignatureMessageRFC4754SHA256,(__bridge CFDataRef)input,(__bridge CFDataRef)decode(parts[2]),NULL));
     assert(!rss_psso_browser(metadata.UTF8String,issuer.UTF8String,"https://other.example/browser/complete",body.UTF8String,token.UTF8String,signMessage,(void *)key));
     int32_t status=0;assert(!rss_psso_begin(1,NULL,NULL,&status) && status==-1);
+    NSString *suite=[@"com.rss.psso.test." stringByAppendingString:NSUUID.UUID.UUIDString];
+    NSUserDefaults *defaults=[[NSUserDefaults alloc]initWithSuiteName:suite];
+    RSSQueueRetirements(defaults);assert(RSSPendingRetirements(defaults).count==0);
+    [defaults setObject:@"device-v1" forKey:@"deviceRegistration"];RSSQueueRetirements(defaults);
+    assert(RSSPendingRetirements(defaults).count==1); // Device-only removal remains recoverable.
+    [defaults setObject:@"user-v1" forKey:@"registration"];RSSQueueRetirements(defaults);
+    assert(RSSPendingRetirements(defaults).count==2);
+    RSSCompleteRetirement(defaults,@"registration",@"user-v1");assert(RSSPendingRetirements(defaults).count==1);
+    [defaults setObject:@"device-v2" forKey:@"deviceRegistration"];
+    RSSCompleteRetirement(defaults,@"deviceRegistration",@"device-v1");
+    assert([[defaults stringForKey:@"deviceRegistration"] isEqual:@"device-v2"]);
+    assert(RSSPendingRetirements(defaults).count==0);[defaults removePersistentDomainForName:suite];
     CFRelease(publicKeyRef);CFRelease(key);puts("Platform SSO native ABI and signature test passed; no system registration exercised");
 } return 0; }

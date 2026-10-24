@@ -6,6 +6,7 @@
 
 static NSError *failure(void) { return [NSError errorWithDomain:@"com.rss.mdmagent.psso" code:1 userInfo:nil]; }
 #import "Signing.h"
+#import "Retirement.h"
 static NSString *field(RSSPSSOHandle *h,uint32_t key) {
     const char *value=rss_psso_field(h,key);return value ? [NSString stringWithUTF8String:value] : nil;
 }
@@ -38,14 +39,8 @@ static NSString *field(RSSPSSOHandle *h,uint32_t key) {
     [self registerUsing:manager user:YES options:options completion:completion];
 }
 - (void)registerUsing:(ASAuthorizationProviderExtensionLoginManager *)manager user:(BOOL)user options:(ASAuthorizationProviderExtensionRequestOptions)options completion:(void (^)(ASAuthorizationProviderExtensionRegistrationResult))completion {
-    if([NSUserDefaults.standardUserDefaults boolForKey:@"retirementPending"]) {
-        NSString *metadata=[NSUserDefaults.standardUserDefaults stringForKey:@"registration"];
-        if(metadata)dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0), ^{
-            if(rss_psso_unregister(metadata.UTF8String)==0)dispatch_async(dispatch_get_main_queue(), ^{
-                [NSUserDefaults.standardUserDefaults removeObjectForKey:@"registration"];
-                [NSUserDefaults.standardUserDefaults removeObjectForKey:@"retirementPending"];
-            });
-        });
+    if(RSSPendingRetirements(NSUserDefaults.standardUserDefaults).count) {
+        [self retireUsing:manager completion:^(BOOL done){ (void)done; }];
         completion(ASAuthorizationProviderExtensionRegistrationResultFailed);return;
     }
     const NSUInteger supported=ASAuthorizationProviderExtensionRequestOptionsUserInteractionEnabled|ASAuthorizationProviderExtensionRequestOptionsRegistrationRepair|ASAuthorizationProviderExtensionRequestOptionsRegistrationSharedDeviceKeys|ASAuthorizationProviderExtensionRequestOptionsUserKeyInvalid;
@@ -78,8 +73,8 @@ static NSString *field(RSSPSSOHandle *h,uint32_t key) {
                         config.nonceEndpointURL=[NSURL URLWithString:field(handle,RSSNonce)];config.nonceResponseKeypath=@"nonce";config.serverNonceClaimName=@"request_nonce";
                         config.additionalScopes=@"urn:apple:platformsso";
                         config.customLoginRequestValues=@[[NSURLQueryItem queryItemWithName:@"platform_sso_version" value:@"1.0"]];
-                        [config setCustomLoginRequestHeaderClaims:@{@"typ":@"platformsso-login-request+jwt"} returningError:&error];
-                        if(!error)[config setCustomAssertionRequestHeaderClaims:@{@"typ":@"platformsso-login-assertion+jwt"} returningError:&error];
+                        [config setCustomLoginRequestHeaderClaims:@{@"typ":field(handle,RSSLoginType)} returningError:&error];
+                        if(!error)[config setCustomAssertionRequestHeaderClaims:@{@"typ":field(handle,RSSAssertionType)} returningError:&error];
                         saved=!error && [manager saveLoginConfiguration:config error:&error];
                         if(saved)[NSUserDefaults.standardUserDefaults setObject:field(handle,RSSMetadata) forKey:@"deviceRegistration"];
                     }
@@ -105,27 +100,41 @@ static NSString *field(RSSPSSOHandle *h,uint32_t key) {
     if(deviceMetadata)dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0), ^{rss_psso_observe(deviceMetadata.UTF8String,device,user);});
     self.manager=nil;
 }
+- (void)retireUsing:(ASAuthorizationProviderExtensionLoginManager *)manager completion:(void (^)(BOOL))completion {
+    NSDictionary<NSString *,NSString *> *pending=RSSPendingRetirements(NSUserDefaults.standardUserDefaults);
+    if(!pending.count){completion(YES);return;}
+    if(!manager){completion(NO);return;}
+    BOOL device=manager.isDeviceRegistered,user=manager.isUserRegistered;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0), ^{
+        NSMutableArray<NSString *> *completed=[NSMutableArray array];
+        for(NSString *scope in pending) {
+            NSString *metadata=pending[scope];
+            BOOL observed=rss_psso_observe(metadata.UTF8String,device,user)==0;
+            BOOL retired=rss_psso_unregister(metadata.UTF8String)==0;
+            BOOL nativeCleared=!user && (![scope isEqual:@"deviceRegistration"] || !device);
+            if(observed && retired && nativeCleared)[completed addObject:scope];
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            for(NSString *scope in completed)RSSCompleteRetirement(NSUserDefaults.standardUserDefaults,scope,pending[scope]);
+            completion(RSSPendingRetirements(NSUserDefaults.standardUserDefaults).count==0);
+        });
+    });
+}
 - (void)beginAuthorizationWithRequest:(ASAuthorizationProviderExtensionAuthorizationRequest *)request {
-    if ([request.requestedOperation isEqual:ASAuthorizationProviderAuthorizationOperationConfigurationRemoved] || [NSUserDefaults.standardUserDefaults boolForKey:@"retirementPending"]) {
+    if ([request.requestedOperation isEqual:ASAuthorizationProviderAuthorizationOperationConfigurationRemoved] || RSSPendingRetirements(NSUserDefaults.standardUserDefaults).count) {
         if(self.registrationCompletion)[self registrationDidCancel];
         if(self.authorization)[self cancelAuthorizationWithRequest:self.authorization];
-        request.loginManager.ssoTokens=nil;
-        if(request.loginManager)[request.loginManager resetUserSecureEnclaveKey];
-        NSString *metadata=[NSUserDefaults.standardUserDefaults stringForKey:@"registration"];
-        [NSUserDefaults.standardUserDefaults setBool:YES forKey:@"retirementPending"];
-        if(!metadata){[request completeWithError:failure()];return;}
+        RSSQueueRetirements(NSUserDefaults.standardUserDefaults);
+        if(request.loginManager) {
+            request.loginManager.ssoTokens=nil;
+            [request.loginManager resetUserSecureEnclaveKey];
+        }
         self.authorization=request;NSUInteger generation=++self.generation;
-        BOOL device=request.loginManager.isDeviceRegistered,user=request.loginManager.isUserRegistered;
-        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0), ^{
-            if(request.loginManager)rss_psso_observe(metadata.UTF8String,device,user);
-            int result=rss_psso_unregister(metadata.UTF8String);
-            dispatch_async(dispatch_get_main_queue(), ^{
-                if(self.authorization!=request || self.generation!=generation)return;
-                self.authorization=nil;
-                if(result==0){[NSUserDefaults.standardUserDefaults removeObjectForKey:@"registration"];[NSUserDefaults.standardUserDefaults removeObjectForKey:@"retirementPending"];[request complete];}
-                else[request completeWithError:failure()];
-            });
-        });
+        [self retireUsing:request.loginManager completion:^(BOOL done){
+            if(self.authorization!=request || self.generation!=generation)return;
+            self.authorization=nil;
+            if(done)[request complete];else[request completeWithError:failure()];
+        }];
         return;
     }
     if([request.callerBundleIdentifier isEqual:NSBundle.mainBundle.bundleIdentifier]){[request doNotHandle];return;}

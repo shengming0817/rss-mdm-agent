@@ -215,6 +215,20 @@ impl<S: IdentityProvider> DeviceService<S> {
                 if current != pending.context {
                     return Err(Error::Identity);
                 }
+                let coordinate = Coordinate {
+                    context: current.clone(),
+                    source: pending.challenge.source_id,
+                    source_version: pending.challenge.source_version,
+                };
+                {
+                    let _lock = state::lock(&self.core.access.root)?;
+                    enabled(&self.core.access.root, current.installation)?;
+                    state::write(
+                        &self.core.access.root,
+                        &coordinate.file("registering")?,
+                        &coordinate,
+                    )?;
+                }
                 let receipt =
                     network(self.client.psso_register(input), &mut self.core, commands).await?;
                 if !receipt.registered
@@ -224,21 +238,13 @@ impl<S: IdentityProvider> DeviceService<S> {
                 {
                     return Err(Error::Untrusted);
                 }
-                let _lock = state::lock(&self.core.access.root)?;
-                let coordinate = Coordinate {
-                    context: current,
-                    source: receipt.source_id,
-                    source_version: receipt.source_version,
-                };
-                state::write(
-                    &self.core.access.root,
-                    &coordinate.file("source")?,
-                    &coordinate,
-                )?;
+                if !retain_registration(&self.core.access.root, &coordinate)? {
+                    return Err(Error::Denied);
+                }
                 Ok(Response::Registered { receipt })
             }
             Operation::Status { scope } => {
-                let context = self.psso_context(command, *scope, false)?;
+                let context = self.psso_context(command, *scope, true)?;
                 let value = network(
                     self.client.psso_status(context.binding),
                     &mut self.core,
@@ -251,17 +257,14 @@ impl<S: IdentityProvider> DeviceService<S> {
                     _ => None,
                 };
                 if let Some(source) = source {
-                    let _lock = state::lock(&self.core.access.root)?;
                     let coordinate = Coordinate {
                         context,
                         source: source.id,
                         source_version: source.version,
                     };
-                    state::write(
-                        &self.core.access.root,
-                        &coordinate.file("source")?,
-                        &coordinate,
-                    )?;
+                    if !retain_registration(&self.core.access.root, &coordinate)? {
+                        return Err(Error::Denied);
+                    }
                 }
                 Ok(Response::Status { value })
             }
@@ -429,6 +432,12 @@ impl Coordinate {
     fn file(&self, suffix: &str) -> Result<String, Error> {
         self.context.validate().map_err(|_| Error::Identity)?;
         let account = self.context.generated_uid.as_deref().unwrap_or("device");
+        if ["registering", "retire", "retired"].contains(&suffix) {
+            return Ok(format!(
+                "{account}-{}-{}.psso-{suffix}",
+                self.source, self.source_version
+            ));
+        }
         Ok(format!("{account}.psso-{suffix}"))
     }
 }
@@ -585,20 +594,21 @@ pub(crate) fn component(
             .file_name()
             .into_string()
             .map_err(|_| Error::Storage)?;
-        if !name.ends_with(".psso-source") {
+        let in_flight = name.ends_with(".psso-registering");
+        if !in_flight && !name.ends_with(".psso-source") {
             continue;
         }
         if coordinates.len() >= 256 {
             return Err(Error::Capacity);
         }
         let coordinate: Coordinate = state::read_optional(&root, &name)?.ok_or(Error::Storage)?;
-        if coordinate.file("source")? != name
+        if coordinate.file(if in_flight { "registering" } else { "source" })? != name
             || coordinate.context.installation != deployment.service_id
             || coordinate.context.tenant != deployment.tenant
         {
             return Err(Error::Identity);
         }
-        coordinates.push(coordinate);
+        coordinates.push((coordinate, in_flight));
     }
     if action != "inspect" {
         state::write(
@@ -610,32 +620,41 @@ pub(crate) fn component(
         )?;
     }
     if action == "retire" {
-        for coordinate in &coordinates {
+        for (coordinate, _) in &coordinates {
             state::write(&root, &coordinate.file("retire")?, coordinate)?;
         }
     }
     let mut observations = Vec::new();
     let mut complete = true;
-    for coordinate in &coordinates {
+    for (coordinate, in_flight) in &coordinates {
         let retired: Option<Coordinate> =
             state::read_optional(&root, &coordinate.file("retired")?)?;
         let native: Option<NativeObservation> =
             state::read_optional(&root, &coordinate.file("observation")?)?;
         let remote_done = retired.as_ref().is_some_and(|r| r == coordinate);
-        let native_done = native.is_some_and(|n| {
-            n.source == coordinate.source
-                && n.source_version == coordinate.source_version
-                && n.binding_generation == coordinate.context.binding_generation
-                && !n.user_registered
-                && (coordinate.context.kind == w::Kind::User || !n.device_registered)
-        });
+        // An in-flight record never authorized saving an Apple login configuration.
+        let native_done = *in_flight
+            || native.is_some_and(|n| {
+                n.source == coordinate.source
+                    && n.source_version == coordinate.source_version
+                    && n.binding_generation == coordinate.context.binding_generation
+                    && !n.user_registered
+                    && (coordinate.context.kind == w::Kind::User || !n.device_registered)
+            });
         complete &= remote_done && native_done;
         observations.push(serde_json::json!({"source": coordinate.source, "sourceVersion": coordinate.source_version,
-            "scope": coordinate.context.kind, "remoteRetired": remote_done, "nativeCleanupConfirmed": native_done}));
+            "scope": coordinate.context.kind, "remoteRetired": remote_done,
+            "nativeConfigurationSaved": !in_flight,
+            "nativeCleanupConfirmed": if *in_flight { None } else { Some(native_done) }}));
     }
     if action == "cleanup" && complete {
-        for coordinate in &coordinates {
-            for suffix in ["source", "retire", "retired", "observation"] {
+        for (coordinate, in_flight) in &coordinates {
+            let suffixes: &[&str] = if *in_flight {
+                &["registering", "retire", "retired"]
+            } else {
+                &["source", "retire", "retired", "observation"]
+            };
+            for suffix in suffixes {
                 state::remove(&root, &coordinate.file(suffix)?)?;
             }
         }
@@ -667,6 +686,24 @@ fn finish_retirement(root: &std::path::Path, coordinate: &Coordinate) -> Result<
     Ok(())
 }
 
+fn retain_registration(root: &std::path::Path, coordinate: &Coordinate) -> Result<bool, Error> {
+    let _lock = state::lock(root)?;
+    match enabled(root, coordinate.context.installation) {
+        Ok(()) => {
+            state::write(root, &coordinate.file("source")?, coordinate)?;
+            state::remove(root, &coordinate.file("registering")?)?;
+            Ok(true)
+        }
+        Err(Error::Denied) => {
+            // Keep the unknown/late registration out of native configuration and queue exact cleanup.
+            state::write(root, &coordinate.file("registering")?, coordinate)?;
+            state::write(root, &coordinate.file("retire")?, coordinate)?;
+            Ok(false)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -687,6 +724,38 @@ mod tests {
         }
     }
     #[test]
+    fn late_registration_after_disable_is_retired_without_authorizing_native_configuration() {
+        let root = std::env::temp_dir().join(format!("psso-late-{}", Uuid::new_v4()));
+        platform_private_storage::directory(&root).unwrap();
+        let coordinate = coordinate();
+        state::write(&root, &coordinate.file("registering").unwrap(), &coordinate).unwrap();
+        state::write(
+            &root,
+            "platform-sso.disabled",
+            &Disabled {
+                installation: coordinate.context.installation,
+            },
+        )
+        .unwrap();
+        assert!(!retain_registration(&root, &coordinate).unwrap());
+        assert!(
+            state::read_optional::<Coordinate>(&root, &coordinate.file("source").unwrap())
+                .unwrap()
+                .is_none()
+        );
+        let pending: Coordinate = state::read_optional(&root, &coordinate.file("retire").unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(pending.source_version, coordinate.source_version);
+        finish_retirement(&root, &coordinate).unwrap();
+        assert!(
+            state::read_optional::<Coordinate>(&root, &coordinate.file("retired").unwrap())
+                .unwrap()
+                .is_some()
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn lost_retirement_reply_cannot_clear_a_new_persisted_request() {
         let root = std::env::temp_dir().join(format!("psso-retirement-{}", Uuid::new_v4()));
         platform_private_storage::directory(&root).unwrap();
@@ -695,7 +764,7 @@ mod tests {
         replacement.source_version = 2;
         state::write(&root, &replacement.file("retire").unwrap(), &replacement).unwrap();
         finish_retirement(&root, &old).unwrap();
-        let pending: Coordinate = state::read_optional(&root, &old.file("retire").unwrap())
+        let pending: Coordinate = state::read_optional(&root, &replacement.file("retire").unwrap())
             .unwrap()
             .unwrap();
         assert_eq!(pending.source_version, 2);
@@ -710,9 +779,10 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-        let completed: Coordinate = state::read_optional(&root, &old.file("retired").unwrap())
-            .unwrap()
-            .unwrap();
+        let completed: Coordinate =
+            state::read_optional(&root, &replacement.file("retired").unwrap())
+                .unwrap()
+                .unwrap();
         assert_eq!(completed.source_version, 2);
         std::fs::remove_dir_all(root).unwrap();
     }
