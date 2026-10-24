@@ -10,6 +10,7 @@ const selfServiceCommands = [
   "software_read",
   "software_prepare",
   "system_settings",
+  "network_check",
   "software_submit",
   "software_status",
   "software_cancel",
@@ -50,7 +51,9 @@ const settingsCommands = [
   "agent_cancel_registration",
   "ai_host_status",
   "ai_restart_host",
-  "ai_export_diagnostics",
+  "diagnostics_prepare",
+  "diagnostics_export",
+  "diagnostics_discard",
 ];
 const userCommands = [
   "test_users",

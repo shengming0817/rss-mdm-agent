@@ -1289,8 +1289,12 @@ async fn run(
             }
         }
     }
-    let collection = ["native-collection-worker", "native-settings-worker"]
-        .contains(&recipe.launch.interpreter.profile.id.as_str());
+    let collection = [
+        "native-collection-worker",
+        "native-settings-worker",
+        "native-network-check-worker",
+    ]
+    .contains(&recipe.launch.interpreter.profile.id.as_str());
     if collection {
         if let Ok(receipt) = serde_json::from_slice::<CollectionCompletion>(&facts.stderr) {
             facts.total_output_bytes = facts
@@ -1312,7 +1316,10 @@ async fn run(
         && err_done
         && ((owner.quiescent()
             && (!native_worker || operation_closed)
-            && (!collection || collection_closed))
+            && (!collection
+                || collection_closed
+                || recipe.launch.interpreter.profile.id.as_str()
+                    == "native-network-check-worker"))
             || (cfg!(target_os = "macos") && (operation_closed || collection_closed)));
     facts.quality = if facts.total_output_bytes > cap || facts.end == ProcessEnd::OutputLimit {
         OutputQuality::Truncated

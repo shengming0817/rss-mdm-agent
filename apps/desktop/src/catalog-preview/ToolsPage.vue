@@ -10,17 +10,28 @@ import {
 } from "@rss-mdm-agent/ui";
 import "./style.css";
 import SettingsGlyph from "../system-settings/SettingsGlyph.vue";
+import ConnectionCheck from "../device-tools/ConnectionCheck.vue";
+import type { NetworkCheckPort } from "../self-service/native";
 import PolicySelfService from "../self-service/PolicySelfService.vue";
 import type { Controller } from "../self-service/controller";
 import { systemSettingsKey } from "../system-settings/controller";
+import { labels, display } from "../system-settings/presentation";
 import { homeFacts } from "../system-settings/facts";
-const props = withDefaults(defineProps<{ execution?: Controller; active?: boolean }>(), { active: true });
+const props = withDefaults(
+  defineProps<{
+    execution?: Controller;
+    active?: boolean;
+    networkPort?: NetworkCheckPort | null;
+  }>(),
+  { active: true },
+);
 const systemSettings = inject(systemSettingsKey, undefined);
 const facts = computed(() => homeFacts(systemSettings));
 import type { PageNavigation } from "../workspace/page-navigation";
 const emit = defineEmits<{
   navigation: [state: PageNavigation];
   navigate: [page: string, section?: string];
+  task: [request: string];
 }>();
 const query = ref("");
 const sections = [
@@ -110,7 +121,7 @@ const tools = [
     title: "收集诊断信息",
     category: "安全与支持",
     description: "整理必要信息，让 IT 更快了解问题。",
-    scope: "设备概况、连接检查与最近操作",
+    scope: "Host、执行服务、设备与任务状态摘要",
     note: "导出前查看收集范围和敏感信息处理方式。",
     color: "rose",
     kind: "installed",
@@ -209,15 +220,90 @@ emit(
           </div>
           <section v-if="current.id === 'space'" aria-label="磁盘使用情况">
             <p>可用 {{ facts.storageFree }} GB · {{ facts.storageDetail }}</p>
-            <p>当前没有已核实范围的清理动作。可在下方授权脚本目录查看组织发布的工具。</p>
-            <button :disabled="!systemSettings" @click="systemSettings?.load('storage', true)">刷新空间信息</button>
+            <p>
+              清理范围由组织发布的工具说明。当前页面提供空间查看；请在工具目录选择已授权的清理脚本。
+            </p>
+            <button
+              :disabled="!systemSettings"
+              @click="systemSettings?.load('storage', true)"
+            >
+              刷新空间信息</button
+            ><button @click="back">查看组织发布的工具</button>
           </section>
-          <p v-if="current.id === 'network'">{{ facts.network }} · {{ facts.networkDetail }}</p>
-          <button v-if="current.id !== 'network'" class="preview-primary" type="button"
-            @click="emit('navigate', current.id === 'space' || current.id === 'power' || current.id === 'security' ? 'system-settings' : current.id === 'recent' ? 'tasks' : 'settings', current.id === 'space' ? 'storage' : current.id === 'power' ? 'power' : current.id === 'security' ? 'security' : current.id === 'diagnostics' ? 'diagnostics' : undefined)"
+          <ConnectionCheck
+            v-if="current.id === 'network'"
+            :port="networkPort ?? null"
+            :active="active"
+            @task="emit('task', $event)"
+          />
+          <section v-if="current.id === 'network'" aria-label="网络与代理事实">
+            <p>{{ facts.network }} · {{ facts.networkDetail }}</p>
+            <button
+              :disabled="!systemSettings"
+              @click="systemSettings?.load('network', true)"
+            >
+              刷新网络状态
+            </button>
+            <template
+              v-if="systemSettings?.state.observations.get('network')?.snapshot"
+            >
+              <p>
+                本机观察时间：{{
+                  new Date(
+                    systemSettings.state.observations.get(
+                      "network",
+                    )!.snapshot!.collectedAtUnixMs,
+                  ).toLocaleString()
+                }}
+              </p>
+              <article
+                v-for="target in systemSettings.state.observations.get(
+                  'network',
+                )!.snapshot!.targets"
+                :key="target.id"
+              >
+                <strong>{{ target.name }}</strong>
+                <p v-for="field in target.fields" :key="field.key">
+                  {{ labels[field.key] ?? field.key }}：{{
+                    field.value == null ? "未读取" : JSON.stringify(field.value)
+                  }}
+                  · {{ field.quality
+                  }}{{ field.reason ? " · " + field.reason : "" }}
+                </p>
+              </article>
+            </template>
+            <p v-else>尚无本机网络或代理观察，请显式刷新。</p>
+          </section>
+          <button
+            v-if="current.id !== 'network'"
+            class="preview-primary"
+            type="button"
+            @click="
+              emit(
+                'navigate',
+                current.id === 'space' ||
+                  current.id === 'power' ||
+                  current.id === 'security'
+                  ? 'system-settings'
+                  : current.id === 'recent'
+                    ? 'tasks'
+                    : 'settings',
+                current.id === 'space'
+                  ? 'storage'
+                  : current.id === 'power'
+                    ? 'power'
+                    : current.id === 'security'
+                      ? 'security'
+                      : current.id === 'diagnostics'
+                        ? 'diagnostics'
+                        : undefined,
+              )
+            "
           >
             {{
-              current.id === "space" || current.id === "power" || current.id === "security"
+              current.id === "space" ||
+              current.id === "power" ||
+              current.id === "security"
                 ? "打开对应系统设置"
                 : current.id === "recent"
                   ? "查看最近操作"
@@ -269,9 +355,14 @@ emit(
         </p>
         <section aria-label="组织发布的工具">
           <h3>组织发布的工具</h3>
-          <PolicySelfService v-if="active" :port="execution?.port ?? null"
-            :records="execution?.state.snapshot?.preparations ?? []" kind="script" :filter="query"
-            @changed="execution?.refresh()" />
+          <PolicySelfService
+            v-if="active"
+            :port="execution?.port ?? null"
+            :records="execution?.state.snapshot?.preparations ?? []"
+            kind="script"
+            :filter="query"
+            @changed="execution?.refresh()"
+          />
         </section>
         <div class="organization-tools">
           <SettingsGlyph kind="about" :size="19" />

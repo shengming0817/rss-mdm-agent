@@ -126,6 +126,7 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
         subject: execution_ipc::host::current_subject().unwrap(),
         current: Arc::new(Mutex::new(None)),
         local_settings: Arc::new(std::sync::Mutex::new(None)),
+        local_network: Arc::new(std::sync::Mutex::new(None)),
         local_read: Arc::new(Mutex::new(None)),
         identity_until: client.runtime_gate(),
         revoked: Default::default(),

@@ -51,6 +51,13 @@ impl JournalPort for Store {
         self.sql_with_material_proof(checkpoint, action)
     }
 
+    fn resource_owner(
+        &self,
+        key: &str,
+        host: &impl JournalHost,
+    ) -> Result<Option<RequestId>, JournalError> {
+        self.sql_resource_owner(key, host).map_err(Into::into)
+    }
     fn authority(&self) -> &Authority {
         &self.authority
     }

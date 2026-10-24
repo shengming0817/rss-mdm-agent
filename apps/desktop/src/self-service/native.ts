@@ -84,3 +84,12 @@ export function nativeSettingsPort():
   return (input) =>
     invoke<SettingsResponse>("system_settings", { input, generation });
 }
+
+export type NetworkCheckPort = (
+  input: import("./types").NetworkCheckOperation,
+) => Promise<import("./types").NetworkCheckResponse>;
+export function nativeNetworkCheckPort(): NetworkCheckPort | null {
+  if (!isTauri()) return null;
+  const generation = userGeneration();
+  return (input) => invoke("network_check", { input, generation });
+}

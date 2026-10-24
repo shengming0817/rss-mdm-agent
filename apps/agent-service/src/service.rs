@@ -14,6 +14,7 @@ use execution_contract::{
 use execution_runner::{MaterialRegistry, NativeRunner};
 use rss_mdm_agent_wire::runtime as wire;
 mod data;
+mod network_check;
 mod policy;
 mod settings;
 pub(crate) const RESULT_CONSUMER: &str = "execution-results";
@@ -241,6 +242,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             current: Arc::new(Mutex::new(None)),
             local_read: Arc::new(Mutex::new(None)),
             local_settings: Arc::new(Mutex::new(None)),
+            local_network: Arc::new(Mutex::new(None)),
             local_software: Arc::new(Mutex::new(None)),
             local_stopped: Arc::new(AtomicBool::new(false)),
             identity_until: client.runtime_gate(),
@@ -1613,7 +1615,8 @@ impl Core {
         if matches!(
             command.request.as_operation(),
             Some(
-                execution_ipc::host::Request::Data { .. }
+                Request::NetworkCheck { .. }
+                    | execution_ipc::host::Request::Data { .. }
                     | Request::RequestRegistration {}
                     | Request::ImportRegistration { .. }
                     | Request::DeviceAccess { .. }
@@ -1641,6 +1644,7 @@ impl Core {
                 Some(
                     Request::Data { .. }
                     | Request::Settings { .. }
+                    | Request::NetworkCheck { .. }
                     | Request::PlatformSso { .. }
                     | Request::DeviceAccess { .. }
                     | Request::SoftwareRead { .. }

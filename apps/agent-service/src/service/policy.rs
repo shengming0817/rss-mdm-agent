@@ -491,6 +491,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                             Request::Data { .. }
                                 | Request::LocalSoftware { .. }
                                 | Request::Settings { .. }
+                                | Request::NetworkCheck { .. }
                         )
                     ) =>
                 {
@@ -650,6 +651,32 @@ impl<S: IdentityProvider> DeviceService<S> {
             return self
                 .access_command(command, context, origin, input, commands)
                 .await;
+        }
+        if let Request::NetworkCheck {
+            context,
+            origin,
+            input,
+        } = request
+        {
+            self.core.data_context(command, context)?;
+            if !matches!(origin, ClientOrigin::Desktop {}) {
+                return Err(Error::Denied);
+            }
+            if matches!(input, execution_contract::NetworkCheckOperation::Defaults) {
+                let target = self
+                    .client
+                    .connection_status()
+                    .ok()
+                    .and_then(|s| url::Url::parse(&s.origin).ok())
+                    .and_then(|u| {
+                        Some(execution_contract::NetworkTarget {
+                            host: u.host_str()?.trim_matches(['[', ']']).into(),
+                            port: u.port_or_known_default()?,
+                        })
+                    });
+                return Ok(Reply::NetworkDefaults { target });
+            }
+            return self.core.network_operation(command, context, origin, input);
         }
         if let Request::Settings {
             context,

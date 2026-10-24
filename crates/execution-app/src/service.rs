@@ -1240,6 +1240,19 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         }
         self.journal.with_material_proof(checkpoint, action)
     }
+    /// Exact active-resource lookup for the sole service owner, independent of historical task volume.
+    pub fn service_resource_owner(&self, key: &str) -> Result<Option<RequestId>, Error> {
+        if key.is_empty() || key.len() > 256 || self.host.service_binding()? != self.binding {
+            return Err(Error::Denied);
+        }
+        let owner = self
+            .journal
+            .resource_owner(key, &self.adapter(None, None))?;
+        if let Some(request) = &owner {
+            self.service_frozen_input(request)?;
+        }
+        Ok(owner)
+    }
     /// Internal device-owner recovery page; never exposed as a UI/model operation.
     pub fn service_tasks(
         &self,

@@ -15,6 +15,7 @@ pub mod local_settings;
 pub mod local_software;
 mod material_gc;
 mod mdm_state;
+pub mod network_check;
 mod recovery;
 mod registration;
 mod service;

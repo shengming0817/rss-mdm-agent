@@ -4,6 +4,7 @@ import { UserRound } from "@rss-mdm-agent/ui";
 import type { AssistantController } from "../assistant/controller";
 import type { DeviceOverview, SelfServicePort } from "../self-service/types";
 import type { PageNavigation } from "../workspace/page-navigation";
+import DiagnosticsPanel from "./DiagnosticsPanel.vue";
 import LocalService from "./LocalService.vue";
 import type { ServicePort } from "./native";
 import ConnectionSettings from "./ConnectionSettings.vue";
@@ -314,11 +315,6 @@ emit("navigation", reactive({ openSection, reset, section, sections, path }));
             >
               重启 AI Host</button
             ><button
-              :disabled="!host.available || host.state.busy"
-              @click="host.exportDiagnostics"
-            >
-              导出脱敏诊断</button
-            ><button
               v-if="assistant"
               :disabled="
                 assistant.state.connection === 'connecting' || host.state.busy
@@ -328,7 +324,7 @@ emit("navigation", reactive({ openSection, reset, section, sections, path }));
               重新连接
             </button>
           </div>
-          <p class="settings-note">诊断不包含密钥、对话、端点或个人路径。</p>
+          <DiagnosticsPanel :active="active" :port="fixture ? null : undefined" />
           <p v-if="host.state.busy" role="status">正在处理，请稍候…</p>
           <p v-if="host.state.readError" role="alert">
             {{ host.state.readError }}
