@@ -829,8 +829,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                 let quality = match process.quality {
                     OutputQuality::Complete
                         if process.exit_code == Some(0)
-                            && failure.is_none()
-                            && process.quiescent =>
+                            && failure.is_none() =>
                     {
                         wire::OutputQuality::Complete
                     }
@@ -874,7 +873,12 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         let status = app
             .status(caller, binding.request())
             .map_err(map_app_error)?;
-        if !settled(&status)
+        // Script Result is process evidence, not an independent effect assessment.
+        // Only a closed activity may release its retained association and materials.
+        let script_closed = matches!(client.retained_offer(task)?.payload(), wire::TaskPayload::Script(_))
+            && status.phase == TaskPhase::ExecutionEnded
+            && status.process.as_ref().is_some_and(|p| p.finished && p.quiescent);
+        if (!settled(&status) && !script_closed)
             || !app
                 .service_delivery(binding.request(), &self.consumer, 1)
                 .map_err(map_app_error)?

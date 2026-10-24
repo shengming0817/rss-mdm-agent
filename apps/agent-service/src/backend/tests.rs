@@ -880,13 +880,15 @@ async fn root_exit_is_delivered_while_overall_quiescence_stays_unknown() {
         let data = server.data.lock().unwrap();
         let result = data.results.values().next().unwrap();
         assert_eq!(result["event"]["exitCode"], 0);
-        assert_eq!(result["event"]["quality"], "partial");
+        assert_eq!(result["event"]["quality"], "complete");
     }
     assert_eq!(
         bridge.finish(&mut client, offer.task_id(), &app, &caller),
         Err(agent_client::Error::Conflict)
     );
     assert!(client.bound_request(offer.task_id()).unwrap().is_some());
+    assert!(!app.all_attempts_quiescent(64).unwrap());
+    assert_eq!(client.cleanup(128).unwrap(), 0);
     assert_eq!(runner.inner.dispatch_count(), 1);
 }
 
