@@ -49,6 +49,24 @@ int main(void) { @autoreleasepool {
     [defaults setObject:@"device-v2" forKey:@"deviceRegistration"];
     RSSCompleteRetirement(defaults,@"deviceRegistration",@"device-v1");
     assert([[defaults stringForKey:@"deviceRegistration"] isEqual:@"device-v2"]);
-    assert(RSSPendingRetirements(defaults).count==0);[defaults removePersistentDomainForName:suite];
+    assert(RSSPendingRetirements(defaults).count==0);
+    [defaults removeObjectForKey:@"deviceRegistration"];
+    RSSSetInflight(defaults,@"deviceRegistration",@"first-inflight");
+    RSSQueueRetirements(defaults);assert(RSSPendingRetirements(defaults).count==1);
+    // Persisted in-flight metadata survives an extension instance; no saved configuration exists.
+    NSUserDefaults *reopened=[[NSUserDefaults alloc]initWithSuiteName:suite];
+    assert([RSSPendingRetirements(reopened)[@"first-inflight"] isEqual:@"deviceRegistration"]);
+    RSSCompleteRetirement(defaults,@"deviceRegistration",@"first-inflight");
+    assert(![defaults dictionaryForKey:@"inflight"] && !RSSPendingRetirements(defaults).count);
+    assert(RSSBeginSave(defaults,@"deviceRegistration",@"device-v1"));
+    RSSSetInflight(defaults,@"deviceRegistration",@"device-v2");
+    RSSQueueInflight(defaults);assert(RSSPendingRetirements(defaults).count==1);
+    RSSQueueRetirements(defaults);assert(RSSPendingRetirements(defaults).count==2);
+    RSSCompleteRetirement(defaults,@"deviceRegistration",@"device-v1");
+    assert([[[defaults dictionaryForKey:@"inflight"] objectForKey:@"deviceRegistration"] isEqual:@"device-v2"]);
+    assert(RSSPendingRetirements(defaults).count==1);
+    RSSCompleteRetirement(defaults,@"deviceRegistration",@"device-v2");
+    assert(!RSSPendingRetirements(defaults).count && ![defaults dictionaryForKey:@"inflight"]);
+    [defaults removePersistentDomainForName:suite];
     CFRelease(publicKeyRef);CFRelease(key);puts("Platform SSO native ABI and signature test passed; no system registration exercised");
 } return 0; }

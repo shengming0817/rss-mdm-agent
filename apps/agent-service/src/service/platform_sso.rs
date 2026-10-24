@@ -223,6 +223,9 @@ impl<S: IdentityProvider> DeviceService<S> {
                 {
                     let _lock = state::lock(&self.core.access.root)?;
                     enabled(&self.core.access.root, current.installation)?;
+                    if retirement_requested(&self.core.access.root, &coordinate)? {
+                        return Err(Error::Denied);
+                    }
                     state::write(
                         &self.core.access.root,
                         &coordinate.file("registering")?,
@@ -231,6 +234,10 @@ impl<S: IdentityProvider> DeviceService<S> {
                 }
                 let receipt =
                     network(self.client.psso_register(input), &mut self.core, commands).await?;
+                let Some(receipt) = receipt else {
+                    settle_rejected_registration(&self.core.access.root, &coordinate)?;
+                    return Err(Error::Denied);
+                };
                 if !receipt.registered
                     || receipt.source_id != pending.challenge.source_id
                     || receipt.source_version != pending.challenge.source_version
@@ -314,25 +321,14 @@ impl<S: IdentityProvider> DeviceService<S> {
                 if coordinate.source.is_nil() || coordinate.source_version < 1 {
                     return Err(Error::Identity);
                 }
-                let coordinate = {
-                    let _lock = state::lock(&self.core.access.root)?;
-                    let retained: Coordinate =
-                        state::read_optional(&self.core.access.root, &coordinate.file("source")?)?
-                            .ok_or(Error::Identity)?;
-                    if !retained.same_owner(&coordinate.context)
-                        || retained.source != coordinate.source
-                    {
-                        return Err(Error::Identity);
-                    }
-                    if retained.source_version > coordinate.source_version {
-                        return Ok(Response::Retired {});
-                    }
-                    if retained.source_version != coordinate.source_version {
-                        return Err(Error::Identity);
-                    }
-                    state::write(&self.core.access.root, &retained.file("retire")?, &retained)?;
-                    retained
-                };
+                // Remove any not-yet-submitted challenge first. Register and Unregister share this
+                // single owner; a request already on the wire has a durable registering record.
+                self.core.psso.pending.retain(|_, p| {
+                    !(p.context == coordinate.context
+                        && p.challenge.source_id == coordinate.source
+                        && p.challenge.source_version == coordinate.source_version)
+                });
+                let coordinate = queue_retirement(&self.core.access.root, coordinate)?;
                 self.retire_coordinate(&coordinate, commands).await
             }
         }
@@ -648,7 +644,7 @@ pub(crate) fn component(
         complete &= remote_done && native_done;
         observations.push(serde_json::json!({"source": coordinate.source, "sourceVersion": coordinate.source_version,
             "scope": coordinate.context.kind, "remoteRetired": remote_done,
-            "nativeConfigurationSaved": !in_flight,
+            "registrationRecord": if *in_flight { "in_flight" } else { "accepted" },
             "nativeCleanupConfirmed": if *in_flight { None } else { Some(native_done) }}));
     }
     if action == "cleanup" && complete {
@@ -690,6 +686,43 @@ fn finish_retirement(root: &std::path::Path, coordinate: &Coordinate) -> Result<
     Ok(())
 }
 
+// Only an authenticated native peer's current context reaches here. With no local record,
+// Status is still scoped to that context; retirement never revokes a different returned source.
+fn queue_retirement(
+    root: &std::path::Path,
+    mut coordinate: Coordinate,
+) -> Result<Coordinate, Error> {
+    let _lock = state::lock(root)?;
+    for suffix in ["registering", "source"] {
+        if let Some(retained) = state::read_optional::<Coordinate>(root, &coordinate.file(suffix)?)?
+        {
+            if retained.source == coordinate.source
+                && retained.source_version == coordinate.source_version
+            {
+                if !retained.same_owner(&coordinate.context) {
+                    return Err(Error::Identity);
+                }
+                coordinate = retained;
+                break;
+            }
+        }
+    }
+    state::write(root, &coordinate.file("retire")?, &coordinate)?;
+    Ok(coordinate)
+}
+fn settle_rejected_registration(
+    root: &std::path::Path,
+    coordinate: &Coordinate,
+) -> Result<(), Error> {
+    let _lock = state::lock(root)?;
+    if state::read_optional::<Coordinate>(root, &coordinate.file("registering")?)?.as_ref()
+        == Some(coordinate)
+    {
+        state::remove(root, &coordinate.file("registering")?)?;
+    }
+    Ok(())
+}
+
 fn registration_unresolved(
     root: &std::path::Path,
     coordinate: &Coordinate,
@@ -701,9 +734,24 @@ fn registration_unresolved(
             .is_none_or(|s| s.id == coordinate.source && s.version < coordinate.source_version))
 }
 
+fn retirement_requested(root: &std::path::Path, coordinate: &Coordinate) -> Result<bool, Error> {
+    Ok(
+        state::read_optional::<Coordinate>(root, &coordinate.file("retire")?)?.as_ref()
+            == Some(coordinate)
+            || state::read_optional::<Coordinate>(root, &coordinate.file("retired")?)?.as_ref()
+                == Some(coordinate),
+    )
+}
+
 fn retain_registration(root: &std::path::Path, coordinate: &Coordinate) -> Result<bool, Error> {
     let _lock = state::lock(root)?;
-    match enabled(root, coordinate.context.installation) {
+    match enabled(root, coordinate.context.installation).and_then(|()| {
+        if retirement_requested(root, coordinate)? {
+            Err(Error::Denied)
+        } else {
+            Ok(())
+        }
+    }) {
         Ok(()) => {
             state::write(root, &coordinate.file("source")?, coordinate)?;
             state::remove(root, &coordinate.file("registering")?)?;
@@ -737,6 +785,46 @@ mod tests {
             source: Uuid::from_u128(6),
             source_version: 1,
         }
+    }
+    #[test]
+    fn configuration_removal_fences_first_registration_and_only_its_version() {
+        let root = std::env::temp_dir().join(format!("psso-remove-{}", Uuid::new_v4()));
+        platform_private_storage::directory(&root).unwrap();
+        let coordinate = coordinate();
+        // Removal can arrive before Register, with no saved source or registering record.
+        let retiring = queue_retirement(&root, coordinate.clone()).unwrap();
+        assert!(retirement_requested(&root, &coordinate).unwrap());
+        assert!(!retain_registration(&root, &coordinate).unwrap());
+        assert!(
+            state::read_optional::<Coordinate>(&root, &coordinate.file("source").unwrap())
+                .unwrap()
+                .is_none()
+        );
+        finish_retirement(&root, &retiring).unwrap();
+        assert!(retirement_requested(&root, &coordinate).unwrap());
+        let mut newer = coordinate.clone();
+        newer.source_version += 1;
+        assert!(!retirement_requested(&root, &newer).unwrap());
+        assert!(retain_registration(&root, &newer).unwrap());
+        // Repeating old removal never deletes or fences the newer source.
+        queue_retirement(&root, coordinate.clone()).unwrap();
+        assert!(retain_registration(&root, &newer).unwrap());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn definite_rejection_settles_only_the_exact_inflight_request() {
+        let root = std::env::temp_dir().join(format!("psso-rejected-{}", Uuid::new_v4()));
+        platform_private_storage::directory(&root).unwrap();
+        let coordinate = coordinate();
+        let mut newer = coordinate.clone();
+        newer.source_version += 1;
+        for c in [&coordinate, &newer] {
+            state::write(&root, &c.file("registering").unwrap(), c).unwrap();
+        }
+        settle_rejected_registration(&root, &coordinate).unwrap();
+        assert!(!registration_unresolved(&root, &coordinate, None).unwrap());
+        assert!(registration_unresolved(&root, &newer, None).unwrap());
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn missing_source_does_not_settle_an_unknown_inflight_registration() {

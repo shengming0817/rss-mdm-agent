@@ -39,13 +39,14 @@ static NSString *field(RSSPSSOHandle *h,uint32_t key) {
     [self registerUsing:manager user:YES options:options completion:completion];
 }
 - (void)registerUsing:(ASAuthorizationProviderExtensionLoginManager *)manager user:(BOOL)user options:(ASAuthorizationProviderExtensionRequestOptions)options completion:(void (^)(ASAuthorizationProviderExtensionRegistrationResult))completion {
+    if (self.registrationCompletion || self.authorization) { completion(ASAuthorizationProviderExtensionRegistrationResultFailed);return; }
+    if([NSUserDefaults.standardUserDefaults dictionaryForKey:@"inflight"].count)RSSQueueInflight(NSUserDefaults.standardUserDefaults);
     if(RSSPendingRetirements(NSUserDefaults.standardUserDefaults).count) {
         [self retireUsing:manager completion:^(BOOL done){ (void)done; }];
         completion(ASAuthorizationProviderExtensionRegistrationResultFailed);return;
     }
     const NSUInteger supported=ASAuthorizationProviderExtensionRequestOptionsUserInteractionEnabled|ASAuthorizationProviderExtensionRequestOptionsRegistrationRepair|ASAuthorizationProviderExtensionRequestOptionsRegistrationSharedDeviceKeys|ASAuthorizationProviderExtensionRequestOptionsUserKeyInvalid;
     if (options & ~supported) { completion(ASAuthorizationProviderExtensionRegistrationResultFailedNoRetry);return; }
-    if (self.registrationCompletion || self.authorization) { completion(ASAuthorizationProviderExtensionRegistrationResultFailed);return; }
     if ((options & ASAuthorizationProviderExtensionRequestOptionsUserKeyInvalid) && !user) { completion(ASAuthorizationProviderExtensionRegistrationResultFailedNoRetry);return; }
     if (user && (options & ASAuthorizationProviderExtensionRequestOptionsUserKeyInvalid)) [manager resetUserSecureEnclaveKey];
     self.manager=manager;self.registrationCompletion=completion;NSUInteger generation=++self.generation;
@@ -59,15 +60,21 @@ static NSString *field(RSSPSSOHandle *h,uint32_t key) {
     if (!signingPoint || !encryptionPoint) { if(signing)CFRelease(signing);[self finishRegistration:generation result:ASAuthorizationProviderExtensionRegistrationResultFailed];return; }
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
         int32_t beginStatus=-1;RSSPSSOHandle *handle=rss_psso_begin(user?1:0,signingPoint.bytes,encryptionPoint.bytes,&beginStatus);
-        int result=handle?rss_psso_register(handle,signMessage,(void *)signing):-1;CFRelease(signing);
+        // Serialize publication with ConfigurationRemoved before any Register can leave the process.
+        __block BOOL submit=NO;
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            if(handle && generation==self.generation && self.registrationCompletion) {
+                submit=RSSSetInflight(NSUserDefaults.standardUserDefaults,user?@"registration":@"deviceRegistration",field(handle,RSSMetadata));
+            }
+        });
+        int result=submit?rss_psso_register(handle,signMessage,(void *)signing):-1;CFRelease(signing);
         dispatch_async(dispatch_get_main_queue(), ^{
             if (generation==self.generation && self.registrationCompletion) {
                 NSError *error=nil;BOOL saved=NO;
-                if (result==0) {
+                if (result==0 && RSSBeginSave(NSUserDefaults.standardUserDefaults,user?@"registration":@"deviceRegistration",field(handle,RSSMetadata))) {
                     if (user) {
                         ASAuthorizationProviderExtensionUserLoginConfiguration *config=[[ASAuthorizationProviderExtensionUserLoginConfiguration alloc]initWithLoginUserName:field(handle,RSSLoginName)];
                         saved=[manager saveUserLoginConfiguration:config error:&error];
-                        if(saved)[NSUserDefaults.standardUserDefaults setObject:field(handle,RSSMetadata) forKey:@"registration"];
                     } else {
                         ASAuthorizationProviderExtensionLoginConfiguration *config=[[ASAuthorizationProviderExtensionLoginConfiguration alloc]initWithClientID:field(handle,RSSClient) issuer:field(handle,RSSIssuer) tokenEndpointURL:[NSURL URLWithString:field(handle,RSSToken)] jwksEndpointURL:[NSURL URLWithString:field(handle,RSSJwks)] audience:field(handle,RSSAudience)];
                         config.nonceEndpointURL=[NSURL URLWithString:field(handle,RSSNonce)];config.nonceResponseKeypath=@"nonce";config.serverNonceClaimName=@"request_nonce";
@@ -76,9 +83,9 @@ static NSString *field(RSSPSSOHandle *h,uint32_t key) {
                         [config setCustomLoginRequestHeaderClaims:@{@"typ":field(handle,RSSLoginType)} returningError:&error];
                         if(!error)[config setCustomAssertionRequestHeaderClaims:@{@"typ":field(handle,RSSAssertionType)} returningError:&error];
                         saved=!error && [manager saveLoginConfiguration:config error:&error];
-                        if(saved)[NSUserDefaults.standardUserDefaults setObject:field(handle,RSSMetadata) forKey:@"deviceRegistration"];
                     }
                 }
+                if(saved)RSSSetInflight(NSUserDefaults.standardUserDefaults,user?@"registration":@"deviceRegistration",nil);
                 ASAuthorizationProviderExtensionRegistrationResult outcome=saved?ASAuthorizationProviderExtensionRegistrationResultSuccess:ASAuthorizationProviderExtensionRegistrationResultFailed;
                 if(beginStatus==1)outcome=ASAuthorizationProviderExtensionRegistrationResultUserInterfaceRequired;
                 [self finishRegistration:generation result:outcome];
@@ -105,17 +112,19 @@ static NSString *field(RSSPSSOHandle *h,uint32_t key) {
     if(!pending.count){completion(YES);return;}
     if(!manager){completion(NO);return;}
     BOOL device=manager.isDeviceRegistered,user=manager.isUserRegistered;
+    NSMutableSet<NSString *> *attempted=[NSMutableSet set];
+    for(NSString *scope in RSSRegistrationScopes()) { NSString *metadata=[NSUserDefaults.standardUserDefaults stringForKey:scope];if(metadata)[attempted addObject:metadata]; }
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0), ^{
         NSMutableArray<NSString *> *completed=[NSMutableArray array];
-        for(NSString *scope in pending) {
-            NSString *metadata=pending[scope];
+        for(NSString *metadata in pending) {
+            NSString *scope=pending[metadata];
             BOOL observed=rss_psso_observe(metadata.UTF8String,device,user)==0;
             BOOL retired=rss_psso_unregister(metadata.UTF8String)==0;
-            BOOL nativeCleared=!user && (![scope isEqual:@"deviceRegistration"] || !device);
-            if(observed && retired && nativeCleared)[completed addObject:scope];
+            BOOL nativeCleared=![attempted containsObject:metadata] || (!user && (![scope isEqual:@"deviceRegistration"] || !device));
+            if(retired && nativeCleared && (observed || ![attempted containsObject:metadata]))[completed addObject:metadata];
         }
         dispatch_async(dispatch_get_main_queue(), ^{
-            for(NSString *scope in completed)RSSCompleteRetirement(NSUserDefaults.standardUserDefaults,scope,pending[scope]);
+            for(NSString *metadata in completed)RSSCompleteRetirement(NSUserDefaults.standardUserDefaults,pending[metadata],metadata);
             completion(RSSPendingRetirements(NSUserDefaults.standardUserDefaults).count==0);
         });
     });
