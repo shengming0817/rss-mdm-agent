@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import { reactive, computed, nextTick, ref } from "vue";
+import { reactive, computed, nextTick, ref, inject } from "vue";
 import { ChevronRight, UiSearchInput, useUiContext } from "@rss-mdm-agent/ui";
 import SettingsGlyph from "./SettingsGlyph.vue";
+import SettingDetail from "./SettingDetail.vue";
+import { systemSettingsKey } from "./controller";
+import type { SettingsSection } from "../self-service/types";
+const controller = inject(systemSettingsKey, undefined);
 import { systemEntries } from "./catalog";
 import type { PageNavigation } from "../workspace/page-navigation";
 const emit = defineEmits<{
@@ -54,6 +58,7 @@ let origin = "";
 async function openSection(id: string) {
   if (!sections.value.some((e) => e.id === id) && id !== "lock") return;
   selected.value = id;
+  void controller?.load(id as SettingsSection);
   await nextTick();
   heading.value?.focus();
 }
@@ -91,8 +96,35 @@ emit(
         title: item.title,
         description:
           entries.value.find((e) => e.id === item.id)?.description ?? "",
-        status: "系统值未读取",
-        source: "系统设置目录",
+        status: (() => {
+          const value = controller?.state.observations.get(
+            item.id as SettingsSection,
+          );
+          const observed = value?.snapshot
+            ? `${value.effect} · ${new Date(value.snapshot.collectedAtUnixMs).toISOString()} · ${JSON.stringify(value.snapshot.targets.map((target) => ({ name: target.name, fields: target.fields.filter((field) => !["http", "https", "socks", "bypass", "proxy"].includes(field.key)) })))}`
+            : "系统值未读取";
+          const facts =
+            controller
+              ?.relevant(item.id as SettingsSection)
+              .flatMap((source) => {
+                const fact = controller.state.facts.get(
+                  source.reference.id,
+                )?.value;
+                return fact
+                  ? [
+                      {
+                        domains: source.domains,
+                        quality: fact.quality,
+                        stale: fact.stale,
+                        collectedAt: fact.collectedAt,
+                        fields: fact.fields,
+                      },
+                    ]
+                  : [];
+              }) ?? [];
+          return `${observed}${facts.length ? ` · ${JSON.stringify(facts)}` : ""}`;
+        })(),
+        source: "本机状态",
       })),
     ),
     setQuery: (value: string) => (query.value = value),
@@ -163,46 +195,24 @@ emit(
         </div>
         <small>{{ mac ? "macOS" : "Windows" }}</small>
       </header>
-      <section
-        v-for="(group, index) in selected === 'lock'
-          ? [
-              { title: '屏幕闲置', rows: current.rows.slice(0, 2) },
-              { title: '返回电脑时', rows: current.rows.slice(2) },
-            ]
-          : [{ title: '状态与偏好', rows: current.rows }]"
-        :key="group.title"
+      <SettingDetail :key="selected" :section="selected as SettingsSection" />
+      <button
+        v-if="selected === 'power'"
+        class="design-row"
+        type="button"
+        data-setting="lock"
+        @click="openSection('lock')"
       >
-        <h3>{{ group.title }}</h3>
-        <div class="design-rows">
-          <div
-            v-for="row in group.rows"
-            :key="row"
-            class="design-row setting-row"
-          >
-            <strong>{{ row }}</strong
-            ><select disabled :aria-label="row">
-              <option>未读取</option>
-            </select>
-          </div>
-          <button
-            v-if="selected === 'power' && index === 0"
-            class="design-row"
-            type="button"
-            data-setting="lock"
-            @click="openSection('lock')"
-          >
-            <strong>{{ entries.find((e) => e.id === "lock")!.title }}</strong
-            ><ChevronRight :size="18" aria-hidden="true" />
-          </button>
-        </div>
-      </section>
+        <strong>{{ entries.find((e) => e.id === "lock")!.title }}</strong
+        ><ChevronRight :size="18" aria-hidden="true" />
+      </button>
       <p class="design-note">{{ current.note }}</p>
       <button class="text-link settings-back" type="button" @click="back">
         ‹ 返回设置概览
       </button>
     </template>
-    <p class="design-note connection-note">
-      系统设置尚未接入。此处不会读取或修改你的系统配置。
+    <p v-if="!controller?.available" class="design-note connection-note">
+      本机服务不可用。此处不会读取或修改你的系统配置。
     </p>
   </section>
 </template>

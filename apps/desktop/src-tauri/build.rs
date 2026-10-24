@@ -104,6 +104,7 @@ fn main() {
             "software_history",
             "software_read",
             "software_prepare",
+            "system_settings",
             "software_submit",
             "software_status",
             "software_cancel",

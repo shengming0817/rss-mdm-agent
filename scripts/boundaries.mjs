@@ -9,6 +9,7 @@ const selfServiceCommands = [
   "device_access",
   "software_read",
   "software_prepare",
+  "system_settings",
   "software_submit",
   "software_status",
   "software_cancel",

@@ -1382,7 +1382,6 @@ export type SoftwareBlock =
   | "ruleDisabled"
   | "identityUnknown"
   | "observationUnavailable"
-  | "recipeUnavailable"
   | "updateUnknown"
   | "noGui"
   | "unsupported";
@@ -1398,38 +1397,211 @@ export type InstalledSoftwareKind =
   | "windowsProgram"
   | "msix"
   | "homebrew";
+/**
+ * Finite desktop settings request using the common journal and native session.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SettingsOperation".
+ */
+export type SettingsOperation =
+  | {
+      kind: "snapshot";
+      /**
+       * Requested page.
+       */
+      section: SettingsSection;
+    }
+  | {
+      kind: "refresh";
+      /**
+       * Stable preallocated UUID.
+       */
+      request: RequestId;
+      /**
+       * Requested page.
+       */
+      section: SettingsSection;
+    }
+  | {
+      /**
+       * Original snapshot revision.
+       */
+      expected: Digest;
+      kind: "change";
+      /**
+       * Closed requested values.
+       */
+      patch: SettingsPatch;
+      /**
+       * Stable preallocated UUID.
+       */
+      request: RequestId;
+    }
+  | {
+      kind: "openNative";
+      /**
+       * Stable preallocated UUID.
+       */
+      request: RequestId;
+      /**
+       * Fixed destination.
+       */
+      section: SettingsSection;
+    }
+  | {
+      kind: "status";
+      /**
+       * Original UUID.
+       */
+      request: RequestId;
+    }
+  | {
+      kind: "cancel";
+      /**
+       * Original UUID.
+       */
+      request: RequestId;
+    }
+  | {
+      /**
+       * Complete frozen execution digest.
+       */
+      digest: Digest;
+      kind: "keepDisplay";
+      /**
+       * Original UUID.
+       */
+      request: RequestId;
+    };
+/**
+ * Product setting page and fixed native destination.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SettingsSection".
+ */
+export type SettingsSection =
+  | "network"
+  | "display"
+  | "sound"
+  | "power"
+  | "lock"
+  | "storage"
+  | "security"
+  | "about";
+/**
+ * Closed settings edits; omitted properties are preserved.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SettingsPatch".
+ */
+export type SettingsPatch =
+  | {
+      /**
+       * Optional exact replacement of manual bypass entries.
+       */
+      bypass: string[] | null;
+      /**
+       * HTTP endpoint, if changed.
+       */
+      http: ProxyEndpoint | null;
+      /**
+       * HTTPS endpoint, if changed.
+       */
+      https: ProxyEndpoint | null;
+      kind: "proxy";
+      /**
+       * SOCKS endpoint, if changed.
+       */
+      socks: ProxyEndpoint | null;
+      /**
+       * Snapshot-selected native service identity.
+       */
+      target: string;
+    }
+  | {
+      kind: "display";
+      /**
+       * Native mode from the observed options; includes supported HiDPI modes.
+       */
+      mode: string | null;
+      /**
+       * Desktop origin, if changed.
+       */
+      origin: DisplayOrigin | null;
+      /**
+       * Snapshot-selected stable display identity.
+       */
+      target: string;
+    }
+  | {
+      /**
+       * Minutes before display sleep; zero means never.
+       */
+      displayOffMinutes: number | null;
+      kind: "power";
+      /**
+       * Supported native energy mode, if changed.
+       */
+      mode: string | null;
+      /**
+       * Minutes before system sleep; zero means never.
+       */
+      sleepMinutes: number | null;
+      /**
+       * AC or DC target returned by the native reader.
+       */
+      target: string;
+    };
+/**
+ * Exact effect observation, never inferred from exit status.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SettingsEffect".
+ */
+export type SettingsEffect =
+  | "pending"
+  | "applied"
+  | "preview"
+  | "restored"
+  | "conflict"
+  | "failed"
+  | "unknown"
+  | "openRequested"
+  | "observed"
+  | "cancelled";
 
 export interface SelfServiceCommands {
-  ai_operation_submit: Command14;
-  appearance_snapshot: Command20;
-  data_read: Command8;
-  device_access: Command;
-  device_overview: Command21;
-  query_cancel: Command10;
-  query_directory: Command7;
-  query_status: Command10;
-  query_submit: Command9;
-  self_service_cancel: Command19;
-  self_service_confirm: Command18;
-  self_service_execute: Command18;
-  self_service_observe_software: Command11;
-  self_service_policy_confirm: Command15;
-  self_service_policy_directory: Command12;
-  self_service_policy_invoke: Command13;
-  self_service_policy_status: Command16;
-  self_service_snapshot: Command17;
-  software_cancel: Command4;
-  software_history: Command5;
-  software_prepare: Command2;
-  software_read: Command6;
-  software_status: Command4;
-  software_submit: Command3;
+  ai_operation_submit: Command15;
+  appearance_snapshot: Command21;
+  data_read: Command9;
+  device_access: Command2;
+  device_overview: Command22;
+  query_cancel: Command11;
+  query_directory: Command8;
+  query_status: Command11;
+  query_submit: Command10;
+  self_service_cancel: Command20;
+  self_service_confirm: Command19;
+  self_service_execute: Command19;
+  self_service_observe_software: Command12;
+  self_service_policy_confirm: Command16;
+  self_service_policy_directory: Command13;
+  self_service_policy_invoke: Command14;
+  self_service_policy_status: Command17;
+  self_service_snapshot: Command18;
+  software_cancel: Command5;
+  software_history: Command6;
+  software_prepare: Command3;
+  software_read: Command7;
+  software_status: Command5;
+  software_submit: Command4;
+  system_settings: Command;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command14".
+ * via the `definition` "Command15".
  */
-export interface Command14 {
+export interface Command15 {
   input: PolicySubmission;
   output: BackendRequest;
 }
@@ -1898,9 +2070,9 @@ export interface VersionedRef {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command20".
+ * via the `definition` "Command21".
  */
-export interface Command20 {
+export interface Command21 {
   input: null;
   output: AppearanceSnapshot;
 }
@@ -1915,9 +2087,9 @@ export interface AppearanceSnapshot {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command8".
+ * via the `definition` "Command9".
  */
-export interface Command8 {
+export interface Command9 {
   input: DataRead;
   output: CollectedData;
 }
@@ -2033,9 +2205,9 @@ export interface CollectedData {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command".
+ * via the `definition` "Command2".
  */
-export interface Command {
+export interface Command2 {
   input: Operation;
   output: Response;
 }
@@ -2205,9 +2377,9 @@ export interface SetupTask {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command21".
+ * via the `definition` "Command22".
  */
-export interface Command21 {
+export interface Command22 {
   input: null;
   output: DeviceOverview;
 }
@@ -2246,9 +2418,9 @@ export interface DeviceAttributes {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command10".
+ * via the `definition` "Command11".
  */
-export interface Command10 {
+export interface Command11 {
   input: QueryRequest;
   output: QueryStatus;
 }
@@ -2310,9 +2482,9 @@ export interface QueryPreparationRef {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command7".
+ * via the `definition` "Command8".
  */
-export interface Command7 {
+export interface Command8 {
   input: QueryDirectory;
   output: QueryPage;
 }
@@ -2426,9 +2598,9 @@ export interface PublishedQuery {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command9".
+ * via the `definition` "Command10".
  */
-export interface Command9 {
+export interface Command10 {
   input: QuerySubmit;
   output: QueryStatus;
 }
@@ -2456,9 +2628,9 @@ export interface QuerySubmit {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command19".
+ * via the `definition` "Command20".
  */
-export interface Command19 {
+export interface Command20 {
   input: ActionRef;
   output: BackendTaskView;
 }
@@ -2816,9 +2988,9 @@ export interface ProcessSummary {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command18".
+ * via the `definition` "Command19".
  */
-export interface Command18 {
+export interface Command19 {
   input: BackendSelection;
   output: TaskSubmission;
 }
@@ -2840,25 +3012,25 @@ export interface TaskSubmission {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command11".
+ * via the `definition` "Command12".
  */
-export interface Command11 {
+export interface Command12 {
   input: SoftwareReadChoice;
   output: BackendRequest;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command15".
+ * via the `definition` "Command16".
  */
-export interface Command15 {
+export interface Command16 {
   input: ActionRef;
   output: BackendRequest;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command12".
+ * via the `definition` "Command13".
  */
-export interface Command12 {
+export interface Command13 {
   input: PolicyDirectoryQuery;
   output: SelfServiceDirectoryResponse;
 }
@@ -2891,9 +3063,9 @@ export interface SelfServiceDirectoryResponse {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command13".
+ * via the `definition` "Command14".
  */
-export interface Command13 {
+export interface Command14 {
   input: PolicyInvocation;
   output: BackendRequest;
 }
@@ -2915,9 +3087,9 @@ export interface PolicyInvocation {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command16".
+ * via the `definition` "Command17".
  */
-export interface Command16 {
+export interface Command17 {
   input: ActionRef;
   output: PolicyStatus;
 }
@@ -3064,9 +3236,9 @@ export interface TaskRunState {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command17".
+ * via the `definition` "Command18".
  */
-export interface Command17 {
+export interface Command18 {
   input: SnapshotQuery;
   output: Snapshot;
 }
@@ -3091,9 +3263,9 @@ export interface Snapshot {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command4".
+ * via the `definition` "Command5".
  */
-export interface Command4 {
+export interface Command5 {
   input: QueryRequest;
   output: LocalSoftwareStatus;
 }
@@ -3199,9 +3371,9 @@ export interface SoftwareRef {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command5".
+ * via the `definition` "Command6".
  */
-export interface Command5 {
+export interface Command6 {
   input: SoftwareHistoryQuery;
   output: LocalSoftwareHistory;
 }
@@ -3239,17 +3411,17 @@ export interface LocalSoftwareHistory {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command2".
+ * via the `definition` "Command3".
  */
-export interface Command2 {
+export interface Command3 {
   input: LocalSoftwareChoice;
   output: LocalSoftwarePrepared;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command6".
+ * via the `definition` "Command7".
  */
-export interface Command6 {
+export interface Command7 {
   input: SoftwareRead;
   output: SoftwarePage;
 }
@@ -3371,9 +3543,9 @@ export interface SoftwareActionView {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command3".
+ * via the `definition` "Command4".
  */
-export interface Command3 {
+export interface Command4 {
   input: LocalSoftwareSubmission;
   output: LocalSoftwareStatus;
 }
@@ -3392,6 +3564,190 @@ export interface LocalSoftwareSubmission {
    * Original request UUID.
    */
   request: RequestId;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Command".
+ */
+export interface Command {
+  input: SettingsOperation;
+  output: SettingsResponse;
+}
+/**
+ * One explicit manual proxy endpoint. Automatic configuration is preserved independently.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ProxyEndpoint".
+ */
+export interface ProxyEndpoint {
+  /**
+   * Whether this manual protocol proxy is enabled.
+   */
+  enabled: boolean;
+  /**
+   * Hostname or IP only, without scheme, credentials or path.
+   */
+  host: string;
+  /**
+   * Native TCP port; zero allowed only when disabled.
+   */
+  port: number;
+}
+/**
+ * Exact native desktop coordinates.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "DisplayOrigin".
+ */
+export interface DisplayOrigin {
+  /**
+   * Horizontal desktop coordinate.
+   */
+  x: number;
+  /**
+   * Vertical desktop coordinate.
+   */
+  y: number;
+}
+/**
+ * Read-only projection of the original settings operation.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SettingsResponse".
+ */
+export interface SettingsResponse {
+  /**
+   * Complete immutable execution digest, when retained.
+   */
+  digest: Digest | null;
+  /**
+   * Observed effect of this exact request.
+   */
+  effect: SettingsEffect;
+  /**
+   * Physical lifecycle ended; effect is independently reported.
+   */
+  finished: boolean;
+  /**
+   * Deadline for keeping a display preview, in UTC milliseconds.
+   */
+  keepBeforeUnixMs: number | null;
+  /**
+   * Accurate bounded explanation, without raw process output.
+   */
+  reason: string | null;
+  /**
+   * Request that produced this observation, absent for retained reads.
+   */
+  request: RequestId | null;
+  /**
+   * Last valid native observation.
+   */
+  snapshot: SettingsSnapshot | null;
+  /**
+   * Current protected delegation permits edits of this section; native target checks still apply.
+   */
+  writeAllowed: boolean;
+}
+/**
+ * Timestamped observation, independent of submission and process exit.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SettingsSnapshot".
+ */
+export interface SettingsSnapshot {
+  /**
+   * Actual observation time, in UTC milliseconds.
+   */
+  collectedAtUnixMs: number;
+  /**
+   * Digest over native values, including target identity and capabilities.
+   */
+  revision: Digest;
+  /**
+   * Actual section read.
+   */
+  section: SettingsSection;
+  /**
+   * Native observation source.
+   */
+  source: string;
+  /**
+   * Bounded targets and per-field quality.
+   */
+  targets: SettingsTarget[];
+}
+/**
+ * An observed display, network service, power source or current device.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SettingsTarget".
+ */
+export interface SettingsTarget {
+  /**
+   * Individual observations.
+   */
+  fields: SettingsField[];
+  /**
+   * Stable native target identifier, never a path selector.
+   */
+  id: string;
+  /**
+   * Human-readable target name.
+   */
+  name: string;
+  /**
+   * Supported native display modes or energy modes.
+   */
+  options: SettingsOption[];
+  /**
+   * Why writes are unavailable; reads remain independent.
+   */
+  reason: string | null;
+  /**
+   * Whether current policy, privilege and native support permit edits.
+   */
+  writable: boolean;
+}
+/**
+ * One actual value or an explicit unavailable observation.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SettingsField".
+ */
+export interface SettingsField {
+  /**
+   * Code-owned field identifier, used only for presentation.
+   */
+  key: string;
+  /**
+   * Completeness of this individual observation.
+   */
+  quality: DataQuality;
+  /**
+   * Accurate human-readable limitation when needed.
+   */
+  reason: string | null;
+  /**
+   * Observed value. Missing never means disabled, zero or absent.
+   */
+  value: unknown;
+}
+/**
+ * One value accepted by the OS for the exact target.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SettingsOption".
+ */
+export interface SettingsOption {
+  /**
+   * Opaque native identifier, re-resolved and validated before mutation.
+   */
+  id: string;
+  /**
+   * Display label, without authority.
+   */
+  label: string;
 }
 
 export type SoftwarePort = {

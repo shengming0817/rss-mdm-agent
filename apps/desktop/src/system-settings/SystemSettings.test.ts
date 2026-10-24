@@ -10,9 +10,7 @@ it("filters the directory, restores search and focus, and keeps unknown system s
     expect(w.findAll(".settings-overview-grid button")).toHaveLength(1);
     await w.get('[data-setting="network"]').trigger("click");
     expect(document.activeElement).toBe(w.get("h2").element);
-    expect(
-      w.findAll(".setting-row").every((e) => e.text().includes("未读取")),
-    ).toBe(true);
+    expect(w.text()).toContain("尚未读取系统状态");
     expect(w.text()).toContain("此处不会读取或修改你的系统配置");
     await w.get(".settings-back").trigger("click");
     expect(w.get("input").element.value).toBe("网络");

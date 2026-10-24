@@ -250,16 +250,13 @@ impl ExecutionHandle {
             return false;
         }
         tokio::task::spawn_blocking(|| {
-            matches!(
-                ServiceClient::inspect(),
-                execution_ipc::host::ServiceView::NotInstalled
-                    | execution_ipc::host::ServiceView::Connected {
-                        status: execution_ipc::host::ServiceStatus {
-                            readiness: execution_ipc::host::Readiness::RegistrationRequired,
-                            ..
-                        }
-                    }
-            )
+            match ServiceClient::inspect() {
+                execution_ipc::host::ServiceView::NotInstalled => true,
+                execution_ipc::host::ServiceView::Connected { status } if status.readiness == execution_ipc::host::Readiness::Ready => {
+                    matches!(ServiceClient::installed().and_then(|client|client.request(Request::RegistrationStatus {})), Ok(Reply::RegistrationStatus { value }) if !value.registered && value.credential == execution_ipc::host::CredentialStatus::Absent)
+                },
+                _ => false,
+            }
         })
         .await
         .unwrap_or(false)
@@ -389,6 +386,26 @@ impl ExecutionHandle {
         {
             Reply::SoftwareHistory { value } => Ok(value),
             _ => Err(bad(Error::Unavailable)),
+        }
+    }
+    pub async fn system_settings(
+        &self,
+        input: execution_contract::SettingsOperation,
+    ) -> ui::Result<execution_contract::SettingsResponse> {
+        if !matches!(self.origin, ClientOrigin::Desktop {}) {
+            return Err(bad(Error::Denied));
+        }
+        let reply = self
+            .request(Request::Settings {
+                context: self.context_ref()?,
+                origin: self.origin.clone(),
+                input,
+            })
+            .await
+            .map_err(bad)?;
+        match software_reply(reply).map_err(software_ui_error)? {
+            Reply::Settings { value } => Ok(value),
+            _ => Err(bad(Error::OutcomeUnknown)),
         }
     }
     pub async fn software_prepare(

@@ -66,7 +66,6 @@ const blocks: Record<SoftwareBlock, string> = {
   ruleDisabled: "当前组织规则不允许",
   identityUnknown: "无法核实原生身份",
   observationUnavailable: "清单缺失、过期或不完整，请显式刷新",
-  recipeUnavailable: "缺少可信的执行配方",
   updateUnknown: "尚无获准的固定更新候选",
   noGui: "此安装记录没有可启动的 GUI",
   unsupported: "当前平台或安装机制不支持",

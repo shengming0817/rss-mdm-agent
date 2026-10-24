@@ -3,6 +3,10 @@ import { computed, inject, ref } from "vue";
 import { softwareSummaryKey } from "../software/controller";
 import HomeAssistant from "./HomeAssistant.vue";
 import SettingsGlyph from "../system-settings/SettingsGlyph.vue";
+import { systemSettingsKey } from "../system-settings/controller";
+import { homeFacts } from "../system-settings/facts";
+const settings = inject(systemSettingsKey, undefined);
+const facts = computed(() => homeFacts(settings));
 import { UiPopover, Package, Sparkles } from "@rss-mdm-agent/ui";
 import type { Controller } from "../self-service/controller";
 import type { DeviceOverview } from "../self-service/types";
@@ -92,11 +96,8 @@ const addressesOpen = ref(false);
       >
         <span class="stat-label"
           ><SettingsGlyph kind="network" :size="17" />网络连接</span
-        ><strong>{{ sample?.network ?? "未读取" }}</strong
-        ><small>{{ sample?.networkDetail ?? "连接状态尚未接入" }}</small
-        ><span class="stat-track"
-          ><i :style="{ width: sample ? '92%' : '0%' }"
-        /></span>
+        ><strong>{{ sample?.network ?? facts.network }}</strong
+        ><small>{{ sample?.networkDetail ?? facts.networkDetail }}</small>
       </button>
       <button
         type="button"
@@ -105,11 +106,13 @@ const addressesOpen = ref(false);
         <span class="stat-label"
           ><SettingsGlyph kind="storage" :size="17" />存储空间</span
         ><strong
-          >{{ sample?.storageFree ?? "—"
-          }}<em v-if="sample">GB 可用</em></strong
-        ><small>{{ sample?.storageDetail ?? "磁盘使用情况未读取" }}</small
+          >{{ sample?.storageFree ?? facts.storageFree
+          }}<em v-if="sample || facts.storageUsed !== undefined"
+            >GB 可用</em
+          ></strong
+        ><small>{{ sample?.storageDetail ?? facts.storageDetail }}</small
         ><span class="stat-track storage-track"
-          ><i :style="{ width: sample ? '64%' : '0%' }"
+          ><i :style="{ width: sample ? '64%' : `${facts.storageUsed ?? 0}%` }"
         /></span>
       </button>
       <button
@@ -118,10 +121,15 @@ const addressesOpen = ref(false);
       >
         <span class="stat-label"
           ><SettingsGlyph kind="power" :size="17" />电池与电源</span
-        ><strong>{{ sample?.battery ?? "—" }}<em v-if="sample">电量</em></strong
-        ><small>{{ sample?.batteryDetail ?? "电源状态未读取" }}</small
+        ><strong
+          >{{ sample?.battery ?? facts.battery
+          }}<em v-if="sample">电量</em></strong
+        ><small>{{ sample?.batteryDetail ?? facts.batteryDetail }}</small
         ><span class="stat-track power-track"
-          ><i :style="{ width: sample ? '86%' : '0%' }"
+          ><i
+            :style="{
+              width: sample ? '86%' : `${facts.batteryPercent ?? 0}%`,
+            }"
         /></span>
       </button>
       <button

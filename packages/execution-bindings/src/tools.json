@@ -322,7 +322,7 @@
             },
             {
               "const": "pkg",
-              "description": "macOS PackageInstaller receipt; removal requires a trusted recipe.",
+              "description": "macOS PackageInstaller receipt; native removal is unsupported.",
               "type": "string"
             },
             {
@@ -501,11 +501,6 @@
             {
               "const": "observationUnavailable",
               "description": "Data is missing, stale, incomplete or changed since selection.",
-              "type": "string"
-            },
-            {
-              "const": "recipeUnavailable",
-              "description": "No fixed trusted installation/removal recipe is registered.",
               "type": "string"
             },
             {
