@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Ensure the OS acceptance harness cannot accept failed or unacknowledged results."""
 import copy
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import importlib.util
 from pathlib import Path
 import unittest
@@ -35,6 +35,73 @@ def absent_execution_registration():
 
 
 class BackendLifecycleTests(unittest.TestCase):
+    def test_completed_offer_is_bound_to_the_original_policy_request_and_execution(self):
+        offer = dict(request='original', attempt='attempt', task='run', revision='a'*64)
+        action = dict(kind='policy', choice=dict(request='original'), runId='run', offer=offer)
+        completion = dict(request='original', record=dict(action=dict(initiator=dict(attempt='attempt'))))
+        current = dict(preparations=[dict(action=action)], available=[dict(offer, request='other')])
+        self.assertEqual(acceptance.completed_replay_offer(current, completion), offer)
+        for change in ('missing', 'duplicate', 'request', 'attempt', 'choice', 'run'):
+            value = copy.deepcopy(current)
+            if change == 'missing': value['preparations'] = []
+            elif change == 'duplicate': value['preparations'] *= 2
+            elif change in ('request', 'attempt'): value['preparations'][0]['action']['offer'][change] = 'other'
+            elif change == 'choice': value['preparations'][0]['action']['choice']['request'] = 'other'
+            else: value['preparations'][0]['action']['runId'] = 'other'
+            with self.subTest(change=change), self.assertRaises(AssertionError):
+                acceptance.completed_replay_offer(value, completion)
+
+    def test_desktop_and_direct_journeys_pass_the_actual_offer_through_security_completion(self):
+        for desktop in (True, False):
+          with self.subTest(desktop=desktop), tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); (root/'package-payload').mkdir()
+            (root/'package-payload/fixed.txt').write_bytes(b'original effect')
+            (root/'service-stderr.log').write_bytes(b'')
+            offer = dict(request='original', task='run', attempt='attempt', revision='c'*64)
+            record = dict(action=dict(initiator=dict(attempt='attempt')), status=dict(attempts=1))
+            action = dict(kind='policy', choice=dict(request='original'), runId='run', offer=offer) if desktop else dict(kind='offered', offer=offer)
+            current = dict(available=[], preparations=[dict(action=action)], value=dict(items=[record]))
+            replay = acceptance.completed_replay_offer(current, dict(request='original', record=record)) if desktop else offer
+            expiring = dict(request='expired', task='expired-run', attempt='expired-attempt', revision='b'*64, expiresAt=0)
+            probe = MagicMock(); probe.suspended.side_effect = nullcontext
+            def reply(request):
+                kind = 'pending'
+                if request['method'] == 'serviceStatus':
+                    return dict(transport='reply', peerUid=0, peerPid=123,
+                        envelope=dict(reply=dict(kind='serviceStatus', value=dict(readiness=dict(phase='ready')))))
+                if request['request'] == 'expired': kind = 'unavailable'
+                elif request != acceptance.offer_request(offer): kind = 'rejected'
+                return dict(transport='reply', peerUid=0, envelope=dict(reply=dict(kind=kind)))
+            probe.request.side_effect = reply
+            command = MagicMock(side_effect=lambda name, **kw: dict(startRequests=1) if name == 'status' else expiring)
+            administrator = MagicMock()
+            administrator.command.side_effect = lambda name: dict(driverDiagnostics='RSS_HELPER_ENDPOINT_INVALID', preflight=dict(originalPid=123)) if name == 'refresh_preflight' else dict(afterStop=dict(verified=True))
+            matrix = acceptance.security_matrix()
+            matrix['scenarios']['restart_old_connection']['status'] = 'passed'
+            matrix['staleHelperPending'] = dict(original=True)
+            with patch.object(acceptance, 'run'), patch.object(acceptance, 'native_stale_helper_security'), \
+                 patch.object(acceptance, 'native_revocation_security') as revocation, \
+                 patch.object(acceptance, 'await_offer', return_value=expiring), patch.object(acceptance.time, 'sleep'):
+                acceptance.complete_native_security(probe, matrix, lambda: current, command, root/'fixed.pkg', 'receipt',
+                    lambda attempt, seconds: dict(startRequests=1), lambda: dict(receiptPresent=True, payloadMatches=True),
+                    root, root/'installer', root/'service', root/'config', administrator, replay)
+            revocation.assert_called_once()
+            for name in ('offer_tamper', 'offer_replay', 'offer_expiry'):
+                self.assertEqual(matrix['scenarios'][name]['status'], 'passed')
+            self.assertEqual(matrix['scenarios']['offer_tamper']['evidence']['offer'], offer)
+            self.assertEqual([value.args[0] for value in probe.request.call_args_list].count(acceptance.offer_request(offer)), 2)
+
+    def test_unregistered_local_owner_requires_ready_and_empty_original_tasks(self):
+        status = {'reply': {'kind': 'serviceStatus', 'value': {'readiness': {'phase': 'ready'}}}}
+        tasks = {'reply': {'kind': 'tasks', 'value': {'items': [], 'next': None}}}
+        self.assertEqual(acceptance.unregistered_local_evidence(status, tasks), dict(service=status, tasks=tasks))
+        for phase in ('notReady', 'registrationRequired'):
+            changed = copy.deepcopy(status)
+            changed['reply']['value']['readiness']['phase'] = phase
+            with self.assertRaises(AssertionError): acceptance.unregistered_local_evidence(changed, tasks)
+        for reply in ({'kind': 'rejected'}, {'kind': 'tasks', 'value': {'items': [{'request': 'unexpected'}]}}):
+            with self.assertRaises(AssertionError): acceptance.unregistered_local_evidence(status, {'reply': reply})
+
     def test_fixed_operation_cancellation_reaps_child_and_restores_before_cleanup(self):
         for disconnect,orphan in ((False,False),(True,False),(False,True)):
           with self.subTest(disconnect=disconnect,orphan=orphan), tempfile.TemporaryDirectory(dir='/private/tmp') as directory:

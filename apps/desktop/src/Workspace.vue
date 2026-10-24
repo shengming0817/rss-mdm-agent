@@ -18,7 +18,6 @@ import {
   Terminal,
   Sparkles,
   Settings as SettingsIcon,
-  UiDialog,
   X,
 } from "@rss-mdm-agent/ui";
 import AppShell from "./workspace/WorkspaceChrome.vue";
@@ -30,41 +29,39 @@ import ModuleNavigation from "./workspace/ModuleNavigation.vue";
 import "./workspace/design.css";
 import ConversationHistory from "./workspace/ConversationHistory.vue";
 import PageAssistantPanel from "./workspace/PageAssistantPanel.vue";
+import { homeFacts } from "./system-settings/facts";
 import { pageContext } from "./workspace/page-context";
 import { nativeAssistant } from "./assistant/native";
 import Assistant from "./assistant/Assistant.vue";
-import ContextPanel from "./assistant/ContextPanel.vue";
-import {
-  resourceContext,
-  contextCurrent,
-  type ResourceContext,
-} from "./assistant/resource-context";
-import type { BackendTask, SelfServicePort } from "./self-service/types";
+import type { SelfServicePort } from "./self-service/types";
 import {
   createAssistant,
   type AssistantServices,
 } from "./assistant/controller";
-import SelfService from "./self-service/SelfService.vue";
+import { createActivity, activityKey } from "./self-service/activity";
+import Tasks from "./self-service/Tasks.vue";
+import { createDirectory, directoryKey } from "./self-service/directory";
+import type { LocalPorts } from "./assembly";
+import type { UserContext } from "@rss-mdm-agent/ai-contract/wire";
 import Home from "./home/Home.vue";
 import SystemSettings from "./system-settings/SystemSettings.vue";
 import {
   createSystemSettings,
   systemSettingsKey,
 } from "./system-settings/controller";
-import SoftwarePreviewPage from "./catalog-preview/SoftwareManagement.vue";
 import SoftwareManagement from "./software/SoftwareManagement.vue";
 import { createSoftware, softwareSummaryKey } from "./software/controller";
 import {
   nativeDataPort,
   nativeSoftwarePort,
   nativeSettingsPort,
+  nativeNetworkCheckPort,
 } from "./self-service/native";
-import ToolsPage from "./catalog-preview/ToolsPage.vue";
+import ToolsPage from "./device-tools/ToolsPage.vue";
 import { createDeviceOverview, type DeviceOverviewPort } from "./home/device";
 import { nativeDeviceOverview } from "./home/native";
 import { createController } from "./self-service/controller";
 import { nativePort } from "./self-service/native";
-import preview from "./self-service/preview";
 import Settings from "./settings/Settings.vue";
 import type { ServicePort } from "./settings/native";
 import type { HostSettings } from "./settings/controller";
@@ -72,6 +69,8 @@ import "./self-service/style.css";
 import "./assistant/style.css";
 const props = defineProps<{
   ready: boolean;
+  identity?: UserContext;
+  localPorts?: LocalPorts;
   busy: boolean;
   assistantServices?: AssistantServices;
   selfServicePort?: SelfServicePort;
@@ -84,7 +83,12 @@ const props = defineProps<{
 const emit = defineEmits<{
   navigate: [id: string];
 }>();
-import type { PageNavigation } from "./workspace/page-navigation";
+import { workspaceIdentity } from "./workspace/identity";
+import type {
+  PageNavigation,
+  NavigationTarget,
+  SearchEntry,
+} from "./workspace/page-navigation";
 const softwarePage = ref<PageNavigation>();
 const toolsPage = ref<PageNavigation>();
 const systemPage = ref<PageNavigation>();
@@ -120,7 +124,7 @@ const moduleTitle = computed(
       { id: "home", title: "主页" },
     ].find((item) => item.id === props.page)?.title ?? "",
 );
-const searchEntries = computed(() => [
+const searchEntries = computed<SearchEntry[]>(() => [
   ...[
     {
       page: "software-management",
@@ -131,36 +135,115 @@ const searchEntries = computed(() => [
     { page: "system-settings", group: "系统设置", module: systemPage.value },
     { page: "settings", group: "RSS Agent 设置", module: settingsPage.value },
   ].flatMap(({ page, group, module }) =>
-    (module?.sections ?? []).map((e) => ({ ...e, page, group })),
+    (module?.sections ?? []).map((e) => ({
+      ...e,
+      kind: "section" as const,
+      page,
+      group,
+    })),
   ),
   ...(softwarePage.value?.searchEntries ?? []).map((e) => ({
     ...e,
+    kind: "resource" as const,
     page: "software-management",
     group: "应用",
   })),
   ...(toolsPage.value?.searchEntries ?? []).map((e) => ({
     ...e,
+    kind: "resource" as const,
     page: "device-tools",
     group: "工具",
   })),
   {
+    kind: "section" as const,
     page: "system-settings",
     id: "lock",
     title: "屏幕与睡眠",
     group: "系统设置 · 电源",
   },
 ]);
-function searchTarget(entry: { page: string; id: string }) {
+const navigationError = ref("");
+const searchState = computed(() => {
+  const states = [softwarePage.value?.search, toolsPage.value?.search].filter(
+    (value) => !!value,
+  );
+  return {
+    loading: states.some((value) => value!.loading),
+    complete: states.length === 2 && states.every((value) => value!.complete),
+    hasMore: states.some((value) => value!.hasMore),
+    error: states
+      .map((value) => value!.error)
+      .filter((value) => !!value)
+      .join(" · "),
+  };
+});
+async function searchMore(retry = false) {
+  if (searchState.value.loading) return;
+  if (retry) {
+    if (
+      software.state.error ||
+      software.state.sources.some((source) => source.error)
+    ) {
+      if (software.state.error) await software.discover();
+      for (const source of software.state.sources.filter(
+        (source) => source.error,
+      ))
+        await software.read(source, !!source.after);
+    }
+    if (directory.state.error) await directory.load(!!directory.state.next);
+  } else {
+    // Software and tools consume the same Policy owner; advance that cursor once.
+    if (software.state.directoryNext) await software.discover(true);
+    else {
+      const source = software.state.sources.find((source) => source.after);
+      if (source) await software.read(source, true);
+    }
+    if (directory.state.next) await directory.load(true);
+  }
+}
+let navigationEpoch = 0;
+async function openTarget(target: NavigationTarget) {
+  const call = ++navigationEpoch;
+  navigationError.value = "";
+  if (target.kind === "request") {
+    await openTask(target.request);
+    return;
+  }
   const module =
-    entry.page === "software-management"
+    target.page === "software-management"
       ? softwarePage.value
-      : entry.page === "device-tools"
+      : target.page === "device-tools"
         ? toolsPage.value
-        : entry.page === "system-settings"
+        : target.page === "system-settings"
           ? systemPage.value
-          : settingsPage.value;
-  module?.openSection(entry.id);
-  emit("navigate", entry.page);
+          : target.page === "settings"
+            ? settingsPage.value
+            : undefined;
+  if (!module) {
+    navigationError.value = "目标页面不可用，请刷新后重试。";
+    return;
+  }
+  if (
+    target.kind === "resource" &&
+    !module.searchEntries?.some(
+      (item) => item.id === target.id && item.revision === target.revision,
+    )
+  ) {
+    navigationError.value = "资源已撤回或版本已变化，请重新搜索。";
+    return;
+  }
+  navigateMain(target.page);
+  await nextTick();
+  if (call !== navigationEpoch) return;
+  if (target.kind === "resource") {
+    if (!(await module.openResource?.(target.id, target.revision)))
+      navigationError.value = "资源不可访问，请重新读取当前目录。";
+  } else if (
+    module.sections.some((item) => item.id === target.id) ||
+    (target.page === "system-settings" && target.id === "lock")
+  )
+    module.openSection(target.id);
+  else navigationError.value = "目标分区已变化，请重新选择。";
 }
 function resetModule(id: string) {
   if (id === "software-management") softwarePage.value?.reset();
@@ -179,6 +262,34 @@ function accountMenu(id: string) {
 }
 function openConnectionSettings() {
   accountMenu("connection");
+}
+async function openTask(request: string) {
+  if (!controller) return;
+  const details = activity.state.items.find(
+    (item) => item.details.action.requestId === request,
+  )?.details;
+  const action = details?.action.operation.action;
+  if (
+    [
+      "local-software.launch",
+      "local-software.uninstall",
+      "local-software.detect",
+    ].includes(action ?? "")
+  ) {
+    navigateMain("software-management");
+    await nextTick();
+    await softwarePage.value?.openRequest?.(request);
+    return;
+  }
+  if (action === "network.check") {
+    navigateMain("device-tools");
+    await nextTick();
+    await toolsPage.value?.openRequest?.(request);
+    return;
+  }
+  controller.state.taskId = request;
+  contextualNavigate("tasks");
+  await controller.refresh();
 }
 function contextualNavigate(page: string, section?: string) {
   navigateMain(page);
@@ -248,70 +359,165 @@ const device = createDeviceOverview(
   props.fixture ? props.devicePort : nativeDeviceOverview(),
 );
 let devicePolling: ReturnType<typeof setInterval> | undefined;
+let taskPolling: ReturnType<typeof setInterval> | undefined;
 const lastContentPage = ref("home");
 const newIdentity = () => crypto.randomUUID();
-const software = createSoftware(
-  !props.ready || props.fixture ? null : nativeDataPort(),
-  !props.ready || props.fixture ? null : nativeSoftwarePort(),
-);
+const ownerKey = workspaceIdentity(props.identity);
+const local: LocalPorts = props.localPorts ?? {
+  data: !props.ready || props.fixture ? null : nativeDataPort(),
+  software: !props.ready || props.fixture ? null : nativeSoftwarePort(),
+  settings: !props.ready || props.fixture ? null : nativeSettingsPort(),
+  network: !props.ready || props.fixture ? null : nativeNetworkCheckPort(),
+};
+const software = createSoftware(local.data, local.software);
 provide(softwareSummaryKey, software.summary);
-const systemSettings = createSystemSettings(
-  !props.ready || props.fixture ? null : nativeSettingsPort(),
-  !props.ready || props.fixture ? null : nativeDataPort(),
-);
+const networkCheck = local.network;
+const systemSettings = createSystemSettings(local.settings, local.data);
 provide(systemSettingsKey, systemSettings);
-onBeforeUnmount(() => systemSettings.dispose());
+const controller = props.ready
+  ? createController(props.selfServicePort ?? nativePort())
+  : undefined;
+const directory = createDirectory(controller?.port ?? null);
+provide(directoryKey, directory);
+const activity = createActivity(controller?.port ?? null);
+provide(activityKey, activity);
 onMounted(() => {
   for (const section of ["network", "storage", "power"] as const)
     void systemSettings.load(section);
 });
-onBeforeUnmount(() => software.dispose());
-const controller = props.ready
-  ? createController(props.selfServicePort ?? nativePort(), preview)
-  : undefined;
+onBeforeUnmount(() => {
+  systemSettings.dispose();
+  software.dispose();
+  directory.dispose();
+  activity.dispose();
+  controller?.dispose();
+});
 const assistant = props.ready
-  ? createAssistant(props.assistantServices ?? nativeAssistant(), newIdentity)
+  ? createAssistant(
+      props.assistantServices ?? nativeAssistant(),
+      newIdentity,
+      () => Date.now(),
+      ownerKey,
+    )
   : undefined;
 watch(
   () => props.page,
   (id) => {
     if (id !== "settings") settingsExpanded.value = false;
     if (id !== "assistant") lastContentPage.value = id;
-    if (["home", "software", "tools", "tasks"].includes(id))
-      controller?.navigate(id);
-    if (id === "home") void device.refresh();
+    navigationError.value = "";
+    if (id === "home") {
+      void device.refresh();
+      void activity.load();
+    }
+    if (["tasks", "software-management", "device-tools"].includes(id))
+      void controller?.refresh();
     if (!historyPinned.value) historyOpen.value = false;
   },
   { immediate: true },
 );
-const contextOpen = ref(false),
-  wide = ref(false),
-  chosen = ref(false),
-  moving = ref(false);
-const candidate = shallowRef<ResourceContext>(),
-  target = shallowRef<HTMLElement>();
-const panelHost = ref<HTMLElement>();
+const moving = ref(false);
+const target = shallowRef<HTMLElement>();
 const pageAssistantOpen = ref(false);
 const pagePanelHost = ref<HTMLElement>();
 const pageAssistantTrigger = ref<HTMLButtonElement>();
-const currentPageContext = computed(() =>
-  pageContext(
-    props.page,
-    moduleTitle.value || (props.page === "assistant" ? "AI 助手" : "工作区"),
-    currentModule.value?.path ?? [],
-    currentModule.value?.resources ??
-      (props.page === "home"
-        ? [
-            {
-              id: "computer",
-              title: device.state.value?.attributes.computerName ?? "这台电脑",
-              description: "当前设备概览",
-              status: device.state.value ? "已读取设备名称" : "设备信息未读取",
-              source: "设备概览",
-            },
-          ]
-        : []),
-  ),
+const homeResources = computed(() => {
+  const facts = homeFacts(systemSettings),
+    summary = software.summary.value;
+  return [
+    {
+      id: "computer",
+      title: device.state.value?.attributes.computerName ?? "这台电脑",
+      description: "当前设备概览",
+      source: "设备概览",
+      revision: JSON.stringify(device.state.value),
+      collectedAt: device.state.readAt ?? undefined,
+      validUntil:
+        device.state.readAt == null ? 0 : device.state.readAt + 30_000,
+      verified: !!device.state.value,
+    },
+    ...[
+      ["network", "网络", facts.network, facts.networkDetail],
+      ["storage", "存储", facts.storageFree, facts.storageDetail],
+      ["power", "电源", facts.battery, facts.batteryDetail],
+    ].map(([id, title, value, detail]) => ({
+      id,
+      title,
+      description: `${value} · ${detail}`,
+      source: "本地已采集结果",
+      revision: JSON.stringify([value, detail]),
+      verified: !systemSettings.state.errors.has(
+        id as "network" | "storage" | "power",
+      ),
+    })),
+    {
+      id: "software",
+      title: "已安装应用",
+      description: summary.read
+        ? `已加载 ${summary.installed} 项 · ${summary.updates} 个固定更新候选 · ${summary.complete ? "完整清单" : "部分或过期清单"}`
+        : "清单未读取",
+      source: "软件业务投影",
+      revision: JSON.stringify(summary.items.map((item) => item.reference)),
+      collectedAt:
+        summary.collectedAt == null ? undefined : summary.collectedAt * 1000,
+      validUntil:
+        summary.collectedAt == null ? 0 : (summary.collectedAt + 300) * 1000,
+      verified: summary.read && !summary.error,
+    },
+    ...activity.state.items.slice(0, 6).map((item) => ({
+      id: item.details.action.requestId,
+      title: item.details.action.operation.action,
+      description: item.details.status.phase,
+      source: "原任务 journal",
+      revision: JSON.stringify([
+        item.details.action.contentDigest,
+        item.details.status,
+      ]),
+      collectedAt: item.recordedAtUnixMs,
+      verified: !activity.state.error,
+    })),
+  ];
+});
+const pageContexts = computed(() =>
+  [
+    ["software-management", "软件管理", softwarePage.value],
+    ["device-tools", "工具中心", toolsPage.value],
+    ["system-settings", "系统设置", systemPage.value],
+    ["settings", "RSS Agent 设置", settingsPage.value],
+    ["home", "主页", undefined],
+  ].map(([page, title, module]) => {
+    const navigation = module as PageNavigation | undefined;
+    return pageContext(
+      page as string,
+      title as string,
+      navigation?.path ?? [],
+      navigation?.resources ?? (page === "home" ? homeResources.value : []),
+      ownerKey,
+    );
+  }),
+);
+const currentPageContext = computed(
+  () =>
+    pageContexts.value.find(
+      (value) =>
+        value.path[0] ===
+        (props.page === "assistant"
+          ? [
+              { id: "home", title: "主页" },
+              { id: "software-management", title: "软件管理" },
+              { id: "device-tools", title: "工具中心" },
+              { id: "system-settings", title: "系统设置" },
+              { id: "settings", title: "RSS Agent 设置" },
+            ].find((item) => item.id === lastContentPage.value)?.title
+          : moduleTitle.value),
+    ) ??
+    pageContext(
+      props.page,
+      moduleTitle.value || "请求与任务",
+      [],
+      [],
+      ownerKey,
+    ),
 );
 function attachPage() {
   assistant?.stageContext(currentPageContext.value);
@@ -319,13 +525,11 @@ function attachPage() {
 async function togglePageAssistant() {
   if (!assistant) return;
   const opening = !pageAssistantOpen.value;
+  if (opening) closeHistory();
   if (opening && props.page === "assistant")
     emit("navigate", lastContentPage.value);
   await relocate(() => {
     pageAssistantOpen.value = opening;
-    contextOpen.value = false;
-    candidate.value = undefined;
-    chosen.value = false;
   });
   if (opening) {
     attachPage();
@@ -340,21 +544,18 @@ async function openMainAssistant() {
   });
   emit("navigate", "assistant");
 }
-watch([currentPageContext, () => assistant?.state.selected], () => {
-  if (pageAssistantOpen.value) attachPage();
-});
+watch(
+  pageContexts,
+  (values) => {
+    assistant?.validatePageContexts(values);
+  },
+  { immediate: true },
+);
 const headerHost = ref<HTMLElement>();
-const contextSelection = ref("");
-const panelError = ref(""),
-  panelNotice = ref("");
 let transition = 0;
-let trigger: HTMLElement | null = null;
 const assistantVisible = computed(
   () =>
-    !moving.value &&
-    (props.page === "assistant" ||
-      pageAssistantOpen.value ||
-      (contextOpen.value && chosen.value)),
+    !moving.value && (props.page === "assistant" || pageAssistantOpen.value),
 );
 async function relocate(change: () => void) {
   const version = ++transition;
@@ -366,119 +567,45 @@ async function relocate(change: () => void) {
   await nextTick();
   if (version !== transition) return;
   if (pageAssistantOpen.value) target.value = pagePanelHost.value;
-  else if (contextOpen.value && chosen.value) target.value = panelHost.value;
   moving.value = false;
-}
-async function askAi(item: BackendTask, source: HTMLElement) {
-  const snapshot = controller?.state.snapshot;
-  if (!snapshot || !assistant) return;
-  const value = resourceContext(item, assistant.state.mode);
-  if (
-    !value ||
-    !contextCurrent(value, snapshot.available, assistant.state.mode)
-  )
-    return;
-  trigger = source;
-  await relocate(() => {
-    pageAssistantOpen.value = false;
-    candidate.value = value;
-    contextSelection.value = "";
-    chosen.value = false;
-    panelError.value = "";
-    panelNotice.value = "";
-    contextOpen.value = true;
-  });
-}
-async function chooseConversation(id: string) {
-  const value = candidate.value,
-    version = transition;
-  if (!assistant || !value || value.stale) return;
-  if (id !== "new" && !assistant.state.sessions.has(id)) {
-    panelError.value = "会话不可用，请重新选择。";
-    return;
-  }
-  if (id === "new") assistant.create();
-  else await assistant.select(id);
-  if (
-    version !== transition ||
-    !contextOpen.value ||
-    candidate.value !== value ||
-    value.stale
-  )
-    return;
-  if (id !== "new" && assistant.state.selected !== id) return;
-  panelNotice.value =
-    assistant.context.value && assistant.context.value.text !== value.text
-      ? `已替换待发送资源为“${value.path[2]}”，原问题已保留。`
-      : "";
-  assistant.stageContext(value);
-  await relocate(() => {
-    chosen.value = true;
-  });
-  await nextTick();
-  panelHost.value?.querySelector<HTMLTextAreaElement>("textarea")?.focus();
-}
-async function closeContext() {
-  await relocate(() => {
-    contextOpen.value = false;
-    candidate.value = undefined;
-    chosen.value = false;
-  });
-  if (trigger?.isConnected && trigger.getClientRects().length) trigger.focus();
-}
-async function mainConversation() {
-  await closeContext();
-  emit("navigate", "assistant");
 }
 watch(
   () => props.page,
   () => {
-    if (contextOpen.value) void closeContext();
     if (props.page === "assistant" && pageAssistantOpen.value)
       void relocate(() => {
         pageAssistantOpen.value = false;
       });
   },
 );
-watch(
-  () => controller?.state.snapshot,
-  (snapshot) => {
-    if (!snapshot) return;
-    assistant?.validateContexts(
-      snapshot.available,
-      assistant?.state.mode ?? "live",
-    );
-    if (
-      candidate.value &&
-      !contextCurrent(
-        candidate.value,
-        snapshot.available,
-        assistant?.state.mode ?? "live",
-      )
-    )
-      candidate.value = Object.freeze({ ...candidate.value, stale: true });
-  },
-  { deep: true },
-);
 let sizing: ResizeObserver | undefined;
 const workspaceRoot = ref<HTMLElement>();
 const attention = computed(() => assistant?.attention.value ?? 0);
 const scrollPositions = new Map<string, number>();
+const pageScroller = (page: string) => {
+  const root = workspaceRoot.value;
+  const selector =
+    page === "home"
+      ? ".home-content"
+      : page === "software-management"
+        ? ".software-production"
+        : page === "device-tools"
+          ? ".catalog-preview"
+          : page === "system-settings"
+            ? ".system-settings"
+            : page === "settings"
+              ? ".settings"
+              : ".resource-content";
+  return root?.querySelector<HTMLElement>(selector) ?? root?.closest("main");
+};
 watch(
   () => props.page,
   async (page, previous) => {
-    const root = workspaceRoot.value;
-    const scroller =
-      previous === "home"
-        ? root?.querySelector<HTMLElement>(".home-content")
-        : root?.closest("main");
+    const scroller = previous ? pageScroller(previous) : undefined;
     if (previous && scroller) scrollPositions.set(previous, scroller.scrollTop);
     await nextTick();
     if (props.page !== page) return;
-    const destination =
-      page === "home"
-        ? workspaceRoot.value?.querySelector<HTMLElement>(".home-content")
-        : workspaceRoot.value?.closest("main");
+    const destination = pageScroller(page);
     if (destination) destination.scrollTop = scrollPositions.get(page) ?? 0;
   },
   { flush: "pre" },
@@ -486,8 +613,18 @@ watch(
 onMounted(() => {
   void device.refresh();
   devicePolling = setInterval(() => {
-    if (props.page === "home") void device.refresh();
+    if (props.page === "home" && !document.hidden) void device.refresh();
   }, 30000);
+  taskPolling = setInterval(() => {
+    if (!document.hidden && props.page === "home") void activity.load();
+    if (
+      !document.hidden &&
+      ["tasks", "software-management", "device-tools"].includes(props.page) &&
+      !controller?.state.busy
+    )
+      void controller?.refresh();
+  }, 2000);
+  void controller?.refresh();
   void assistant?.connect();
   if (workspaceRoot.value) {
     const resize = () => {
@@ -495,11 +632,6 @@ onMounted(() => {
         workspaceRoot.value!.closest(".workspace-chrome") ??
         workspaceRoot.value!;
       chromeNarrow.value = outer.getBoundingClientRect().width < 900;
-      const next = workspaceRoot.value!.getBoundingClientRect().width >= 1200;
-      if (wide.value !== next) {
-        wide.value = next;
-        if (contextOpen.value && chosen.value) void relocate(() => {});
-      }
     };
     resize();
     sizing = new ResizeObserver(resize);
@@ -511,8 +643,10 @@ onMounted(() => {
 });
 onBeforeUnmount(() => {
   if (devicePolling) clearInterval(devicePolling);
+  if (taskPolling) clearInterval(taskPolling);
   device.dispose();
   transition++;
+  navigationEpoch++;
   sizing?.disconnect();
   assistant?.dispose();
 });
@@ -577,13 +711,7 @@ onBeforeUnmount(() => {
                     ? "系统设置"
                     : page === "tasks"
                       ? "请求与任务"
-                      : page === "software"
-                        ? "软件中心"
-                        : page === "tools"
-                          ? "工具中心"
-                          : page === "help"
-                            ? "设备与帮助"
-                            : "首页"
+                      : "首页"
           }}
         </h1>
       </div>
@@ -593,7 +721,13 @@ onBeforeUnmount(() => {
         v-if="ready"
         :entries="searchEntries"
         :request="searchRequest"
-        @select="searchTarget"
+        :loading="searchState.loading"
+        :complete="searchState.complete"
+        :has-more="searchState.hasMore"
+        :error="searchState.error"
+        @more="searchMore()"
+        @retry="searchMore(true)"
+        @select="openTarget"
       />
     </template>
     <template #actions>
@@ -771,63 +905,29 @@ onBeforeUnmount(() => {
           @select="historySelected"
         />
       </aside>
-      <div
-        class="workspace-page-surface"
-        :class="{ 'context-layout': contextOpen && wide }"
-      >
+      <p v-if="navigationError" role="alert">{{ navigationError }}</p>
+      <div class="workspace-page-surface">
         <div
-          class="resource-content"
           v-if="controller"
-          v-show="
-            ![
-              'assistant',
-              'settings',
-              'home',
-              'system-settings',
-              'software-management',
-              'device-tools',
-            ].includes(page)
-          "
+          v-show="page === 'tasks'"
+          class="resource-content"
         >
-          <SelfService
-            v-if="controller"
-            v-show="
-              ![
-                'assistant',
-                'settings',
-                'home',
-                'system-settings',
-                'software-management',
-                'device-tools',
-              ].includes(page)
-            "
-            :controller="controller"
-            :context-key="candidate?.key ?? assistant?.context.value?.key"
-            :source="
-              assistant?.state.mode === 's1'
-                ? 's1'
-                : controller.interactive
-                  ? 'live'
-                  : 'preview'
-            "
-            @ask-ai="askAi"
-          />
+          <Tasks :controller="controller" />
         </div>
-        <SoftwarePreviewPage
-          v-if="ready && fixture"
-          v-show="page === 'software-management'"
-          @navigation="softwarePage = $event"
-          @navigate="emit('navigate', $event)"
-        />
         <SoftwareManagement
-          v-if="ready && !fixture"
+          v-if="ready"
           v-show="page === 'software-management'"
           :model="software"
+          :active="page === 'software-management'"
           :execution="controller"
           @navigation="softwarePage = $event"
           @navigate="emit('navigate', $event)"
         />
         <ToolsPage
+          :network-port="networkCheck"
+          :execution="controller"
+          :active="page === 'device-tools'"
+          @task="openTask"
           @navigation="toolsPage = $event"
           v-if="ready"
           v-show="page === 'device-tools'"
@@ -842,12 +942,12 @@ onBeforeUnmount(() => {
         <div v-if="controller && page === 'home'" class="home-content">
           <Home
             :controller="controller"
-            :fixture="!!fixture"
             :device="device.state.value"
-            :preview="!controller.interactive || !!fixture"
             :draft="assistant?.draft.value ?? ''"
             :connected="assistant?.state.connection === 'connected'"
             @navigate="contextualNavigate"
+            @task="openTask"
+            @open="openTarget"
             @update:draft="
               (text) => {
                 if (assistant) assistant.draft.value = text;
@@ -860,71 +960,17 @@ onBeforeUnmount(() => {
             v-if="assistant"
             :visible="assistantVisible"
             :controller="assistant"
-            :presentation="
-              pageAssistantOpen || (contextOpen && chosen) ? 'context' : 'main'
-            "
+            :presentation="pageAssistantOpen ? 'context' : 'main'"
             :header-target="headerHost"
             @settings="openConnectionSettings"
             @tasks="emit('navigate', 'tasks')"
         /></Teleport>
-        <UiDialog
-          :open="true"
-          presentation="drawer"
-          v-if="contextOpen && !wide && candidate && assistant"
-          class="resource-context-drawer"
-          title="资源上下文 AI"
-          side="right"
-          @update:open="closeContext"
-        >
-          <ContextPanel
-            v-model:selection="contextSelection"
-            :wide="false"
-            :candidate="candidate"
-            :controller="assistant"
-            :chosen="chosen"
-            :notice="panelNotice"
-            :error="
-              panelError ||
-              (candidate.stale && !chosen
-                ? '资源信息已变更，请从最新资源详情重新选择。'
-                : '')
-            "
-            @choose="chooseConversation"
-            @close="closeContext"
-            @main="mainConversation"
-            ><div ref="panelHost" class="assistant-panel-host"
-          /></ContextPanel>
-        </UiDialog>
-        <aside
-          v-if="contextOpen && wide && candidate && assistant"
-          class="resource-context-aside"
-          aria-label="资源上下文 AI"
-        >
-          <ContextPanel
-            v-model:selection="contextSelection"
-            :wide="true"
-            :candidate="candidate"
-            :controller="assistant"
-            :chosen="chosen"
-            :notice="panelNotice"
-            :error="
-              panelError ||
-              (candidate.stale && !chosen
-                ? '资源信息已变更，请从最新资源详情重新选择。'
-                : '')
-            "
-            @choose="chooseConversation"
-            @close="closeContext"
-            @main="mainConversation"
-            ><div ref="panelHost" class="assistant-panel-host"
-          /></ContextPanel>
-        </aside>
         <Settings
           @navigation="settingsPage = $event"
           v-show="!ready || page === 'settings'"
           :host="host"
           :service-port="servicePort"
-          :self-service-port="selfServicePort"
+          :self-service-port="controller?.port ?? selfServicePort"
           :device="device.state.value"
           :fixture="fixture"
           :active="!ready || page === 'settings'"
@@ -935,7 +981,8 @@ onBeforeUnmount(() => {
             ><slot name="development" /><slot
               name="operation-cards"
               :visible="scope.active"
-              :session-id="assistant?.state.selected ?? ''" /></template
+              :session-id="assistant?.state.selected ?? ''"
+              :drafts="assistant?.operationDrafts" /></template
           ><template #user><slot name="user" /></template
           ><template #account-summary
             ><slot name="account-summary">账户与连接</slot></template
@@ -1079,27 +1126,8 @@ onBeforeUnmount(() => {
   overflow: auto;
   padding: 24px;
 }
-.context-layout {
-  display: flex;
-}
-.context-layout > .resource-content {
-  flex: 1;
-}
 .assistant-panel-host {
   height: 100%;
-  min-height: 0;
-}
-:global(.resource-context-drawer) {
-  --rss-drawer-width: 520px;
-  --rss-drawer-padding: 16px;
-}
-:global(.resource-context-drawer .ui-dialog-body > .context-panel) {
-  flex: 1;
-  min-height: 0;
-}
-.resource-context-aside {
-  min-width: 0;
-  flex: 0 0 var(--rss-inspector-width);
   min-height: 0;
 }
 @media (max-width: 640px) {

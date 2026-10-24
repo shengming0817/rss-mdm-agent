@@ -111,5 +111,4 @@ test("fixture supplies isolated current identity and Host operations with genera
     (await read("host-restart", { generation: host.generation })).status,
     500,
   );
-  assert.equal((await read("host-export")).value, false);
 });

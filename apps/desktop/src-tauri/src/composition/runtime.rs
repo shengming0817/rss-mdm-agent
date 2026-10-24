@@ -20,6 +20,7 @@ fn unavailable() -> ui::ServiceError {
 }
 pub struct DesktopRuntime {
     pub execution: ExecutionHandle,
+    pub(super) diagnostics: super::diagnostics::Store,
     pub users: Arc<std::sync::Mutex<super::users::Users>>,
     switching: Mutex<()>,
     registration_epoch: AtomicU64,
@@ -84,6 +85,7 @@ impl DesktopRuntime {
         });
         let runtime = Self {
             execution,
+            diagnostics: Default::default(),
             identity: super::identity::IdentityOwner::new(users.clone()),
             users,
             switching: Mutex::new(()),
@@ -234,6 +236,7 @@ impl DesktopRuntime {
         Ok(())
     }
     async fn revoke_locked(&self) -> ui::Result<()> {
+        self.diagnostics.invalidate();
         let previous = self.identity.snapshot().ok();
         let cleared = self.users.lock().map_err(|_| unavailable())?.clear();
         self.detach_views().await;
@@ -490,8 +493,49 @@ impl DesktopRuntime {
             return Ok(());
         }
         let Some(mut account) = self.identity.session()? else {
-            return Ok(());
+            let Some(expected) = &before.execution_binding else {
+                return Ok(());
+            };
+            let _switch = self.switching.lock().await;
+            if self
+                .identity
+                .snapshot()
+                .map_or(true, |current| current.generation != before.generation)
+            {
+                return Ok(());
+            }
+            let result = self
+                .execution
+                .bind_context(
+                    execution_ipc::host::NativeContextSession {
+                        access: execution_ipc::host::NativeAccess::Device {},
+                        generation: execution_contract::Id::new(before.generation.as_str())
+                            .map_err(|_| unavailable())?,
+                        expires_at_unix_ms: u64::MAX,
+                    },
+                    Some(
+                        execution_contract::Id::new(expected.as_str())
+                            .map_err(|_| unavailable())?,
+                    ),
+                )
+                .await;
+            return match result {
+                Ok(binding) if binding.id.as_str() == expected.as_str() => Ok(()),
+                Ok(_) => {
+                    self.retire_locked().await?;
+                    Err(ui::error(
+                        "binding_invalidated",
+                        "设备绑定已变化，请重新进入工作区",
+                    ))
+                }
+                Err(error) if matches!(error.code, "binding_invalidated" | "binding_conflict") => {
+                    self.retire_locked().await?;
+                    Err(error)
+                }
+                Err(error) => Err(error),
+            };
         };
+
         let verified = account.verify().await;
         let _switch = self.switching.lock().await;
         if self

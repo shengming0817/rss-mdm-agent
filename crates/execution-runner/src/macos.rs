@@ -204,6 +204,7 @@ pub(crate) fn profile(profile: &VersionedRef) -> Result<(), Error> {
             "native-software-worker",
             "native-local-software-worker",
             "native-settings-worker",
+            "native-network-check-worker",
             "native-collection-worker",
             "native-device-access-worker",
         ]
@@ -237,6 +238,13 @@ pub(crate) fn arguments(
     }
     if profile.id.as_str() == "native-collection-worker" {
         return if args == ["--collection-worker", path] {
+            Ok(())
+        } else {
+            Err(Error::Denied)
+        };
+    }
+    if profile.id.as_str() == "native-network-check-worker" {
+        return if args == ["--network-check-worker", path] {
             Ok(())
         } else {
             Err(Error::Denied)

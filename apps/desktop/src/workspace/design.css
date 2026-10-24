@@ -607,3 +607,11 @@ button.design-row {
 .agent-experience .hidden-account .conversation-shortcuts span {
   display: none;
 }
+
+/* ref: Vue core vShow.ts@478e3e83acd34dd213a860be4a2a2bf2090dc26b; retained pages own their scroll containers. */
+.workspace-page-surface > .catalog-preview,
+.workspace-page-surface > .system-settings {
+  height: 100%;
+  overflow: auto;
+  box-sizing: border-box;
+}

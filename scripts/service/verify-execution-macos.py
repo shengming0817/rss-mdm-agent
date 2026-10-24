@@ -326,7 +326,22 @@ def await_offer(query, task):
         time.sleep(.05)
 
 
-def native_offer_security(probe, matrix, query, command, package, receipt, completed, effect, protected):
+def completed_replay_offer(current, completion):
+    request = completion['request']
+    attempt = completion['record']['action']['initiator']['attempt']
+    offers = []
+    for row in current['preparations']:
+        action = row['action']
+        offer = action.get('offer')
+        if offer and offer['request'] == request and offer['attempt'] == attempt:
+            if action['kind'] == 'policy':
+                assert action['choice']['request'] == request and action['runId'] == offer['task'], 'original policy association changed'
+            offers.append(offer)
+    assert len(offers) == 1, 'original completed offer missing or duplicated'
+    return offers[0]
+
+
+def native_offer_security(probe, matrix, query, command, package, receipt, completed, effect, protected, replay_offer):
     prior = query()['available']
     if prior:
         command('cancel')
@@ -334,7 +349,7 @@ def native_offer_security(probe, matrix, query, command, package, receipt, compl
         while query()['available']:
             assert time.monotonic()<deadline, 'previous unselected catalog offer did not withdraw'
             time.sleep(.1)
-    offer = matrix.pop('replayOffer')
+    offer = replay_offer
     request = offer_request(offer)
     task=dict(task=offer['task'],attempt=offer['attempt'])
     original=[r for r in query()['value']['items'] if r['action']['initiator'].get('attempt')==task['attempt']]
@@ -527,7 +542,7 @@ def native_stale_helper_security(probe, matrix, query, command, protected, prior
     deadline=time.monotonic()+15
     while True:
         value=query()
-        records=[row for row in value['preparations'] if row['offer']['attempt']==task['attempt']]
+        records=[row for row in value['preparations'] if row['action']['offer']['attempt']==task['attempt']]
         if records and records[0]['state']=='failed':break
         assert time.monotonic()<deadline, 'stale helper denial did not settle the original selection'
         time.sleep(.1)
@@ -539,7 +554,7 @@ def native_stale_helper_security(probe, matrix, query, command, protected, prior
 
 
 def complete_native_security(probe, matrix, query, command, package, package_receipt, completed, effect,
-        protected, installer, binary, config, administrator):
+        protected, installer, binary, config, administrator, replay_offer):
     if matrix['scenarios']['restart_old_connection']['status']!='passed':
         native_restart_security(probe,matrix,command,administrator)
     prior=query()
@@ -564,7 +579,7 @@ def complete_native_security(probe, matrix, query, command, package, package_rec
     security_result(matrix,'refresh_after_stop',results['afterStop'])
     run('/usr/bin/python3',str(installer),'install','--scope','user','--binary',str(binary),'--config',str(config))
     query()
-    native_offer_security(probe,matrix,query,command,package,package_receipt,completed,effect,protected)
+    native_offer_security(probe,matrix,query,command,package,package_receipt,completed,effect,protected,replay_offer)
     native_revocation_security(probe,matrix,query,command,package,package_receipt,protected)
 
 
@@ -1300,6 +1315,14 @@ def rejected_image_probe(image, binary, config):
     return dict(baseline=baseline, response=reply, exitCode=rejected.returncode, changed='client image path')
 
 
+def unregistered_local_evidence(status, tasks):
+    assert status['reply']['kind'] == 'serviceStatus', 'missing authenticated service status'
+    assert status['reply']['value']['readiness'] == {'phase': 'ready'}, 'local owner is not ready'
+    assert tasks['reply']['kind'] == 'tasks', 'local task read was not accepted'
+    assert tasks['reply']['value']['items'] == [], 'fresh unregistered owner has unexpected tasks'
+    return dict(service=status, tasks=tasks)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', type=Path, required=True)
@@ -1529,6 +1552,9 @@ if default.exists():
 from pathlib import Path
 p=plistlib.loads(Path('/Library/LaunchDaemons/com.rss-mdm.agent.execution.plist').read_bytes())
 assert p['ProgramArguments']==%r, 'initialization registration owner mismatch'
+state=Path(p['ProgramArguments'][2]).parent/'state'
+assert (state/'execution.sqlite').is_file(), 'local journal was not initialized'
+assert (state/'communication/communication.sqlite').is_file(), 'registration owner was not initialized'
 try:
     subprocess.run(%r,text=True,check=True,capture_output=True)
 except subprocess.CalledProcessError as error:
@@ -1589,11 +1615,8 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
                 if time.monotonic() >= deadline: raise RuntimeError('unregistered service diagnostic deadline exceeded')
                 time.sleep(.2)
             status = json.loads(probe.stdout)
-            assert status['reply']['value']['readiness']['phase'] == 'registrationRequired'
-            denied = json.loads(run(str(binary), '--config', str(config), '--query').stdout)
-            assert denied['reply']['kind'] == 'rejected'
-            assert not (protected / 'state').exists(), 'diagnostic startup created device state'
-            receipt['scenarios']['unregistered_status_without_authority'] = status
+            tasks = json.loads(run(str(binary), '--config', str(config), '--query').stdout)
+            receipt['scenarios']['local_owner_before_enterprise_registration'] = unregistered_local_evidence(status, tasks)
             administrator_session.command('initialize')
 
         helper = True
@@ -1648,16 +1671,15 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             package_receipt = 'org.rss.verification.' + tag
             run('/usr/bin/pkgbuild', '--root', str(payload), '--identifier', package_receipt,
                 '--version', '1.0', '--install-location', str(protected / 'package-payload'), str(pkg))
-            offered = command('package', path=str(pkg), receipt=package_receipt, user=True)
-            if native_probe: receipt['security']['replayOffer']=await_offer(query,offered['task'])
+            catalog = command('software-catalog', path=str(pkg), receipt=package_receipt)
             print(json.dumps({'kind': 'desktopService', 'desktop': str(protected / 'rss-mdm-desktop'),
-                'service': receipt['artifact'], 'config': str(default_config), 'task': offered, 'journalOwner': 'agent-service'}), flush=True)
+                'service': receipt['artifact'], 'config': str(default_config), 'catalog': catalog, 'journalOwner': 'agent-service'}), flush=True)
             def effect():
                 detected = subprocess.run(['/usr/sbin/pkgutil', '--pkg-info-plist', package_receipt], capture_output=True, text=True)
                 target_file = protected / 'package-payload/fixed.txt'
                 return {'receiptPresent': detected.returncode == 0, 'payloadPresent': target_file.exists(),
                     'payloadMatches': target_file.exists() and target_file.read_text() == 'controlled package payload\n'}
-            finish = completion = None
+            finish = completion = replay_offer = None
             for line in sys.stdin:
                 request = json.loads(line)
                 method = request['method']
@@ -1680,7 +1702,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
                         security_result(receipt['security'],name,evidence)
                     value=dict(recorded=True)
                 elif method == 'catalog':
-                    value = command('package', path=str(pkg), receipt=package_receipt, user=True)
+                    value = command('software-catalog', path=str(pkg), receipt=package_receipt)
                     receipt['scenarios']['second_unexecuted_catalog_offer'] = value
                 elif method == 'effect': value = effect()
                 elif method == 'completion':
@@ -1693,6 +1715,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
                         assert time.monotonic() < deadline, 'terminal process/result deadline exceeded'
                         time.sleep(.2)
                     completion = validate_desktop_completion(current['value']['items'], remote, effect(), request['request'])
+                    if native_probe: replay_offer = completed_replay_offer(current, completion)
                     value = completion
                 elif method == 'finish':
                     finish = request
@@ -1714,7 +1737,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             security_result(receipt['security'],'process_scope_empty',dict(finish=finish))
             if native_probe:
                 complete_native_security(native_probe,receipt['security'],query,command,pkg,package_receipt,
-                    completed,effect,protected,installer,binary,config,administrator_session)
+                    completed,effect,protected,installer,binary,config,administrator_session,replay_offer)
             receipt['status'] = 'passed'
             print(json.dumps(dict(id=finish['id'],value=dict(journeyStatus='passed'))),flush=True)
             return
@@ -1755,7 +1778,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         third = command('package', path=str(pkg), receipt=package_receipt, user=bool(native_probe))
         if native_probe:
             offer=await_offer(query,third['task'])
-            receipt['security']['replayOffer']=offer
+            replay_offer=offer
             assert_native_reply(native_probe.request(offer_request(offer)), 'queued')
         package = completed(third['attempt'], 60)
         event = acknowledged_result(package, third['attempt'])
@@ -1905,7 +1928,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
                 payload_file=protected/'package-payload/fixed.txt'
                 return dict(receiptPresent=detected.returncode==0,payloadMatches=payload_file.exists() and payload_file.read_text()=='controlled package payload\n')
             complete_native_security(native_probe,receipt['security'],query,command,pkg,package_receipt,
-                completed,effect,protected,installer,binary,config,administrator_session)
+                completed,effect,protected,installer,binary,config,administrator_session,replay_offer)
         receipt['status'] = 'passed'
     except BaseException as error:
         receipt['status'] = 'cancelled' if isinstance(error, (AuthorizationCancelled, InterruptedError)) else 'failed'

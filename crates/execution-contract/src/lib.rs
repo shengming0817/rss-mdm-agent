@@ -19,6 +19,8 @@ mod input;
 mod launch;
 mod model;
 mod network;
+mod network_check;
+pub use network_check::*;
 mod process;
 mod settings;
 mod software;

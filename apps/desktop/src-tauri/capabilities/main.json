@@ -20,13 +20,13 @@
     "allow-ai-operation-submit",
     "allow-self-service-policy-status",
     "allow-self-service-observe-software",
+    "allow-self-service-recent-tasks",
     "allow-self-service-snapshot",
     "allow-self-service-execute",
     "allow-self-service-confirm",
     "allow-execution-task-details",
     "allow-ai-host-status",
     "allow-ai-restart-host",
-    "allow-ai-export-diagnostics",
     "allow-ai-connect",
     "allow-ai-receive",
     "allow-ai-send",
@@ -57,6 +57,10 @@
     "allow-software-status",
     "allow-software-cancel",
     "allow-software-history",
-    "allow-system-settings"
+    "allow-system-settings",
+    "allow-network-check",
+    "allow-diagnostics-prepare",
+    "allow-diagnostics-export",
+    "allow-diagnostics-discard"
   ]
 }

@@ -1,22 +1,62 @@
-import { DOMWrapper, mount } from "@vue/test-utils";
-import { expect, it } from "vitest";
+import { DOMWrapper, mount, flushPromises } from "@vue/test-utils";
+import { expect, it, vi } from "vitest";
 import Home from "./Home.vue";
 import { createController } from "../self-service/controller";
-const controller = () =>
-  createController(null, {
-    available: [],
-    preparations: [],
-    requests: [],
-    selected: null,
-    next: null,
+import { activityKey, createActivity } from "../self-service/activity";
+import { executionTask } from "../../../../tests/self-service/support";
+const controller = () => createController(null);
+it("shows appended activity beyond six rows and keeps it visible after a polling refresh", async () => {
+  const task = (id: string) => {
+    const details = executionTask();
+    details.action.requestId = id;
+    details.action.operation.resource.id = id;
+    return { details, recordedAtUnixMs: 1000 };
+  };
+  const first = Array.from({ length: 6 }, (_, i) => task(`task-${i}`));
+  const recent = vi
+    .fn()
+    .mockResolvedValueOnce({ items: first, next: "10" })
+    .mockResolvedValueOnce({ items: [task("seventh")], next: "5" })
+    .mockResolvedValueOnce({ items: first, next: "11" })
+    .mockResolvedValueOnce({ items: [task("seventh")], next: "4" });
+  const activity = createActivity({ recent_tasks: recent });
+  const c = controller();
+  const wrapper = mount(Home, {
+    props: { controller: c, draft: "", connected: false },
+    global: { provide: { [activityKey as symbol]: activity } },
   });
+  try {
+    await activity.load();
+    await flushPromises();
+    expect(wrapper.findAll(".activity-row")).toHaveLength(6);
+    const more = () =>
+      wrapper.findAll("button").find((b) => b.text() === "继续读取动态")!;
+    await more().trigger("click");
+    await flushPromises();
+    expect(wrapper.findAll(".activity-row")).toHaveLength(7);
+    await wrapper.findAll(".activity-row")[6].trigger("click");
+    expect(wrapper.emitted("task")).toEqual([["seventh"]]);
+    await activity.load();
+    await flushPromises();
+    expect(wrapper.findAll(".activity-row")).toHaveLength(7);
+    expect(activity.state.next).toBe("4");
+    await wrapper
+      .findAll("button")
+      .find((b) => b.text() === "查看任务记录 ›")!
+      .trigger("click");
+    expect(wrapper.emitted("navigate")).toEqual([["tasks"]]);
+  } finally {
+    wrapper.unmount();
+    activity.dispose();
+    c.dispose();
+  }
+});
 it("shows device values as plain text and exposes all addresses without an unavailable banner", async () => {
   const c = controller();
   const wrapper = mount(Home, {
     attachTo: document.body,
     props: {
       controller: c,
-      preview: true,
       draft: "",
       connected: false,
       device: {
@@ -52,3 +92,37 @@ it("shows device values as plain text and exposes all addresses without an unava
   wrapper.unmount();
   c.dispose();
 });
+
+it("distinguishes missing data, a complete empty software observation and partial loaded counts", async () => {
+  const ports = fixtureLocalPorts();
+  const read = vi.fn(async () => ({
+    query: { id: "software.installations", revision: "1".repeat(64) },
+    collectedAt: Math.floor(Date.now() / 1000),
+    quality: "complete" as const,
+    enumerationComplete: true,
+    stale: false,
+    items: [],
+    next: null,
+  }));
+  const model = createSoftware(ports.data, { ...ports.software!, read });
+  const w = mount(Home, {
+    props: { controller: controller(), draft: "", connected: false },
+    global: { provide: { [softwareSummaryKey as symbol]: model.summary } },
+  });
+  try {
+    expect(w.text()).toContain("软件清单尚未读取");
+    expect(w.find(".storage-track").exists()).toBe(false);
+    await model.discover();
+    await flushPromises();
+    expect(w.text()).toContain("完整清单");
+    expect(w.text()).toContain("当前加载 0 项");
+    model.state.sources[0].page!.enumerationComplete = false;
+    await flushPromises();
+    expect(w.text()).toContain("部分或过期清单");
+  } finally {
+    w.unmount();
+    model.dispose();
+  }
+});
+import { fixtureLocalPorts } from "../../../../tests/assistant/local-ports";
+import { createSoftware, softwareSummaryKey } from "../software/controller";

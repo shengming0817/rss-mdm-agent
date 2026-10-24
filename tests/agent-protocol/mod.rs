@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 pub mod current_user;
 pub(crate) mod pki;
+pub mod self_service_software;
 pub mod software_native;
 pub mod telemetry;
 use agent_client::*;
@@ -175,6 +176,8 @@ pub struct Data {
     pub employee_calls: Vec<(String, Value)>,
     pub employee_credentials: Vec<bool>,
     pub self_service_directory: Option<SelfServiceDirectoryResponse>,
+    pub self_service_software: Option<self_service_software::Template>,
+    pub self_service_offers: BTreeMap<Uuid, (SignedTask, i64)>,
     pub self_service_pages: BTreeMap<Option<Uuid>, SelfServiceDirectoryResponse>,
     pub invocations: BTreeMap<Uuid, (Value, SelfServiceAccepted)>,
     pub invocation_reply_lost: bool,
@@ -665,6 +668,8 @@ impl Server {
             employee_calls: vec![],
             employee_credentials: vec![],
             self_service_directory: None,
+            self_service_software: None,
+            self_service_offers: BTreeMap::new(),
             self_service_pages: BTreeMap::new(),
             invocations: BTreeMap::new(),
             invocation_reply_lost: false,
@@ -1948,6 +1953,21 @@ fn self_service_response(d: &mut Data, uri: &Uri, headers: &HeaderMap, value: Va
                 policy_revision: input.policy_revision,
                 policy_version: input.policy_version,
             };
+            match self_service_software::offer(d, &input, &accepted) {
+                Err(status) => return status.into_response(),
+                Ok(Some(offer)) => {
+                    d.task = accepted.run_id;
+                    let TaskPayload::Software(spec) = &offer.payload else {
+                        unreachable!()
+                    };
+                    d.attempt = spec.attempt_id;
+                    d.reset_current_task();
+                    d.offer = Some(offer.clone());
+                    d.self_service_offers
+                        .insert(input.operation_id, (offer, d.time.now().unwrap()));
+                }
+                Ok(None) => (),
+            }
             d.invocations
                 .insert(input.operation_id, (value, accepted.clone()));
             accepted
@@ -1966,6 +1986,9 @@ fn self_service_response(d: &mut Data, uri: &Uri, headers: &HeaderMap, value: Va
         .and_then(|id| Uuid::parse_str(id).ok())
     {
         if let Some((_, accepted)) = d.invocations.get(&id) {
+            if let Some(status) = self_service_software::status(d, id, accepted) {
+                return axum::Json(status).into_response();
+            }
             return axum::Json(SelfServiceStatus {
                 request_id: id,
                 run_id: accepted.run_id,

@@ -265,13 +265,13 @@ export async function createFixture() {
           "/__fixture/identity",
           "/__fixture/host",
           "/__fixture/host-restart",
-          "/__fixture/host-export",
           "/__fixture/registration",
           "/__fixture/mdm-registration",
           "/__fixture/policy_directory",
           "/__fixture/registration-request",
           "/__fixture/state",
           "/__fixture/scenario",
+          "/__fixture/recent_tasks",
           "/__fixture/snapshot",
           "/__fixture/execute",
           "/__fixture/confirm",
@@ -303,9 +303,6 @@ export async function createFixture() {
               generation: hostStatus.generation + 1,
             };
             value = structuredClone(hostStatus);
-            break;
-          case "/__fixture/host-export":
-            value = false;
             break;
           case "/__fixture/mdm-registration":
             value = {
@@ -342,6 +339,15 @@ export async function createFixture() {
           case "/__fixture/scenario":
             selectScenario(input.scenario);
             value = {};
+            break;
+          case "/__fixture/recent_tasks":
+            value = {
+              items: snapshot().requests.map((details) => ({
+                details,
+                recordedAtUnixMs: 1000,
+              })),
+              next: null,
+            };
             break;
           case "/__fixture/snapshot":
             value = snapshot(input);

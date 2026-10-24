@@ -69,7 +69,6 @@ Rust 命令、task details 和 MCP schema 生成前端/模型声明，无手写�
 ```sh
 node scripts/check-self-service-bindings.mjs --write
 node scripts/check-execution-bindings.mjs --write
-node scripts/check-self-service.mjs --write  # 仅浏览器只读 fixture
 cargo test -p rss-mdm-desktop --test composition --locked
 pnpm test:ai-host
 pnpm check:boundaries
@@ -180,11 +179,9 @@ macOS 透明 WebView 启用了 Tauri 的 `macos-private-api`，该路径影响 M
 
 `pnpm check:desktop-native --visual` 自动使用同一 fixture 装配；`pnpm check:desktop-native --controlled-service` 明确请求固定候选的真实服务旅程与受控安装。两者回执分别记录 fixture 和真实执行事实。真实模式的候选、注册、可信配置和协议必须匹配；部署/刷新及管理员操作见[服务指南](local-service-lab.md#显式开发刷新)。
 
-
 企业脚本与工具读取当前登录员工和设备共同获准的 Policy 自助目录。填写 Resource 的 Input 参数后，人工入口会展示配置 revision、执行版本、资源版本和最终参数；`allowAi=false` 只关闭 AI 入口。
 AI 使用实际注册的 Policy 工具，风险 2 的原请求需要本人在桌面卡片确认一次。确认后策略变更、退出登录或期限届满会阻止启动。
 提交回执丢失时查询原请求 UUID；未知结果不允许创建新请求重试。脚本结果保留原始采集时间、完整度、schema/预算判断与输出引用，软件检测只返回受限原生 observation。
-
 
 ## 基础控件展示
 
@@ -201,3 +198,10 @@ AI 使用实际注册的 Policy 工具，风险 2 的原请求需要本人在桌
 实际 OS/build、浏览器和原生检查结果随交付 PR 记录。
 
 主页设备信息使用本地 IPC v15，桌面和本机服务必须作为同一候选更新；旧版本不降级或猜测字段。此变更不新增网络探测、设备写操作或 AI 设备信息附件。Windows 原生结果需在目标系统验证。
+
+### 工具中心
+
+工具中心可直接运行组织当前授权的脚本，参数与执行信息在同一表单展示。填写后点击“运行”，在原请求中查看状态和结果。
+连接检查默认使用当前 RSS MDM 后端域名与端口，也可修改为单个域名/IP 和端口；结果分别报告 DNS 和 TCP，端口连通不代表业务恢复。
+空间查看使用已有采集事实，显式刷新才采集新结果；清理须使用范围明确的授权工具。
+诊断先选择 Host、服务、设备或执行摘要并预览，再选择保存位置；不可用或截断范围会保留在文件中。取消保存不会生成成功提示。

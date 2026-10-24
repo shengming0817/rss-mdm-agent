@@ -7,8 +7,7 @@ import {
   nextTick,
   watch,
 } from "vue";
-import { OperationDrafts } from "@rss-mdm-agent/ai-ui-bridge";
-const operationDrafts = new OperationDrafts();
+import { workspaceIdentity } from "./workspace/identity";
 import Workspace from "./Workspace.vue";
 import { UiProvider } from "@rss-mdm-agent/ui";
 import { createAppearance, desktopPlatform } from "./appearance";
@@ -164,13 +163,10 @@ onMounted(() => {
   }
   void appearance.refresh();
   polling = setInterval(() => {
-    void appearance.refresh();
-    if (host.available) void host.refresh();
-    if (
-      !props.environment &&
-      !loading.value &&
-      selectedUser.value?.identity.mode === "user_device"
-    )
+    if (!document.hidden) void appearance.refresh();
+    if (!document.hidden && page.value === "settings" && host.available)
+      void host.refresh();
+    if (!props.environment && !loading.value && !!selectedUser.value)
       void refreshAccount();
   }, 2000);
 });
@@ -218,7 +214,7 @@ onBeforeUnmount(() => {
       <Workspace
         v-else
         :inert="loading ? true : undefined"
-        :key="selectedUser?.generation ?? 'anonymous'"
+        :key="workspaceIdentity(selectedUser)"
         :ready="
           environment ? !!selectedUser : !accountEnabled || !!selectedUser
         "
@@ -229,6 +225,8 @@ onBeforeUnmount(() => {
         :host="host"
         :service-port="environment?.service"
         :device-port="environment?.device"
+        :local-ports="environment?.local"
+        :identity="selectedUser"
         :fixture="!!environment"
         @navigate="navigate"
       >
@@ -237,7 +235,7 @@ onBeforeUnmount(() => {
             name="operation-cards"
             :visible="slotProps.visible"
             :session-id="slotProps.sessionId"
-            :drafts="operationDrafts"
+            :drafts="slotProps.drafts"
         /></template>
         <template #account-summary>
           <strong>{{

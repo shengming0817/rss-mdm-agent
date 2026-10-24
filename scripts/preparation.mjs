@@ -34,11 +34,6 @@ export const helpers = {
     "self-service-schema",
     ["--no-default-features"],
   ],
-  selfServicePreview: [
-    "rss-mdm-desktop",
-    "self-service-preview",
-    ["--no-default-features"],
-  ],
   hostFixture: ["native-process", "host-fixture", []],
   taskSchema: ["execution-app", "task-details-schema", []],
   taskFixtures: [

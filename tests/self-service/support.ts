@@ -54,12 +54,14 @@ export function resourceOffer(): BackendTask {
 /** Empty formal directory is explicit fixture data, never a production fallback. */
 export const policyFixturePort: Pick<
   SelfServicePort,
+  | "recent_tasks"
   | "policy_directory"
   | "policy_invoke"
   | "policy_confirm"
   | "policy_status"
   | "observe_software"
 > = {
+  recent_tasks: async () => ({ items: [], next: null }),
   policy_directory: async () => ({ items: [], nextCursor: null, asOf: 1000 }),
   policy_invoke: async () => {
     throw new Error("fixture policy not configured");
@@ -74,3 +76,61 @@ export const policyFixturePort: Pick<
     throw new Error("fixture detector not configured");
   },
 };
+
+/** A minimal authorized script request for UI request recovery journeys. */
+export function policyRecord(
+  request = "original-policy",
+): import("../../apps/desktop/src/self-service/types").BackendRequest {
+  return {
+    action: {
+      kind: "policy",
+      choice: {
+        request,
+        policyId: "policy",
+        policyRevision: 1,
+        policyVersion: "version",
+        parameters: {},
+      },
+      locator: { after: null },
+      directory: {
+        policyId: "policy",
+        policyRevision: 1,
+        policyVersion: "version",
+        subject: { kind: "device" },
+        task: {
+          kind: "script",
+          runAs: "system",
+          resource: { id: "r", version: "1", variant: "macos" },
+          parameterSchema: { type: "object" },
+          parameterSources: {},
+        },
+        selfService: {
+          published: true,
+          allowAi: true,
+          riskLevel: 1,
+          presentation: {
+            displayName: "Published tool",
+            description: "Read state",
+          },
+        },
+      },
+      access: { kind: "device" },
+      expiresAtUnixMs: Date.now() + 60_000,
+      runId: null,
+      offer: null,
+    },
+    trigger: {
+      kind: "human",
+      osSession: {
+        device: "d",
+        account: { platform: "macos", subject: "501" },
+        session: "login",
+      },
+    },
+    risk: null,
+    confirmation: null,
+    revision: 1,
+    state: "awaitingConfirmation",
+    failure: null,
+  };
+}

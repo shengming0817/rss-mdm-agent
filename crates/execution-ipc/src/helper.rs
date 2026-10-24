@@ -179,7 +179,8 @@ pub enum Reply {
     Unavailable,
 }
 /// Observed login and private work directory of a pinned helper; no enterprise permission.
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UserContext {
     /// Actual native OS subject.
     pub subject: String,

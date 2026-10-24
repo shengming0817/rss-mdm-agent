@@ -51,6 +51,13 @@ impl JournalPort for Store {
         self.sql_with_material_proof(checkpoint, action)
     }
 
+    fn resource_owner(
+        &self,
+        key: &str,
+        host: &impl JournalHost,
+    ) -> Result<Option<RequestId>, JournalError> {
+        self.sql_resource_owner(key, host).map_err(Into::into)
+    }
     fn authority(&self) -> &Authority {
         &self.authority
     }
@@ -221,6 +228,15 @@ impl JournalPort for Store {
         host: &impl JournalHost,
     ) -> Result<Vec<execution_contract::RequestId>, JournalError> {
         self.sql_service_requests(after, limit, host)
+            .map_err(Into::into)
+    }
+    fn recent_requests(
+        &self,
+        before: Option<u64>,
+        limit: usize,
+        host: &impl JournalHost,
+    ) -> Result<RecentRequestPage, JournalError> {
+        self.sql_recent_requests(before, limit, host)
             .map_err(Into::into)
     }
     fn execution_confirmation_state(

@@ -52,6 +52,14 @@ pub trait JournalPort {
         action: impl FnOnce() -> Result<T, Error>,
     ) -> Result<T, Error>;
 
+    /// Find the exact execution holding one resource; validates its stored scope and RunnerFact access.
+    /// This service-only lookup never scans execution history or grants execution permission.
+    fn resource_owner(
+        &self,
+        key: &str,
+        host: &impl JournalHost,
+    ) -> Result<Option<RequestId>, JournalError>;
+
     /// Authority actually bound to this opened journal.
     fn authority(&self) -> &Authority;
     /// Immutable decoder/execution envelope selected when this journal was opened.
@@ -222,6 +230,13 @@ pub trait JournalPort {
         limit: usize,
         host: &impl JournalHost,
     ) -> Result<Vec<execution_contract::RequestId>, JournalError>;
+    /// Bounded newest-per-request owner scan over existing business receipts, excluding trust refreshes.
+    fn recent_requests(
+        &self,
+        before: Option<u64>,
+        limit: usize,
+        host: &impl JournalHost,
+    ) -> Result<crate::RecentRequestPage, JournalError>;
     /// Read the execution confirmation under the caller's existing operation access.
     /// Missing is distinct from corrupt/unavailable storage; this does not grant result access.
     fn execution_confirmation_state(

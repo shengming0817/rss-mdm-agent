@@ -188,3 +188,28 @@ pub struct LocalSoftwareHistory {
     /// Journal continuation; a filtered page may be empty and still have a next position.
     pub next: Option<RequestId>,
 }
+
+/// Original execution status plus bounded fixed-worker diagnostic evidence.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NetworkCheckStatus {
+    /// Authoritative lifecycle projection from the existing journal.
+    pub status: ExecutionStatus,
+    /// Evidence available only after a trusted complete worker result.
+    pub result: Option<execution_contract::NetworkCheckResult>,
+}
+
+/// Finite diagnostic response, generated for desktop consumers.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(
+    tag = "kind",
+    content = "value",
+    rename_all = "camelCase",
+    deny_unknown_fields
+)]
+pub enum NetworkCheckResponse {
+    /// Current configured backend destination, without credentials.
+    Defaults(Option<execution_contract::NetworkTarget>),
+    /// Status and result of the original request.
+    Status(Box<NetworkCheckStatus>),
+}

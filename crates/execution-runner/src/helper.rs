@@ -414,6 +414,7 @@ pub(crate) fn local_or_enterprise(authority: &Authority, profile: &VersionedRef)
                 "native-collection-worker",
                 "native-local-software-worker",
                 "native-settings-worker",
+                "native-network-check-worker",
             ]
             .contains(&profile.id.as_str()))
 }

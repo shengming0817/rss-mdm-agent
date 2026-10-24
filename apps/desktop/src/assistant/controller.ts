@@ -7,11 +7,9 @@ import type {
 import { computed, markRaw, reactive, shallowRef } from "vue";
 import {
   composePrompt,
-  contextCurrent,
   type ResourceContext,
   type Composition,
 } from "./resource-context";
-import type { ContextSource } from "./resource-context";
 import {
   ClientError,
   type ClientOptions,
@@ -122,6 +120,7 @@ export function createAssistant(
   services: AssistantServices | undefined,
   identity: () => string,
   now = () => Date.now(),
+  ownerKey = "anonymous",
 ) {
   const runtime = shallowRef<RuntimeClient>();
   const clock = shallowRef(now());
@@ -208,9 +207,12 @@ export function createAssistant(
   });
   const composition = () => state.drafts.get(state.selected) ?? { text: "" };
   const context = computed(() => composition().context);
-  const promptPreview = computed(() => composePrompt(composition()));
+  const promptPreview = computed(() =>
+    composePrompt(composition(), clock.value),
+  );
   const compositionError = computed(() =>
-    context.value?.stale
+    context.value?.stale ||
+    (!!context.value && context.value.expiresAt <= clock.value)
       ? "资源信息已变更，请移除附件或从最新资源详情重新选择。"
       : draft.value.trim() && !promptPreview.value
         ? "消息与上下文超过发送预算，请精简后发送。"
@@ -222,20 +224,19 @@ export function createAssistant(
   function removeContext() {
     state.drafts.set(state.selected, { text: draft.value });
   }
-  function validateContexts(
-    catalog: readonly BackendTask[],
-    source: ContextSource,
-  ) {
+  function validatePageContexts(current: readonly ResourceContext[]) {
     for (const [id, value] of state.drafts) {
+      const attached = value.context;
       if (
-        value.context &&
-        value.context.scope === "catalog" &&
-        !value.context.stale &&
-        !contextCurrent(value.context, catalog, source)
+        attached &&
+        !attached.stale &&
+        (attached.ownerKey !== ownerKey ||
+          attached.expiresAt <= now() ||
+          !current.some((value) => !value.stale && attached.key === value.key))
       )
         state.drafts.set(id, {
           ...value,
-          context: Object.freeze({ ...value.context, stale: true }),
+          context: Object.freeze({ ...attached, stale: true }),
         });
     }
   }
@@ -661,7 +662,7 @@ export function createAssistant(
       current = epoch,
       selectedAtStart = selectionVersion,
       original = composition(),
-      text = composePrompt(original);
+      text = composePrompt(original, now());
     if (!client || state.connection !== "connected" || !text)
       return Promise.resolve();
     if (!creation && !connectionReady.value) {
@@ -804,7 +805,7 @@ export function createAssistant(
   async function prompt(policy: "queue_next" | "steer" = "queue_next") {
     if (!state.selected && policy === "queue_next") return firstPrompt();
     const original = composition(),
-      text = composePrompt(original);
+      text = composePrompt(original, now());
     if (!(policy === "steer" ? canSteer.value : canSend.value) || !text) return;
     await send(
       {
@@ -1022,7 +1023,7 @@ export function createAssistant(
     compositionError,
     stageContext,
     removeContext,
-    validateContexts,
+    validatePageContexts,
     busy,
     active,
     canSend,

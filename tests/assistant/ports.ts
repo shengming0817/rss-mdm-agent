@@ -11,6 +11,7 @@ import type {
 } from "../../packages/ai-contract/dist/wire.js";
 import { createLoginFixture } from "./login-fixture";
 import type { FixtureEnvironment } from "../../apps/desktop/src/assembly";
+import { fixtureLocalPorts } from "./local-ports";
 export function createFixturePorts() {
   const services: AssistantServices = {
     async connect(options, signal) {
@@ -88,6 +89,7 @@ export function createFixturePorts() {
     policy_confirm: (input) => rpc("policy_confirm", input),
     policy_status: (input) => rpc("policy_status", input),
     observe_software: (input) => rpc("observe_software", input),
+    recent_tasks: (input) => rpc("recent_tasks", input),
     snapshot: (input) => rpc("snapshot", input),
     execute: (input) => rpc("execute", input),
     confirm: (input) => rpc("confirm", input),
@@ -96,6 +98,7 @@ export function createFixturePorts() {
 
   const environment: FixtureEnvironment = {
     kind: "fixture",
+    local: fixtureLocalPorts(),
     account: createLoginFixture(() => rpc<UserContext>("identity")),
     device: {
       async read() {
@@ -112,7 +115,6 @@ export function createFixturePorts() {
     host: {
       read: () => rpc<HostStatus>("host"),
       restart: (generation) => rpc<HostStatus>("host-restart", { generation }),
-      export: () => rpc<boolean>("host-export"),
     },
     service: {
       async read() {

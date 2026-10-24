@@ -27,6 +27,7 @@ pub(crate) struct EnterpriseHost {
     pub materials: MaterialRegistry,
     pub subject: String,
     pub current: Arc<Mutex<Option<Arc<BackendPermit>>>>,
+    pub local_network: Arc<Mutex<Option<crate::network_check::Permit>>>,
     pub local_settings: Arc<Mutex<Option<crate::local_settings::Permit>>>,
     pub local_read: Arc<Mutex<Option<crate::local_execution::ReadPermit>>>,
     pub local_software: Arc<Mutex<Option<Arc<crate::local_software::Permit>>>>,
@@ -96,7 +97,16 @@ impl AuthorityVerifier for EnterpriseHost {
                 .local_settings
                 .lock()
                 .map_err(|_| VerificationError::Subject)?;
-            let risk = if let Some(permit) = settings.as_ref() {
+            let network = self
+                .local_network
+                .lock()
+                .map_err(|_| VerificationError::Subject)?;
+            let risk = if let Some(permit) = network.as_ref() {
+                permit
+                    .verify(plan, now)
+                    .map_err(|_| VerificationError::Subject)?;
+                RiskLevel::One
+            } else if let Some(permit) = settings.as_ref() {
                 permit
                     .verify(plan, now)
                     .map_err(|_| VerificationError::Subject)?

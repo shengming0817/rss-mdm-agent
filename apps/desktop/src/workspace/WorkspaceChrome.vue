@@ -415,7 +415,7 @@ watch(
 .chrome-app-brand strong {
   font-weight: 600;
 }
-:global(.workspace-full-drawer) {
+:global(.ui-dialog.workspace-full-drawer) {
   background: var(--rss-color-navigation);
   --rss-drawer-width: 280px;
   --rss-drawer-padding: 16px;

@@ -14,8 +14,19 @@ export async function verifyAssembly() {
 import type { UserContext } from "@rss-mdm-agent/ai-contract/wire";
 import type { ServicePort, nativeHost } from "./settings/native";
 import type { AssistantServices } from "./assistant/controller";
-import type { SelfServicePort } from "./self-service/types";
+import type {
+  DataAccessPort,
+  SoftwarePort,
+  SelfServicePort,
+} from "./self-service/types";
+export type LocalPorts = {
+  data: DataAccessPort | null;
+  software: SoftwarePort | null;
+  settings: import("./system-settings/controller").SettingsPort | null;
+  network: import("./self-service/native").NetworkCheckPort | null;
+};
 export type FixtureEnvironment = {
+  local: LocalPorts;
   device: import("./home/device").DeviceOverviewPort;
   kind: "fixture";
   account?: import("./account/types").FixtureLoginPort;
@@ -37,11 +48,11 @@ export function assertFixtureAssembly(input: {
     !input.selfServicePort?.snapshot ||
     !input.selfServicePort.execute ||
     !input.selfServicePort.cancel ||
+    !input.environment.local ||
     !input.environment.identity?.read ||
     !input.environment.device?.read ||
     !input.environment.host?.read ||
     !input.environment.host.restart ||
-    !input.environment.host.export ||
     !input.environment.service?.read ||
     !input.environment.service.registration ||
     !input.environment.service.mdmStatus ||

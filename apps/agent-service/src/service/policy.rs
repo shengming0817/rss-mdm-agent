@@ -1,6 +1,9 @@
 //! Policy self-service is a projection of backend authority, driven by the sole device owner.
 use super::*;
-use execution_contract::{ExecutionRisk, Id, PolicyAccess, PreparedAction, RiskLevel, RiskSource};
+use execution_contract::{
+    ExecutionRisk, Id, InputValue, NativeContextRef, PolicyAccess, PreparedAction, RiskLevel,
+    RiskSource,
+};
 use execution_ipc::host::{ClientOrigin, NativeContextSession, Reply, Request};
 use std::collections::{BTreeMap, VecDeque};
 use uuid::Uuid;
@@ -339,6 +342,36 @@ impl Core {
             .backend_request(&self.caller(), request)
             .map_err(map_app_error)?
         else {
+            let frozen = self
+                .app
+                .service_frozen_input(request)
+                .map_err(map_app_error)?;
+            if frozen.spec().request.authority == self.host.root.authority {
+                for key in [
+                    "local-software-context",
+                    "local-settings-context",
+                    "network-check-context",
+                ] {
+                    if let Some(InputValue::Literal { value }) =
+                        frozen.spec().request.parameters.get(key)
+                    {
+                        let expected: NativeContextRef =
+                            serde_json::from_value(value.clone()).map_err(|_| Error::Untrusted)?;
+                        return Ok(self.contexts.values().any(|current| {
+                            current.scope.subject == subject
+                                && Some(&current.scope.binding) == binding
+                                && current.context == expected
+                                && current.ready
+                                && self.fences.current(&current.scope).ok() == Some(current.epoch)
+                                && self
+                                    .host
+                                    .clock
+                                    .millis()
+                                    .is_ok_and(|now| now < current.expires_at_unix_ms)
+                        }));
+                    }
+                }
+            }
             return Ok(true);
         };
         if matches!(record.action, PreparedAction::Policy { .. }) {
@@ -486,6 +519,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                             Request::Data { .. }
                                 | Request::LocalSoftware { .. }
                                 | Request::Settings { .. }
+                                | Request::NetworkCheck { .. }
                         )
                     ) =>
                 {
@@ -645,6 +679,32 @@ impl<S: IdentityProvider> DeviceService<S> {
             return self
                 .access_command(command, context, origin, input, commands)
                 .await;
+        }
+        if let Request::NetworkCheck {
+            context,
+            origin,
+            input,
+        } = request
+        {
+            self.core.data_context(command, context)?;
+            if !matches!(origin, ClientOrigin::Desktop {}) {
+                return Err(Error::Denied);
+            }
+            if matches!(input, execution_contract::NetworkCheckOperation::Defaults) {
+                let target = self
+                    .client
+                    .connection_status()
+                    .ok()
+                    .and_then(|s| url::Url::parse(&s.origin).ok())
+                    .and_then(|u| {
+                        Some(execution_contract::NetworkTarget {
+                            host: u.host_str()?.trim_matches(['[', ']']).into(),
+                            port: u.port_or_known_default()?,
+                        })
+                    });
+                return Ok(Reply::NetworkDefaults { target });
+            }
+            return self.core.network_operation(command, context, origin, input);
         }
         if let Request::Settings {
             context,

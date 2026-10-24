@@ -66,11 +66,9 @@ const fixtureControls = async () => {
 const navigate = async (name) => {
   const dialog = page.locator('[role="dialog"][data-state="open"]');
   if (await dialog.count()) await page.keyboard.press("Escape");
-  if (["软件中心", "请求与任务"].includes(name)) {
+  if (name === "请求与任务") {
     await fixtureControls();
-    await page
-      .getByLabel("原有业务验证", { exact: true })
-      .selectOption(name === "软件中心" ? "software" : "tasks");
+    await page.getByLabel("业务页面", { exact: true }).selectOption("tasks");
     return;
   }
   if (name === "设置") {
@@ -189,6 +187,7 @@ try {
     "primary navigation opens at its left-hand trigger",
   );
   assert.equal(drawerStyle.selectedColor, sidebarStyle.selectedColor);
+  assert.equal(drawerStyle.background, sidebarStyle.background);
   assert.equal(drawerStyle.selectedBackground, sidebarStyle.selectedBackground);
   const navigationFooter = await navigation
     .locator(".navigation-footer")
@@ -918,7 +917,7 @@ try {
   await page.keyboard.press("Escape");
   const activity = page.locator(".execution-activity");
   fixture.selectScenario("proposed");
-  await navigate("软件中心");
+  await navigate("软件管理");
   await navigate("AI 助手");
   await activity
     .getByRole("button", { name: "查询原任务", exact: true })
@@ -941,7 +940,7 @@ try {
     "execution",
   );
   fixture.selectScenario("proposed");
-  await navigate("软件中心");
+  await navigate("软件管理");
   await navigate("AI 助手");
   await activity
     .getByRole("button", { name: "查询原任务", exact: true })
@@ -1023,7 +1022,7 @@ try {
       el.dispatchEvent(new Event("scroll"));
       return el.scrollTop;
     });
-  await navigate("软件中心");
+  await navigate("软件管理");
   await navigate("AI 助手");
   assert.ok(
     Math.abs(
@@ -1050,7 +1049,7 @@ try {
     "A to B to A restores the historical reading position without following the latest message",
   );
   await page.clock.setFixedTime(new Date());
-  await navigate("软件中心");
+  await navigate("软件管理");
   await page.getByRole("button", { name: /^AI 助手/ }).click();
   assert.equal(await composer.inputValue(), "保留草稿");
   await navigate("设置");
@@ -1217,7 +1216,7 @@ try {
       fullPage: true,
     });
   }
-  // Resource entry must use the same product workspace/session, at every supported layout.
+  // The same assistant and draft move between the page panel and main page.
   await page.keyboard.press("Escape");
   for (const [width, height] of [
     [1100, 760],
@@ -1226,77 +1225,51 @@ try {
   ]) {
     await page.setViewportSize({ width, height });
     await page.clock.runFor(32);
-    await navigate("软件中心");
-    const resource = page
-      .locator(".resource-card")
-      .filter({ hasText: "办公套件" });
-    await resource.locator('[data-action="resource-details"]').click();
-    const trigger = page.getByRole("button", { name: "询问 AI", exact: true });
+    await navigate("软件管理");
+    await page
+      .getByLabel("软件视图", { exact: true })
+      .getByRole("button", { name: "已安装", exact: true })
+      .click();
+    const trigger = page.getByRole("button", {
+      name: "打开电脑助手",
+      exact: true,
+    });
     await trigger.click();
-    const panel =
-      width < 1440
-        ? page.getByRole("dialog", { name: "资源上下文 AI", exact: true })
-        : page.getByRole("complementary", {
-            name: "资源上下文 AI",
-            exact: true,
-          });
+    const panel = page.getByRole("complementary", {
+      name: "电脑助手侧栏",
+      exact: true,
+    });
     await panel.waitFor();
-    assert.ok(
-      await panel
-        .locator(".resource-path")
-        .textContent()
-        .then((value) =>
-          value.includes("软件中心 → 未提供分类 → 办公套件 → 软件详情"),
-        ),
-    );
-    assert.equal(
-      await panel
-        .getByRole("button", { name: "继续到所选会话", exact: true })
-        .isDisabled(),
-      true,
-    );
-    await panel
-      .getByLabel("选择目标会话", { exact: true })
-      .selectOption(sessionId);
-    await panel
-      .getByRole("button", { name: "继续到所选会话", exact: true })
-      .click();
     await panel.locator(".composer textarea").waitFor();
-    await panel
-      .getByRole("region", { name: "待发送资源上下文", exact: true })
-      .waitFor();
-    if (width < 1440) {
-      assert.equal(await panel.locator(".connection-trigger").count(), 0);
-      assert.equal(await panel.locator(".conversation-menu").count(), 0);
-      await panel.locator(".composer textarea").waitFor();
-    }
+    const attachment = panel.getByRole("region", {
+      name: "待发送页面上下文",
+      exact: true,
+    });
+    await attachment.waitFor();
+    assert.equal(await panel.locator(".connection-trigger").count(), 0);
     assert.equal(await page.locator(".assistant").count(), 1);
-    assert.equal(
-      await panel
-        .getByRole("button", { name: "检查并执行", exact: true })
-        .count(),
-      0,
-    );
-    await panel
-      .getByRole("region", { name: "待发送资源上下文", exact: true })
-      .getByLabel("核对将发送的信息", { exact: true })
-      .click();
+    await attachment.getByLabel("核对将发送的信息", { exact: true }).click();
     const contextText = await panel
       .locator(".resource-context pre")
       .textContent();
+    const data = JSON.parse(contextText.slice(contextText.indexOf("\n") + 1));
+    assert.equal(data.page, "software-management");
+    assert.ok(data.path.includes("软件管理"));
     assert.ok(
-      contextText.includes('"entry": "软件中心"') &&
-        contextText.includes('"name": "办公套件"'),
+      data.resources.some(
+        (item) => item.title === "Notes" && item.version === "2.1",
+      ),
     );
+    assert.ok(data.resources.length <= 12);
     assert.ok(
       !contextText.includes("osSession") &&
         !contextText.includes("secretReference"),
     );
-    await panel.locator(".composer textarea").fill(`资源问题 ${width}`);
+    await panel.locator(".composer textarea").fill(`页面问题 ${width}`);
     const box = await panel.locator(".composer textarea").boundingBox();
     assert.ok(
       box.y >= 0 && box.y + box.height <= height,
-      "context composer reachable",
+      "page composer reachable",
     );
     assert.equal(
       await page.evaluate(
@@ -1305,7 +1278,7 @@ try {
       true,
     );
     await panel
-      .getByRole("button", { name: "关闭资源上下文 AI", exact: true })
+      .getByRole("button", { name: "关闭电脑助手侧栏", exact: true })
       .click();
     await trigger.waitFor();
     assert.equal(
@@ -1313,10 +1286,10 @@ try {
       true,
     );
     await navigate("AI 助手");
-    assert.equal(await composer.inputValue(), `资源问题 ${width}`);
+    assert.equal(await composer.inputValue(), `页面问题 ${width}`);
     assert.ok(
       await page
-        .getByRole("region", { name: "待发送资源上下文", exact: true })
+        .getByRole("region", { name: "待发送页面上下文", exact: true })
         .isVisible(),
     );
   }

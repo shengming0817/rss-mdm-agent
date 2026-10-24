@@ -70,3 +70,37 @@ pub(crate) fn settle(
     }
     Ok(())
 }
+
+impl crate::Store {
+    pub(crate) fn sql_resource_owner(
+        &self,
+        key: &str,
+        host: &impl execution_app::JournalHost,
+    ) -> Result<Option<execution_contract::RequestId>, Error> {
+        crate::database::ensure_current(&self.conn, &self.authority, self.limits)?;
+        if key.is_empty() || key.len() > 256 {
+            return Err(Error::InvalidInput);
+        }
+        let request:Option<String>=self.conn.query_row("SELECT e.request_id FROM resource_claims r JOIN attempts a ON a.attempt_id=r.attempt_id JOIN executions e ON e.scope=a.scope WHERE r.resource=?1",[key],|r|r.get(0)).optional()?;
+        let Some(request) = request else {
+            return Ok(None);
+        };
+        let request = execution_contract::RequestId::new(request).map_err(|_| Error::Corrupt)?;
+        let record = self.sql_execution_by_request(
+            &request,
+            execution_app::ExecutionAccess::RunnerFact,
+            host,
+        )?;
+        if !record
+            .execution
+            .input()
+            .exclusive_resource_keys()
+            .map_err(|_| Error::Corrupt)?
+            .iter()
+            .any(|k| k == key)
+        {
+            return Err(Error::Corrupt);
+        }
+        Ok(Some(request))
+    }
+}

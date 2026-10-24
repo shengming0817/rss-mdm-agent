@@ -754,7 +754,10 @@ impl RunnerPort for NativeRunner {
             return Ok(None);
         }
         let never = matches!(facts.scope, ProcessScope::NotStarted {});
-        if !never && facts.exit_code.is_none() {
+        let signalled_network = !never
+            && facts.exit_code.is_none()
+            && thread_only_worker(&plan.spec().launch.interpreter.profile);
+        if !never && facts.exit_code.is_none() && !signalled_network {
             return Ok(None);
         }
         Ok(Some(ObservationFacts {
@@ -767,7 +770,7 @@ impl RunnerPort for NativeRunner {
                     id: Id::new(attempt.as_str()).map_err(|_| Error::InvalidInput)?,
                     revision: Id::new("process-final").unwrap(),
                 },
-                kind: if never {
+                kind: if never || signalled_network {
                     EvidenceKind::StateObserved
                 } else {
                     EvidenceKind::ProcessExited
@@ -778,6 +781,8 @@ impl RunnerPort for NativeRunner {
                 Observation::NeverDispatched {
                     total_output_bytes: 0,
                 }
+            } else if signalled_network {
+                Observation::Quiescent {}
             } else {
                 Observation::Exited {
                     exit_code: facts.exit_code.unwrap(),
@@ -786,6 +791,12 @@ impl RunnerPort for NativeRunner {
             },
         }))
     }
+}
+// This pinned fixed worker creates resolver/runtime threads but never child processes.
+// A reaped worker plus drained pipes proves its scope ended even after signals or failed output.
+// Successful diagnostic evidence still requires the separate hashed completion receipt.
+fn thread_only_worker(profile: &VersionedRef) -> bool {
+    profile.id.as_str() == "native-network-check-worker" && profile.revision.as_str() == "1"
 }
 #[cfg(all(test, target_os = "macos"))]
 fn now() -> Result<u64, Error> {
@@ -1289,8 +1300,12 @@ async fn run(
             }
         }
     }
-    let collection = ["native-collection-worker", "native-settings-worker"]
-        .contains(&recipe.launch.interpreter.profile.id.as_str());
+    let collection = [
+        "native-collection-worker",
+        "native-settings-worker",
+        "native-network-check-worker",
+    ]
+    .contains(&recipe.launch.interpreter.profile.id.as_str());
     if collection {
         if let Ok(receipt) = serde_json::from_slice::<CollectionCompletion>(&facts.stderr) {
             facts.total_output_bytes = facts
@@ -1310,9 +1325,10 @@ async fn run(
     facts.quiescent = exited
         && out_done
         && err_done
-        && ((owner.quiescent()
-            && (!native_worker || operation_closed)
-            && (!collection || collection_closed))
+        && (thread_only_worker(&recipe.launch.interpreter.profile)
+            || (owner.quiescent()
+                && (!native_worker || operation_closed)
+                && (!collection || collection_closed))
             || (cfg!(target_os = "macos") && (operation_closed || collection_closed)));
     facts.quality = if facts.total_output_bytes > cap || facts.end == ProcessEnd::OutputLimit {
         OutputQuality::Truncated

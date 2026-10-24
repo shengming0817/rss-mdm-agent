@@ -26,6 +26,7 @@ fn recipe(
         "native-software-worker",
         "native-local-software-worker",
         "native-settings-worker",
+        "native-network-check-worker",
         "native-collection-worker",
         "native-enrollment-worker",
         "native-credential-worker",

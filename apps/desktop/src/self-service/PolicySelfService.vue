@@ -1,7 +1,14 @@
 <script setup lang="ts">
 import PolicyExecutionContext from "./PolicyExecutionContext.vue";
-import { computed, onMounted, onBeforeUnmount, ref, watch } from "vue";
-import Ajv, { type AnySchema } from "ajv";
+import {
+  computed,
+  inject,
+  onMounted,
+  onBeforeUnmount,
+  ref,
+  watch,
+  toRaw,
+} from "vue";
 import type {
   SelfServicePort,
   SelfServiceDirectoryItem,
@@ -9,13 +16,14 @@ import type {
   PolicyStatus,
   BackendRequest,
 } from "./types";
+import { createDirectory, directoryKey, policyResource } from "./directory";
 import { currentUser } from "../test-users";
 import PolicyPreparation from "./PolicyPreparation.vue";
 const props = withDefaults(
   defineProps<{
     port: SelfServicePort | null;
     records: BackendRequest[];
-    kind?: "enrollment" | "software";
+    kind?: "enrollment" | "software" | "script" | "all";
     filter?: string;
     allowNewRequests?: boolean;
     allowConfirm?: boolean;
@@ -52,8 +60,19 @@ const visibleDirectory = computed(() =>
         .includes((props.filter ?? "").trim().toLocaleLowerCase()),
   ),
 );
-const directory = ref<SelfServiceDirectoryItem[]>([]),
-  selected = ref<SelfServiceDirectoryItem>(),
+const sharedDirectory = inject(directoryKey, undefined);
+const catalog =
+  sharedDirectory && toRaw(sharedDirectory.port) === toRaw(props.port)
+    ? sharedDirectory
+    : createDirectory(props.port);
+const directory = computed(() =>
+  catalog.state.items.filter((item) =>
+    props.kind
+      ? item.task.kind === props.kind
+      : item.task.kind !== "enrollment",
+  ),
+);
+const selected = ref<SelfServiceDirectoryItem>(),
   inputs = ref<Record<string, string>>({}),
   choice = ref<PolicyChoice>(),
   request = ref(""),
@@ -61,13 +80,7 @@ const directory = ref<SelfServiceDirectoryItem[]>([]),
   busy = ref(false),
   error = ref("");
 const fieldErrors = ref(new Map<string, string>());
-const ajv = new Ajv({ strict: false, allErrors: true });
-function isSchema(value: unknown): value is AnySchema {
-  return (
-    typeof value === "boolean" ||
-    (typeof value === "object" && value !== null && !Array.isArray(value))
-  );
-}
+const form = ref<HTMLFormElement>();
 const scriptTask = computed(() =>
   selected.value?.task.kind === "script" ? selected.value.task : undefined,
 );
@@ -82,10 +95,6 @@ const parameterSchema = computed(
       additionalProperties: false,
     },
 );
-const validator = computed(() => {
-  const schema = parameterSchema.value;
-  return isSchema(schema) ? ajv.compile(schema) : undefined;
-});
 let epoch = 0;
 const finished = computed(() => {
   if (status.value?.kind === "absent") return true;
@@ -132,81 +141,44 @@ const resolved = computed(() =>
     ]),
   ),
 );
-const nextCursor = ref<string | null>(null);
-const directoryComplete = ref(false);
-const directoryWindowed = ref(false);
-const locators = new Map<string, string | null>();
-const visited = new Set<string>();
+const nextCursor = computed(() => catalog.state.next);
+const directoryComplete = computed(() => catalog.state.complete);
+const directoryWindowed = computed(() => catalog.state.windowed);
+const locators = catalog.locators;
 async function refresh() {
-  await loadDirectory(false);
+  await catalog.load();
 }
 async function loadMore() {
-  await loadDirectory(true);
-}
-async function loadDirectory(append: boolean) {
-  if (!props.port || busy.value || (append && !nextCursor.value)) return;
-  if (!append) {
-    ++epoch;
-    directory.value = [];
-    nextCursor.value = null;
-    directoryComplete.value = false;
-    directoryWindowed.value = false;
-    locators.clear();
-    visited.clear();
-    if (!request.value) {
-      selected.value = undefined;
-      choice.value = undefined;
-    }
-  }
-  busy.value = true;
-  const current = epoch;
-  const after = append ? nextCursor.value : null;
-  try {
-    if (visited.size >= 2048) throw new Error("capacity");
-    const value = await props.port.policy_directory({ after });
-    if (current !== epoch) return;
-    if (
-      value.nextCursor &&
-      (value.nextCursor === after || visited.has(value.nextCursor))
-    )
-      throw new Error("cursor");
-    if (after) visited.add(after);
-    const items = value.items.filter((item) =>
-      props.kind
-        ? item.task.kind === props.kind
-        : item.task.kind !== "enrollment",
-    );
-    for (const item of items) locators.set(item.policyId, after);
-    const merged = new Map(
-      directory.value.map((item) => [item.policyId, item]),
-    );
-    for (const item of items) merged.set(item.policyId, item);
-    if (merged.size > 1024) directoryWindowed.value = true;
-    directory.value = [...merged.values()].slice(-1024);
-    const retained = new Set(directory.value.map((item) => item.policyId));
-    for (const id of locators.keys())
-      if (!retained.has(id) && id !== selected.value?.policyId)
-        locators.delete(id);
-    nextCursor.value = value.nextCursor;
-    directoryComplete.value = !value.nextCursor && !directoryWindowed.value;
-    error.value = "";
-  } catch {
-    if (current === epoch)
-      error.value =
-        "目录读取未完成；已加载条目保留，可重试本页。刷新可重新开始发现。";
-  } finally {
-    if (current === epoch) busy.value = false;
-  }
+  await catalog.load(true);
 }
 onBeforeUnmount(() => {
   ++epoch;
+  if (catalog !== sharedDirectory) catalog.dispose();
 });
+const resource = computed(() =>
+  selected.value ? policyResource(selected.value, catalog) : undefined,
+);
+defineExpose({
+  resource,
+  openPolicy(id: string) {
+    if (request.value || props.allowNewRequests === false) return false;
+    const item = directory.value.find((item) => item.policyId === id);
+    if (!item) return false;
+    select(item);
+    return true;
+  },
+});
+
 function select(item: SelfServiceDirectoryItem) {
   if (request.value || props.allowNewRequests === false) return;
   selected.value = item;
   choice.value = undefined;
   inputs.value = {};
   fieldErrors.value = new Map();
+}
+async function runScript() {
+  preview();
+  if (choice.value) await invoke();
 }
 function options(schema: any): unknown[] | undefined {
   return (
@@ -244,19 +216,10 @@ function preview() {
         fieldErrors.value.set(field.name, "请填写有效的字段值。");
       }
     }
-    const resolvedParameters = Object.fromEntries(
-      Object.entries(parameterSources.value).map(([name, source]) => [
-        name,
-        source.kind === "fixed" ? source.value : parameters.get(name),
-      ]),
-    );
-    if (!validator.value?.(resolvedParameters)) {
-      for (const issue of validator.value?.errors ?? []) {
-        const name =
-          issue.instancePath.split("/").at(1) || issue.params.missingProperty;
-        if (name)
-          fieldErrors.value.set(name, `不符合字段要求：${issue.message}`);
-      }
+    // Native form constraints are hints; the service validates the full Resource schema.
+    if (form.value && !form.value.checkValidity()) {
+      error.value = "请修正标出的参数后再核对。";
+      return;
     }
     if (fieldErrors.value.size) {
       error.value = "请修正标出的参数后再核对。";
@@ -354,7 +317,9 @@ async function cancel(id: string) {
     if (current === epoch) busy.value = false;
   }
 }
-onMounted(refresh);
+onMounted(() => {
+  if (props.allowNewRequests !== false && !catalog.state.asOf) void refresh();
+});
 watch(
   () => currentUser.value?.generation,
   () => {
@@ -363,12 +328,11 @@ watch(
     inputs.value = {};
     fieldErrors.value = new Map();
     error.value = "";
-    directory.value = [];
     selected.value = undefined;
     choice.value = undefined;
     request.value = "";
     status.value = undefined;
-    void refresh();
+    if (catalog !== sharedDirectory) catalog.dispose();
   },
 );
 function presentationText(value: unknown, fallback = "未提供"): string {
@@ -377,195 +341,246 @@ function presentationText(value: unknown, fallback = "未提供"): string {
 </script>
 <template>
   <section class="policy-self-service" aria-label="企业自助任务">
-    <div class="section-heading">
-      <h3>{{ kind === "enrollment" ? "MDM 注册" : "企业自助任务" }}</h3>
-      <button :disabled="busy" @click="refresh">刷新任务</button>
-    </div>
-    <label v-if="kind === 'software'"
-      >发布分类
-      <select v-model="category">
-        <option value="">全部发布分类</option>
-        <option v-for="name in categories" :key="name">{{ name }}</option>
-      </select></label
-    >
-    <p v-if="kind === 'software'">
-      企业发布目标与本机安装记录独立显示。当前发布接口未提供可核实的安装关联时，关联状态为未知。
-    </p>
-    <p v-if="directoryWindowed">
-      仅保留最近加载的 1024 项；搜索与计数不代表完整目录，可刷新重新浏览。
-    </p>
-    <p role="status">
-      当前加载 {{ directory.length }} 条；{{
-        directoryComplete
-          ? "目录已读取完毕"
-          : "目录尚未完整，搜索与计数仅覆盖当前加载范围"
-      }}。
-    </p>
-    <button v-if="nextCursor" :disabled="busy" @click="loadMore">
-      继续加载
-    </button>
-    <button v-if="error && !nextCursor" :disabled="busy" @click="refresh">
-      重试读取
-    </button>
-    <p v-if="error" role="status">{{ error }}</p>
-    <p
-      v-if="
-        kind === 'enrollment' &&
-        !busy &&
-        !error &&
-        !directory.length &&
-        !records.some(
-          (r) =>
-            r.action.kind === 'policy' &&
-            r.action.directory.task.kind === 'enrollment',
-        )
-      "
-    >
-      当前没有组织授权的 MDM 注册入口。
-    </p>
-    <div class="catalog-grid" v-if="allowNewRequests !== false">
-      <article
-        v-for="item in visibleDirectory"
-        :key="item.policyId"
-        class="resource-card"
-      >
-        <button :disabled="busy || !!request" @click="select(item)">
-          {{
-            kind === "enrollment"
-              ? "注册 MDM"
-              : presentationText(
-                  item.selfService.presentation.displayName,
-                  `策略 ${item.policyId}`,
-                )
-          }}
+    <template v-if="allowNewRequests !== false">
+      <div class="section-heading">
+        <h3>{{ kind === "enrollment" ? "MDM 注册" : "企业自助任务" }}</h3>
+        <button :disabled="busy || catalog.state.loading" @click="refresh">
+          刷新任务
         </button>
-        <p>{{ presentationText(item.selfService.presentation.description) }}</p>
-        <p>
-          {{ presentationText(item.selfService.presentation.category) }} · 风险
-          {{ item.selfService.riskLevel }}
-        </p>
-        <p>
+      </div>
+      <label v-if="kind === 'software'"
+        >发布分类
+        <select v-model="category">
+          <option value="">全部发布分类</option>
+          <option v-for="name in categories" :key="name">{{ name }}</option>
+        </select></label
+      >
+      <p v-if="kind === 'software'">
+        企业发布目标与本机安装记录独立显示。当前发布接口未提供可核实的安装关联时，关联状态为未知。
+      </p>
+      <p v-if="directoryWindowed">
+        仅保留最近加载的 1024 项；搜索与计数不代表完整目录，可刷新重新浏览。
+      </p>
+      <p role="status">
+        当前加载 {{ directory.length }} 条；{{
+          directoryComplete
+            ? "目录已读取完毕"
+            : "目录尚未完整，搜索与计数仅覆盖当前加载范围"
+        }}。
+      </p>
+      <button
+        v-if="nextCursor"
+        :disabled="busy || catalog.state.loading"
+        @click="loadMore"
+      >
+        继续加载
+      </button>
+      <button
+        v-if="error && !nextCursor"
+        :disabled="busy || catalog.state.loading"
+        @click="refresh"
+      >
+        重试读取
+      </button>
+      <p v-if="error || catalog.state.error" role="status">
+        {{ error || catalog.state.error }}
+      </p>
+      <p
+        v-if="
+          kind === 'enrollment' &&
+          !busy &&
+          !error &&
+          !directory.length &&
+          !records.some(
+            (r) =>
+              r.action.kind === 'policy' &&
+              r.action.directory.task.kind === 'enrollment',
+          )
+        "
+      >
+        当前没有组织授权的 MDM 注册入口。
+      </p>
+      <div class="catalog-grid">
+        <article
+          :data-policy-id="item.policyId"
+          v-for="item in visibleDirectory"
+          :key="item.policyId"
+          class="resource-card"
+        >
+          <button :disabled="busy || !!request" @click="select(item)">
+            {{
+              kind === "enrollment"
+                ? "注册 MDM"
+                : presentationText(
+                    item.selfService.presentation.displayName,
+                    `策略 ${item.policyId}`,
+                  )
+            }}
+          </button>
+          <p>
+            {{ presentationText(item.selfService.presentation.description) }}
+          </p>
+          <p>
+            {{ presentationText(item.selfService.presentation.category) }} ·
+            风险
+            {{ item.selfService.riskLevel }}
+          </p>
+          <p>
+            {{
+              item.subject.kind === "device"
+                ? "设备准入 · 无需企业登录"
+                : "企业用户准入 · 需要有效企业会话"
+            }}
+          </p>
+          <p>
+            {{ item.selfService.allowAi ? "允许 AI 请求" : "仅供人工操作" }}
+          </p>
+        </article>
+      </div>
+      <form
+        ref="form"
+        v-if="selected && !choice"
+        @submit.prevent="scriptTask ? runScript() : preview()"
+      >
+        <h3>
           {{
-            item.subject.kind === "device"
+            presentationText(
+              selected.selfService.presentation.displayName,
+              `策略 ${selected.policyId}`,
+            )
+          }}
+        </h3>
+        <label v-for="field in fields" :key="field.name"
+          >{{ field.schema.title ?? field.name
+          }}<span>{{ field.schema.description }}</span
+          ><select
+            v-if="options(field.schema)"
+            v-model="inputs[field.name]"
+            :name="field.name"
+            required
+          >
+            <option disabled value="">请选择</option>
+            <option
+              v-for="value in options(field.schema)"
+              :key="JSON.stringify(value)"
+              :value="JSON.stringify(value)"
+            >
+              {{ typeof value === "string" ? value : JSON.stringify(value) }}
+            </option></select
+          ><input
+            v-else-if="field.schema.type === 'string'"
+            v-model="inputs[field.name]"
+            :name="field.name"
+            required
+            :minlength="field.schema.minLength"
+            :maxlength="field.schema.maxLength"
+          /><textarea
+            v-else
+            v-model="inputs[field.name]"
+            :name="field.name"
+            placeholder="按字段要求填写 JSON 值"
+          /><small
+            v-if="
+              field.schema.minLength != null || field.schema.maxLength != null
+            "
+          >
+            长度：{{ field.schema.minLength ?? 0 }} 至
+            {{ field.schema.maxLength ?? "不限" }} </small
+          ><small
+            v-if="field.schema.minimum != null || field.schema.maximum != null"
+          >
+            范围：{{ field.schema.minimum ?? "不限" }} 至
+            {{ field.schema.maximum ?? "不限" }} </small
+          ><span v-if="fieldErrors.get(field.name)" role="alert">{{
+            fieldErrors.get(field.name)
+          }}</span></label
+        ><template v-if="scriptTask">
+          <p>{{ selected.selfService.presentation.prerequisites }}</p>
+          <p>{{ selected.selfService.presentation.sideEffects }}</p>
+          <PolicyExecutionContext :task="selected.task" />
+          <p v-for="(source, name) in parameterSources" :key="name">
+            <template v-if="source.kind === 'fixed'"
+              >{{ name }}（固定）：{{ JSON.stringify(source.value) }}</template
+            >
+          </p> </template
+        ><button :disabled="busy">
+          {{ scriptTask ? "运行" : "核对执行参数" }}
+        </button>
+      </form>
+      <section
+        v-if="choice && !request && !scriptTask"
+        aria-label="人工执行确认"
+      >
+        <h3>
+          确认
+          {{
+            presentationText(
+              selected?.selfService.presentation.displayName,
+              `策略 ${selected?.policyId}`,
+            )
+          }}
+        </h3>
+        <p>
+          准入主体：{{
+            selected?.subject.kind === "device"
               ? "设备准入 · 无需企业登录"
-              : "企业用户准入 · 需要有效企业会话"
+              : "企业用户准入"
           }}
         </p>
-        <p>{{ item.selfService.allowAi ? "允许 AI 请求" : "仅供人工操作" }}</p>
-      </article>
-    </div>
-    <form
-      v-if="selected && !choice && allowNewRequests !== false"
-      @submit.prevent="preview"
-    >
-      <h3>
-        {{
-          presentationText(
-            selected.selfService.presentation.displayName,
-            `策略 ${selected.policyId}`,
-          )
-        }}
-      </h3>
-      <label v-for="field in fields" :key="field.name"
-        >{{ field.schema.title ?? field.name
-        }}<span>{{ field.schema.description }}</span
-        ><select
-          v-if="options(field.schema)"
-          v-model="inputs[field.name]"
-          required
-        >
-          <option disabled value="">请选择</option>
-          <option
-            v-for="value in options(field.schema)"
-            :key="JSON.stringify(value)"
-            :value="JSON.stringify(value)"
-          >
-            {{ typeof value === "string" ? value : JSON.stringify(value) }}
-          </option></select
-        ><input
-          v-else-if="field.schema.type === 'string'"
-          v-model="inputs[field.name]"
-          required
-          :minlength="field.schema.minLength"
-          :maxlength="field.schema.maxLength"
-        /><textarea
-          v-else
-          v-model="inputs[field.name]"
-          placeholder="按字段要求填写 JSON 值"
-        /><small
-          v-if="
-            field.schema.minLength != null || field.schema.maxLength != null
-          "
-        >
-          长度：{{ field.schema.minLength ?? 0 }} 至
-          {{ field.schema.maxLength ?? "不限" }} </small
-        ><small
-          v-if="field.schema.minimum != null || field.schema.maximum != null"
-        >
-          范围：{{ field.schema.minimum ?? "不限" }} 至
-          {{ field.schema.maximum ?? "不限" }} </small
-        ><span v-if="fieldErrors.get(field.name)" role="alert">{{
-          fieldErrors.get(field.name)
-        }}</span></label
-      ><button :disabled="busy">核对执行参数</button>
-    </form>
-    <section
-      v-if="choice && !request && allowNewRequests !== false"
-      aria-label="人工执行确认"
-    >
-      <h3>
-        确认
-        {{
-          presentationText(
-            selected?.selfService.presentation.displayName,
-            `策略 ${selected?.policyId}`,
-          )
-        }}
-      </h3>
-      <p>
-        准入主体：{{
-          selected?.subject.kind === "device"
-            ? "设备准入 · 无需企业登录"
-            : "企业用户准入"
-        }}
-      </p>
-      <p v-if="selected?.subject.kind === 'user'">
-        企业身份：{{ selected.subject.user.tenantId }} /
-        {{ selected.subject.user.principalId }}
-      </p>
-      <p>
-        前置条件：{{
-          presentationText(selected?.selfService.presentation.prerequisites)
-        }}
-      </p>
-      <p>
-        副作用：{{
-          presentationText(selected?.selfService.presentation.sideEffects)
-        }}
-      </p>
-      <p>
-        策略 {{ choice.policyId }} / revision {{ choice.policyRevision }} /
-        执行版本 {{ choice.policyVersion }}
-      </p>
-      <p v-if="selected && selected.task.kind !== 'enrollment'">
-        资源 {{ selected.task.resource.id }} /
-        {{ selected.task.resource.version }} /
-        {{ selected.task.resource.variant }}
-      </p>
-      <PolicyExecutionContext v-if="selected" :task="selected.task" />
-      <pre v-if="selected?.task.kind === 'script'">{{
-        JSON.stringify(resolved, null, 2)
-      }}</pre>
-      <button :disabled="busy" @click="invoke">确认并执行</button
-      ><button :disabled="busy" @click="choice = undefined">修改参数</button>
-    </section>
+        <p v-if="selected?.subject.kind === 'user'">
+          企业身份：{{ selected.subject.user.tenantId }} /
+          {{ selected.subject.user.principalId }}
+        </p>
+        <p>
+          前置条件：{{
+            presentationText(selected?.selfService.presentation.prerequisites)
+          }}
+        </p>
+        <p>
+          副作用：{{
+            presentationText(selected?.selfService.presentation.sideEffects)
+          }}
+        </p>
+        <p>
+          策略 {{ choice.policyId }} / revision {{ choice.policyRevision }} /
+          执行版本 {{ choice.policyVersion }}
+        </p>
+        <p v-if="selected && selected.task.kind !== 'enrollment'">
+          资源 {{ selected.task.resource.id }} /
+          {{ selected.task.resource.version }} /
+          {{ selected.task.resource.variant }}
+        </p>
+        <PolicyExecutionContext v-if="selected" :task="selected.task" />
+        <pre v-if="selected?.task.kind === 'script'">{{
+          JSON.stringify(resolved, null, 2)
+        }}</pre>
+        <button :disabled="busy" @click="invoke">确认并执行</button
+        ><button :disabled="busy" @click="choice = undefined">修改参数</button>
+      </section>
+    </template>
     <section v-if="request">
       <p>原请求：{{ request }}</p>
       <template v-if="status?.kind === 'absent'">
-        <p>原请求未创建；可以修改参数或重新选择脚本。</p>
-        <button :disabled="busy" @click="editAbsent">修改参数</button>
+        <p>
+          {{
+            allowNewRequests === false
+              ? "原请求未创建，请回到目录核对。"
+              : "原请求未创建；可以修改参数或重新选择脚本。"
+          }}
+        </p>
+        <button
+          v-if="allowNewRequests !== false"
+          :disabled="busy"
+          @click="editAbsent"
+        >
+          修改参数
+        </button>
       </template>
-      <button v-if="finished" :disabled="busy" @click="newRequest">
+      <button
+        v-if="finished && allowNewRequests !== false"
+        :disabled="busy"
+        @click="newRequest"
+      >
         发起新任务
       </button>
       <button :disabled="busy" @click="query()">查询原请求</button
@@ -624,7 +639,7 @@ function presentationText(value: unknown, fallback = "未提供"): string {
           r.action.kind === 'policy' &&
           r.action.choice.request !== request &&
           (kind
-            ? r.action.directory.task.kind === kind
+            ? kind === 'all' || r.action.directory.task.kind === kind
             : r.action.directory.task.kind !== 'enrollment'),
       )"
       :key="record.action.kind === 'policy' ? record.action.choice.request : ''"

@@ -10,21 +10,19 @@ const status = (generation: number): HostStatus => ({
   version: "test",
   recent: [],
 });
-it("clears recovered read errors while retaining the result of an export", async () => {
+it("clears recovered read errors", async () => {
   const c = createHostSettings({
     read: vi
       .fn()
       .mockRejectedValueOnce(new Error("offline"))
       .mockResolvedValue(status(1)),
     restart: vi.fn(),
-    export: vi.fn().mockResolvedValue(true),
   });
   await c.refresh();
   expect(c.state.readError).toContain("无法读取");
-  await c.exportDiagnostics();
   await c.refresh();
   expect(c.state.readError).toBe("");
-  expect(c.state.message).toBe("脱敏诊断已保存。");
+  expect(c.state.message).toBe("");
 });
 it("late status reads cannot overwrite a completed restart and repeated clicks share the pending operation", async () => {
   let resolveRead!: (v: HostStatus) => void,
@@ -37,7 +35,6 @@ it("late status reads cannot overwrite a completed restart and repeated clicks s
     restart: vi
       .fn()
       .mockImplementationOnce(() => new Promise((r) => (resolveRestart = r))),
-    export: vi.fn(),
   };
   const c = createHostSettings(port);
   await c.refresh();
@@ -52,14 +49,12 @@ it("late status reads cannot overwrite a completed restart and repeated clicks s
   expect(c.state.status?.generation).toBe(2);
   c.dispose();
 });
-it("native errors never appear verbatim and disposed controllers ignore late replies", async () => {
+it("disposed controllers ignore late replies", async () => {
   let done!: (v: HostStatus) => void;
   const c = createHostSettings({
     read: () => new Promise((r) => (done = r)),
     restart: vi.fn(),
-    export: vi.fn().mockRejectedValue(new Error("CANARY_SECRET")),
   });
-  await c.exportDiagnostics();
   expect(c.state.message).not.toContain("CANARY");
   const pending = c.refresh();
   c.dispose();

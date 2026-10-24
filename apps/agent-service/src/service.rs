@@ -14,6 +14,7 @@ use execution_contract::{
 use execution_runner::{MaterialRegistry, NativeRunner};
 use rss_mdm_agent_wire::runtime as wire;
 mod data;
+mod network_check;
 mod policy;
 mod settings;
 pub(crate) const RESULT_CONSUMER: &str = "execution-results";
@@ -241,6 +242,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             current: Arc::new(Mutex::new(None)),
             local_read: Arc::new(Mutex::new(None)),
             local_settings: Arc::new(Mutex::new(None)),
+            local_network: Arc::new(Mutex::new(None)),
             local_software: Arc::new(Mutex::new(None)),
             local_stopped: Arc::new(AtomicBool::new(false)),
             identity_until: client.runtime_gate(),
@@ -1639,7 +1641,8 @@ impl Core {
         if matches!(
             command.request.as_operation(),
             Some(
-                execution_ipc::host::Request::Data { .. }
+                Request::NetworkCheck { .. }
+                    | execution_ipc::host::Request::Data { .. }
                     | Request::RequestRegistration {}
                     | Request::ImportRegistration { .. }
                     | Request::DeviceAccess { .. }
@@ -1667,6 +1670,7 @@ impl Core {
                 Some(
                     Request::Data { .. }
                     | Request::Settings { .. }
+                    | Request::NetworkCheck { .. }
                     | Request::PlatformSso { .. }
                     | Request::DeviceAccess { .. }
                     | Request::SoftwareRead { .. }
@@ -1689,6 +1693,19 @@ impl Core {
                     &command.subject,
                     command.session,
                 )),
+                Some(Request::HelperStatus {}) => {
+                    if self.stopping || self.host.local_stopped.load(Ordering::Acquire) {
+                        return Err(Error::Unavailable);
+                    }
+                    let helper = self.helpers.connect_peer(
+                        &command.subject,
+                        command.session,
+                        command.binding.as_ref().ok_or(Error::Denied)?,
+                    )?;
+                    Ok(Reply::HelperStatus {
+                        value: helper.context().clone(),
+                    })
+                }
                 Some(Request::ServiceStatus {}) => {
                     let readiness =
                         if self.stopping || self.host.local_stopped.load(Ordering::Acquire) {
@@ -1714,6 +1731,34 @@ impl Core {
                     | Request::RegistrationContext {}
                     | Request::ImportRegistration { .. },
                 ) => Ok(Reply::Rejected),
+                Some(Request::RecentTasks { before }) => {
+                    let cursor = before
+                        .as_deref()
+                        .map(|value| {
+                            let parsed = value.parse::<u64>().map_err(|_| Error::Protocol)?;
+                            if parsed == 0 || parsed.to_string() != value {
+                                return Err(Error::Protocol);
+                            }
+                            Ok(parsed)
+                        })
+                        .transpose()?;
+                    let mut value = self
+                        .app
+                        .service_recent_tasks(cursor, 64)
+                        .map_err(crate::error::app_error)?;
+                    value.items.retain(|item| {
+                        let request = &item.details.action.request_id;
+                        self.can_read(request, &command.subject).unwrap_or(false)
+                            && self
+                                .policy_readable(
+                                    request,
+                                    &command.subject,
+                                    command.binding.as_ref(),
+                                )
+                                .unwrap_or(false)
+                    });
+                    Ok(Reply::RecentTasks { value })
+                }
                 Some(Request::Tasks { after }) => {
                     let mut value = self
                         .app
