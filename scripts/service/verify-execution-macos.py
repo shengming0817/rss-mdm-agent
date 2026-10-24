@@ -1963,6 +1963,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         old_connection = native_probe.open(establish=True) if native_probe else None
         old_starts=command('status')['startRequests']
         administrator_session.command('restart')
+        if native_probe: native_probe.policy_context = None
         if native_probe:
             response = native_probe.send(old_connection, json.dumps(native_probe.identity['baseline']).encode())
             if response.get('transport')=='reply' and response.get('bytes'):

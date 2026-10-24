@@ -361,6 +361,35 @@ pub(super) fn compile(
         }
         wire::SoftwareTaskBehavior::Exe(_) | wire::SoftwareTaskBehavior::Msix(_) => (),
     }
+    if let Some(wire::SoftwareTaskDetection::Script { command }) = commands.detection {
+        let profile = match command.interpreter {
+            wire::SoftwareTaskInterpreter::PowerShell7 => wire::ExecutorProfile::PowerShell7,
+            wire::SoftwareTaskInterpreter::PosixSh => wire::ExecutorProfile::PosixSh,
+            wire::SoftwareTaskInterpreter::Bash => wire::ExecutorProfile::Bash,
+        };
+        let interpreter = config
+            .interpreters
+            .iter()
+            .find(|i| i.profile == profile)
+            .ok_or(Error::Unsupported)?;
+        interpreter
+            .image
+            .verify(&interpreter.image.path)
+            .map_err(|_| Error::Untrusted)?;
+        tools.insert("detect-interpreter".into(), pin(&interpreter.image.path)?);
+        #[cfg(target_os = "macos")]
+        if action.signatures.iter().any(|s| {
+            s.artifact == command.entry
+                && s.mechanism == wire::SoftwareTaskSignatureMechanism::AppleDeveloperId
+        }) {
+            for (name, path) in [
+                ("codesign", "/usr/bin/codesign"),
+                ("spctl", "/usr/sbin/spctl"),
+            ] {
+                tools.insert(name.into(), pin(Path::new(path))?);
+            }
+        }
+    }
     if action
         .signatures
         .iter()
@@ -673,10 +702,14 @@ pub(super) fn compile(
             None,
         ),
         Some(wire::SoftwareTaskDetection::Script { command: script }) => {
-            let (command, source) = compiler.command(script)?;
+            let (mut detector, source) = build(&mut compiler, O::Detect, &script.invocation)?;
+            detector.exit_codes = SoftwareExitCodes {
+                success: [0].into(),
+                reboot: Default::default(),
+            };
             (
                 SoftwareDetector::Script {
-                    invocation: Box::new(command),
+                    invocation: Box::new(detector),
                 },
                 Some(Box::new(source)),
             )

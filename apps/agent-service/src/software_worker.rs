@@ -115,8 +115,15 @@ pub fn run(path: &std::path::Path) -> Result<i32, Error> {
     } else {
         None
     };
+    let scripted_detector = request.operation == WorkerOperation::Detect
+        && matches!(
+            crate::backend::commands::software_commands(&request.action)?.detection,
+            Some(wire::SoftwareTaskDetection::Script { .. })
+        );
     #[cfg(target_os = "macos")]
-    let outcome = if matches!(
+    let outcome = if scripted_detector {
+        source::detect(&request).map(|state| result(0, Some(state), String::new()))
+    } else if matches!(
         request.action.behavior,
         wire::SoftwareTaskBehavior::Pkg(_) | wire::SoftwareTaskBehavior::Bundle(_)
     ) {
@@ -127,7 +134,9 @@ pub fn run(path: &std::path::Path) -> Result<i32, Error> {
         macos::execute(&request, before.as_ref())
     };
     #[cfg(windows)]
-    let outcome = if matches!(
+    let outcome = if scripted_detector {
+        source::detect(&request).map(|state| result(0, Some(state), String::new()))
+    } else if matches!(
         request.action.behavior,
         wire::SoftwareTaskBehavior::Msi(_) | wire::SoftwareTaskBehavior::Bundle(_)
     ) {
@@ -150,6 +159,17 @@ pub fn run(path: &std::path::Path) -> Result<i32, Error> {
         && !matches!(request.action.behavior, wire::SoftwareTaskBehavior::Dmg(_))
         && request.resource_root.exists()
     {
+        result.1.closed = false;
+    }
+    #[cfg(target_os = "macos")]
+    if scripted_detector
+        || (request.operation != WorkerOperation::Detect
+            && matches!(
+                request.action.behavior,
+                wire::SoftwareTaskBehavior::Bundle(_)
+            ))
+    {
+        // Arbitrary shell completion does not close escaped descendants.
         result.1.closed = false;
     }
     result.1.native_output_bytes = request
@@ -341,7 +361,13 @@ fn run_tool_environment(
         .spawn()?;
     request.native_pending.store(true, Ordering::Release);
     #[cfg(windows)]
-    scope.attach(child.id())?;
+    if let Err(error) = scope.attach(child.id()) {
+        let _ = child.kill();
+        if child.wait().is_ok() {
+            request.native_pending.store(false, Ordering::Release);
+        }
+        return Err(error.into());
+    }
     let observed = request.native_output.clone();
     let bound = request
         .output_bytes

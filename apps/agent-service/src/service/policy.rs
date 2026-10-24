@@ -361,7 +361,6 @@ impl Core {
                             current.scope.subject == subject
                                 && Some(&current.scope.binding) == binding
                                 && current.context == expected
-                                && current.ready
                                 && self.fences.current(&current.scope).ok() == Some(current.epoch)
                                 && self
                                     .host
