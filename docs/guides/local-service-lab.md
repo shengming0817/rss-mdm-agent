@@ -117,7 +117,7 @@ WinGet/Brew 使用签名任务中的完整源绑定、文档摘要和物料集�
 
 管理员在当前格式部署的 `software_read_grants` 中显式登记 Brew 只读凭据，例如 `{"credential":{"source":"实际 target","reference":"只读凭据引用"},"origin":"https://软件源主机"}`。source/reference 必须与签名任务一致，origin 仅允许 HTTPS origin；凭据不写入 JSON 或源 URL。先完成首次安装初始化，停止系统服务，再由服务 OS 主体运行固定服务镜像 `--config <受保护配置> --import-software-credential <target>`，通过 stdin 提供 32–512 字节 ASCII 可见只读 token（允许一个结尾换行）；该入口只向现有 OS 凭据命名空间追加，不覆盖、自动获取或扩大权限。macOS 使用 root 服务身份，Windows 使用原服务账户；重新启动后才宣告对应凭据可用。WinGet 公共源不需要读 token。软件源使用独立的无客户端证书 HTTPS 传输，仅信任部署 CA；设备 mTLS 身份不会发送给软件源。
 
-原生源 Prepare/Cleanup 与安装共用原 attempt、manager 排他和预算。Brew 仅在 tap/URI/commit/文档完全匹配时借用已有源，借用资源不会删除；本次新建资源记录所有权后才能创建；Brew checkout 在 attempt 私有目录完成并校验，再以禁止覆盖的原子重命名发布到 tap 路径，部分 checkout 随原 attempt 清理。attempt 与 tap 须位于同一文件系统，不支持原子发布时明确失败，不退回直接写 tap。恢复只清理本次资源。WinGet 只创建本次私有 manifest。原活动结束证明绑定原内核启动世代与 runner 原进程组/Windows Job；仍在运行、无查询权限或共享源内容变化时保留证据与排他。资源清理成功不改写未知安装事实，不重置既有包管理器配置。新部署使用 deployment version 3；不提供旧软件 Ring、旧部署格式或旧库兼容入口。当前 macOS 测试覆盖真实 TLS/SQLite/Git 与固定 fixture manager；不代表 Windows 原生 WinGet 或真实软件安装验收通过。
+原生源 Prepare/Cleanup 与安装共用原 attempt、manager 排他和预算。Brew 仅在 tap/URI/commit/文档完全匹配时借用已有源，借用资源不会删除；本次新建资源记录所有权后才能创建；Brew checkout 在 attempt 私有目录完成并校验，再以禁止覆盖的原子重命名发布到 tap 路径，部分 checkout 随原 attempt 清理。attempt 与 tap 须位于同一文件系统，不支持原子发布时明确失败，不退回直接写 tap。恢复只清理本次资源。WinGet 只创建本次私有 manifest。原活动结束证明绑定原内核启动世代与 runner 原进程组/Windows Job；仍在运行、无查询权限或共享源内容变化时保留证据与排他。资源清理成功不改写未知安装事实，不重置既有包管理器配置。新部署使用 deployment version 4；不提供旧软件 Ring、旧部署格式或旧库兼容入口。当前 macOS 测试覆盖真实 TLS/SQLite/Git 与固定 fixture manager；不代表 Windows 原生 WinGet 或真实软件安装验收通过。
 
 验收入口可加 `--dmg-app <已公证 app>`，将固定候选装入只读镜像，经真实 HTTPS、系统服务、SQLite 与认证 IPC 验证安装及精确卸载；测试不修改签名信任或 quarantine。
 
@@ -343,3 +343,23 @@ Windows CPU 当前仅接纳单 processor group，多组系统报告 unsupported�
 该操作使用现有管理员安装操作、安装锁与独占通信租约，停止服务后验证并持久化文件，然后恢复原服务注册；失败同样尝试恢复服务。它保留原设备、密钥、registration/generation、执行日志、内容缓存和未决操作。无私钥导入，无身份重新初始化。安装程序正常刷新也保留这些状态、软件源读取授权及已安装连接配置；旧安装包的较低 revision 不覆盖本机更高 revision。
 
 原生 Windows/Apple MDM 注册 URL 继续由各自协议材料持有，Agent 连接配置不承担原生客户端换址。软件源凭据仍按原 source/reference 与精确 HTTPS origin 独立授权；桌面网站登录入口由既有组织配置持有。
+
+### Windows RSS 登录组件（x64）
+
+本机设置页的“RSS 登录”只向当前已解锁的物理控制台本地账户提供首次自助关联，需有效员工登录与后台候选策略。设置验证器后提交六位动态码；创建账户时 Windows 密码只经本机受控输入交给 SYSTEM worker，不上传后台。页面的“准备完成”不代表已应用，应刷新并核对后台应用 revision。追加关联、创建其它账户、角色变更由后台 AccountWrite 授权；本地管理员身份不提供 RSS 授权。
+
+Credential Provider 是独立 `windows-credential-provider` cdylib，与 Agent 静态链接同一离线因子 owner；当前仅交付源码与手工组件入口，安装包装配另行验收。在 Windows x64 构建环境使用 `cargo build --locked --release -p windows-credential-provider -p agent-service`，固定 Agent 和 DLL 的提交、摘要及签名后，将 DLL 放入 SYSTEM/管理员拥有、普通用户不可写的规范绝对路径。部署格式为 version 4，旧格式在候选准入阶段拒绝，不迁移；已有当前格式部署在服务切换前核对离线库与安装身份。先由系统服务的新部署初始化 `execution.material_root/device-access`；注册不能创建或替换离线库。以 LocalSystem 主体运行：
+
+```powershell
+& $Agent --device-access-component register $OfflineRoot $ServiceId $ProviderDll
+& $Agent --device-access-component health
+# 独立恢复入口，不加载 DLL；保留其它系统登录 Provider：
+& $Agent --device-access-component disable
+& $Agent --device-access-component cleanup
+```
+
+`$OfflineRoot` 是上述 device-access 子目录，`$ServiceId` 是部署配置的 `service_id`，`$ProviderDll` 是固定候选 DLL 的绝对路径。register 先检查既有离线库及 DLL，再发布固定 CLSID；health 核对注册、路径、摘要与库，不能证明 LogonUI 能加载。disable 只停用 RSS Provider；cleanup 删除其 COM/配置注册，保留 OS 账户与离线材料。正常设备 unmanage 会在移除程序前撤销匹配安装身份的组件注册。不要删除系统 Provider，也不安装 Credential Provider Filter。
+
+离线验证先持久消费 TOTP，再向 Windows 序列化密码；Windows 密码错误仍消耗该时间步。TOTP 为六位、30 秒、前后一步，持久限速从第五次失败开始；重启不能清零失败预算，时钟回拨拒绝动态码。恢复密钥可重复使用、无期限，只替代 RSS 因子，仍需正确 Windows 密码。网络或 Agent 停机不影响已激活的离线验证。解绑只移除 RSS 集成，不删除账户、数据或角色；既有角色仅在明确授权时修改，并保护最后一个可用管理员。
+
+目标机可在已有固定候选验收中运行 `verify-execution-windows.ps1 -Phase DeviceAccessHealth -Candidate <候选> -Config <配置> -Output <新回执目录> -ProviderDll <固定DLL> -ProviderSha256 <预先固定SHA256>`，要求 LocalSystem/x64。此阶段只记录组件健康证据。必须另在原生 LogonUI 验证首次登录/解锁、离线、错误密码后的 OTP 重放、并发消费、重启限速、时钟回拨、恢复密钥轮换、账户角色保护、卸载及故障禁用。AD/Entra/MSA、RDP、UAC 与全入口 MFA 均不在当前承诺内。开发机 macOS 不执行 Windows 构建、测试或验收。

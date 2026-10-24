@@ -221,7 +221,7 @@ async fn settlement(case: u8) {
             .escrow_credentials(task.task_id, escrow.clone())
             .await
             .unwrap();
-        crate::credential_worker::acknowledge(&credential_root, &task, &escrow).unwrap();
+        crate::credential_worker::acknowledge(&credential_root, &task, &escrow, &[]).unwrap();
     }
     let wrong = AttemptId::new("wrong-attempt").unwrap();
     assert!(app

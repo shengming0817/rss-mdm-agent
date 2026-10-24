@@ -122,7 +122,22 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
     ) -> Result<PreparedExecution, Error> {
         materials.validate_offer(offer)?;
         let (device, platform, run_as, timeout, output) = match offer.payload() {
-            wire::TaskPayload::DeviceAccess(_) => return Err(Error::Unsupported),
+            wire::TaskPayload::DeviceAccess(v) => {
+                if plan.spec().launch.interpreter.profile.id.as_str()
+                    != crate::access_worker::PROFILE
+                    || plan.spec().request.operation.resource.revision.as_str()
+                        != super::plan::hex(&v.definition_digest)
+                {
+                    return Err(Error::Untrusted);
+                }
+                (
+                    &v.device_id,
+                    v.platform,
+                    wire::ExecutionIdentity::System,
+                    3_600_000,
+                    crate::access_worker::OUTPUT_BYTES,
+                )
+            }
             wire::TaskPayload::Unmanage(_) => return Err(Error::Unsupported),
             wire::TaskPayload::Credential(v) => {
                 if plan.spec().launch.interpreter.profile.id.as_str()
@@ -271,6 +286,9 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         let plan = &plan;
         let caller = &caller;
         client.validate_start(&start)?;
+        if let wire::TaskPayload::DeviceAccess(task) = start.payload() {
+            super::access::verify_input(plan, task)?;
+        }
         if let wire::TaskPayload::Credential(task) = start.payload() {
             super::credential::verify_input(plan, task)?;
         }
@@ -512,6 +530,26 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                 .map_err(map_app_error)?;
             }
         }
+        if let (wire::TaskPayload::DeviceAccess(spec), Some(attempt)) =
+            (retained.payload(), binding.local_attempt())
+        {
+            let plan = app
+                .service_frozen_input(binding.request())
+                .map_err(map_app_error)?;
+            let root = crate::access_worker::plan_root(&plan)?;
+            if crate::access_worker::stored_result(&root, spec)?.is_some() {
+                app.service_assess(
+                    binding.request(),
+                    attempt,
+                    super::plan::reference(spec.task_id.to_string(), "access-result")?,
+                    &super::access::EffectEvidence {
+                        task: spec,
+                        attempt,
+                    },
+                )
+                .map_err(map_app_error)?;
+            }
+        }
         if let Some(result) = client.pending_result(&binding)? {
             if let Some(ack) = client.frozen_result_ack(&result)? {
                 return Ok(Some(PendingDelivery {
@@ -620,6 +658,28 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         payload: &wire::TaskPayload,
         evidence: &execution_app::DeliveryEvidence,
     ) -> Result<Option<wire::TaskEvent>, Error> {
+        if let wire::TaskPayload::DeviceAccess(spec) = payload {
+            let stopped = evidence.terminal.is_some()
+                || evidence.process.as_ref().is_some_and(|p| p.finished);
+            if !stopped {
+                return Ok(None);
+            }
+            let quiescent = evidence.terminal.is_some()
+                || evidence.process.as_ref().is_some_and(|p| p.quiescent);
+            let result = if quiescent {
+                crate::access_worker::stored_result(
+                    &crate::access_worker::plan_root(&evidence.input)?,
+                    spec,
+                )?
+            } else {
+                None
+            };
+            return Ok(Some(wire::TaskEvent::DeviceAccessResult(
+                result.unwrap_or_else(|| {
+                    crate::access_worker::report(spec, wire::AccessEffect::Unknown)
+                }),
+            )));
+        }
         if let Some(terminal) = evidence.terminal {
             if let wire::TaskPayload::Credential(spec) = payload {
                 return Ok(Some(wire::TaskEvent::CredentialResult(
@@ -830,6 +890,12 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                 .frozen_input(caller, binding.request())
                 .map_err(map_app_error)?;
             crate::credential_worker::retire(&crate::credential_worker::plan_root(&input)?, spec)?;
+        }
+        if let wire::TaskPayload::DeviceAccess(spec) = client.retained_offer(task)?.payload() {
+            let input = app
+                .frozen_input(caller, binding.request())
+                .map_err(map_app_error)?;
+            crate::access_worker::retire(&input, spec)?;
         }
         client.release_result(ack)
     }

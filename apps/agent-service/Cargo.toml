@@ -11,6 +11,8 @@ name = "rss-execution-service"
 path = "src/main.rs"
 
 [dependencies]
+data-encoding = "=2.11.1"
+device-access = { path = "../../crates/device-access" }
 time = "=0.3.55"
 ring = "=0.17.14"
 rsa = { version = "=0.9.10", features = ["sha2"] }

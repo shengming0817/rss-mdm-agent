@@ -23,7 +23,7 @@ pub(super) fn name(task: &w::CredentialTaskSpec, suffix: &str) -> String {
         task.registration_id, task.generation, task.task_id, task.attempt_id, suffix
     )
 }
-pub(super) fn lock(root: &Path) -> Result<std::fs::File, Error> {
+pub(crate) fn lock(root: &Path) -> Result<std::fs::File, Error> {
     let dir = platform_private_storage::PrivateDirectory::open(root)?;
     match dir.create_file(Path::new("owner.lock")) {
         Ok(file) => {
@@ -38,7 +38,7 @@ pub(super) fn lock(root: &Path) -> Result<std::fs::File, Error> {
     file.try_lock_exclusive().map_err(|_| Error::Unavailable)?;
     Ok(file)
 }
-pub(super) fn read_optional<T: DeserializeOwned>(
+pub(crate) fn read_optional<T: DeserializeOwned>(
     root: &Path,
     name: &str,
 ) -> Result<Option<T>, Error> {
@@ -51,7 +51,7 @@ pub(super) fn read_optional<T: DeserializeOwned>(
         Err(e) => Err(e.into()),
     }
 }
-pub(super) fn write(root: &Path, name: &str, value: &impl Serialize) -> Result<(), Error> {
+pub(crate) fn write(root: &Path, name: &str, value: &impl Serialize) -> Result<(), Error> {
     let dir = platform_private_storage::PrivateDirectory::open(root)?;
     let bytes = serde_json::to_vec(value).map_err(|_| Error::Storage)?;
     if bytes.len() > 4 * 1024 * 1024 {
@@ -88,7 +88,7 @@ pub(super) fn seal(
     native.protect(&bytes)
 }
 
-pub(super) fn remove(root: &Path, name: &str) -> Result<(), Error> {
+pub(crate) fn remove(root: &Path, name: &str) -> Result<(), Error> {
     let dir = platform_private_storage::PrivateDirectory::open(root)?;
     match dir.open_file(Path::new(name)) {
         Ok(file) => {

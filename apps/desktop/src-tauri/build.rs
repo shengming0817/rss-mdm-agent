@@ -96,6 +96,7 @@ fn main() {
             "self_service_policy_status",
             "query_directory",
             "data_read",
+            "device_access",
             "query_submit",
             "query_status",
             "query_cancel",

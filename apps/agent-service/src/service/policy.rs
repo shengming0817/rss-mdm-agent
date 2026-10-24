@@ -613,6 +613,16 @@ impl<S: IdentityProvider> DeviceService<S> {
         let Some(request) = command.request.as_operation() else {
             return Err(Error::Protocol);
         };
+        if let Request::DeviceAccess {
+            context,
+            origin,
+            input,
+        } = request
+        {
+            return self
+                .access_command(command, context, origin, input, commands)
+                .await;
+        }
         if let Request::LocalSoftware {
             context,
             origin,

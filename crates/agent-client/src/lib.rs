@@ -9,6 +9,7 @@ pub use collected::CollectedStore;
 use rss_mdm_agent_wire::runtime::Secret;
 mod credential_escrow;
 mod delivery;
+mod device_access;
 mod unmanage;
 pub use unmanage::{inspect_unmanage, UnmanagePermit, UnmanageTransport};
 mod redaction;

@@ -1,12 +1,14 @@
 # Target Windows 11 amd64/arm64. Reuse the installation owner; never run from a macOS developer host.
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('InstallSystem','VerifyUser','RefreshSystem','RemoveSystem')][string]$Phase,
+    [Parameter(Mandatory)][ValidateSet('InstallSystem','VerifyUser','RefreshSystem','RemoveSystem','DeviceAccessHealth')][string]$Phase,
     [Parameter(Mandatory)][string]$Candidate,
     [Parameter(Mandatory)][string]$Config,
     [Parameter(Mandatory)][string]$Output,
     [string]$CurrentBinary,
-    [string]$CurrentConfig
+    [string]$CurrentConfig,
+    [string]$ProviderDll,
+    [string]$ProviderSha256
 )
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
@@ -35,6 +37,19 @@ $Receipt=[ordered]@{status='running';phase=$Phase;utc=[DateTime]::UtcNow.ToStrin
 $HelperCreated=$false
 try {
     switch ($Phase) {
+        DeviceAccessHealth {
+            if ($Identity.User.Value -ne 'S-1-5-18' -or [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'X64') { throw 'DeviceAccessHealth requires LocalSystem on x64' }
+            if (!$ProviderDll -or $ProviderSha256 -notmatch '^[a-fA-F0-9]{64}$') { throw 'Fixed provider path and SHA256 required' }
+            $ProviderDll=[IO.Path]::GetFullPath($ProviderDll)
+            $Actual=(Get-FileHash -LiteralPath $ProviderDll -Algorithm SHA256).Hash
+            if ($Actual -ine $ProviderSha256) { throw 'Provider candidate hash mismatch' }
+            $Class='Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Classes\CLSID\{C61C6B95-9162-42A2-B80B-61EBCA730510}\InprocServer32'
+            if ((Get-Item -LiteralPath $Class).GetValue('') -ine $ProviderDll) { throw 'Registered provider differs from fixed candidate' }
+            & $Binary --device-access-component health
+            if ($LASTEXITCODE -ne 0) { throw 'Device Access component health failed' }
+            $Receipt.scenarios.deviceAccess=@{dll=$ProviderDll;sha256=$Actual;signature=(Get-AuthenticodeSignature -LiteralPath $ProviderDll).Status.ToString();health='passed; DLL not loaded'}
+            $Receipt.unexecuted+=@('LogonUI login/unlock and offline','wrong password consumes OTP','concurrent OTP replay','reboot throttling and clock rollback','recovery rotation','last administrator protection','provider disable and uninstall')
+        }
         InstallSystem {
             & $Owner -Action Install -Scope System -Binary $Binary -Config $Config
             $Receipt.scenarios.install=& $Owner -Action Status -Scope System -Binary $Binary -Config $Config

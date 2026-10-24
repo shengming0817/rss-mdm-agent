@@ -311,3 +311,54 @@ pub(crate) fn boot_generation() -> Result<Id, Error> {
     ))
     .map_err(|_| Error::Unavailable)
 }
+
+/// Require the same unlocked physical-console logon, including its token authentication ID.
+/// WTSActive alone also includes locked sessions and is insufficient for enrollment.
+pub fn verify_unlocked_console(subject: &str, session: u32, binding: &Id) -> Result<(), Error> {
+    if session == 0 || unsafe { WTSGetActiveConsoleSessionId() } != session {
+        return Err(Error::Unbound);
+    }
+    let mut token = null_mut();
+    if unsafe { WTSQueryUserToken(session, &mut token) } == 0 {
+        return Err(Error::Unbound);
+    }
+    // SAFETY: WTSQueryUserToken returned this uniquely owned token.
+    let token = unsafe { own(token) }?;
+    if token_subject(raw(&token))? != (subject.to_owned(), session)
+        || token_session_binding(raw(&token))? != *binding
+    {
+        return Err(Error::Unbound);
+    }
+    let mut data = null_mut();
+    let mut bytes = 0;
+    if unsafe {
+        WTSQuerySessionInformationW(
+            WTS_CURRENT_SERVER_HANDLE,
+            session,
+            WTSSessionInfoEx,
+            &mut data,
+            &mut bytes,
+        )
+    } == 0
+    {
+        return Err(Error::Unbound);
+    }
+    let valid = if bytes as usize >= size_of::<WTSINFOEXW>() && !data.is_null() {
+        let info = unsafe { &*data.cast::<WTSINFOEXW>() };
+        let level = unsafe { info.Data.WTSInfoExLevel1 };
+        info.Level == 1
+            && level.SessionId == session
+            && level.SessionState == WTSActive
+            && level.SessionFlags == WTS_SESSIONSTATE_UNLOCK as i32
+    } else {
+        false
+    };
+    unsafe {
+        WTSFreeMemory(data.cast());
+    }
+    if valid {
+        Ok(())
+    } else {
+        Err(Error::Unbound)
+    }
+}

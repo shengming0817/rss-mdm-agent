@@ -9,21 +9,25 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         &mut self,
         task: Uuid,
         escrow: wire::CredentialEscrow,
-    ) -> Result<(), Error> {
+    ) -> Result<Vec<wire::CredentialReceipt>, Error> {
         self.active()?;
         escrow.validate()?;
         let offer = self.retained_offer(task)?;
-        let wire::TaskPayload::Credential(spec) = offer.payload() else {
-            return Err(Error::Protocol);
+        let (definition_digest, attempt_id) = match offer.payload() {
+            wire::TaskPayload::Credential(spec) => (spec.definition_digest, spec.attempt_id),
+            wire::TaskPayload::DeviceAccess(spec) => (spec.definition_digest, spec.attempt_id),
+            _ => return Err(Error::Protocol),
         };
-        if escrow.definition_digest != spec.definition_digest || self.association(task)?.is_none() {
+        if escrow.definition_digest != definition_digest || self.association(task)?.is_none() {
             return Err(Error::Untrusted);
         }
-        let key = format!("credential-escrow/{task}/{}", spec.attempt_id);
+        let key = format!("credential-escrow/{task}/{}", attempt_id);
+        let subjects: Vec<_> = escrow.materials.iter().map(|m| m.subject.clone()).collect();
+        let receipt_key = format!("{key}/receipt");
         let request = self.event_request(
             &key,
             task,
-            spec.attempt_id,
+            attempt_id,
             wire::TaskEvent::CredentialEscrow(escrow),
             None,
         )?;
@@ -34,14 +38,25 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         )?;
         if !accepted {
             let ack = self.send_event(task, &request).await?;
-            if ack.permit().is_some() {
+            if ack.permit().is_some()
+                || ack.credentials().len() != subjects.len()
+                || subjects
+                    .iter()
+                    .any(|s| !ack.credentials().iter().any(|r| &r.subject == s))
+            {
                 return Err(Error::Protocol);
             }
-            self.store.conn.execute(
+            let tx = self.store.conn.unchecked_transaction()?;
+            tx.execute(
+                "INSERT INTO state VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET body=excluded.body",
+                params![receipt_key, crate::store::encode(&ack.credentials())?],
+            )?;
+            tx.execute(
                 "UPDATE requests SET accepted=1 WHERE key=?1 AND task=?2",
                 params![key, task.to_string()],
             )?;
+            tx.commit()?;
         }
-        Ok(())
+        self.store.get(&receipt_key)?.ok_or(Error::Storage)
     }
 }

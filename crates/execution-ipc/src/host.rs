@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 /// Current desktop/system IPC. No negotiation or legacy parser exists.
 pub const IPC_VERSION: u8 = 3;
 /// Current protected installation document format.
-pub const DEPLOYMENT_VERSION: u32 = 3;
+pub const DEPLOYMENT_VERSION: u32 = 4;
 
 /// Read-only native state, independent from Agent identity and policy authorization.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
@@ -688,6 +688,15 @@ impl NativeContextSession {
     deny_unknown_fields
 )]
 pub enum Request {
+    /// Authenticated desktop-only Device Access setup; no AI equivalent.
+    DeviceAccess {
+        /// Exact current employee context.
+        context: execution_contract::NativeContextRef,
+        /// Native-attested origin.
+        origin: ClientOrigin,
+        /// Finite local setup operation.
+        input: crate::device_access::Operation,
+    },
     /// Typed local software intent, without a remote task or caller-selected command.
     LocalSoftware {
         /// Current authenticated native context.
@@ -864,6 +873,11 @@ struct Envelope {
     rename_all_fields = "camelCase"
 )]
 pub enum Reply {
+    /// Device Access response, including ephemeral local setup material when requested.
+    DeviceAccess {
+        /// Typed desktop-only result.
+        value: crate::device_access::Response,
+    },
     /// Immutable local preview retained in the existing execution journal.
     SoftwarePrepared {
         /// Safe summary; executable input remains private.

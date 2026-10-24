@@ -292,6 +292,8 @@ fn execute(task: uuid::Uuid, package_entry: bool) -> Result<(), Error> {
                 Phase::Stopped => {
                     outcome::phase("retirement-payload")?;
                     platform::remove(true, &deployment.service.path, &config)?;
+                    #[cfg(windows)]
+                    crate::access_component::remove_for(&deployment)?;
                     if !package_managed {
                         platform::uninstall_payload(&candidate)?;
                     }

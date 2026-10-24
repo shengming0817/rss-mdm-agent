@@ -337,6 +337,9 @@ export interface BackendPresentation {
    */
   summary:
     | {
+        kind: "deviceAccess";
+      }
+    | {
         kind: "credential";
       }
     | {

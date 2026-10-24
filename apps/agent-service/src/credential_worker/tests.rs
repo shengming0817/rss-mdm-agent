@@ -206,7 +206,7 @@ fn ack(input: &Input) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         for _ in 0..500 {
             if let Some(value) = pending(&root, &task).unwrap() {
-                acknowledge(&root, &task, &value).unwrap();
+                acknowledge(&root, &task, &value, &[]).unwrap();
                 return;
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -284,7 +284,7 @@ fn bitlocker_cleanup_waits_for_exact_escrow_ack() {
     state::write(&root_path, &state::name(&task, "ack"), &"wrong digest").unwrap();
     std::thread::sleep(std::time::Duration::from_millis(250));
     assert_eq!(state.lock().unwrap().removals, 0);
-    acknowledge(&root_path, &task, &escrow).unwrap();
+    acknowledge(&root_path, &task, &escrow, &[]).unwrap();
     assert!(worker.join().unwrap().unwrap().failure.is_none());
     assert_eq!(state.lock().unwrap().removals, 1);
 }
@@ -569,4 +569,257 @@ fn denied_logon_still_escrows_changed_password_and_recovery_never_resets_again()
     );
     assert_eq!(recovered.items[0].outcome, w::CredentialOutcome::Verified);
     assert_eq!(n.state.lock().unwrap().changes, 1);
+}
+
+impl device_access::Protector for Fake {
+    fn seal(&self, bytes: &[u8]) -> Result<Vec<u8>, device_access::Error> {
+        self.protect(bytes)
+            .map_err(|_| device_access::Error::Storage)
+    }
+    fn open(&self, bytes: &[u8]) -> Result<Zeroizing<Vec<u8>>, device_access::Error> {
+        self.unprotect(bytes)
+            .map_err(|_| device_access::Error::Storage)
+    }
+}
+fn factor_code(secret: &[u8], utc: i64) -> String {
+    use ring::hmac;
+    let tag = hmac::sign(
+        &hmac::Key::new(hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY, secret),
+        &((utc / 30) as u64).to_be_bytes(),
+    );
+    let b = tag.as_ref();
+    let offset = (b[19] & 15) as usize;
+    format!(
+        "{:06}",
+        (u32::from_be_bytes(b[offset..offset + 4].try_into().unwrap()) & 0x7fff_ffff) % 1_000_000
+    )
+}
+fn rss_ack(input: &Input, receipt: w::CredentialReceipt) -> std::thread::JoinHandle<()> {
+    let root = input.root.clone();
+    let task = input.task.clone();
+    std::thread::spawn(move || {
+        for _ in 0..500 {
+            if let Some(value) = pending(&root, &task).unwrap() {
+                assert_eq!(value.materials[0].subject, receipt.subject);
+                acknowledge(&root, &task, &value, &[receipt]).unwrap();
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("RSS escrow missing")
+    })
+}
+#[test]
+fn rss_rotation_changes_only_recovery_after_ack_and_verification_reuses_material() {
+    use device_access::{Authority, Candidate, Clock, Decision, Factor, Store};
+    let root = Root::new();
+    let offline = root.0.join("offline");
+    platform_private_storage::directory(&offline).unwrap();
+    let installation = uuid::Uuid::new_v4();
+    let mut store = Store::create(&offline, installation).unwrap();
+    let native = Fake::new();
+    let binding = uuid::Uuid::new_v4();
+    let sid = "S-1-5-21-1-2-3-1001".to_owned();
+    let mut task = input(
+        &root,
+        Op::RotateRssLogin {
+            binding,
+            binding_generation: 1,
+            sid: sid.clone(),
+        },
+    );
+    let subject = Subject::RssLogin {
+        binding,
+        binding_generation: 1,
+        sid: sid.clone(),
+    };
+    let authority = Authority {
+        tenant: task.task.tenant_id,
+        device: task.task.device_id.clone(),
+        registration: task.task.registration_id,
+        registration_generation: 1,
+        binding,
+        binding_generation: 1,
+        factor_generation: 1,
+        sid: sid.clone(),
+    };
+    let clock = Clock {
+        utc: (crate::wall().unwrap() / 1000) as i64,
+        monotonic: 1000,
+        boot: uuid::Uuid::new_v4(),
+    };
+    let mut candidate = Candidate::generate().unwrap();
+    let totp = candidate.totp_secret().to_vec();
+    let old = candidate.recovery_secret().to_owned();
+    assert!(candidate
+        .confirm(&factor_code(&totp, clock.utc), clock)
+        .unwrap());
+    let setup = uuid::Uuid::new_v4();
+    store.stage(setup, &candidate, &native).unwrap();
+    let mut receipt = w::CredentialReceipt {
+        subject: subject.clone(),
+        material: uuid::Uuid::new_v4(),
+        version: 1,
+    };
+    store
+        .activate(
+            authority,
+            1,
+            true,
+            setup,
+            w::AccessWindowsFacts {
+                factor_generation: 1,
+                recovery: receipt.clone(),
+            },
+            clock,
+            &native,
+        )
+        .unwrap();
+    task.task.expected = vec![w::CredentialVersion {
+        subject: subject.clone(),
+        revision: 1,
+    }];
+    task.task.definition_digest = w::CredentialTaskSpec::digest(
+        &task.task.operation,
+        &task.task.recipient,
+        &task.task.expected,
+        &None,
+    )
+    .unwrap();
+    receipt.version = 2;
+    let ack = rss_ack(&task, receipt.clone());
+    let result = super::rss::execute(&task, &native, &mut store).unwrap();
+    ack.join().unwrap();
+    assert!(result.complete);
+    assert_eq!(result.items[0].outcome, w::CredentialOutcome::Verified);
+    let (new, actual) = store
+        .recovery_material(&task.task, &subject, &native)
+        .unwrap();
+    assert_eq!(actual, receipt);
+    assert_ne!(&*new, &old);
+    assert_eq!(
+        store
+            .verify(&sid, Factor::Recovery(&old), clock, &native)
+            .unwrap(),
+        Decision::Denied
+    );
+    for _ in 0..2 {
+        assert_eq!(
+            store
+                .verify(&sid, Factor::Recovery(&new), clock, &native)
+                .unwrap(),
+            Decision::Accepted
+        );
+    }
+    assert_eq!(
+        store
+            .verify(
+                &sid,
+                Factor::Totp(&factor_code(&totp, clock.utc)),
+                clock,
+                &native
+            )
+            .unwrap(),
+        Decision::Denied
+    );
+    let next = Clock {
+        utc: clock.utc + 30,
+        monotonic: 1030,
+        ..clock
+    };
+    assert_eq!(
+        store
+            .verify(
+                &sid,
+                Factor::Totp(&factor_code(&totp, next.utc)),
+                next,
+                &native
+            )
+            .unwrap(),
+        Decision::Accepted
+    );
+    let mut verify = input(
+        &root,
+        Op::VerifyRssLogin {
+            binding,
+            binding_generation: 1,
+            sid,
+        },
+    );
+    verify.task.expected = vec![w::CredentialVersion {
+        subject,
+        revision: 2,
+    }];
+    verify.task.definition_digest = w::CredentialTaskSpec::digest(
+        &verify.task.operation,
+        &verify.task.recipient,
+        &verify.task.expected,
+        &None,
+    )
+    .unwrap();
+    let ack = rss_ack(&verify, receipt.clone());
+    assert!(
+        super::rss::execute(&verify, &native, &mut store)
+            .unwrap()
+            .complete
+    );
+    ack.join().unwrap();
+
+    // Crash after the SQLite commit, before a verified result: terminal Unknown is ACKed.
+    let mut original: state::Record =
+        state::read_optional(&root.0, &state::name(&task.task, "state"))
+            .unwrap()
+            .unwrap();
+    original.phase = state::Phase::Issued;
+    state::write(&root.0, &state::name(&task.task, "state"), &original).unwrap();
+    let unknown = failure_with_materials(&root.0, &task.task, Failure::RecoveryState).unwrap();
+    state::write(&root.0, &state::name(&task.task, "result"), &unknown).unwrap();
+    retire(&root.0, &task.task).unwrap();
+    assert!(state::read_optional::<Vec<w::CredentialReceipt>>(
+        &root.0,
+        &state::name(&task.task, "receipts")
+    )
+    .unwrap()
+    .is_some());
+    verify.task.task_id = uuid::Uuid::new_v4();
+    verify.task.attempt_id = uuid::Uuid::new_v4();
+    verify.task.recovery = Some(w::CredentialRecovery {
+        task_id: task.task.task_id,
+        attempt_id: task.task.attempt_id,
+    });
+    verify.task.definition_digest = w::CredentialTaskSpec::digest(
+        &verify.task.operation,
+        &verify.task.recipient,
+        &verify.task.expected,
+        &verify.task.recovery,
+    )
+    .unwrap();
+    let ack = rss_ack(&verify, receipt.clone());
+    let recovered = super::rss::execute(&verify, &native, &mut store).unwrap();
+    ack.join().unwrap();
+    assert!(recovered.complete);
+    assert_eq!(
+        recovered.recovery,
+        Some(w::CredentialRecoveryOutcome::Applied)
+    );
+    state::write(&root.0, &state::name(&verify.task, "result"), &recovered).unwrap();
+    retire(&root.0, &verify.task).unwrap();
+    assert!(state::read_optional::<Vec<w::CredentialReceipt>>(
+        &root.0,
+        &state::name(&task.task, "receipts")
+    )
+    .unwrap()
+    .is_none());
+    assert_eq!(
+        store
+            .recovery_material(&task.task, &receipt.subject, &native)
+            .unwrap()
+            .1,
+        receipt
+    );
+    assert_eq!(
+        native.state.lock().unwrap().changes,
+        0,
+        "no Windows password mutation"
+    );
 }

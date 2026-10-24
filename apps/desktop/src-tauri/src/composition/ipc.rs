@@ -55,6 +55,7 @@ macro_rules! commands {
     }
 }
 commands! {
+    device_access(execution_ipc::device_access::Operation) -> execution_ipc::device_access::Response = device_access, employee = true,
     software_prepare(execution_contract::LocalSoftwareChoice) -> execution_contract::LocalSoftwarePrepared = software_prepare, employee = false,
     software_submit(execution_contract::LocalSoftwareSubmission) -> execution_app::LocalSoftwareStatus = software_submit, employee = false,
     software_status(execution_contract::QueryRequest) -> execution_app::LocalSoftwareStatus = software_status, employee = false,
@@ -420,6 +421,7 @@ pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder
         query_status,
         query_cancel,
         self_service_observe_software,
+        device_access,
         software_history,
         software_read,
         software_prepare,
@@ -551,6 +553,7 @@ mod tests {
             "ai_restart_host",
             "ai_export_diagnostics",
             "self_service_observe_software",
+            "device_access",
             "software_history",
             "software_read",
             "software_prepare",

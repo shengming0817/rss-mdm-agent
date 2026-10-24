@@ -1,0 +1,92 @@
+//! Desktop-only setup protocol. System passwords are transient and redact on Debug.
+use rss_mdm_agent_wire::runtime as w;
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+use zeroize::Zeroizing;
+/// Finite local operations; there is no role or account mutation authority in this protocol.
+#[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum Operation {
+    /// Discover eligible first-enrollment policies and own binding states.
+    Directory {
+        /// Policy cursor.
+        after: Option<Uuid>,
+    },
+    /// Begin an authenticated first association.
+    Begin(w::AccessBegin),
+    /// Confirm the same original native login and challenge retained by the service.
+    Confirm {
+        /// Original ceremony operation.
+        operation: Uuid,
+    },
+    /// Discover pending signed tasks for this RSS person.
+    Tasks {},
+    /// Generate or redisplay this exact task's local TOTP candidate.
+    Prepare {
+        /// Signed task identity.
+        task: Uuid,
+    },
+    /// Confirm possession before Start; optional password is only for a signed Create task.
+    ConfirmFactor {
+        /// Signed task identity.
+        task: Uuid,
+        /// Six-digit TOTP.
+        #[schemars(with = "String")]
+        code: Zeroizing<String>,
+        /// New Windows account password; never persisted or sent remotely.
+        #[schemars(with = "Option<String>")]
+        password: Option<Zeroizing<String>>,
+    },
+}
+/// Safe local task selection; all authority remains in the signed task.
+#[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SetupTask {
+    /// Exact backend task.
+    pub task: Uuid,
+    /// Business association.
+    pub binding: Uuid,
+    /// Name only when creating a new account.
+    pub create_name: Option<String>,
+}
+/// Response for the authenticated desktop session only.
+#[derive(Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+pub enum Response {
+    /// Backend-owned safe discovery result.
+    Directory(w::AccessDirectory),
+    /// Challenge retained in native memory; nonce is not sent to the renderer.
+    Challenge {
+        /// Original operation.
+        operation: Uuid,
+        /// Expiry in UTC seconds.
+        expires_at: i64,
+    },
+    /// Confirmed desired binding; not evidence of Applied.
+    Binding(w::AccessBindingStatus),
+    /// Pending signed initialization tasks.
+    Tasks {
+        /// Tasks for the current person.
+        tasks: Vec<SetupTask>,
+    },
+    /// Local TOTP secret, shown only while the setup screen remains active.
+    Setup {
+        /// Exact task.
+        task: Uuid,
+        /// RFC 4648 base32 secret for an authenticator.
+        #[schemars(with = "String")]
+        secret: Zeroizing<String>,
+    },
+    /// Setup saved; the existing task runner must still apply and report its effect.
+    Prepared {},
+}

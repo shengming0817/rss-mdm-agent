@@ -20,9 +20,30 @@ pub(super) fn encrypt(
     task: &w::CredentialTaskSpec,
     material: &Material,
 ) -> Result<w::CredentialEnvelope, Error> {
+    let expected_revision = task
+        .expected
+        .iter()
+        .find(|v| v.subject == material.subject)
+        .map_or(0, |v| v.revision);
+    encrypt_material(
+        &task.recipient,
+        &material.subject,
+        expected_revision,
+        task.material_aad(&material.subject, expected_revision)?,
+        &material.secret,
+    )
+}
+#[cfg(any(windows, test))]
+pub(crate) fn encrypt_material(
+    recipient: &w::CredentialRecipient,
+    subject: &w::CredentialSubject,
+    expected_revision: i64,
+    aad: Vec<u8>,
+    secret: &str,
+) -> Result<w::CredentialEnvelope, Error> {
     let public = RsaPublicKey::from_public_key_der(
         &STANDARD
-            .decode(&task.recipient.public_key)
+            .decode(&recipient.public_key)
             .map_err(|_| Error::Protocol)?,
     )
     .map_err(|_| Error::Protocol)?;
@@ -40,16 +61,10 @@ pub(super) fn encrypt(
     let wrapped = public
         .encrypt(&mut OsRng, Oaep::new::<Sha256>(), key.as_ref())
         .map_err(|_| Error::Protocol)?;
-    let expected_revision = task
-        .expected
-        .iter()
-        .find(|v| v.subject == material.subject)
-        .map_or(0, |v| v.revision);
-    let aad = task.material_aad(&material.subject, expected_revision)?;
     let aead = aead::LessSafeKey::new(
         aead::UnboundKey::new(&aead::AES_256_GCM, key.as_ref()).map_err(|_| Error::Protocol)?,
     );
-    let mut ciphertext = material.secret.as_bytes().to_vec();
+    let mut ciphertext = secret.as_bytes().to_vec();
     aead.seal_in_place_append_tag(
         aead::Nonce::assume_unique_for_key(nonce),
         aead::Aad::from(aad),
@@ -57,7 +72,7 @@ pub(super) fn encrypt(
     )
     .map_err(|_| Error::Protocol)?;
     Ok(w::CredentialEnvelope {
-        subject: material.subject.clone(),
+        subject: subject.clone(),
         expected_revision,
         wrapped_key: STANDARD.encode(wrapped),
         nonce,

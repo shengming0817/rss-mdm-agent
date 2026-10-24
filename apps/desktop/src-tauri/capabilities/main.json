@@ -5,6 +5,7 @@
   "permissions": [
     "allow-query-directory",
     "allow-data-read",
+    "allow-device-access",
     "allow-query-submit",
     "allow-query-status",
     "allow-query-cancel",
