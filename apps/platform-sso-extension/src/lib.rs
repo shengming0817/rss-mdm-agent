@@ -132,10 +132,10 @@ pub unsafe extern "C" fn rss_psso_register(
         let mut signature = [0u8;64];
         if sign.ok_or(())?(context,input.as_ptr(),input.len(),signature.as_mut_ptr()) != 0 { return Err(()); }
         let proof = platform_sso::signed(&input,&signature).map_err(|_| ())?;
-        let result = request(&handle.client, Operation::Register { input: w::Registration {
+        let result = request(&handle.client, Operation::Register { input: Box::new(w::Registration {
             operation_id: Uuid::new_v4(), challenge_id: handle.challenge.id,
             signing_key: handle.registration.signing_key.clone(), encryption_key: handle.registration.encryption_key.clone(), proof,
-        }});
+        })});
         if matches!(result, Ok(Response::Registered { ref receipt }) if handle.registration.accepts(receipt)) { return Ok(()); }
         // A transport error is an unknown outcome. Never replay a consumed registration challenge.
         match request(&handle.client, Operation::Status { scope: handle.registration.context.kind })? {

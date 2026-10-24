@@ -19,7 +19,7 @@ pub enum Operation {
     /// Submit proof for a challenge issued to this native peer.
     Register {
         #[doc = "Server-owned registration proof."]
-        input: w::Registration,
+        input: Box<w::Registration>,
     },
     /// Inspect server state for the exact current native account.
     Status {

@@ -30,24 +30,6 @@ pub fn applications_directory() -> Result<(), Rejected> {
     Ok(())
 }
 
-#[cfg(test)]
-mod permission_tests {
-    #[test]
-    fn mode_bits_do_not_hide_an_extended_acl() {
-        let path = std::env::temp_dir().join(format!("rss-acl-{}", std::process::id()));
-        std::fs::write(&path, b"fixture").unwrap();
-        assert!(super::acl_empty(&path).is_ok());
-        assert!(std::process::Command::new("/bin/chmod")
-            .args(["+a", "everyone allow write"])
-            .arg(&path)
-            .status()
-            .unwrap()
-            .success());
-        assert!(super::acl_empty(&path).is_err());
-        std::fs::remove_file(path).unwrap();
-    }
-}
-
 /// Verify a real Apple signing team and exact bundle identifier, in addition to protected image pins.
 pub fn verify_apple_identity(
     path: &std::path::Path,
@@ -78,5 +60,23 @@ pub fn verify_apple_identity(
         Ok(())
     } else {
         Err(Rejected)
+    }
+}
+
+#[cfg(test)]
+mod permission_tests {
+    #[test]
+    fn mode_bits_do_not_hide_an_extended_acl() {
+        let path = std::env::temp_dir().join(format!("rss-acl-{}", std::process::id()));
+        std::fs::write(&path, b"fixture").unwrap();
+        assert!(super::acl_empty(&path).is_ok());
+        assert!(std::process::Command::new("/bin/chmod")
+            .args(["+a", "everyone allow write"])
+            .arg(&path)
+            .status()
+            .unwrap()
+            .success());
+        assert!(super::acl_empty(&path).is_err());
+        std::fs::remove_file(path).unwrap();
     }
 }

@@ -56,17 +56,6 @@ pub(crate) fn boot_generation() -> Result<Id, Error> {
         .trim_end_matches('\0');
     Id::new(text).map_err(|_| Error::Unavailable)
 }
-#[cfg(test)]
-mod boot_tests {
-    #[test]
-    fn same_kernel_boot_is_stable_across_reads() {
-        assert_eq!(
-            super::boot_generation().unwrap(),
-            super::boot_generation().unwrap()
-        );
-    }
-}
-
 /// Recheck the kernel boot/session and current GUI owner before a local account ceremony.
 pub fn verify_console(subject: &str, session: u32, binding: &Id) -> Result<(), Error> {
     let uid: u32 = subject.parse().map_err(|_| Error::Unbound)?;
@@ -81,4 +70,15 @@ pub fn verify_console(subject: &str, session: u32, binding: &Id) -> Result<(), E
         return Err(Error::Unbound);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod boot_tests {
+    #[test]
+    fn same_kernel_boot_is_stable_across_reads() {
+        assert_eq!(
+            super::boot_generation().unwrap(),
+            super::boot_generation().unwrap()
+        );
+    }
 }

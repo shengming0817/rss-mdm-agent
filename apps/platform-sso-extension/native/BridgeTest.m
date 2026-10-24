@@ -13,8 +13,13 @@ static NSData *decode(NSString *value) {
     return [[NSData alloc]initWithBase64EncodedString:value options:0];
 }
 static NSString *json(id value) { return [[NSString alloc]initWithData:[NSJSONSerialization dataWithJSONObject:value options:0 error:NULL] encoding:NSUTF8StringEncoding]; }
+static int signingCalls=0;
+static int32_t testSign(void *context,const uint8_t *bytes,size_t length,uint8_t *output) {
+    signingCalls++;return signMessage(context,bytes,length,output);
+}
 int main(void) { @autoreleasepool {
-    SecKeyRef key=SecKeyCreateRandomKey((__bridge CFDictionaryRef)@{(__bridge id)kSecAttrKeyType:(__bridge id)kSecAttrKeyTypeECSECPrimeRandom,(__bridge id)kSecAttrKeySizeInBits:@256},NULL);
+    // Modern ephemeral Security key, matching the system key API; never persist a test key.
+    SecKeyRef key=SecKeyCreateRandomKey((__bridge CFDictionaryRef)@{(__bridge id)kSecUseDataProtectionKeychain:@YES,(__bridge id)kSecAttrIsPermanent:@NO,(__bridge id)kSecAttrKeyType:(__bridge id)kSecAttrKeyTypeECSECPrimeRandom,(__bridge id)kSecAttrKeySizeInBits:@256},NULL);
     assert(key);NSData *point=publicPoint(key);assert(point.length==65);
     NSString *x=[[encode([point subdataWithRange:NSMakeRange(1,32)]) componentsSeparatedByString:@"="]firstObject];
     NSString *y=[[encode([point subdataWithRange:NSMakeRange(33,32)]) componentsSeparatedByString:@"="]firstObject];
@@ -25,13 +30,13 @@ int main(void) { @autoreleasepool {
     NSString *metadata=json(@{@"context":@{@"tenant":id1,@"agentRegistration":id1,@"installation":id1,@"origin":@"https://mdm.example",@"kind":@"user",@"binding":id1,@"bindingGeneration":@1,@"generatedUid":id1},@"sourceId":id1,@"sourceVersion":@1,@"clientId":id1,@"signingKey":publicKey,@"encryptionKey":publicKey});
     NSString *body=json(@{@"challengeId":id1,@"nonce":@"test-nonce",@"proof":@""});
     NSString *token=[@"a" stringByPaddingToLength:43 withString:@"a" startingAtIndex:0];
-    char *result=rss_psso_browser(metadata.UTF8String,issuer.UTF8String,target.UTF8String,body.UTF8String,token.UTF8String,signMessage,(void *)key);
-    assert(result);NSDictionary *response=[NSJSONSerialization JSONObjectWithData:[[NSString stringWithUTF8String:result] dataUsingEncoding:NSUTF8StringEncoding] options:0 error:NULL];rss_psso_string_free(result);
+    char *result=rss_psso_browser(metadata.UTF8String,issuer.UTF8String,target.UTF8String,body.UTF8String,token.UTF8String,testSign,(void *)key);
+    assert(result && signingCalls==1);NSDictionary *response=[NSJSONSerialization JSONObjectWithData:[[NSString stringWithUTF8String:result] dataUsingEncoding:NSUTF8StringEncoding] options:0 error:NULL];rss_psso_string_free(result);
     NSArray *parts=[response[@"proof"] componentsSeparatedByString:@"."];assert(parts.count==3);
     NSData *input=[[NSString stringWithFormat:@"%@.%@",parts[0],parts[1]]dataUsingEncoding:NSUTF8StringEncoding];
     SecKeyRef publicKeyRef=SecKeyCopyPublicKey(key);
     assert(SecKeyVerifySignature(publicKeyRef,kSecKeyAlgorithmECDSASignatureMessageRFC4754SHA256,(__bridge CFDataRef)input,(__bridge CFDataRef)decode(parts[2]),NULL));
-    assert(!rss_psso_browser(metadata.UTF8String,issuer.UTF8String,"https://other.example/browser/complete",body.UTF8String,token.UTF8String,signMessage,(void *)key));
+    assert(!rss_psso_browser(metadata.UTF8String,issuer.UTF8String,"https://other.example/browser/complete",body.UTF8String,token.UTF8String,testSign,(void *)key));assert(signingCalls==1);
     int32_t status=0;assert(!rss_psso_begin(1,NULL,NULL,&status) && status==-1);
     NSString *suite=[@"com.rss.psso.test." stringByAppendingString:NSUUID.UUID.UUIDString];
     NSUserDefaults *defaults=[[NSUserDefaults alloc]initWithSuiteName:suite];
