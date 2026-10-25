@@ -131,6 +131,7 @@ pub struct TestHost {
     pub write: bool,
     pub audit: bool,
     pub expire_during_admission: bool,
+    pub admission_error: Option<JournalError>,
 
     pub answer_clock: Option<u64>,
 }
@@ -149,6 +150,7 @@ impl TestHost {
             write: true,
             audit: true,
             expire_during_admission: false,
+            admission_error: None,
 
             answer_clock: None,
         }
@@ -231,6 +233,9 @@ impl JournalHost for TestHost {
         self.calls.set(self.calls.get() + 1);
         if self.expire_during_admission {
             self.now.set(2000);
+        }
+        if let Some(error) = self.admission_error {
+            return Err(error);
         }
         Ok(AdmissionGate {
             execution_gate: ExecutionGate::Direct,

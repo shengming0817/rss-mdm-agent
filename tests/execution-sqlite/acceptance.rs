@@ -242,21 +242,87 @@ fn content_and_subject_conflicts_do_not_mutate_and_historical_event_ids_cannot_b
 }
 
 #[test]
-fn expired_decision_is_durable_rejection_without_attempt() {
+fn product_denial_and_expired_decision_are_durable_without_attempt() {
+    for admission_error in [None, Some(JournalError::Denied)] {
+        let db = Database::new();
+        let mut store = db.create();
+        let mut host = TestHost::new();
+        host.prepare(&mut store);
+        host.expire_during_admission = admission_error.is_none();
+        host.admission_error = admission_error;
+        let result = store
+            .apply_command(&operation("rejected"), &host.scope(), &host.begin(), &host)
+            .unwrap();
+        let receipt = result.receipt().clone();
+        assert_eq!(receipt.admission, Some(AdmissionStatus::Denied));
+        assert_eq!(receipt.outcome, Outcome::Rejected);
+        assert_eq!(db.count("attempts"), 0);
+        assert!(matches!(
+            result,
+            CommitOutcome::Applied {
+                first_dispatch: None,
+                ..
+            }
+        ));
+        drop(store);
+        let mut store = db.open();
+        let restored = store
+            .execution_by_request(
+                &host.plan.spec().request.request_id,
+                ExecutionAccess::Result,
+                &host,
+            )
+            .unwrap();
+        assert_eq!(restored.admission, Some(AdmissionStatus::Denied));
+        assert!(restored.execution.snapshot().attempt.is_none());
+        let audit = store
+            .audit(&host.scope(), &operation("rejected"), &host)
+            .unwrap();
+        assert_eq!(audit.admission, Some(false));
+        assert_eq!(audit.reason, AuditReason::CommitGateRejected);
+        host.admission_error = Some(JournalError::Storage);
+        let replay = store
+            .apply_command(&operation("rejected"), &host.scope(), &host.begin(), &host)
+            .unwrap();
+        assert!(matches!(replay, CommitOutcome::AlreadyCommitted(_)));
+        assert_eq!(replay.receipt(), &receipt);
+        assert_eq!(host.calls.get(), 1);
+    }
+}
+
+#[test]
+fn admission_infrastructure_failure_rolls_back_and_retries_same_operation() {
     let db = Database::new();
     let mut store = db.create();
     let mut host = TestHost::new();
     host.prepare(&mut store);
-    host.expire_during_admission = true;
-    let result = store
-        .apply_command(&operation("expired"), &host.scope(), &host.begin(), &host)
-        .unwrap();
-    assert_eq!(result.receipt().admission, Some(AdmissionStatus::Denied));
+    host.admission_error = Some(JournalError::Storage);
+    assert_eq!(
+        store
+            .apply_command(&operation("start"), &host.scope(), &host.begin(), &host,)
+            .unwrap_err(),
+        JournalError::Storage
+    );
     assert_eq!(db.count("attempts"), 0);
+    assert_eq!(
+        store
+            .execution_by_request(
+                &host.plan.spec().request.request_id,
+                ExecutionAccess::Result,
+                &host,
+            )
+            .unwrap()
+            .admission,
+        None
+    );
+    host.admission_error = None;
+    let result = store
+        .apply_command(&operation("start"), &host.scope(), &host.begin(), &host)
+        .unwrap();
     assert!(matches!(
         result,
         CommitOutcome::Applied {
-            first_dispatch: None,
+            first_dispatch: Some(_),
             ..
         }
     ));

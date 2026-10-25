@@ -361,10 +361,20 @@ impl Store {
             ..
         }) = &event
         {
-            let gate = host.admit(&plan, attempt_id, w.now)?;
+            let gate = host.admit(&plan, attempt_id, w.now);
             w.refresh_time(host)?;
             audit.occurred_at(w.now);
             audit.reason = AuditReason::AdmissionEvaluated;
+            let gate = match gate {
+                Ok(gate) => gate,
+                Err(JournalError::Denied) => {
+                    audit.admission = Some(false);
+                    audit.reason = AuditReason::CommitGateRejected;
+                    audit.event.as_mut().expect("plan audit").decision = Decision::Denied {};
+                    return w.finish(Outcome::Rejected, current.snapshot().revision, audit);
+                }
+                Err(error) => return Err(error.into()),
+            };
             let confirmation_ok = match gate.execution_gate {
                 ExecutionGate::Direct => true,
                 ExecutionGate::Blocked => false,
