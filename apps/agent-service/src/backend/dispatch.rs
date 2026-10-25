@@ -159,56 +159,10 @@ pub(crate) async fn submit<S: IdentityProvider>(
     } else {
         None
     };
-    dispatch_with_material(
-        service,
-        offer,
-        materials,
-        selection,
-        start,
-        delegate,
-        super::enrollment::NativeMaterials {
-            material,
-            profile_bytes: profile,
-        },
-        compiled,
-    )
-}
-
-// Single synchronous delivery boundary after HTTP Start and native helper verification.
-// Explicit gate fixtures may exercise this boundary without claiming native OS authentication.
-#[cfg(test)]
-pub(crate) fn dispatch_started<S: IdentityProvider>(
-    service: &mut DeviceService<S>,
-    offer: Offer,
-    materials: Materials,
-    selection: Option<Selection>,
-    start: agent_client::Start,
-    delegate: Option<Arc<execution_ipc::helper::Connection>>,
-) -> Result<ExecutionStatus, Error> {
-    dispatch_with_material(
-        service,
-        offer,
-        materials,
-        selection,
-        start,
-        delegate,
-        super::enrollment::NativeMaterials::default(),
-        None,
-    )
-}
-fn dispatch_with_material<S: IdentityProvider>(
-    service: &mut DeviceService<S>,
-    offer: Offer,
-    materials: Materials,
-    selection: Option<Selection>,
-    start: agent_client::Start,
-    delegate: Option<Arc<execution_ipc::helper::Connection>>,
-    native: super::enrollment::NativeMaterials,
-    compiled: Option<(
-        execution_contract::FrozenExecution,
-        execution_runner::Artifacts,
-    )>,
-) -> Result<ExecutionStatus, Error> {
+    let native = super::enrollment::NativeMaterials {
+        material,
+        profile_bytes: profile,
+    };
     if service
         .core
         .host

@@ -590,7 +590,7 @@ async fn every_tool_advertises_and_times_out_according_to_its_effects() {
         ),
         (
             "execution_query_directory",
-            json!({"after":null,"limit":16,"policyPage":null}),
+            json!({"after":null,"limit":16,"refreshPolicies":false,"policyCursor":null}),
             true,
             "unavailable",
         ),
@@ -843,7 +843,7 @@ async fn data_tools_preserve_original_request_and_typed_results_through_real_mcp
         .call(
             2,
             "execution_query_directory",
-            json!({"after":null,"limit":16,"policyPage":null}),
+            json!({"after":null,"limit":16,"refreshPolicies":false,"policyCursor":null}),
         )
         .await;
     assert_eq!(value(&directory)["kind"], "directory");

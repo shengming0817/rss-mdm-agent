@@ -274,15 +274,11 @@ describe("production operation adapter", () => {
     for (const userTarget of [true, false]) {
       const f = fixture();
       if (f.record.action.kind !== "policy") throw Error("fixture");
-      directoryItem(f.record.action).subject = userTarget
+      f.record.action.access = userTarget
         ? { kind: "device" }
         : {
             kind: "user",
-            user: {
-              tenantId: "enterprise-tenant",
-              instanceId: "enterprise-instance",
-              principalId: "enterprise-user",
-            },
+            sessionBinding: { id: "binding", generation: "generation" },
           };
       if (f.record.action.task.kind !== "script") throw Error("script fixture");
       f.record.action.task = {
@@ -309,7 +305,7 @@ describe("production operation adapter", () => {
         "enterprise-user",
       );
       expect(bridge.snapshot.approval.enterprise).toContain(
-        userTarget ? "设备准入主体" : "enterprise-user",
+        userTarget ? "设备准入" : "企业用户准入",
       );
       expect(bridge.snapshot.approval.elevation).toContain("系统执行身份");
     }
@@ -564,8 +560,11 @@ describe("production operation adapter", () => {
     expect(
       JSON.stringify(operationProjection(f.raw, scope, 3).snapshot),
     ).not.toContain("nested-do-not-display");
-    task.parameterSchema = { $ref: "#/unresolved" };
-    expect(operationProjection(f.raw, scope, 4).snapshot.allowed).not.toContain(
+    task.parameterSchema = {
+      $defs: { fields: { type: "object" } },
+      $ref: "#/$defs/fields",
+    };
+    expect(operationProjection(f.raw, scope, 4).snapshot.allowed).toContain(
       "submit",
     );
   });

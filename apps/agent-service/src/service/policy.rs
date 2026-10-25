@@ -141,8 +141,8 @@ fn uuid(value: &str) -> Result<Uuid, Error> {
     }
     Ok(parsed)
 }
-// Generic operation cards have no secret reference owner. Reject unresolved schema
-// references as well: they cannot prove that nested values are safe to persist/display.
+// Generic operation cards have no secret reference owner. Secret fields remain unsupported;
+// local schema references are handled by the existing validator.
 fn operation_parameters_supported(directory: &wire::SelfServiceDirectoryItem) -> Result<(), Error> {
     fn unsafe_schema(value: &serde_json::Value) -> bool {
         match value {
@@ -1165,7 +1165,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                     } = &mut next.action
                     {
                         choice.parameters = input.parameters.clone();
-                        *task = Box::new(current.task.clone());
+                        **task = current.task.clone();
                         *presentation = current.self_service.presentation.clone();
                     }
                     if let Some(risk) = &mut next.risk {
@@ -1264,7 +1264,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                     task, presentation, ..
                 } = &mut next.action
                 {
-                    *task = Box::new(current.task);
+                    **task = current.task;
                     *presentation = current.self_service.presentation;
                 }
                 if let Some(risk) = &mut next.risk {
@@ -1553,6 +1553,10 @@ impl<S: IdentityProvider> DeviceService<S> {
         {
             return Err(Error::Untrusted);
         }
+        let current = offered(offer)?;
+        if previous.action.offer() == Some(&current) {
+            return Selection::from_record(&previous);
+        }
         let mut next = previous.clone();
         next.revision += 1;
         if let PreparedAction::Policy {
@@ -1561,7 +1565,6 @@ impl<S: IdentityProvider> DeviceService<S> {
             ..
         } = &mut next.action
         {
-            let current = offered(offer)?;
             if bound.as_ref().is_some_and(|old| old != &current) {
                 return Err(Error::Conflict);
             }

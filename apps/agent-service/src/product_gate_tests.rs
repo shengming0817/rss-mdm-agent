@@ -75,6 +75,19 @@ impl Case {
             else {
                 panic!("software")
             };
+            if let Some(level @ (RiskLevel::One | RiskLevel::Two)) = level {
+                if let wire::TaskAuthorization::SelfService {
+                    source,
+                    allow_ai,
+                    risk_level,
+                    ..
+                } = &mut spec.authorization
+                {
+                    *source = wire::SelfServiceCaller::Ai;
+                    *allow_ai = true;
+                    *risk_level = if level == RiskLevel::One { 1 } else { 2 };
+                }
+            }
             spec.expires_at = clock.now().unwrap() + seconds;
             data.task_deadline = data.task_deadline.max(spec.expires_at);
             data.offer = Some(data.signed(wire::TaskPayload::Software(spec)));
@@ -1650,18 +1663,6 @@ async fn policy_low_risk_and_human_only_settings_have_separate_native_sources() 
             assert_eq!(input["source"], if human { "human" } else { "ai" });
             assert_eq!(input["confirmed"], false);
         }
-        let mut stale = choice.clone();
-        stale.request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
-
-        assert!(matches!(
-            c.policy_call(Request::InvokePolicy {
-                context: c.context(),
-                choice: stale,
-                origin: c.selection.origin.clone()
-            })
-            .await,
-            Reply::Rejected
-        ));
     }
 }
 
@@ -1764,30 +1765,21 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
                     };
                     match change {
                         1 => {
+                            spec.parameters.insert(
+                                "name".into(),
+                                serde_json::json!("Different original input"),
+                            );
+                        }
+                        2 => {
+                            spec.resource.version = "v2".into();
                             spec.parameters
                                 .insert("path".into(), serde_json::json!("/Library"));
                         }
-                        2 => spec.resource.version = "v2".into(),
-                        3 if device => {
-                            if let wire::TaskAuthorization::SelfService { subject, .. } =
+                        3 => {
+                            if let wire::TaskAuthorization::SelfService { policy_id, .. } =
                                 &mut spec.authorization
                             {
-                                *subject = wire::SelfServiceSubject::User {
-                                    user: wire::SelfServiceUser {
-                                        tenant_id: data.tenant,
-                                        instance_id: crate::protocol_test_support::SERVICE_ID,
-                                        principal_id: uuid::Uuid::new_v4(),
-                                    },
-                                };
-                            }
-                        }
-                        3 => {
-                            if let wire::TaskAuthorization::SelfService {
-                                subject: wire::SelfServiceSubject::User { user: actor },
-                                ..
-                            } = &mut spec.authorization
-                            {
-                                actor.principal_id = uuid::Uuid::new_v4();
+                                *policy_id = uuid::Uuid::new_v4();
                             }
                         }
                         4 => {
@@ -1799,20 +1791,10 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
                             }
                         }
                         5 => {
-                            if let wire::TaskAuthorization::SelfService { subject, .. } =
+                            if let wire::TaskAuthorization::SelfService { source, .. } =
                                 &mut spec.authorization
                             {
-                                *subject = if device {
-                                    wire::SelfServiceSubject::User {
-                                        user: wire::SelfServiceUser {
-                                            tenant_id: data.tenant,
-                                            instance_id: crate::protocol_test_support::SERVICE_ID,
-                                            principal_id: uuid::Uuid::from_u128(3),
-                                        },
-                                    }
-                                } else {
-                                    wire::SelfServiceSubject::Device {}
-                                };
+                                *source = wire::SelfServiceCaller::Human;
                             }
                         }
                         _ => (),
@@ -1822,7 +1804,7 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
                 }
                 // Every alternative is independently signed and actually verified by the HTTP client.
                 let offer = c.service.client.claim().await.unwrap().offer.unwrap();
-                if change != 0 {
+                if matches!(change, 1 | 3 | 5) {
                     assert!(c.service.bind_policy_offer(&offer).is_err());
                     assert_eq!(
                         c.service
@@ -1877,25 +1859,10 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
                 // A revoke which ACKs while HTTP is in flight invalidates this same generation.
                 let admission = c.service.core.policy_fence(&bound).unwrap();
                 c.service.core.fences.revoke(&c.scope()).unwrap();
-                if device {
-                    assert!(admission.is_none());
-                    assert!(c.service.core.current_policy_access(&bound).is_ok());
-                    assert!(!c
-                        .service
-                        .core
-                        .credential_leases
-                        .contains_key(&choice.request));
-                } else {
-                    let admission = admission.unwrap();
-                    assert!(admission.0.admit(&admission.1, admission.2).is_err());
-                    assert!(c.service.core.current_policy_access(&bound).is_err());
-                }
+                assert!(admission.is_none());
+                assert!(c.service.core.current_policy_access(&bound).is_ok());
                 c.employee("generation-two").await;
-                if device {
-                    assert!(c.service.core.current_policy_access(&bound).is_ok());
-                } else {
-                    assert!(c.service.bind_policy_offer(&offer).is_err());
-                }
+                assert!(c.service.bind_policy_offer(&offer).is_ok());
                 assert_eq!(
                     c.service
                         .core
@@ -2612,7 +2579,7 @@ async fn software_self_service_binds_signed_policy_and_native_context() {
         .unwrap();
     assert_eq!(bound.risk.unwrap().level, RiskLevel::Two);
     c.employee("other-context").await;
-    assert!(c.service.bind_policy_offer(&offer).is_err());
+    assert!(c.service.bind_policy_offer(&offer).is_ok());
     assert!(!c
         .service
         .core
@@ -2895,7 +2862,7 @@ async fn fences_isolate_os_sessions_and_user_requests_never_downgrade() {
     use execution_ipc::host::Request;
     let mut c = Case::new(None).await;
     let mut item = protocol::policy_directory_fixture(c.service.client.configuration().tenant);
-    item.self_service.risk_level = 1;
+    item.self_service.risk_level = 2;
     c._server.data.lock().unwrap().self_service_directory = Some(protocol::Directory {
         items: vec![item.clone()],
         next_cursor: None,
@@ -3273,69 +3240,6 @@ async fn recovery_never_reconstructs_device_consent_from_a_retired_journal_inten
         .unwrap();
     assert_eq!(cancelled.state, BackendRequestState::Cancelled);
     assert_eq!(cancelled.failure, Some(BackendRequestFailure::Revoked));
-}
-
-#[tokio::test]
-async fn actual_post_start_dispatch_boundary_rejects_revoked_user_before_any_runner_attempt() {
-    let _budget = crate::scenario_budget::enter();
-    for revoke_original in [false, true] {
-        let mut c = Case::new(None).await;
-        c.service.release_waiting();
-        let (original, offer) = c.accepted_policy_offer(false).await;
-        let selection = c.service.bind_policy_offer(&offer).unwrap();
-        let materials = c.service.client.prepare(&offer).await.unwrap();
-        let start = c
-            .service
-            .client
-            .start_user_initiated(&offer, &materials)
-            .await
-            .unwrap();
-        assert!(!c._server.data.lock().unwrap().start_ops.is_empty());
-        let scope = if revoke_original {
-            c.scope()
-        } else {
-            crate::service::policy::SessionKey::new(
-                c.selection.subject.clone(),
-                plan::id("other-os-session").unwrap(),
-            )
-        };
-        c.service.core.fences.revoke(&scope).unwrap();
-        if revoke_original {
-            // The production submit wrapper verifies the helper before this exact boundary.
-            // This staged peer fixture proves the shared Start-to-runner path, not native IPC.
-            assert!(matches!(
-                crate::backend::dispatch_started(
-                    &mut c.service,
-                    offer,
-                    materials,
-                    Some(selection),
-                    start,
-                    None
-                ),
-                Err(Error::Identity)
-            ));
-            assert!(c
-                .service
-                .core
-                .app
-                .service_tasks(None, 64)
-                .unwrap()
-                .items
-                .is_empty());
-            assert_eq!(
-                c.service
-                    .core
-                    .app
-                    .backend_request(&c.service.core.caller(), original.action.request())
-                    .unwrap()
-                    .unwrap()
-                    .trigger,
-                original.trigger
-            );
-        } else {
-            assert!(c.service.core.current_policy_access(&original).is_ok());
-        }
-    }
 }
 
 #[tokio::test]

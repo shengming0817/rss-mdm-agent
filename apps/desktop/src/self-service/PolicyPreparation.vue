@@ -84,7 +84,7 @@ function presentationText(value: unknown, fallback = "未提供"): string {
           }}
         </dd>
         <template v-if="record.action.access.kind === 'user'">
-          <dt>发起企业身份 / 会话</dt>
+          <dt>发起企业会话引用</dt>
           <dd>
             {{ record.action.access.sessionBinding.generation }}
           </dd>

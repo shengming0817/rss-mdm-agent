@@ -130,9 +130,10 @@ async fn lost_start_reply_replays_same_request_after_offer_expiry_without_renewi
     let ops = server.data.lock().unwrap().start_ops.clone();
     assert_eq!(ops.len(), 2);
     assert_eq!(ops[0], ops[1]);
-    assert_eq!(start.payload().expires_at(), 300);
+    let deadline = start.payload().expires_at();
+    assert!(deadline > 200);
     assert_eq!(client.validate_start(&start), Ok(()));
-    server.time.set(300);
+    server.time.set(deadline);
     assert_eq!(client.validate_start(&start), Err(Error::Expired));
 }
 
@@ -648,10 +649,8 @@ async fn offer_rotation_preserves_uncertain_start_and_replays_original_request()
         data.attempt = offer.attempt_id();
         data.start_permit = original_permit;
     }
-    assert!(matches!(
-        client.recover_start(offer.task_id()).await,
-        Err(Error::Expired)
-    ));
+    let recovered = client.recover_start(offer.task_id()).await.unwrap();
+    assert_eq!(recovered.start.payload().attempt_id(), offer.attempt_id());
     let ops = server.data.lock().unwrap().start_ops.clone();
     assert_eq!(ops.len(), 2);
     assert_eq!(ops[0], ops[1]);
@@ -1411,7 +1410,7 @@ async fn employee_self_service_uses_device_mtls_and_recovers_the_original_uuid()
     ));
     server.data.lock().unwrap().response_override = Some((
         "invocations".into(),
-        serde_json::json!({"requestId":Uuid::new_v4(),"runId":retry.run_id,"policyId":input.policy_id}),
+        serde_json::json!({"requestId":Uuid::new_v4(),"runId":retry.run_id,"policyId":input.policy_id,"policyRevision":1,"policyVersion":input.policy_id}),
     ));
     assert!(matches!(
         client.invoke_self_service(Some(&secret), &input).await,

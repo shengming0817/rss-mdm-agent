@@ -711,12 +711,14 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     /// Acknowledgement of an authenticated offer never grants execution.
     pub async fn received(&mut self, offer: &Offer) -> Result<(), Error> {
         let key = format!("received/{}/{}", offer.task_id(), offer.attempt_id());
-        let replay: bool = self.store.conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM requests WHERE key=?1)",
-            [&key],
-            |r| r.get(0),
-        )?;
-        if replay {
+        let accepted: Option<bool> = self
+            .store
+            .conn
+            .query_row("SELECT accepted FROM requests WHERE key=?1", [&key], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        if let Some(accepted) = accepted {
             self.active()?;
             if offer
                 .preparation_deadline()
@@ -724,6 +726,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 || self.stored_offer(offer.task_id())?.signed != offer.signed
             {
                 return Err(Error::Expired);
+            }
+            if accepted {
+                return Ok(());
             }
         } else {
             self.verify(&offer.signed, wire::TaskPermit::Offer)?;
@@ -1027,6 +1032,17 @@ impl Drop for CancelTransport {
     }
 }
 
+fn task_deadline(payload: &wire::TaskPayload) -> Option<i64> {
+    match payload {
+        wire::TaskPayload::Script(p) => Some(p.deadline),
+        wire::TaskPayload::Software(_) | wire::TaskPayload::Enrollment(_) => None,
+        wire::TaskPayload::Collection(p) => Some(p.deadline),
+        wire::TaskPayload::Credential(p) => Some(p.deadline),
+        wire::TaskPayload::DeviceAccess(p) => Some(p.deadline),
+        wire::TaskPayload::Unmanage(p) => Some(p.deadline),
+    }
+}
+
 #[cfg(test)]
 mod transport_tests {
     use super::*;
@@ -1099,16 +1115,5 @@ mod transport_tests {
         tokio::task::spawn_blocking(move || server.join().unwrap())
             .await
             .unwrap();
-    }
-}
-
-fn task_deadline(payload: &wire::TaskPayload) -> Option<i64> {
-    match payload {
-        wire::TaskPayload::Script(p) => Some(p.deadline),
-        wire::TaskPayload::Software(_) | wire::TaskPayload::Enrollment(_) => None,
-        wire::TaskPayload::Collection(p) => Some(p.deadline),
-        wire::TaskPayload::Credential(p) => Some(p.deadline),
-        wire::TaskPayload::DeviceAccess(p) => Some(p.deadline),
-        wire::TaskPayload::Unmanage(p) => Some(p.deadline),
     }
 }

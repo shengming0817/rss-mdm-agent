@@ -571,7 +571,7 @@ export interface BackendConfirmation {
    */
   confirmedAtUnixMs: number;
   /**
-   * Exclusive deadline, bounded by the offer, policy and one-minute interaction limit.
+   * Exclusive confirmation deadline before acceptance; it does not revoke an accepted Run.
    */
   expiresAtUnixMs: number;
   osSession: OsSessionRef;

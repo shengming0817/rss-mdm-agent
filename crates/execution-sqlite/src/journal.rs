@@ -5,7 +5,7 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBe
 use serde::{de::DeserializeOwned, Serialize};
 
 pub(crate) fn encode(value: &impl Serialize, max: usize) -> Result<Vec<u8>, Error> {
-    let bytes = serde_json_canonicalizer::to_vec(value).map_err(|_| Error::Corrupt)?;
+    let bytes = serde_json::to_vec(value).map_err(|_| Error::Corrupt)?;
     if bytes.len() > max {
         return Err(Error::Capacity);
     }

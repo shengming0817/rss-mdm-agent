@@ -26,6 +26,7 @@ const selfServiceCommands = [
   "self_service_confirm",
   "self_service_cancel",
   "self_service_policy_directory",
+  "self_service_policy_resolve",
   "self_service_policy_invoke",
   "self_service_policy_confirm",
   "self_service_policy_status",

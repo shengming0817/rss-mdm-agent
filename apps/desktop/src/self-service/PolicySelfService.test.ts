@@ -35,7 +35,7 @@ const record = (id: string): BackendRequest => ({
       sessionBinding: { id: "binding", generation: "generation" },
     },
     expiresAtUnixMs: Date.now() + 60000,
-    runId: "run",
+    runId: null,
     offer: null,
   },
   trigger: {
@@ -84,6 +84,7 @@ test.each([
       target,
       resource: item.task.resource,
     } satisfies SelfServiceTask;
+    original.action.task = item.task;
     original.state = "awaitingConfirmation";
     original.action.choice.parameters = {};
     const port = {
@@ -118,7 +119,7 @@ test.each([
       }
       expect(confirmation.text()).toContain("准入主体");
       expect(preparation.text()).toContain("准入主体");
-      expect(preparation.text()).toContain("principal");
+      expect(preparation.text()).toContain("generation");
       expect(preparation.text()).not.toContain("最终参数");
       expect(preparation.get("button").text()).toBe("查询原请求与结果");
     } finally {
@@ -133,7 +134,7 @@ test("remounted history queries its original UUID and does not invoke again", as
     kind: "run",
     value: {
       requestId: original,
-      runId: "run",
+      runId: null,
       state: { execution: "succeeded", cancellation: "none" },
       result: {
         kind: "script",
@@ -449,8 +450,8 @@ test.each([undefined, 12, "   "])(
         .trigger("click");
       await human.get("textarea").setValue(JSON.stringify("Acme"));
       expect(human.get("form").text()).toContain("策略 policy");
-      expect(preparation.get("h3").text()).toBe("策略 policy");
-      expect(preparation.text()).toContain("未提供");
+      expect(preparation.get("h3").text()).toBe("Policy");
+      expect(preparation.text()).toContain("policy");
     } finally {
       human.unmount();
       preparation.unmount();

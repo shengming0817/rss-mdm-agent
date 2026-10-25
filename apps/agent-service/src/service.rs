@@ -707,10 +707,22 @@ impl<S: IdentityProvider> DeviceService<S> {
             if self.client.bound_request(cancel.task_id())?.is_some() {
                 self.bridge
                     .cancel(&self.client, &cancel, &mut self.core.app, &caller)?;
-            } else if self.waiting.as_ref().is_some_and(|(offer, _)| {
-                offer.task_id() == cancel.task_id() && offer.attempt_id() == cancel.attempt_id()
-            }) {
-                self.release_waiting();
+            } else if self
+                .client
+                .pending_tasks(self.client.configuration().limits.pending_tasks)?
+                .contains(&cancel.task_id())
+            {
+                let held = self.client.retained_offer(cancel.task_id())?;
+                if held.attempt_id() != cancel.attempt_id() {
+                    continue;
+                }
+                if self
+                    .waiting
+                    .as_ref()
+                    .is_some_and(|(offer, _)| offer.task_id() == cancel.task_id())
+                {
+                    self.release_waiting();
+                }
                 // Withdrawal has no execution effect; the original request remains queryable.
                 let pending = self.bridge.prepare_abandonment(
                     &mut self.client,
@@ -780,7 +792,18 @@ impl<S: IdentityProvider> DeviceService<S> {
         let expired = retained
             .preparation_deadline()
             .is_some_and(|deadline| now >= deadline);
-        if expired && self.client.bound_request(task)?.is_none() {
+        let terminal = self
+            .core
+            .app
+            .backend_request(&caller, &backend::request_id(&retained)?)
+            .map_err(map_app_error)?
+            .is_some_and(|r| {
+                matches!(
+                    r.state,
+                    BackendRequestState::Failed | BackendRequestState::Cancelled
+                )
+            });
+        if (expired || terminal) && self.client.bound_request(task)?.is_none() {
             if self
                 .waiting
                 .as_ref()
@@ -788,11 +811,13 @@ impl<S: IdentityProvider> DeviceService<S> {
             {
                 self.release_waiting();
             }
-            self.core.transition(
-                &backend::request_id(&retained)?,
-                BackendRequestState::Failed,
-                Some(BackendRequestFailure::Expired),
-            )?;
+            if expired && !terminal {
+                self.core.transition(
+                    &backend::request_id(&retained)?,
+                    BackendRequestState::Failed,
+                    Some(BackendRequestFailure::Expired),
+                )?;
+            }
             return self.abandon(task, commands).await;
         }
         if matches!(retained.payload(), wire::TaskPayload::Unmanage(_)) {

@@ -443,13 +443,6 @@ fn actual_sqlite_full_rolls_back_and_preserves_existing_authority() {
     assert_eq!(db.count("receipts"), before);
     assert_eq!(db.count("attempts"), 0);
     assert_eq!(
-        db.sql()
-            .query_row("SELECT used FROM approval_usage", [], |r| r
-                .get::<_, u32>(0))
-            .unwrap(),
-        0
-    );
-    assert_eq!(
         store
             .execution(&host.scope(), &host)
             .map_err(JournalError::from)
@@ -492,7 +485,7 @@ fn unknown_schema_is_rejected_without_modifying_the_database() {
         Store::open(&db.path, &plan().spec().request.authority, limits()),
         Ok(OpenOutcome::UnsupportedSchema {
             found: 98,
-            supported: 2
+            supported: 3
         })
     ));
     assert!(Store::initialize_test(
@@ -521,7 +514,7 @@ fn newer_schema_is_diagnostics_only_and_corrupt_database_is_never_reinitialized(
         Store::open(&db.path, &plan().spec().request.authority, limits()).unwrap(),
         OpenOutcome::UnsupportedSchema {
             found: 99,
-            supported: 2
+            supported: 3
         }
     ));
     assert_eq!(std::fs::read(&db.path).unwrap(), before);

@@ -140,7 +140,12 @@ async fn settlement(case: u8) {
         },
     );
     let input = crate::credential_worker::Input {
-        task: task.clone(),
+        task: {
+            let mut value = task.clone();
+            value.permit = w::TaskPermit::Offer;
+            value.expires_at = value.deadline;
+            value
+        },
         root: credential_root.clone(),
         image_sha256: spec.launch.interpreter.artifact.sha256.clone(),
         run_as: spec.run_as.clone(),

@@ -229,13 +229,23 @@ fn mapping_uses_exact_closed_recipes_and_never_promotes_receipts_or_arbitrary_wm
 }
 
 fn published_item() -> w::SelfServiceDirectoryItem {
-    serde_json::from_value(json!({
+    let mut value = json!({
         "policyId":"00000000-0000-4000-a000-000000000001","policyRevision":1,"policyVersion":"00000000-0000-4000-a000-000000000002",
         "subject":{"kind":"device"},"selfService":{"published":true,"allowAi":true,"riskLevel":1,"presentation":{"displayName":"Published fixture","description":"Safe inputs"}},
         "task":{"kind":"script","runAs":"system","resource":{"id":"resource","version":"1","variant":"default"},
         "parameterSources":{"name":{"kind":"input"},"fixed":{"kind":"fixed","value":"hidden"}},
         "parameterSchema":{"type":"object","properties":{"name":{"type":"string"},"fixed":{"type":"string"}},"required":["name","fixed"],"additionalProperties":false}}
-    })).unwrap()
+    });
+    let mut capability =
+        crate::protocol_test_support::policy_directory_fixture(uuid::Uuid::from_u128(1)).capability;
+    capability.id = uuid::Uuid::parse_str(value["policyId"].as_str().unwrap()).unwrap();
+    capability.tool_name = w::policy_tool_name(capability.id);
+    capability.scope = uuid::Uuid::from_u128(3);
+    capability.version = uuid::Uuid::from_u128(2);
+    capability.revision = 1;
+    capability.input_schema = json!({"type":"object","properties":{"name":{"type":"string"}},"required":["name"],"additionalProperties":false});
+    value["capability"] = serde_json::to_value(capability).unwrap();
+    serde_json::from_value(value).unwrap()
 }
 #[tokio::test]
 async fn metadata_is_bounded_titles_survive_capture_and_published_inputs_remain_usable() {

@@ -104,7 +104,7 @@ pub struct NativeContextRef {
 pub enum PolicyAccess {
     /// Device requests do not depend on enterprise login generation.
     Device {},
-    /// User requests require this exact live native employee session.
+    /// Unaccepted user requests bind this native employee session; accepted work belongs to its Run.
     User {
         /// Owner-issued reference; never a credential or another identity authority.
         session_binding: NativeContextRef,
@@ -307,7 +307,7 @@ pub struct BackendConfirmation {
     pub os_session: OsSessionRef,
     /// Trusted service time at the user's explicit response.
     pub confirmed_at_unix_ms: u64,
-    /// Exclusive deadline, bounded by the offer, policy and one-minute interaction limit.
+    /// Exclusive confirmation deadline before acceptance; it does not revoke an accepted Run.
     pub expires_at_unix_ms: u64,
 }
 /// Safe preview bound to the complete signed offer revision.

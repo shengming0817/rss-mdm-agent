@@ -77,7 +77,7 @@ pub struct Limits {
     /// Interaction bounds.
     pub interaction: execution_interaction::Limits,
 
-    /// Maximum encoded receipt/audit/trust record bytes.
+    /// Maximum encoded receipt/audit record bytes.
     pub max_record_bytes: usize,
     /// Maximum retained receipts plus reserved terminal receipt slots.
     pub max_receipts: u64,
@@ -94,7 +94,7 @@ impl Limits {
     pub(crate) fn validate(self) -> Result<(), Error> {
         if self.max_batch == 0
             || self.max_batch > 4096
-            || self.max_receipts < 9
+            || self.max_receipts < 8
             || self.max_receipts > i64::MAX as u64
             || self.max_database_pages == 0
             || self.max_consumers == 0

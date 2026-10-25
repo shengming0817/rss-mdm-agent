@@ -6307,7 +6307,7 @@
               "type": "integer"
             },
             "expiresAtUnixMs": {
-              "description": "Exclusive deadline, bounded by the offer, policy and one-minute interaction limit.",
+              "description": "Exclusive confirmation deadline before acceptance; it does not revoke an accepted Run.",
               "format": "uint64",
               "minimum": 0,
               "type": "integer"
@@ -6906,7 +6906,7 @@
             },
             {
               "additionalProperties": false,
-              "description": "User requests require this exact live native employee session.",
+              "description": "Unaccepted user requests bind this native employee session; accepted work belongs to its Run.",
               "properties": {
                 "kind": { "const": "user", "type": "string" },
                 "sessionBinding": {
@@ -7739,7 +7739,7 @@
               "type": "integer"
             },
             "expiresAtUnixMs": {
-              "description": "Exclusive deadline, bounded by the offer, policy and one-minute interaction limit.",
+              "description": "Exclusive confirmation deadline before acceptance; it does not revoke an accepted Run.",
               "format": "uint64",
               "minimum": 0,
               "type": "integer"
@@ -8338,7 +8338,7 @@
             },
             {
               "additionalProperties": false,
-              "description": "User requests require this exact live native employee session.",
+              "description": "Unaccepted user requests bind this native employee session; accepted work belongs to its Run.",
               "properties": {
                 "kind": { "const": "user", "type": "string" },
                 "sessionBinding": {
