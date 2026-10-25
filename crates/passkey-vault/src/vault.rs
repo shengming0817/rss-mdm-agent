@@ -104,6 +104,8 @@ impl Vault {
     }
     /// Lock is never queued behind a password KDF or native dialog.
     pub fn lock(&self) {
+        #[cfg(windows)]
+        crate::platform::notify_lock();
         self.epoch.fetch_add(1, Ordering::AcqRel);
         if let Ok(mut session) = self.session.lock() {
             *session = None;
@@ -432,6 +434,16 @@ impl Vault {
         tx.save(&value)?;
         Self::published(&tx, &value)?;
         self.install(&value, key, epoch)
+    }
+    /// Publish a derived OS index from one committed snapshot while excluding concurrent writers.
+    pub fn synchronize_index(&self, publish: impl FnOnce(&[Entry]) -> Result<()>) -> Result<()> {
+        let tx = self.store.transaction()?;
+        let value = tx.load(&self.store.owner)?.ok_or(Error::NotFound)?;
+        let key = self.session_key(&value)?;
+        let content = Self::content(&value, &key)?;
+        let entries: Vec<_> = content.records.iter().map(|r| r.entry.clone()).collect();
+        publish(&entries)?;
+        tx.remove_index_notice()
     }
     pub fn entries(&self, rp_id: &str) -> Result<Vec<Entry>> {
         Ok(self

@@ -126,15 +126,8 @@ async fn independent_rp_verifies_multi_account_backup_flags_and_signature() {
         index: 0,
         verified: true,
     };
-    let first = lab
-        .vault
-        .register("https://example.com", register(1), &yes)
-        .await
-        .unwrap();
-    lab.vault
-        .register("https://example.com", register(2), &yes)
-        .await
-        .unwrap();
+    let first = lab.vault.register(register(1), &yes).await.unwrap();
+    lab.vault.register(register(2), &yes).await.unwrap();
     let bytes = first.auth_data.to_vec();
     assert_eq!(&bytes[..32], Sha256::digest(b"example.com").as_slice());
     assert_eq!(bytes[32], 0x4d); // UP | UV | BE | AT; BS is absent.
@@ -157,11 +150,7 @@ async fn independent_rp_verifies_multi_account_backup_flags_and_signature() {
     let mut public = vec![4];
     public.extend(coordinate(-2));
     public.extend(coordinate(-3));
-    let output = lab
-        .vault
-        .assert("https://example.com", assertion(), &yes)
-        .await
-        .unwrap();
+    let output = lab.vault.assert(assertion(), &yes).await.unwrap();
     assert_eq!(output.credential.as_ref().unwrap().id.to_vec(), id);
     assert_eq!(output.user.unwrap().id.to_vec(), vec![1]);
     let mut signed = output.auth_data.to_vec();
@@ -175,7 +164,6 @@ async fn independent_rp_verifies_multi_account_backup_flags_and_signature() {
     let output = lab
         .vault
         .assert(
-            "https://example.com",
             assertion(),
             &Consent {
                 index: 1,
@@ -187,13 +175,18 @@ async fn independent_rp_verifies_multi_account_backup_flags_and_signature() {
     assert_eq!(output.user.unwrap().id.to_vec(), vec![2]);
     assert!(lab
         .vault
-        .assert("https://evil.example", assertion(), &yes)
+        .assert(
+            get::Request {
+                rp_id: "evil.example".into(),
+                ..assertion()
+            },
+            &yes
+        )
         .await
         .is_err());
     assert!(lab
         .vault
         .assert(
-            "https://example.com",
             assertion(),
             &Consent {
                 index: 0,
@@ -209,10 +202,7 @@ async fn independent_rp_verifies_multi_account_backup_flags_and_signature() {
         transports: None,
     }]);
     assert_eq!(
-        lab.vault
-            .register("https://example.com", excluded, &yes)
-            .await
-            .err(),
+        lab.vault.register(excluded, &yes).await.err(),
         Some(Error::Excluded)
     );
 }
@@ -224,10 +214,7 @@ async fn password_lifecycle_preserves_credentials_and_recovers_missing_system_ke
         index: 0,
         verified: true,
     };
-    lab.vault
-        .register("https://example.com", register(1), &yes)
-        .await
-        .unwrap();
+    lab.vault.register(register(1), &yes).await.unwrap();
     let id = lab.vault.status().unwrap().entries[0].credential_id.clone();
     lab.vault
         .set_password(
@@ -291,10 +278,7 @@ async fn password_lifecycle_preserves_credentials_and_recovers_missing_system_ke
         .vault
         .remove_password(&lab.vault.begin_interaction())
         .is_err()); // cannot destroy the only usable method
-    lab.vault
-        .assert("https://example.com", assertion(), &yes)
-        .await
-        .unwrap();
+    lab.vault.assert(assertion(), &yes).await.unwrap();
     lab.keys.denied.store(false, Ordering::Release);
     lab.vault
         .repair_system("new password phrase", &lab.vault.begin_interaction())
@@ -369,19 +353,13 @@ async fn independent_instances_reject_stale_deletion_and_preserve_committed_data
         index: 0,
         verified: true,
     };
-    lab.vault
-        .register("https://example.com", register(1), &yes)
-        .await
-        .unwrap();
+    lab.vault.register(register(1), &yes).await.unwrap();
     let second = Vault::open(&lab.path, lab.keys.clone()).unwrap();
     second
         .unlock(UnlockMethod::System, None, &second.begin_interaction())
         .unwrap();
     let old = second.status().unwrap();
-    lab.vault
-        .register("https://example.com", register(2), &yes)
-        .await
-        .unwrap();
+    lab.vault.register(register(2), &yes).await.unwrap();
     assert_eq!(
         second.delete(
             &old.entries[0].credential_id,
@@ -534,7 +512,6 @@ async fn process_crash_never_selects_half_a_commit() {
             .unwrap();
         vault
             .register(
-                "https://example.com",
                 register(1),
                 &Consent {
                     index: 0,
@@ -691,4 +668,73 @@ fn explicit_reset_after_snapshot_loss_preserves_receipt_and_restores_use() {
         })
         .unwrap();
     assert_eq!(std::fs::read(archived).unwrap(), old);
+}
+
+#[tokio::test]
+async fn provider_cancellation_before_publication_cannot_save_or_return_a_signature() {
+    struct CancelAtPublication(std::sync::atomic::AtomicUsize);
+    impl Authorizer for CancelAtPublication {
+        fn authorize(&self, context: &Context<'_>) -> Result<Decision> {
+            Ok(Decision {
+                selected: context.accounts.first().map(|e| e.credential_id.clone()),
+                verified: true,
+            })
+        }
+        fn check(&self) -> Result<()> {
+            if self.0.fetch_add(1, Ordering::SeqCst) >= 2 {
+                Err(Error::Cancelled)
+            } else {
+                Ok(())
+            }
+        }
+    }
+    let lab = Lab::new();
+    let before = lab.vault.status().unwrap().revision;
+    assert!(matches!(
+        lab.vault
+            .register(register(1), &CancelAtPublication(0.into()))
+            .await,
+        Err(Error::Cancelled)
+    ));
+    let status = lab.vault.status().unwrap();
+    assert_eq!(status.revision, before);
+    assert!(status.entries.is_empty());
+}
+
+#[tokio::test]
+async fn native_request_rejects_invalid_rp_and_changed_credential_selection() {
+    let lab = Lab::new();
+    let consent = Consent {
+        index: 0,
+        verified: true,
+    };
+    for rp in [
+        "https://example.com",
+        "EXAMPLE.COM",
+        "com",
+        "bad..example.com",
+        "-bad.example.com",
+        "example.com/",
+    ] {
+        let mut request = register(1);
+        request.rp.id = rp.into();
+        assert!(matches!(
+            lab.vault.register(request, &consent).await,
+            Err(Error::Input)
+        ));
+    }
+    lab.vault.register(register(1), &consent).await.unwrap();
+    struct Unknown;
+    impl Authorizer for Unknown {
+        fn authorize(&self, _: &Context<'_>) -> Result<Decision> {
+            Ok(Decision {
+                selected: Some(vec![99; 32]),
+                verified: true,
+            })
+        }
+    }
+    assert!(matches!(
+        lab.vault.assert(assertion(), &Unknown).await,
+        Err(Error::NotFound)
+    ));
 }
