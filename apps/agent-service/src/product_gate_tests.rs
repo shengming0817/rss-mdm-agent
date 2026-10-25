@@ -3116,9 +3116,9 @@ async fn expired_unadmitted_task_releases_waiting_and_replays_abandonment_after_
     let task = offer.task_id();
     let attempt = offer.attempt_id();
     let materials = c.service.client.prepare(&offer).await.unwrap();
-    c.service.waiting = Some((offer.clone(), materials));
     // Stage the original signed task at an elapsed Run deadline in the real communication DB.
     let mut payload = offer.payload().clone();
+    c.service.waiting = Some((offer, materials));
     let wire::TaskPayload::Script(spec) = &mut payload else {
         panic!("script");
     };

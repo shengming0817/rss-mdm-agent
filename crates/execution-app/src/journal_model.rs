@@ -280,7 +280,7 @@ pub enum Outcome {
     Cancelled,
     /// Interaction expired; not consent.
     Expired,
-    /// Required admission/approval was not satisfied.
+    /// Required product permit or confirmation was not satisfied.
     Rejected,
 }
 /// Immutable accepted API result and reliable event. Sensitive audit is queried separately.
