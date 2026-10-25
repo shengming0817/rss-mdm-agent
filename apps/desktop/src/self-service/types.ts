@@ -3944,6 +3944,10 @@ export interface SoftwarePage {
    */
   collectedAt: number | null;
   /**
+   * Physical inventories and account boundaries covered by this query, independent of delivery identity.
+   */
+  coverage: Digest[];
+  /**
    * Whether the original enumeration completed.
    */
   enumerationComplete: boolean;

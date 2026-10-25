@@ -114,7 +114,7 @@ impl Core {
         let policies = self
             .telemetry
             .as_ref()
-            .map(|t| t.data_sources())
+            .map(|t| t.data_sources(&self.data))
             .transpose()?
             .unwrap_or_default();
         self.data

@@ -108,6 +108,7 @@ impl Core {
         }
         Ok(Reply::SoftwarePage {
             value: SoftwarePage {
+                coverage: self.data.software_coverage(&data.query, &command.subject)?,
                 query: data.query,
                 collected_at: data.collected_at,
                 quality: data.quality,

@@ -1451,3 +1451,93 @@ async fn frozen_view_domain_survives_recovery_without_changing_the_current_read_
     assert_eq!(saved.rows[0]["domain"], json!("historical.memory"));
     assert!(read_granted(&read));
 }
+
+#[tokio::test]
+async fn software_coverage_joins_delivery_identities_but_separates_physical_and_account_boundaries()
+{
+    let _budget = crate::scenario_budget::enter();
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    let r = server.register(&mut client).await;
+    let mut data = projection(&client);
+    let mut local = read_plan();
+    let mut spec: w::NativePlanSpec = local.plan.clone().into();
+    let query = spec.queries.values_mut().next().unwrap();
+    query.definition = w::NativeQueryDefinition::MacosApplications {
+        root: w::MacosApplicationRoot::SystemApplications,
+        max_depth: 4,
+    };
+    query.cardinality = w::NativeCardinality::List;
+    query.instance_keys = vec!["id".into()];
+    local.plan = w::NativeCollectionPlan::new(spec).unwrap();
+    local.source = crate::collection_worker::ReadSource::local(&local.plan).unwrap();
+    let local_ref = data.register(local.clone()).unwrap().descriptor.reference;
+    let expected = data.software_coverage(&local_ref, "0").unwrap();
+    assert_eq!(expected.len(), 1);
+    let task = enterprise_task(&client, &local);
+    let task_ref = data
+        .register(task.try_into().unwrap())
+        .unwrap()
+        .descriptor
+        .reference;
+    assert_ne!(local_ref, task_ref);
+    assert_eq!(expected, data.software_coverage(&task_ref, "0").unwrap());
+    let mut periodic =
+        crate::protocol_test_support::telemetry::native_performance_configuration(&server, &r)
+            .configuration;
+    let (fields, mappings) = crate::protocol_test_support::projection::native(&local.plan);
+    periodic.fields = fields;
+    periodic.collector = w::TelemetryCollector::Native {
+        plan_digest: local.plan.digest(),
+        plan: local.plan.clone(),
+        mappings,
+    };
+    let periodic_ref = data
+        .register(ReadPlan::periodic(&periodic, periodic.expires_at).unwrap())
+        .unwrap()
+        .descriptor
+        .reference;
+    assert_ne!(periodic_ref, local_ref);
+    assert_eq!(
+        expected,
+        data.software_coverage(&periodic_ref, "0").unwrap()
+    );
+    let mut changed = local.clone();
+    let mut spec: w::NativePlanSpec = changed.plan.clone().into();
+    spec.queries.values_mut().next().unwrap().definition =
+        w::NativeQueryDefinition::MacosPkgReceipts {};
+    changed.plan = w::NativeCollectionPlan::new(spec).unwrap();
+    changed.source = crate::collection_worker::ReadSource::local(&changed.plan).unwrap();
+    let changed_ref = data.register(changed).unwrap().descriptor.reference;
+    assert_ne!(expected, data.software_coverage(&changed_ref, "0").unwrap());
+    let caller = execution_ipc::host::current_subject().unwrap();
+    let mut spec: w::NativePlanSpec = local.plan.clone().into();
+    spec.scope = rss_mdm_agent_wire::CollectionScope::User {
+        identity: caller.clone(),
+    };
+    spec.queries.values_mut().next().unwrap().definition =
+        w::NativeQueryDefinition::MacosApplications {
+            root: w::MacosApplicationRoot::UserApplications,
+            max_depth: 4,
+        };
+    local.plan = w::NativeCollectionPlan::new(spec).unwrap();
+    local.source = crate::collection_worker::ReadSource::local(&local.plan).unwrap();
+    local.execution = w::NativeExecutionBinding {
+        identity: w::ExecutionIdentity::LoggedInUser,
+        context_revision: 1,
+        target: w::SoftwareExecutionTarget::User {
+            identity: caller.clone(),
+            session_id: uuid::Uuid::new_v4(),
+        },
+        generated_uid: account_uid(&caller).unwrap(),
+    };
+    let user_ref = data.register(local).unwrap().descriptor.reference;
+    assert_ne!(
+        expected,
+        data.software_coverage(&user_ref, &caller).unwrap()
+    );
+    if caller != "0" {
+        assert!(data.software_coverage(&user_ref, "0").is_err());
+    }
+}

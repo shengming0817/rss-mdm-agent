@@ -95,6 +95,29 @@ export function createSoftware(
         ),
     );
   });
+  // Each physical inventory needs one complete observation; delivery identities
+  // (local recipe, enterprise task or periodic policy) may cover the same inventory.
+  const complete = (s: Source) =>
+    !!s.page &&
+    !s.after &&
+    !s.page.stale &&
+    s.page.collectedAt != null &&
+    s.page.collectedAt * 1000 <= state.now &&
+    state.now - s.page.collectedAt * 1000 <= 300_000 &&
+    s.page.quality === "complete" &&
+    s.page.enumerationComplete &&
+    !s.error;
+  const coverageComplete = computed(() => {
+    const covered = new Set(
+      state.sources.filter(complete).flatMap((s) => s.page!.coverage),
+    );
+    return state.sources.every(
+      (s) =>
+        s.page &&
+        s.page.coverage.length > 0 &&
+        s.page.coverage.every((key) => covered.has(key)),
+    );
+  });
   const summary = computed(() => ({
     items: installed.value,
     installed: installed.value.length,
@@ -107,18 +130,7 @@ export function createSoftware(
       state.directoryComplete &&
       !state.windowed &&
       state.sources.length > 0 &&
-      state.sources.every(
-        (s) =>
-          s.page &&
-          !s.after &&
-          !s.page.stale &&
-          s.page.collectedAt != null &&
-          s.page.collectedAt * 1000 <= state.now &&
-          state.now - s.page.collectedAt * 1000 <= 300_000 &&
-          s.page.quality === "complete" &&
-          s.page.enumerationComplete &&
-          !s.error,
-      ),
+      coverageComplete.value,
     read: state.sources.some(
       (s) =>
         s.page && ["complete", "partial", "truncated"].includes(s.page.quality),

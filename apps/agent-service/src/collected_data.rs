@@ -451,6 +451,7 @@ impl Data {
             }
             if !self.pinned.contains(&d.descriptor.reference.id)
                 && !protected.contains(&d.descriptor.reference.id)
+                && !active_policies.contains(d.descriptor.reference.id.as_str())
             {
                 definitions.push((key, d.seen_at, d.descriptor.reference.id));
             }
@@ -623,11 +624,7 @@ impl Data {
         }
         // Script/osquery periodic leases permit observation only. They never become a
         // manually executable script catalog or expose process diagnostics to readers.
-        let revision = digest(c)?;
-        let reference = QueryRef {
-            id: crate::backend::plan::id(format!("telemetry:{}", revision.as_str()))?,
-            revision,
-        };
+        let reference = self.periodic_reference(c)?;
         let descriptor = QueryDescriptor {
             reference: reference.clone(),
             title: c.policy.to_string(),
@@ -936,6 +933,37 @@ impl Data {
             &encode(&definition)?,
         )?;
         Ok(definition)
+    }
+    pub(crate) fn software_coverage(
+        &self,
+        query: &QueryRef,
+        caller: &str,
+    ) -> Result<Vec<Digest>, Error> {
+        let definition = self.definition(query, caller)?;
+        let read = &definition.read;
+        read.plan
+            .spec()
+            .queries
+            .iter()
+            .filter(|(_, q)| {
+                matches!(
+                    domain(&q.definition),
+                    Some("software.installations" | "software.receipts" | "software.packages")
+                )
+            })
+            .map(|(source, q)| {
+                digest(&(
+                    q.version,
+                    &q.definition,
+                    q.cardinality,
+                    &q.instance_keys,
+                    &read.plan.spec().scope,
+                    subject(read),
+                    &read.execution.generated_uid,
+                    &read.local_projection().single(source)?,
+                ))
+            })
+            .collect()
     }
     pub fn local_definition(&self, query: &QueryRef, caller: &str) -> Result<Definition, Error> {
         let mut definition = self.definition(query, caller)?;

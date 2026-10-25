@@ -45,6 +45,7 @@ const item: InstalledSoftware = {
   ],
 };
 const page: SoftwarePage = {
+  coverage: ["4".repeat(64)],
   query,
   collectedAt: Math.floor(Date.now() / 1000),
   quality: "complete",
@@ -258,5 +259,97 @@ it("a fresh traversal accepts the same first-page cursor after reading later pag
   await c.history();
   expect(c.state.historyError).toBe("");
   expect(c.state.historyNext).toBe("next-history");
+  c.dispose();
+});
+
+it("accepts a complete enterprise alternative to an uncollected local inventory, including empty lists", async () => {
+  const { data, port } = ports();
+  const enterprise = {
+    ...descriptor,
+    reference: { ...query, id: "native:enterprise" },
+    origin: "enterprise" as const,
+  };
+  vi.mocked(data.query_directory).mockResolvedValue({
+    items: [descriptor, enterprise],
+    next: null,
+    policyNext: null,
+  });
+  vi.mocked(port.read).mockImplementation(async (input) => ({
+    ...page,
+    query:
+      input.read.selection.kind === "query"
+        ? input.read.selection.query
+        : query,
+    ...(input.read.selection.kind === "query" &&
+    input.read.selection.query.id === query.id
+      ? {
+          quality: "notCollected",
+          collectedAt: null,
+          enumerationComplete: false,
+        }
+      : {}),
+    items: [],
+  }));
+  const c = createSoftware(data, port);
+  await c.discover();
+  expect(c.summary.value.complete).toBe(true);
+  expect(c.summary.value.installed).toBe(0);
+  const alternative = c.state.sources[1];
+  for (const update of [
+    { stale: true },
+    { quality: "partial" as const },
+    { enumerationComplete: false },
+    { collectedAt: Math.floor(Date.now() / 1000) - 301 },
+    { collectedAt: Math.floor(Date.now() / 1000) + 10 },
+  ]) {
+    const saved = { ...alternative.page! };
+    Object.assign(alternative.page!, update);
+    expect(c.summary.value.complete).toBe(false);
+    alternative.page = saved;
+  }
+  alternative.after = { snapshot: "2".repeat(64), offset: 128 };
+  expect(c.summary.value.complete).toBe(false);
+  alternative.after = null;
+  alternative.error = "read failed";
+  expect(c.summary.value.complete).toBe(false);
+  c.dispose();
+});
+
+it("requires independent coverage for other accounts and physical inventories", async () => {
+  const { data, port } = ports();
+  const other = { ...descriptor, reference: { ...query, id: "native:other" } };
+  vi.mocked(data.query_directory).mockResolvedValue({
+    items: [descriptor, other],
+    next: null,
+    policyNext: null,
+  });
+  vi.mocked(port.read).mockImplementation(async (input) => {
+    const selected =
+      input.read.selection.kind === "query"
+        ? input.read.selection.query
+        : query;
+    return {
+      ...page,
+      query: selected,
+      ...(selected.id === other.reference.id
+        ? {
+            coverage: ["5".repeat(64)],
+            quality: "notCollected",
+            collectedAt: null,
+            enumerationComplete: false,
+            items: [],
+          }
+        : {}),
+    };
+  });
+  const c = createSoftware(data, port);
+  await c.discover();
+  expect(c.summary.value.complete).toBe(false);
+  Object.assign(c.state.sources[1].page!, {
+    quality: "complete",
+    collectedAt: page.collectedAt,
+    enumerationComplete: true,
+  });
+  expect(c.summary.value.complete).toBe(true);
   c.dispose();
 });

@@ -51,14 +51,18 @@ pub(crate) enum Event {
     GapReceipt(w::TelemetryGapReceipt),
 }
 impl Telemetry {
-    pub(crate) fn data_sources(&self) -> Result<std::collections::BTreeSet<String>, Error> {
+    pub(crate) fn data_sources(
+        &self,
+        data: &crate::collected_data::Data,
+    ) -> Result<std::collections::BTreeSet<String>, Error> {
         self.slots
             .values()
             .map(|s| {
-                Ok(format!(
-                    "telemetry:{}",
-                    crate::collected_data::digest(s.configuration.payload())?.as_str()
-                ))
+                Ok(data
+                    .periodic_reference(s.configuration.payload())?
+                    .id
+                    .as_str()
+                    .to_owned())
             })
             .collect()
     }

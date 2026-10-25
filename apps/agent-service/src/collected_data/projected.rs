@@ -249,6 +249,19 @@ impl LocalQueryProjection {
 }
 
 impl Data {
+    pub(crate) fn periodic_reference(
+        &self,
+        c: &w::TelemetryConfiguration,
+    ) -> Result<QueryRef, Error> {
+        if matches!(c.collector, w::TelemetryCollector::Native { .. }) {
+            return self.projected_reference(&ReadPlan::periodic(c, c.expires_at)?);
+        }
+        let revision = digest(c)?;
+        Ok(QueryRef {
+            id: crate::backend::plan::id(format!("telemetry:{}", revision.as_str()))?,
+            revision,
+        })
+    }
     fn projection_enterprise(&self, read: &ReadPlan) -> Result<Option<Digest>, Error> {
         let binding = match &read.source {
             ReadSource::Task { task, .. } => crate::backend::plan::enterprise_binding(
@@ -295,20 +308,24 @@ impl Data {
             ReadSource::Local { .. } => Err(Error::Protocol),
         }
     }
-    pub(super) fn register_projected(&mut self, read: ReadPlan) -> Result<Definition, Error> {
-        read.validate()?;
-        let enterprise = self.projection_enterprise(&read)?;
+    fn projected_reference(&self, read: &ReadPlan) -> Result<QueryRef, Error> {
+        let enterprise = self.projection_enterprise(read)?;
         let revision = digest(&(
             &read.plan,
             &read.execution,
             &enterprise,
-            Self::projection_material(&read)?,
+            Self::projection_material(read)?,
             read.local_projection(),
         ))?;
-        let reference = QueryRef {
+        Ok(QueryRef {
             id: crate::backend::plan::id(format!("native:{}", revision.as_str()))?,
             revision,
-        };
+        })
+    }
+    pub(super) fn register_projected(&mut self, read: ReadPlan) -> Result<Definition, Error> {
+        read.validate()?;
+        let enterprise = self.projection_enterprise(&read)?;
+        let reference = self.projected_reference(&read)?;
         let domains = read
             .plan
             .spec()
