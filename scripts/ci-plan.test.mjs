@@ -527,3 +527,19 @@ test("a prepared gate records consumption rather than an unexecuted command", as
   assert.deepEqual(results[0].preparedInputs, ["node:desktop"]);
   assert.equal(results[0].outcome, "passed");
 });
+
+test("Passkey ABI follows its native owner without broadening unrelated changes", () => {
+  const gate = [
+    [
+      "macOS Passkey native ABI",
+      "node",
+      ["scripts/build-macos-passkey.mjs", "--verify-abi"],
+    ],
+  ];
+  assert.equal(planSteps(gate, impact())[0].selected, false);
+  assert.equal(planSteps(gate, impact(["script-plan"]))[0].selected, false);
+  assert.equal(
+    planSteps(gate, impact(["macos-passkey-extension"]))[0].selected,
+    true,
+  );
+});

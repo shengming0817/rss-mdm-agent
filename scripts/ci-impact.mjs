@@ -75,6 +75,8 @@ export function parseChanges(raw) {
 // Build scripts, generated bindings, runtime packing and shared fixtures are not
 // represented by Cargo or pnpm dependencies. These are directed consumer edges.
 export const sourceEdges = [
+  ["macos-passkey-extension", "rss-mdm-desktop"],
+  ["macos-passkey-extension", "agent-service"],
   ["platform-sso-extension", "rss-mdm-desktop"],
   ["platform-sso-extension", "agent-service"],
   ["platform-private-storage", npm("platform-private-storage")],
@@ -93,6 +95,8 @@ export const sourceEdges = [
   [npm("ai-client"), npm("ai-host-app")],
 ];
 export const testOwners = [
+  ["scripts/build-macos-passkey.mjs", "macos-passkey-extension"],
+  ["scripts/macos-passkey-package.test.mjs", "macos-passkey-extension"],
   ["tests/passkey-provider", "windows-passkey-provider"],
   ["scripts/build-passkey-provider.mjs", "rss-passkey-provider"],
   ["scripts/passkey-package.mjs", "rss-passkey-provider"],

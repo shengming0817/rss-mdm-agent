@@ -8,7 +8,7 @@
       "files": {
         "Resources/ai-host-runtime": "resources/ai-host-runtime"
       },
-      "minimumSystemVersion": "26.4"
+      "minimumSystemVersion": "15.0"
     }
   }
 }

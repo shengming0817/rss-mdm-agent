@@ -25,13 +25,10 @@ impl SystemProtection for OsProtection {
             match self.unprotect(reference, &[]) {
                 Ok(existing) if existing.as_slice() == key => Ok(vec![]),
                 Ok(_) => Err(Error::Conflict),
-                Err(Error::NotFound) => platform_credentials::create_user_password(
-                    "RSS Personal Passkeys",
-                    reference,
-                    key,
-                )
-                .map(|_| vec![])
-                .map_err(|_| Error::SystemUnavailable),
+                Err(Error::NotFound) => {
+                    let mut bytes = Zeroizing::new(key.to_vec());
+                    macos_key(reference, &mut bytes, true).map(|_| vec![])
+                }
                 Err(error) => Err(error),
             }
         }
@@ -53,15 +50,9 @@ impl SystemProtection for OsProtection {
             if !protected.is_empty() {
                 return Err(Error::Corrupt);
             }
-            platform_credentials::read_user_password("RSS Personal Passkeys", reference)
-                .map(Zeroizing::new)
-                .map_err(|e| {
-                    if e.kind() == std::io::ErrorKind::NotFound {
-                        Error::NotFound
-                    } else {
-                        Error::SystemUnavailable
-                    }
-                })
+            let mut bytes = Zeroizing::new(vec![0; 32]);
+            macos_key(reference, &mut bytes, false)?;
+            Ok(bytes)
         }
         #[cfg(windows)]
         {
@@ -206,4 +197,49 @@ pub(crate) fn notify_lock() {
 #[cfg(windows)]
 pub fn notify_management_change() {
     notify_lock();
+}
+
+#[cfg(target_os = "macos")]
+fn macos_key(reference: &str, bytes: &mut [u8], create: bool) -> Result<()> {
+    unsafe extern "C" {
+        fn rss_vault_key(reference: *const std::ffi::c_char, bytes: *mut u8, create: i32) -> i32;
+    }
+    let reference = std::ffi::CString::new(reference).map_err(|_| Error::Input)?;
+    if bytes.len() != 32 {
+        return Err(Error::Input);
+    }
+    // SAFETY: fixed-size key buffer and NUL-terminated reference live throughout the call.
+    match unsafe { rss_vault_key(reference.as_ptr(), bytes.as_mut_ptr(), i32::from(create)) } {
+        1 => Ok(()),
+        0 => Err(Error::NotFound),
+        _ => Err(Error::SystemUnavailable),
+    }
+}
+#[cfg(target_os = "macos")]
+pub fn default_root() -> Result<std::path::PathBuf> {
+    unsafe extern "C" {
+        fn rss_vault_root(output: *mut std::ffi::c_char, capacity: usize) -> i32;
+    }
+    let mut bytes = [0u8; 4096];
+    // SAFETY: shim receives a writable bounded buffer and terminates the returned path.
+    if unsafe { rss_vault_root(bytes.as_mut_ptr().cast(), bytes.len()) } != 1 {
+        return Err(Error::SystemUnavailable);
+    }
+    let text =
+        std::ffi::CStr::from_bytes_until_nul(&bytes).map_err(|_| Error::SystemUnavailable)?;
+    use std::os::unix::ffi::OsStrExt;
+    Ok(std::path::PathBuf::from(std::ffi::OsStr::from_bytes(
+        text.to_bytes(),
+    )))
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn notify_lock() {
+    unsafe extern "C" {
+        fn rss_vault_notify_lock();
+    }
+    // SAFETY: fire-and-forget native cancellation notification, containing no secrets.
+    unsafe {
+        rss_vault_notify_lock();
+    }
 }

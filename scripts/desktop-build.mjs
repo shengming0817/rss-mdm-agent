@@ -47,3 +47,44 @@ run(
   fileURLToPath(new URL("../apps/desktop", import.meta.url)),
   buildEnv,
 );
+
+if (process.platform === "darwin" && !native) {
+  const { join } = await import("node:path");
+  const { mkdirSync } = await import("node:fs");
+  const { execFileSync } = await import("node:child_process");
+  const { cargoTargetDir } = await import("./cargo-target.mjs");
+  const { assemblePasskeyHost } = await import("./build-macos-passkey.mjs");
+  const root = fileURLToPath(new URL("../", import.meta.url));
+  const app = join(
+    cargoTargetDir(root),
+    "release/bundle/macos/RSS MDM Agent.app",
+  );
+  const identity =
+    process.env.RSS_MACOS_APP_SIGNING_IDENTITY ??
+    process.env.RSS_MACOS_DEVELOPMENT_SIGNING_IDENTITY ??
+    "-";
+  const output = join(root, ".local-ci-runs/macos-passkey");
+  mkdirSync(output, { recursive: true });
+  const entitlements = assemblePasskeyHost({
+    app,
+    output: join(output, "host-entitlements.plist"),
+    identity,
+    release: true,
+  });
+  execFileSync(
+    "/usr/bin/codesign",
+    [
+      "--force",
+      "--sign",
+      identity,
+      "--entitlements",
+      entitlements,
+      ...(identity === "-" ? [] : ["--options", "runtime"]),
+      app,
+    ],
+    { stdio: "inherit" },
+  );
+  execFileSync("/usr/bin/codesign", ["--verify", "--strict", app], {
+    stdio: "inherit",
+  });
+}

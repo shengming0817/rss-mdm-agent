@@ -1,3 +1,4 @@
+import { assemblePasskeyHost } from "./build-macos-passkey.mjs";
 // Fixed organization packages contain only public trust. Device enrollment is a separate operation.
 // ref: Apple pkgbuild(1); NSIS 3.11 Docs/Chapter4.html (per-machine execution level).
 import { execFileSync, spawnSync } from "node:child_process";
@@ -277,6 +278,12 @@ if (windows) {
   packagedRuntime = join(app, "Contents/Resources/ai-host-runtime");
   psso = buildPlatformSso({
     output: join(app, "Contents/PlugIns/RSSPlatformSSO.appex"),
+    identity: macosIdentity,
+    release: true,
+  });
+  assemblePasskeyHost({
+    app,
+    output: join(output, "passkey-container-entitlements.plist"),
     identity: macosIdentity,
     release: true,
   });

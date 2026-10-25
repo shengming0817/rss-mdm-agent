@@ -30,7 +30,7 @@ pub struct Entry {
 }
 #[derive(Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
-#[schemars(rename = "PersonalVaultStatus")]
+#[schemars(rename = "PersonalVaultContents")]
 pub struct Status {
     pub initialized: bool,
     pub unlocked: bool,

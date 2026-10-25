@@ -206,7 +206,13 @@ impl ProviderRuntime {
                 }
             });
             // Cache is derived. Its failure must not roll back an already published credential.
-            if vault.synchronize_index(registration::sync_cache).is_err() {
+            if crate::cache::update(|| {
+                let snapshot = vault.index_snapshot()?;
+                registration::sync_cache(&snapshot.entries)?;
+                vault.acknowledge_index(&snapshot)
+            })
+            .is_err()
+            {
                 eprintln!("passkey cache synchronization pending");
             }
             self.check(&op)?;

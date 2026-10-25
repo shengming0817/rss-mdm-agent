@@ -68,6 +68,8 @@ export function planSteps(steps, impact) {
     else if (name === "workspace build inputs") selected = nodes.size > 0;
     else if (name === "Platform SSO native ABI")
       selected = impact.rustPackages.includes("platform-sso-extension");
+    else if (name === "macOS Passkey native ABI")
+      selected = impact.rustPackages.includes("macos-passkey-extension");
     else if (name === "Windows collector pure logic")
       selected = impact.rustPackages.includes("agent-service");
     else if (name.startsWith("rust "))

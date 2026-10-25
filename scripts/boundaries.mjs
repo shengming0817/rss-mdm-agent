@@ -998,6 +998,7 @@ export function checkTree(treeRoot = root, executable) {
         'platform-credentials = { path = "../../../crates/platform-credentials" }',
         'passkey-vault = { path = "../../../crates/passkey-vault" }',
         'windows-passkey-provider = { path = "../../../crates/windows-passkey-provider" }',
+        'macos-passkey-provider = { path = "../../../crates/macos-passkey-provider" }',
         'installation-security = { path = "../../../crates/installation-security" }',
         'windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_System_Threading"] }',
         'aes-gcm = { version = "=0.10.3", features = ["zeroize"] }',

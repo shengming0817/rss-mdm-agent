@@ -50,3 +50,13 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[cfg(test)]
 mod tests;
+
+/// A derived identity projection; it contains no private key material.
+pub struct IndexSnapshot {
+    // Retain publication ownership through the external callback AND acknowledgement.
+    // This file lock does not retain the Vault writer lock or any secret material.
+    pub(crate) _publication: std::fs::File,
+    pub vault_id: String,
+    pub revision: u64,
+    pub entries: Vec<Entry>,
+}

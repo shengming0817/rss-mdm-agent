@@ -34,6 +34,7 @@ export const steps = [
       "scripts/ci-workspace.test.mjs",
       "scripts/native-candidate.test.mjs",
       "scripts/passkey-package.test.mjs",
+      "scripts/macos-passkey-package.test.mjs",
       "scripts/passkey-rp.test.mjs",
       "scripts/desktop-dev.test.mjs",
       "tests/assistant/fixture.test.mjs",
@@ -154,6 +155,11 @@ export const steps = [
   ["rust test", "cargo", ["test", "--workspace", "--locked"]],
   ...(process.platform === "darwin" && process.arch === "arm64"
     ? [
+        [
+          "macOS Passkey native ABI",
+          "node",
+          ["scripts/build-macos-passkey.mjs", "--verify-abi"],
+        ],
         [
           "Platform SSO native ABI",
           "node",

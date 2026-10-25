@@ -26,18 +26,47 @@ impl Store {
             owner,
         })
     }
-    pub fn transaction(&self) -> Result<Transaction> {
+    pub fn cancellation(&self) -> Result<[u8; 16]> {
+        PrivateDirectory::open(&self.root)
+            .map_err(|_| Error::Owner)?
+            .read(Path::new("cancel-generation"), 16)
+            .map_err(|_| Error::Storage)?
+            .try_into()
+            .map_err(|_| Error::Corrupt)
+    }
+    // Independent atomic file: cancellation must never wait behind an active Vault writer.
+    pub fn revoke(&self) -> Result<()> {
         let directory = PrivateDirectory::open(&self.root).map_err(|_| Error::Owner)?;
-        let lock = match directory.create_file(Path::new("vault.lock")) {
+        let id = uuid::Uuid::new_v4();
+        let name = format!("cancel-{}.stage", id);
+        let stage = Path::new(&name);
+        let mut file = directory.create_file(stage).map_err(|_| Error::Storage)?;
+        file.write_all(id.as_bytes()).map_err(|_| Error::Storage)?;
+        file.sync_all().map_err(|_| Error::Storage)?;
+        drop(file);
+        directory
+            .replace(stage, Path::new("cancel-generation"))
+            .map_err(|_| Error::Storage)
+    }
+    // ref: Rust 1.96 library/std/src/sys/fs/unix.rs File::try_lock (flock LOCK_EX|LOCK_NB).
+    // A stable, independently owned lock file; never rename/unlink it during normal operation.
+    pub fn lock(&self, name: &str) -> Result<File> {
+        let directory = PrivateDirectory::open(&self.root).map_err(|_| Error::Owner)?;
+        let lock = match directory.create_file(Path::new(name)) {
             Ok(file) => file,
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => directory
-                .open_file(Path::new("vault.lock"))
+                .open_file(Path::new(name))
                 .map_err(|_| Error::Storage)?,
             Err(_) => return Err(Error::Storage),
         };
-        platform_private_storage::validate_single_link(&self.root.join("vault.lock"))
+        platform_private_storage::validate_single_link(&self.root.join(name))
             .map_err(|_| Error::Owner)?;
         lock.try_lock().map_err(|_| Error::Busy)?;
+        Ok(lock)
+    }
+    pub fn transaction(&self) -> Result<Transaction> {
+        let lock = self.lock("vault.lock")?;
+        let directory = PrivateDirectory::open(&self.root).map_err(|_| Error::Owner)?;
         Ok(Transaction {
             directory,
             _lock: lock,

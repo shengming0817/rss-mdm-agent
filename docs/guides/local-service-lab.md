@@ -498,3 +498,23 @@ EXE 签名。安装保留固定摘要和现有包身份归属校验，不强制 
 证书私钥或改变正式设备信任。页面提供创建/认证与 `rpAccepted` 结果，服务端独立验证 origin、
 challenge、RP hash、userHandle、UP/UV 和签名；数据只驻留内存，重启后失效。该夹具只适用于
 一次受控本机验收，不是产品认证服务。服务器不记录凭据、挑战或用户标识。
+
+
+## macOS Passkey Provider（#2930）
+
+独立的 Credential Provider 扩展嵌入现有 RSS Desktop，与 PSSO 分别声明身份和权限。
+Provider 运行不需要企业会话、Agent 服务或 AI Host。兼容目标为 macOS 15+ 的 Safari、Chrome、Edge；
+这不是已完成的平台支持矩阵。当前开发配置为 arm64、SDK 26.4。
+
+`node scripts/build-macos-passkey.mjs` 构建并检查 `.appex`；加 `--verify-abi` 可运行无 Vault、无系统认证的
+原生 ABI 检查。`pnpm desktop:build` 将扩展嵌入 Desktop 并合并宿主权限，现有安装包入口消费该应用。
+宿主与扩展使用同一固定 App Group，并声明 AutoFill 及 Keychain 共享权限。PSSO 权限保留，
+PSSO 自身系统版本要求不作为个人 Provider 的功能前置。
+
+默认 ad-hoc，沿用现有显式签名身份和可选公证配置。构建成功或 `codesign --verify` 通过不说明
+系统已接受受限 entitlement；实际共享容器/Keychain 访问失败明确报告，不回退到其他 Vault。
+无旧部署兼容路径，不提供旧目录迁移、旧安装升级或跨版本数据回退。
+
+本轮开发验证仅覆盖当前 Mac 的自动化检查、原生构建和 Chrome 开发 UI。浏览器真实创建/登录、
+第三方 RP、Safari/Edge 和 macOS 15 真机、正式签名公证及安装升级卸载旅程均后续统一安排，
+未运行不记通过。Provider 完成响应与网站接受断言是两个不同事实。
