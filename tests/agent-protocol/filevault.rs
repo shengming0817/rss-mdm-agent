@@ -9,6 +9,7 @@ pub struct Fixture {
     pub receipts: BTreeMap<Uuid, w::Receipt>,
     pub lose_ack: bool,
     pub wrong_ack: bool,
+    pub fail_before_commit: bool,
     pub deny_status: bool,
     pub reject_upload: bool,
     pub config_reads: usize,
@@ -37,10 +38,7 @@ pub fn response(data: &mut Fixture, path: &str, value: Value) -> Response {
             .rsplit('/')
             .next()
             .and_then(|s| Uuid::parse_str(s).ok());
-        return match id.and_then(|id| data.receipts.get(&id)) {
-            Some(r) => axum::Json(r.clone()).into_response(),
-            None => runtime_error(StatusCode::NOT_FOUND, ErrorCode::ReportNotFound),
-        };
+        return axum::Json(id.and_then(|id| data.receipts.get(&id)).cloned()).into_response();
     }
     let input: w::Upload = serde_json::from_value(value).unwrap();
     input.decode().unwrap();
@@ -62,6 +60,12 @@ pub fn response(data: &mut Fixture, path: &str, value: Value) -> Response {
         );
     }
     data.uploads.push(input.clone());
+    if std::mem::take(&mut data.fail_before_commit) {
+        return runtime_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            ErrorCode::ServiceUnavailable,
+        );
+    }
     if data.reject_upload {
         return runtime_error(StatusCode::CONFLICT, ErrorCode::OperationConflict);
     }

@@ -354,7 +354,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         state.save(&self.store)?;
         let result = if attempted {
             match self
-                .self_service_json::<w::Receipt>(
+                .self_service_json::<Option<w::Receipt>>(
                     None,
                     Method::GET,
                     &format!("filevault/operations/{}", input.operation_id),
@@ -362,8 +362,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 )
                 .await
             {
-                Ok(receipt) => Ok(Some(receipt)),
-                Err(Error::NotFound) => self.upload_filevault(&input).await,
+                Ok(Some(receipt)) => Ok(Some(receipt)),
+                Ok(None) => self.upload_filevault(&input).await,
                 // A failed status read says nothing about the original upload outcome.
                 Err(error) => Err(error),
             }

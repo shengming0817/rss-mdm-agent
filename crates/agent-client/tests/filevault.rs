@@ -163,6 +163,43 @@ async fn mismatched_receipt_cannot_rebind_a_frozen_operation_to_a_new_custody_ep
     assert!(d.filevault.receipts[&original.operation_id].matches(&original));
 }
 
+#[tokio::test]
+async fn uncommitted_upload_restarts_by_replaying_the_frozen_operation_after_null_receipt() {
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let cert = certificate(4);
+    let bytes = carrier(&cert, 4);
+    {
+        let mut d = server.data.lock().unwrap();
+        d.filevault.configuration = Some(configuration(&cert));
+        d.filevault.pending_probe = Some(root.path.join("communication.sqlite"));
+        d.filevault.fail_before_commit = true;
+    }
+    assert!(client.drive_filevault(|| Ok(bytes)).await.is_err());
+    assert_eq!(client.filevault_status().unwrap(), Status::Pending);
+    assert!(server.data.lock().unwrap().filevault.receipts.is_empty());
+    drop(client);
+    let mut client = server.client(&root, OpenMode::Existing);
+    server.time.set(31);
+    assert_eq!(
+        client
+            .drive_filevault(|| panic!("replay must use durable bytes, never a new file"))
+            .await
+            .unwrap(),
+        Status::EscrowedUnverified
+    );
+    let d = server.data.lock().unwrap();
+    assert_eq!(d.filevault.status_reads, 1);
+    assert_eq!(d.filevault.uploads.len(), 2);
+    assert_eq!(
+        serde_json::to_value(&d.filevault.uploads[0]).unwrap(),
+        serde_json::to_value(&d.filevault.uploads[1]).unwrap()
+    );
+    assert_eq!(d.filevault.receipts.len(), 1);
+}
+
 fn configuration(certificate: &[u8]) -> w::Configuration {
     w::Configuration {
         enabled: true,
