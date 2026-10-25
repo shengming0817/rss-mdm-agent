@@ -10,6 +10,27 @@ fn text<'a>(row: &'a Value, key: &str) -> Option<&'a str> {
         .and_then(Value::as_str)
         .filter(|v| !v.is_empty())
 }
+// Collection snapshots retain source/projection wrappers. Software selectors consume
+// only the bounded physical installation record; the snapshot cursor keeps its raw offset.
+fn installation_row(row: &Value) -> Result<Option<&Value>, Error> {
+    if row.get("field").is_some() {
+        return Ok(None);
+    }
+    if let Some(domain) = row.get("domain") {
+        if !matches!(
+            domain.as_str(),
+            Some("software.installations" | "software.receipts" | "software.packages")
+        ) {
+            return Ok(None);
+        }
+        return row
+            .get("values")
+            .filter(|v| v.is_object())
+            .map(Some)
+            .ok_or(Error::Untrusted);
+    }
+    Ok(Some(row))
+}
 impl Core {
     fn select_local_software(
         &self,
@@ -70,6 +91,9 @@ impl Core {
             !data.stale && data.quality == DataQuality::Complete && data.enumeration_complete;
         let mut items = Vec::new();
         for (index, row) in data.rows.iter().enumerate() {
+            let Some(row) = installation_row(row)? else {
+                continue;
+            };
             if let Some(mut item) = software_item(
                 row,
                 &data.query,
@@ -216,7 +240,11 @@ impl Core {
             command.binding.as_ref().ok_or(Error::Denied)?,
             self.host.clock.millis()? / 1000,
         )?;
-        Ok((item, data.rows.into_iter().next().ok_or(Error::NotFound)?))
+        let row = data.rows.first().ok_or(Error::NotFound)?;
+        Ok((
+            item,
+            installation_row(row)?.ok_or(Error::Unsupported)?.clone(),
+        ))
     }
     fn local_software_input(
         &self,

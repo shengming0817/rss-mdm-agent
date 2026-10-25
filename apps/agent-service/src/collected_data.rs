@@ -178,6 +178,13 @@ fn domain(q: &w::NativeQueryDefinition) -> Option<&'static str> {
         _ => return None,
     })
 }
+fn read_granted(read: &ReadPlan) -> bool {
+    read.plan
+        .spec()
+        .queries
+        .values()
+        .any(|q| domain(&q.definition).is_some())
+}
 fn subject(read: &ReadPlan) -> Option<&str> {
     match &read.execution.target {
         w::SoftwareExecutionTarget::User { identity, .. } => Some(identity),
@@ -216,23 +223,6 @@ fn mapped_field(q: &w::NativeQueryDefinition, key: &str) -> Option<String> {
     };
     Some(exact.into())
 }
-fn domains(query: &w::NativeQuery) -> Vec<String> {
-    if query.cardinality == w::NativeCardinality::List {
-        return domain(&query.definition)
-            .map(|d| vec![d.into()])
-            .unwrap_or_default();
-    }
-    query
-        .definition
-        .properties()
-        .keys()
-        .filter_map(|key| mapped_field(&query.definition, key))
-        .filter_map(|key| key.rsplit_once('.').map(|(domain, _)| domain.to_owned()))
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect()
-}
-
 fn now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -866,6 +856,7 @@ impl Data {
         }
         // Physical semantics and scope form the identity. A periodic budget, source
         // label, deadline or login incarnation must not split the same local facts.
+        let cardinality = query.cardinality;
         let revision = digest(&(
             query.version,
             &query.definition,
@@ -889,11 +880,10 @@ impl Data {
             revision,
         };
         let supported = read
-            .plan
-            .spec()
+            .local_projection()
             .queries
             .values()
-            .all(|q| domain(&q.definition).is_some());
+            .all(|q| q.domain.is_some());
         let definition = Definition {
             descriptor: QueryDescriptor {
                 reference,
@@ -909,14 +899,13 @@ impl Data {
                 ),
                 kind: QueryKind::Native,
                 origin: QueryOrigin::Local,
-                domains: domains(
-                    read.plan
-                        .spec()
-                        .queries
-                        .values()
-                        .next()
-                        .ok_or(Error::Protocol)?,
-                ),
+                domains: read
+                    .local_projection()
+                    .queries
+                    .values()
+                    .next()
+                    .ok_or(Error::Protocol)?
+                    .domains(cardinality),
                 input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
                 policy: None,
                 scope: match subject(&read) {
@@ -958,6 +947,7 @@ impl Data {
             return Err(Error::Conflict);
         }
         if !visible(&definition.read, caller)
+            || (!definition.descriptor.domains.is_empty() && !read_granted(&definition.read))
             || (definition.enterprise.is_some() && definition.enterprise != self.enterprise)
         {
             return Err(Error::Denied);
@@ -975,6 +965,7 @@ impl Data {
                 if visible(&d.read, caller)
                     && (d.enterprise.is_none() || d.enterprise == self.enterprise)
                     && !d.descriptor.domains.is_empty()
+                    && read_granted(&d.read)
                 {
                     if !self.pinned.contains(&d.descriptor.reference.id) {
                         d.descriptor.available = false;
@@ -1218,7 +1209,14 @@ impl Data {
                         _ => DataQuality::Partial,
                     }
                 };
-                if let Some(kind) = domain(&q.definition) {
+                if let Some(kind) = read
+                    .local_projection()
+                    .queries
+                    .get(source)
+                    .ok_or(Error::Protocol)?
+                    .domain
+                    .as_deref()
+                {
                     if self.safe(&encode(&result.rows)?)? {
                         if value.enumeration_complete
                             && result.rows.len() == 1

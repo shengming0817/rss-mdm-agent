@@ -4840,10 +4840,67 @@ async fn local_software_case() -> (Case, LocalSoftwareChoice) {
         .unwrap()
         .reference;
     let receipt = format!("org.rss.fixture.never-installed.{}", uuid::Uuid::new_v4());
-    c.service.core.data.snapshot(&CollectedData{
-        query:query.clone(),scope:DataScope::Device,request:None,collected_at:Some(c.service.core.host.clock.millis().unwrap()/1000),quality:DataQuality::Complete,enumeration_complete:true,fields:Default::default(),
-        rows:vec![serde_json::json!({"id":"fixture-receipt","native_id":receipt,"name":"Explicit receipt fixture","version":"1.0.0","scope":"device","owner":"","origin":"pkg_receipt"})],stale:false,next:None,
-    }).unwrap();
+    let read = c
+        .service
+        .core
+        .data
+        .definition(&query, &c.selection.subject)
+        .unwrap()
+        .read;
+    let q = &read.plan.spec().queries["read"];
+    let at = c.service.core.host.clock.millis().unwrap() / 1000;
+    let row: std::collections::BTreeMap<String, serde_json::Value> = serde_json::from_value(serde_json::json!({"id":"fixture-receipt","native_id":receipt,"name":"Explicit receipt fixture","version":"1.0.0","publisher":"Fixture","location":"/","install_time":1,"scope":"device","owner":"","origin":"pkg_receipt"})).unwrap();
+    let result = wire::NativeCollectionResult {
+        plan_digest: read.plan.digest(),
+        collected_at: at as i64,
+        queries: [(
+            "read".into(),
+            wire::NativeQueryResult {
+                query_digest: q.digest(),
+                collected_at: at as i64,
+                status: wire::NativeQueryStatus::Complete,
+                enumeration_complete: true,
+                row_count: 1,
+                rows: vec![row],
+                scan: None,
+                users: None,
+            },
+        )]
+        .into(),
+    };
+    result.validate_for(&read.plan, at as i64).unwrap();
+    let stdout = serde_json::to_vec(&result).unwrap();
+    let stderr = serde_json::to_vec(&CollectionCompletion {
+        input_sha256: "b".repeat(64),
+        output_sha256: format!("{:x}", Sha256::digest(&stdout)),
+        closed: true,
+        native_output_bytes: stdout.len() as u64,
+    })
+    .unwrap();
+    c.service
+        .core
+        .data
+        .native(
+            read,
+            None,
+            &ProcessEvidence {
+                content_digest: Digest::new("a".repeat(64)).unwrap(),
+                attempt_id: AttemptId::new("fixture-attempt").unwrap(),
+                runner: plan::id("fixture-runner").unwrap(),
+                scope: ProcessScope::NotStarted {},
+                finished: true,
+                exit_code: Some(0),
+                end: ProcessEnd::Exited,
+                failure_kind: ProcessFailureKind::None,
+                quiescent: true,
+                total_output_bytes: (stdout.len() + stderr.len()) as u64,
+                stdout,
+                stderr,
+                quality: OutputQuality::Complete,
+            },
+            at * 1000,
+        )
+        .unwrap();
     let (reply, receive) = tokio::sync::oneshot::channel();
     c.service.core.handle(Command {
         fence_epoch: c.service.core.fences.current(&c.scope()).unwrap(),
@@ -5927,6 +5984,23 @@ async fn recent_activity_rejects_invalid_cursors_without_creating_work() {
             Reply::Rejected
         ));
     }
+    assert!(c
+        .service
+        .core
+        .app
+        .service_tasks(None, 64)
+        .unwrap()
+        .items
+        .is_empty());
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn collected_software_physical_view_reaches_the_authenticated_software_reader() {
+    let _budget = crate::scenario_budget::enter();
+    let (c, choice) = local_software_case().await;
+    assert_eq!(choice.software.installation.as_str(), "fixture-receipt");
+    assert!(c._server.data.lock().unwrap().start_ops.is_empty());
     assert!(c
         .service
         .core

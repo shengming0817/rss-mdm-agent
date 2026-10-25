@@ -177,6 +177,17 @@ impl LocalProjection {
 }
 
 impl LocalQueryProjection {
+    pub(super) fn domains(&self, cardinality: w::NativeCardinality) -> Vec<String> {
+        if cardinality == w::NativeCardinality::List {
+            return self.domain.iter().cloned().collect();
+        }
+        self.fields
+            .keys()
+            .filter_map(|k| k.rsplit_once('.').map(|(d, _)| d.to_owned()))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
     pub(super) fn fields(
         &self,
         row: &BTreeMap<String, Value>,
@@ -282,16 +293,15 @@ impl Data {
             id: crate::backend::plan::id(format!("native:{}", revision.as_str()))?,
             revision,
         };
-        let domains = {
-            read.plan
-                .spec()
-                .queries
-                .values()
-                .filter_map(|q| domain(&q.definition).map(str::to_owned))
-                .collect::<std::collections::BTreeSet<_>>()
-                .into_iter()
-                .collect()
-        };
+        let domains = read
+            .plan
+            .spec()
+            .queries
+            .iter()
+            .flat_map(|(source, q)| read.local_projection().queries[source].domains(q.cardinality))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
         let definition = Definition {
             descriptor: QueryDescriptor {
                 reference,
@@ -454,9 +464,7 @@ impl Data {
                     .queries
                     .get(source)
                     .ok_or(Error::Protocol)?;
-                let Some(domain) =
-                    domain(&query.definition).filter(|d| view.domain.as_deref() == Some(*d))
-                else {
+                let Some(domain) = view.domain.as_deref() else {
                     continue;
                 };
                 let Some(observation) = result.queries.get(source) else {

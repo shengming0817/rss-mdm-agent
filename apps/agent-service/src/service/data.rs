@@ -199,7 +199,11 @@ impl Core {
     }
     pub(crate) fn capture_data(&mut self, request: &RequestId) -> Result<(), Error> {
         if self.data.captured(request)? {
-            return Ok(());
+            // Snapshot durability and delivery confirmation are independent commits.
+            // Finish confirmations after a crash without projecting or collecting again.
+            return Self::capture_delivery(&mut self.app, &mut self.data, request, |_, _, _| {
+                Err(Error::Conflict)
+            });
         }
         let input = self
             .app
@@ -222,28 +226,12 @@ impl Core {
             {
                 return Err(Error::Untrusted);
             }
-            let consumer = plan::id("local-collected-data")?;
-            for evidence in self
-                .app
-                .service_delivery(request, &consumer, 1)
-                .map_err(map_app_error)?
-            {
-                if let Some(process) = &evidence.process {
-                    if !process.finished || !process.quiescent {
-                        continue;
-                    }
-                    self.data.capture_script(
-                        &task,
-                        request,
-                        process,
-                        evidence.observed_at_unix_ms,
-                    )?;
-                }
-                self.app
-                    .service_confirm(request, &consumer, &evidence.receipt.event_id)
-                    .map_err(map_app_error)?;
-            }
-            return Ok(());
+            return Self::capture_delivery(
+                &mut self.app,
+                &mut self.data,
+                request,
+                |data, process, at| data.capture_script(&task, request, process, at),
+            );
         }
         if input.spec().launch.interpreter.profile.id.as_str() != crate::collection_worker::PROFILE
         {
@@ -253,9 +241,49 @@ impl Core {
         let Some(read) = self.data.remembered(request)? else {
             return Ok(());
         };
+        Self::capture_native_delivery(&mut self.app, &mut self.data, &input, &read)
+    }
+    pub(crate) fn capture_native_delivery<
+        H: execution_app::AppHost,
+        R: execution_app::RunnerPort,
+        J: execution_app::JournalPort,
+    >(
+        app: &mut ExecutionApp<H, R, J>,
+        data: &mut crate::collected_data::Data,
+        input: &FrozenExecution,
+        read: &crate::collection_worker::ReadPlan,
+    ) -> Result<(), Error> {
+        let request = &input.spec().request.request_id;
+        Self::capture_delivery(app, data, request, |data, process, at| {
+            if process.exit_code == Some(0)
+                && process.quality == OutputQuality::Complete
+                && process.total_output_bytes <= u64::from(read.plan.spec().budget.output_bytes)
+            {
+                let proof: CollectionCompletion =
+                    serde_json::from_slice(&process.stderr).map_err(|_| Error::Protocol)?;
+                if proof.input_sha256 != input.spec().launch.artifact.sha256.as_str() {
+                    return Err(Error::Untrusted);
+                }
+            }
+            data.native(read.clone(), Some(request.clone()), process, at)
+        })
+    }
+    fn capture_delivery<
+        H: execution_app::AppHost,
+        R: execution_app::RunnerPort,
+        J: execution_app::JournalPort,
+    >(
+        app: &mut ExecutionApp<H, R, J>,
+        data: &mut crate::collected_data::Data,
+        request: &RequestId,
+        mut capture: impl FnMut(
+            &mut crate::collected_data::Data,
+            &ProcessEvidence,
+            u64,
+        ) -> Result<(), Error>,
+    ) -> Result<(), Error> {
         let consumer = plan::id("local-collected-data")?;
-        for evidence in self
-            .app
+        for evidence in app
             .service_delivery(request, &consumer, 1)
             .map_err(map_app_error)?
         {
@@ -263,20 +291,11 @@ impl Core {
                 if !process.finished || !process.quiescent {
                     continue;
                 }
-                let completion: CollectionCompletion =
-                    serde_json::from_slice(&process.stderr).map_err(|_| Error::Protocol)?;
-                if completion.input_sha256 != input.spec().launch.artifact.sha256.as_str() {
-                    return Err(Error::Untrusted);
+                if !data.captured(request)? {
+                    capture(data, process, evidence.observed_at_unix_ms)?;
                 }
-                self.data.native(
-                    read.clone(),
-                    Some(request.clone()),
-                    process,
-                    evidence.observed_at_unix_ms,
-                )?;
             }
-            self.app
-                .service_confirm(request, &consumer, &evidence.receipt.event_id)
+            app.service_confirm(request, &consumer, &evidence.receipt.event_id)
                 .map_err(map_app_error)?;
         }
         Ok(())

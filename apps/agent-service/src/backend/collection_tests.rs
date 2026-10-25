@@ -202,8 +202,15 @@ async fn capture_recovery(case: u8) {
             value: serde_json::json!({}),
         },
     );
+    let read: crate::collection_worker::ReadPlan = (**task).clone().try_into().unwrap();
+    input.request.parameters.insert(
+        "collection-read".into(),
+        InputValue::Literal {
+            value: serde_json::to_value(&read).unwrap(),
+        },
+    );
     let bytes = serde_json::to_vec(&crate::collection_worker::Input {
-        read: (**task).clone().try_into().unwrap(),
+        read,
         finish_by_unix_ms: input.validity.not_before_unix_ms + input.budget.total_timeout_ms,
         image_sha256: input.launch.interpreter.artifact.sha256.clone(),
         run_as: input.run_as.clone(),

@@ -1274,3 +1274,173 @@ async fn frozen_script_projection_retains_typed_results_and_requires_the_origina
         .capture_script(&task, &request, &process, 101_000)
         .is_err());
 }
+
+#[tokio::test]
+async fn journal_delivery_capture_checks_success_hash_and_confirms_terminal_failures_after_reopen()
+{
+    use crate::backend::test_support::{local, CaptureSpec, CapturingRunner};
+    use execution_app::{AppConfig, DeterministicTestRunner, RequestContext, TestScenario};
+    let _budget = crate::scenario_budget::enter();
+    for mode in 0..4 {
+        let server = Server::new().await;
+        let root = Root::new();
+        let mut client = server.client(&root, OpenMode::Create);
+        server.register(&mut client).await;
+        let read = read_plan();
+        let mut data = projection(&client);
+        let mut spec = local::plan().spec().clone();
+        spec.request.request_id = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+        let input = FrozenExecution::freeze(spec, &execution_app::test_execution_limits()).unwrap();
+        let mut result: w::NativeCollectionResult =
+            serde_json::from_slice(&evidence(&read, true).stdout).unwrap();
+        result.collected_at = 1;
+        for r in result.queries.values_mut() {
+            r.collected_at = 1;
+        }
+        let stdout = serde_json::to_vec(&result).unwrap();
+        let stderr = if mode < 2 {
+            serde_json::to_vec(&CollectionCompletion {
+                input_sha256: if mode == 1 {
+                    "d".repeat(64)
+                } else {
+                    input.spec().launch.artifact.sha256.as_str().into()
+                },
+                output_sha256: format!("{:x}", Sha256::digest(&stdout)),
+                closed: true,
+                native_output_bytes: stdout.len() as u64,
+            })
+            .unwrap()
+        } else {
+            b"worker stopped before completion".to_vec()
+        };
+        let runner = CapturingRunner {
+            inner: DeterministicTestRunner::new(id("test-runner"), TestScenario::Complete, 16)
+                .unwrap(),
+            ready: Default::default(),
+            progress: Default::default(),
+            capture: std::sync::Arc::new(std::sync::Mutex::new(Some(CaptureSpec {
+                exit_code: if mode == 2 { 1 } else { 0 },
+                quiescent: true,
+                stdout,
+                stderr,
+                quality: if mode == 3 {
+                    OutputQuality::Truncated
+                } else if mode == 2 {
+                    OutputQuality::Failed
+                } else {
+                    OutputQuality::Complete
+                },
+                end: ProcessEnd::Exited,
+            }))),
+        };
+        let db = local::Database::new();
+        let mut host = local::TestHost::new();
+        host.template = input.clone();
+        let caller = RequestContext {
+            actor: input.spec().request.actor.clone(),
+        };
+        let mut app = local::create_app(
+            &db.path,
+            host.clone(),
+            runner.clone(),
+            AppConfig::test_defaults(1),
+        )
+        .unwrap();
+        app.request_execution(&caller, &input).unwrap();
+        app.reconcile(&input.spec().request.request_id).unwrap();
+        let request = &input.spec().request.request_id;
+        let consumer = id("local-collected-data");
+        let pending = app.service_delivery(request, &consumer, 64).unwrap().len();
+        assert!(pending > 1);
+        if mode == 1 {
+            assert_eq!(
+                crate::service::Core::capture_native_delivery(&mut app, &mut data, &input, &read),
+                Err(Error::Untrusted)
+            );
+            assert!(!data.captured(request).unwrap());
+            assert_eq!(
+                app.service_delivery(request, &consumer, 64).unwrap().len(),
+                pending
+            );
+            continue;
+        }
+        crate::service::Core::capture_native_delivery(&mut app, &mut data, &input, &read).unwrap();
+        assert!(data.captured(request).unwrap());
+        drop(app);
+        drop(data);
+        let mut app =
+            local::reopen_app(&db.path, host, runner.clone(), AppConfig::test_defaults(1)).unwrap();
+        let mut data = projection(&client);
+        for _ in 0..32 {
+            crate::service::Core::capture_native_delivery(&mut app, &mut data, &input, &read)
+                .unwrap();
+        }
+        assert!(app
+            .service_delivery(request, &consumer, 64)
+            .unwrap()
+            .is_empty());
+        assert_eq!(runner.inner.dispatch_count(), 1);
+        let saved: CollectedData = decode(
+            data.store
+                .read(&format!("result/{}", request.as_str()))
+                .unwrap()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            saved.quality,
+            match mode {
+                0 => DataQuality::Complete,
+                2 => DataQuality::Failed,
+                _ => DataQuality::Truncated,
+            }
+        );
+        if mode == 0 {
+            assert_eq!(
+                saved.fields["hardware.memory.total_bytes"],
+                json!("4294967296")
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn frozen_view_domain_survives_recovery_without_changing_the_current_read_grant() {
+    let _budget = crate::scenario_budget::enter();
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let mut read = read_plan();
+    let crate::collection_worker::ReadSource::Local { projection: frozen } = &mut read.source
+    else {
+        panic!("local")
+    };
+    frozen
+        .queries
+        .get_mut("arbitrarySourceName")
+        .unwrap()
+        .domain = Some("historical.memory".into());
+    let mut data = projection(&client);
+    let request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+    data.remember(&request, read.clone()).unwrap();
+    drop(data);
+    let mut data = projection(&client);
+    let read = data.remembered(&request).unwrap().unwrap();
+    data.native(
+        read.clone(),
+        Some(request.clone()),
+        &evidence(&read, true),
+        100_000,
+    )
+    .unwrap();
+    let saved: CollectedData = decode(
+        data.store
+            .read(&format!("result/{}", request.as_str()))
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(saved.rows[0]["domain"], json!("historical.memory"));
+    assert!(read_granted(&read));
+}
