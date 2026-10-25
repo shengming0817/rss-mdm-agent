@@ -1186,6 +1186,13 @@ export type QueryPhase =
  */
 export type QueryKind = "native" | "policy" | "telemetry";
 /**
+ * Provenance classification only; it never grants execution or local read permission.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "QueryOrigin".
+ */
+export type QueryOrigin = "local" | "enterprise";
+/**
  * Query result spanning preparation and actual execution without inventing a frozen plan.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -2402,10 +2409,6 @@ export interface CollectedData {
     [k: string]: unknown;
   };
   /**
-   * Version of the local domain mapping; absent when unavailable.
-   */
-  mappingVersion: number | null;
-  /**
    * Continuation for this exact snapshot.
    */
   next: DataCursor | null;
@@ -3112,6 +3115,10 @@ export interface QueryDescriptor {
    * Source family.
    */
   kind: QueryKind;
+  /**
+   * Frozen provenance, independent of the physical source and caller permissions.
+   */
+  origin: QueryOrigin;
   /**
    * Exact original published Policy, when applicable.
    */

@@ -115,6 +115,7 @@ impl Core {
             .telemetry
             .as_ref()
             .map(|t| t.data_sources())
+            .transpose()?
             .unwrap_or_default();
         self.data
             .maintain(&self.data_contexts(), &active, &policies)
@@ -151,7 +152,10 @@ impl Core {
             &input.spec().run_as,
             &input.spec().launch.artifact.sha256,
         );
-        let bytes = match execution_runner::staging::read_worker_input(&path, 1024 * 1024) {
+        let bytes = match execution_runner::staging::read_worker_input(
+            &path,
+            crate::collection_worker::INPUT_BYTES,
+        ) {
             Ok(v) => v,
             Err(_) => return Ok(()), // Historical GC is an unavailable definition, never a guessed plan.
         };
@@ -161,6 +165,34 @@ impl Core {
         }
         let worker: crate::collection_worker::Input =
             serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)?;
+        worker.read.validate()?;
+        let remote = match &worker.read.source {
+            crate::collection_worker::ReadSource::Task { task, .. } => {
+                Some(plan::enterprise_binding(
+                    self.data.service_id,
+                    task.tenant_id,
+                    task.registration_id,
+                    task.generation,
+                    &task.device_id,
+                )?)
+            }
+            crate::collection_worker::ReadSource::Periodic {
+                configuration: c, ..
+            } => Some(plan::enterprise_binding(
+                self.data.service_id,
+                c.tenant_id,
+                c.registration_id,
+                c.generation,
+                &c.device_id,
+            )?),
+            crate::collection_worker::ReadSource::Local { .. } => None,
+        };
+        if remote.as_ref().is_some_and(|b| {
+            b.authority != input.spec().request.authority
+                || b.device != input.spec().request.target.device
+        }) {
+            return Err(Error::Untrusted);
+        }
         self.data
             .remember(&input.spec().request.request_id, worker.read)?;
         Ok(())
@@ -173,6 +205,46 @@ impl Core {
             .app
             .service_frozen_input(request)
             .map_err(map_app_error)?;
+        if let Some(InputValue::Literal { value }) =
+            input.spec().request.parameters.get(plan::SCRIPT_PROJECTION)
+        {
+            let task: wire::TaskSpec =
+                serde_json::from_value(value.clone()).map_err(|_| Error::Protocol)?;
+            let b = plan::enterprise_binding(
+                self.data.service_id,
+                task.tenant_id,
+                task.registration_id,
+                task.generation,
+                &task.device_id,
+            )?;
+            if b.authority != input.spec().request.authority
+                || b.device != input.spec().request.target.device
+            {
+                return Err(Error::Untrusted);
+            }
+            let consumer = plan::id("local-collected-data")?;
+            for evidence in self
+                .app
+                .service_delivery(request, &consumer, 1)
+                .map_err(map_app_error)?
+            {
+                if let Some(process) = &evidence.process {
+                    if !process.finished || !process.quiescent {
+                        continue;
+                    }
+                    self.data.capture_script(
+                        &task,
+                        request,
+                        process,
+                        evidence.observed_at_unix_ms,
+                    )?;
+                }
+                self.app
+                    .service_confirm(request, &consumer, &evidence.receipt.event_id)
+                    .map_err(map_app_error)?;
+            }
+            return Ok(());
+        }
         if input.spec().launch.interpreter.profile.id.as_str() != crate::collection_worker::PROFILE
         {
             return Ok(());
@@ -190,6 +262,11 @@ impl Core {
             if let Some(process) = &evidence.process {
                 if !process.finished || !process.quiescent {
                     continue;
+                }
+                let completion: CollectionCompletion =
+                    serde_json::from_slice(&process.stderr).map_err(|_| Error::Protocol)?;
+                if completion.input_sha256 != input.spec().launch.artifact.sha256.as_str() {
+                    return Err(Error::Untrusted);
                 }
                 self.data.native(
                     read.clone(),
@@ -575,6 +652,17 @@ impl<S: IdentityProvider> DeviceService<S> {
                     };
                     let reply = self.policy_operation(command, &request, commands).await?;
                     if let Reply::PolicyStatus { value } = &reply {
+                        if self
+                            .core
+                            .app
+                            .has_service_execution(
+                                &query.request,
+                                &self.core.request_device(&query.request)?,
+                            )
+                            .map_err(map_app_error)?
+                        {
+                            self.core.capture_data(&query.request)?;
+                        }
                         self.core.data.policy_result(&a, value)?;
                     }
                     let mut status = policy_status(reply, &a, &query.request)?;

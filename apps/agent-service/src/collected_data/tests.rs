@@ -7,6 +7,7 @@ fn projection<S: agent_client::IdentityProvider, C: agent_client::Clock>(
     let mut data = Data::new(
         client.collected_store().unwrap(),
         client.output_policy().unwrap(),
+        client.configuration().service_id,
     );
     let (binding, _) = crate::backend::plan::context(
         client.configuration().service_id,
@@ -14,7 +15,7 @@ fn projection<S: agent_client::IdentityProvider, C: agent_client::Clock>(
         &client.registration().unwrap(),
     )
     .unwrap();
-    data.bind_enterprise(Some(&binding.authority)).unwrap();
+    data.bind_enterprise(Some(&binding)).unwrap();
     data
 }
 fn id(s: &str) -> Id {
@@ -44,6 +45,7 @@ fn read_plan() -> ReadPlan {
     })
     .unwrap();
     ReadPlan {
+        source: crate::collection_worker::ReadSource::local(&plan).unwrap(),
         plan,
         platform: w::TaskPlatform::Macos,
         deadline: 200,
@@ -283,6 +285,7 @@ async fn metadata_is_bounded_titles_survive_capture_and_published_inputs_remain_
                 filter: None,
             };
         read.plan = w::NativeCollectionPlan::new(spec).unwrap();
+        read.source = crate::collection_worker::ReadSource::local(&read.plan).unwrap();
         read.platform = w::TaskPlatform::Windows;
         data.register(read).unwrap();
     }
@@ -341,7 +344,11 @@ async fn reused_numeric_uid_cannot_discover_or_read_an_old_accounts_collection()
     let query = spec.queries.values_mut().next().unwrap();
     query.cardinality = w::NativeCardinality::List;
     query.instance_keys = vec!["id".into()];
+    spec.scope = rss_mdm_agent_wire::CollectionScope::User {
+        identity: caller.clone(),
+    };
     read.plan = w::NativeCollectionPlan::new(spec).unwrap();
+    read.source = crate::collection_worker::ReadSource::local(&read.plan).unwrap();
     read.execution = w::NativeExecutionBinding {
         identity: w::ExecutionIdentity::LoggedInUser,
         context_revision: 1,
@@ -367,7 +374,7 @@ async fn reused_numeric_uid_cannot_discover_or_read_an_old_accounts_collection()
     assert!(data.read(&read, &caller, &id("login/1"), 100).is_err());
 }
 #[tokio::test]
-async fn telemetry_ack_removes_delivery_but_preserves_the_normalized_local_projection() {
+async fn telemetry_ack_preserves_normalized_projection_without_granting_unknown_fields() {
     let _budget = crate::scenario_budget::enter();
     use crate::protocol_test_support::telemetry as fixture;
     use agent_client::{telemetry::Limits, Clock};
@@ -399,13 +406,16 @@ async fn telemetry_ack_removes_delivery_but_preserves_the_normalized_local_proje
         Some(normalized),
     )
     .unwrap();
-    let query = data
+    assert!(!data
         .directory("501")
         .unwrap()
-        .into_iter()
-        .find(|d| d.kind == QueryKind::Telemetry)
-        .unwrap()
-        .reference;
+        .iter()
+        .any(|d| d.kind == QueryKind::Telemetry));
+    let key = format!(
+        "latest/projected:telemetry:{}",
+        digest(c.payload()).unwrap().as_str()
+    );
+    let retained = data.store.read(&key).unwrap().unwrap();
     spool.freeze_all(&c).unwrap();
     let pending = spool.pending(at / 1_000_000, false).unwrap().unwrap();
     spool.attempting(&pending, at / 1_000_000).unwrap();
@@ -414,23 +424,26 @@ async fn telemetry_ack_removes_delivery_but_preserves_the_normalized_local_proje
     assert_eq!(spool.summary().unwrap().pending, 0);
     drop(data);
     let data = projection(&client);
-    let result = data
-        .read(
+    assert_eq!(data.store.read(&key).unwrap(), Some(retained));
+    let query = QueryRef {
+        id: id(&format!(
+            "telemetry:{}",
+            digest(c.payload()).unwrap().as_str()
+        )),
+        revision: digest(c.payload()).unwrap(),
+    };
+    assert!(data
+        .authorize_read(
             &DataRead {
                 selection: DataSelection::Query { query },
                 after: None,
                 limit: 16,
-                max_age_seconds: None,
+                max_age_seconds: None
             },
             "501",
-            &id("login/1"),
-            (at / 1_000_000) as u64,
+            &id("login/1")
         )
-        .unwrap();
-    assert_eq!(
-        result.fields["custom.load"]["value"],
-        json!({"kind":"integer","value":17})
-    );
+        .is_err());
 }
 
 #[tokio::test]
@@ -457,28 +470,26 @@ async fn declared_domains_and_windows_fields_match_the_same_local_display_contra
         mapped_field(q, "TotalPhysicalMemory").as_deref(),
         Some("hardware.memory.total_bytes")
     );
-    let disk = w::NativeQueryDefinition::WindowsWmi {
-        namespace: r"root\cimv2".into(),
-        class: "Win32_DiskDrive".into(),
-        properties: Default::default(),
-        filter: None,
+    let disk = entries
+        .iter()
+        .find(|q| q.domains.iter().any(|d| d == "hardware.disks"))
+        .unwrap();
+    let read = data.definition(&disk.reference, "501").unwrap().read;
+    let crate::collection_worker::ReadSource::Local { projection } = &read.source else {
+        panic!("local recipe");
     };
     assert_eq!(
-        mapped_row(
-            &disk,
-            &[
-                ("DeviceID".into(), json!("disk0")),
-                ("Model".into(), json!("native")),
-                ("Size".into(), json!("1024"))
-            ]
-            .into()
-        ),
-        [
-            ("id".into(), json!("disk0")),
-            ("model".into(), json!("native")),
-            ("size_bytes".into(), json!("1024"))
-        ]
-        .into()
+        projection.queries["read"]
+            .row(
+                &[
+                    ("DeviceID".into(), json!("disk0")),
+                    ("Model".into(), json!("native")),
+                    ("Size".into(), json!("1024")),
+                ]
+                .into()
+            )
+            .unwrap(),
+        json!({"id":"disk0","model":"native","size_bytes":"1024"})
     );
 }
 
@@ -567,6 +578,7 @@ async fn a_later_native_projection_failure_rolls_back_the_batch_and_recovers_aft
     };
     spec.queries.insert("cpu".into(), cpu);
     read.plan = w::NativeCollectionPlan::new(spec).unwrap();
+    read.source = crate::collection_worker::ReadSource::local(&read.plan).unwrap();
     let request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
     data.remember(&request, read.clone()).unwrap();
     let mut refs = read
@@ -839,4 +851,426 @@ async fn old_settings_tasks_cannot_replace_a_newer_observation() {
             .collected_at_unix_ms,
         200
     );
+}
+
+fn enterprise_task<S: agent_client::IdentityProvider, C: agent_client::Clock>(
+    client: &agent_client::Client<S, C>,
+    read: &ReadPlan,
+) -> w::CollectionTaskSpec {
+    let r = client.registration().unwrap();
+    let (fields, mappings) = crate::protocol_test_support::projection::native(&read.plan);
+    let task = w::CollectionTaskSpec {
+        fields,
+        mappings,
+        wire_version: w::COLLECTION_TASK_VERSION,
+        tenant_id: client.configuration().tenant,
+        registration_id: r.registration_id,
+        device_id: r.device_id,
+        generation: r.generation,
+        platform: read.platform,
+        architecture: w::TaskArchitecture::Aarch64,
+        task_id: uuid::Uuid::new_v4(),
+        attempt_id: uuid::Uuid::new_v4(),
+        permit: w::TaskPermit::Start,
+        expires_at: 100,
+        deadline: read.deadline,
+        resource_digest: [3; 32],
+        resource: w::TaskResource {
+            id: "enterprise-memory".into(),
+            version: "v1".into(),
+            variant: "macos".into(),
+        },
+        authorization: w::TaskAuthorization::Policy {
+            policy_id: uuid::Uuid::new_v4(),
+            policy_version: uuid::Uuid::new_v4(),
+        },
+        execution: read.execution.clone(),
+        plan: read.plan.clone(),
+        plan_digest: read.plan.digest(),
+    };
+    task.validate().unwrap();
+    task
+}
+
+#[tokio::test]
+async fn frozen_enterprise_projection_is_generic_private_and_isolated_from_local_views() {
+    let _budget = crate::scenario_budget::enter();
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let mut data = projection(&client);
+    let local = read_plan();
+    let local_ref = data
+        .register(single(&local, local.plan.spec().queries.values().next().unwrap()).unwrap())
+        .unwrap()
+        .descriptor
+        .reference;
+    let task = enterprise_task(&client, &local);
+    let read: ReadPlan = task.clone().try_into().unwrap();
+    let reference = data.register(read.clone()).unwrap().descriptor.reference;
+    assert_ne!(reference, local_ref);
+    data.native(read.clone(), None, &evidence(&read, true), 100_000)
+        .unwrap();
+    let key = format!("latest/projected:{}", reference.id.as_str());
+    let fields: BTreeMap<String, crate::collection_projection::FieldResult> =
+        decode(data.store.read(&key).unwrap().unwrap()).unwrap();
+    assert_eq!(fields["custom.native"].value, Some(json!(4294967296i64)));
+    assert!(data
+        .directory("501")
+        .unwrap()
+        .iter()
+        .any(|d| d.reference == reference && d.origin == QueryOrigin::Enterprise));
+    let value: CollectedData = decode(
+        data.store
+            .read(&format!("latest/{}", reference.id.as_str()))
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(value.quality, DataQuality::Complete);
+    assert!(!value.fields.contains_key("custom.native"));
+    assert_eq!(
+        value.fields["hardware.memory.total_bytes"],
+        json!("4294967296")
+    );
+    // A different delivery attempt retains the mapping identity; a different mapping does not.
+    let mut again = task.clone();
+    again.attempt_id = uuid::Uuid::new_v4();
+    assert_eq!(
+        data.register(again.try_into().unwrap())
+            .unwrap()
+            .descriptor
+            .reference,
+        reference
+    );
+    let mut changed = task.clone();
+    changed.fields[0].key = w::FieldKey::parse("custom.other").unwrap();
+    let binding = changed.mappings.remove("custom.native").unwrap();
+    changed.mappings.insert("custom.other".into(), binding);
+    let changed_ref = data
+        .register(changed.try_into().unwrap())
+        .unwrap()
+        .descriptor
+        .reference;
+    assert_ne!(changed_ref, reference);
+    for context in 0..4 {
+        let mut changed = task.clone();
+        match context {
+            0 => changed.generation += 1,
+            1 => changed.device_id = "other-device".into(),
+            2 => changed.tenant_id = uuid::Uuid::new_v4(),
+            _ => changed.resource_digest = [4; 32],
+        }
+        assert_ne!(
+            data.register(changed.try_into().unwrap())
+                .unwrap()
+                .descriptor
+                .reference,
+            reference
+        );
+    }
+    let mut corrupted = read.clone();
+    corrupted.deadline += 1;
+    assert_eq!(corrupted.validate(), Err(Error::Untrusted));
+    drop(data);
+    let data = projection(&client);
+    let restored: Definition = decode(
+        data.store
+            .read(&format!("definition/{}", reference.id.as_str()))
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        encode(&restored.read.source).unwrap(),
+        encode(&read.source).unwrap()
+    );
+    assert_eq!(
+        data.store.read(&key).unwrap().unwrap(),
+        encode(&fields).unwrap()
+    );
+    assert!(data.local_definition(&reference, "501").is_err());
+}
+
+#[test]
+fn shared_projection_preserves_missing_partial_unknown_and_complete_empty_list() {
+    use crate::collection_projection::{self as p, FieldResult};
+    let read = read_plan();
+    let (mut fields, mut mappings) = crate::protocol_test_support::projection::native(&read.plan);
+    let mut result: w::NativeCollectionResult =
+        serde_json::from_slice(&evidence(&read, true).stdout).unwrap();
+    for (status, complete, expected) in [
+        (w::NativeQueryStatus::Partial, false, DataQuality::Partial),
+        (
+            w::NativeQueryStatus::Truncated,
+            false,
+            DataQuality::Truncated,
+        ),
+        (w::NativeQueryStatus::Missing, true, DataQuality::Missing),
+    ] {
+        let row = result.queries.get_mut("arbitrarySourceName").unwrap();
+        row.status = status;
+        row.enumeration_complete = complete;
+        row.rows.clear();
+        row.row_count = 0;
+        let v = p::native(&fields, &mappings, &read.plan, &result, 100).unwrap();
+        assert_eq!(v["custom.native"].quality, expected);
+        assert!(!v["custom.native"].deleted);
+    }
+    fields[0].nullable = true;
+    mappings.get_mut("custom.native").unwrap().missing = w::NativeMissing::Null;
+    let v = p::native(&fields, &mappings, &read.plan, &result, 100).unwrap();
+    assert_eq!(v["custom.native"].value, Some(Value::Null));
+    mappings.get_mut("custom.native").unwrap().missing = w::NativeMissing::Delete;
+    let v = p::native(&fields, &mappings, &read.plan, &result, 100).unwrap();
+    assert!(v["custom.native"].deleted);
+    result.queries.clear();
+    let v = p::native(&fields, &mappings, &read.plan, &result, 100).unwrap();
+    assert_eq!(v["custom.native"].quality, DataQuality::Unknown);
+    let mut spec: w::NativePlanSpec = read.plan.into();
+    let q = spec.queries.get_mut("arbitrarySourceName").unwrap();
+    q.definition = w::NativeQueryDefinition::WindowsWmi {
+        namespace: r"root\cimv2".into(),
+        class: "Vendor_Items".into(),
+        properties: [(
+            "Id".into(),
+            w::WmiProperty {
+                cim_type: w::CimType::String,
+                array: false,
+            },
+        )]
+        .into(),
+        filter: None,
+    };
+    q.cardinality = w::NativeCardinality::List;
+    q.instance_keys = vec!["Id".into()];
+    let plan = w::NativeCollectionPlan::new(spec).unwrap();
+    let (fields, mappings) = crate::protocol_test_support::projection::native(&plan);
+    result.plan_digest = plan.digest();
+    result.queries.insert(
+        "arbitrarySourceName".into(),
+        w::NativeQueryResult {
+            scan: None,
+            query_digest: plan.spec().queries["arbitrarySourceName"].digest(),
+            collected_at: 100,
+            status: w::NativeQueryStatus::Complete,
+            enumeration_complete: true,
+            row_count: 0,
+            rows: vec![],
+            users: None,
+        },
+    );
+    let v: BTreeMap<String, FieldResult> =
+        p::native(&fields, &mappings, &plan, &result, 100).unwrap();
+    assert_eq!(v["custom.native"].value, Some(json!([])));
+    assert_eq!(v["custom.native"].quality, DataQuality::Complete);
+}
+
+#[tokio::test]
+async fn packaged_baseline_and_product_owned_local_additions_coexist_without_registration() {
+    let _budget = crate::scenario_budget::enter();
+    let server = Server::new().await;
+    let root = Root::new();
+    let client = server.client(&root, OpenMode::Create);
+    let mut data = Data::new(
+        client
+            .collected_store_for_installation(uuid::Uuid::new_v4())
+            .unwrap(),
+        client.output_policy().unwrap(),
+        client.configuration().service_id,
+    );
+    data.install_platform(Platform::Macos).unwrap();
+    let mac = data.directory("501").unwrap();
+    assert_eq!(mac.len(), 15);
+    data.install_platform(Platform::Windows).unwrap();
+    let all = data.directory("501").unwrap();
+    assert_eq!(all.len(), 32);
+    assert!(all.iter().all(|d| d.origin == QueryOrigin::Local));
+    let os = all
+        .iter()
+        .find(|d| {
+            d.domains.contains(&"hardware.os".into()) && d.title.contains("Win32_OperatingSystem")
+        })
+        .unwrap();
+    let read = data.definition(&os.reference, "501").unwrap().read;
+    let crate::collection_worker::ReadSource::Local { projection } = &read.source else {
+        panic!("local source")
+    };
+    let fields = projection.queries["read"]
+        .fields(
+            &[
+                ("Caption".into(), json!("Windows")),
+                ("Version".into(), json!("11")),
+                ("BuildNumber".into(), json!("26100")),
+                ("SystemDrive".into(), json!("C:")),
+            ]
+            .into(),
+        )
+        .unwrap();
+    assert_eq!(fields["hardware.os.system_drive"], json!("C:"));
+    let local = read_plan();
+    let q = local.plan.spec().queries.values().next().unwrap();
+    let single = single(&local, q).unwrap();
+    let reference = data.register(single).unwrap().descriptor.reference;
+    data.native(local.clone(), None, &evidence(&local, true), 100_000)
+        .unwrap();
+    let result = data
+        .read(
+            &DataRead {
+                selection: DataSelection::Query { query: reference },
+                after: None,
+                limit: 16,
+                max_age_seconds: None,
+            },
+            "501",
+            &id("login/1"),
+            100,
+        )
+        .unwrap();
+    assert_eq!(
+        result.fields["hardware.memory.total_bytes"],
+        json!("4294967296")
+    );
+    assert!(
+        rss_mdm_agent_wire::packaged_collections::definitions()
+            .unwrap()
+            .len()
+            > 32
+    );
+    let crate::collection_worker::ReadSource::Local { projection } = local.source else {
+        panic!("local source")
+    };
+    assert!(!projection.queries["arbitrarySourceName"]
+        .baseline_fields(
+            &local.plan,
+            &serde_json::from_slice(&evidence(&read_plan(), true).stdout).unwrap(),
+            100
+        )
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn frozen_script_projection_retains_typed_results_and_requires_the_original_policy_grant() {
+    let _budget = crate::scenario_budget::enter();
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let mut task = {
+        let mut d = server.data.lock().unwrap();
+        d.script();
+        let w::TaskPayload::Script(task) = d.offer.as_ref().unwrap().payload.clone() else {
+            panic!("script")
+        };
+        *task
+    };
+    let (mut fields, _) = crate::protocol_test_support::projection::native(&read_plan().plan);
+    fields[0].key = w::FieldKey::parse("custom.created").unwrap();
+    fields[0].sources = [(w::Source::AgentScript, 0)].into();
+    task.projection = w::ScriptProjection::Collection {
+        fields,
+        mappings: [(
+            "custom.created".into(),
+            w::ValueMapping {
+                pointer: "/count".into(),
+                conversion: w::Conversion::Integer,
+                columns: Default::default(),
+            },
+        )]
+        .into(),
+        output_schema: json!({"type":"object","properties":{"count":{"type":"string"}},"required":["count"],"additionalProperties":false}),
+        scope: rss_mdm_agent_wire::CollectionScope::Device,
+    };
+    task.validate().unwrap();
+    let mut process = evidence(&read_plan(), true);
+    process.stdout = br#"{"count":"17"}"#.to_vec();
+    process.stderr.clear();
+    process.total_output_bytes = process.stdout.len() as u64;
+    let mut data = projection(&client);
+    let automatic = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+    data.capture_script(&task, &automatic, &process, 100_000)
+        .unwrap();
+    assert!(data.directory("501").unwrap().is_empty());
+    let saved: CollectedData = decode(
+        data.store
+            .read(&format!("result/{}", automatic.as_str()))
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(saved.quality, DataQuality::Denied);
+    assert!(saved.fields.is_empty());
+    let protected = data
+        .store
+        .read(&format!("latest/projected:{}", saved.query.id.as_str()))
+        .unwrap()
+        .unwrap();
+    assert_eq!(protected[1]["custom.created"]["value"], json!(17));
+    let subject = execution_ipc::host::current_subject().unwrap();
+    let session = id("login/1");
+    let context = NativeContextRef {
+        id: id("context"),
+        generation: id("generation"),
+    };
+    let item = published_item();
+    let query = data
+        .publish(
+            item.clone(),
+            PolicyLocator { after: None },
+            &subject,
+            &session,
+            &context,
+        )
+        .unwrap()
+        .reference;
+    let request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+    let association = Association {
+        query: query.clone(),
+        subject: subject.clone(),
+        session: session.clone(),
+        parameters: digest(&json!({})).unwrap(),
+        kind: QueryKind::Policy,
+        created_at: 100,
+        origin: digest(&json!("desktop")).unwrap(),
+    };
+    data.associate(&request, &association).unwrap();
+    let w::SelfServiceTask::Script { resource, .. } = &item.task else {
+        panic!("script")
+    };
+    task.resource = resource.clone();
+    task.authorization = w::TaskAuthorization::SelfService {
+        request_id: uuid::Uuid::parse_str(request.as_str()).unwrap(),
+        subject: item.subject,
+        source: w::SelfServiceCaller::Human,
+        policy_id: item.policy_id,
+        policy_revision: item.policy_revision,
+        policy_version: item.policy_version,
+        allow_ai: true,
+        risk_level: 1,
+        confirmed: true,
+    };
+    data.capture_script(&task, &request, &process, 100_000)
+        .unwrap();
+    drop(data);
+    let data = projection(&client);
+    let read = DataRead {
+        selection: DataSelection::Request {
+            request: request.clone(),
+        },
+        after: None,
+        limit: 16,
+        max_age_seconds: None,
+    };
+    assert_eq!(
+        data.read(&read, &subject, &session, 100).unwrap().fields["custom.created"],
+        json!(17)
+    );
+    assert!(data.read(&read, "other-account", &session, 100).is_err());
+    let mut data = data;
+    task.resource.version = "other".into();
+    assert!(data
+        .capture_script(&task, &request, &process, 101_000)
+        .is_err());
 }

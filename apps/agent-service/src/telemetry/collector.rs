@@ -238,17 +238,10 @@ impl Collector {
                 let image = plan::pin(&std::env::current_exe()?)?;
                 let tools = crate::collection_worker::tools(&core.config, read)?;
                 let input = crate::collection_worker::Input {
-                    read: crate::collection_worker::ReadPlan {
-                        plan: read.clone(),
-                        platform: read.platform(),
-                        deadline: (deadline / 1000) as i64,
-                        execution: w::NativeExecutionBinding {
-                            identity: w::ExecutionIdentity::System,
-                            context_revision: 1,
-                            target: w::SoftwareExecutionTarget::Device,
-                            generated_uid: None,
-                        },
-                    },
+                    read: crate::collection_worker::ReadPlan::periodic(
+                        p,
+                        (deadline / 1000) as i64,
+                    )?,
                     finish_by_unix_ms: deadline,
                     image_sha256: image.artifact.sha256.clone(),
                     run_as: run_as.clone(),
@@ -257,6 +250,9 @@ impl Collector {
                     observed: Default::default(),
                 };
                 let bytes = serde_json::to_vec(&input).map_err(|_| Error::Protocol)?;
+                if bytes.len() as u64 > crate::collection_worker::INPUT_BYTES {
+                    return Err(Error::Capacity);
+                }
                 use sha2::{Digest as _, Sha256};
                 let hash = format!("{:x}", Sha256::digest(&bytes));
                 let artifact = ExactArtifactRef {
@@ -313,6 +309,12 @@ impl Collector {
                 )
             }
         };
+        parameters.insert(
+            "rss-periodic-collection".into(),
+            InputValue::Literal {
+                value: serde_json::to_value(p).map_err(|_| Error::Protocol)?,
+            },
+        );
         let policy = reference(p.policy.to_string(), p.policy_version.to_string())?;
         let frozen = FrozenExecution::freeze(
             ExecutionInput {

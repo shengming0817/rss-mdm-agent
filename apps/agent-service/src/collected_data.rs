@@ -9,12 +9,14 @@ use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
 
 mod catalog;
-pub(crate) const MAPPING_VERSION: u32 = 1;
+mod projected;
+pub(crate) use projected::LocalProjection;
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Definition {
     pub descriptor: QueryDescriptor,
     pub read: ReadPlan,
     pub seen_at: u64,
+    pub enterprise: Option<Digest>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Association {
@@ -47,6 +49,7 @@ struct PolicyRead {
 }
 #[derive(Serialize, Deserialize)]
 struct Observed {
+    source: w::TelemetryConfiguration,
     enterprise: Option<Digest>,
     descriptor: QueryDescriptor,
 }
@@ -62,6 +65,7 @@ fn policy_revision(item: &w::SelfServiceDirectoryItem, subject: &str) -> Result<
 }
 pub(crate) struct Data {
     store: CollectedStore,
+    pub(crate) service_id: uuid::Uuid,
     redactor: CredentialRedactor,
     pinned: std::collections::BTreeSet<Id>,
     local_reads: BTreeMap<Id, ReadPlan>,
@@ -228,30 +232,6 @@ fn domains(query: &w::NativeQuery) -> Vec<String> {
         .into_iter()
         .collect()
 }
-fn mapped_row(
-    q: &w::NativeQueryDefinition,
-    row: &BTreeMap<String, Value>,
-) -> BTreeMap<String, Value> {
-    if matches!(q, w::NativeQueryDefinition::WindowsWmi { class, .. } if class == "Win32_DiskDrive")
-    {
-        return row
-            .iter()
-            .filter_map(|(key, value)| {
-                Some((
-                    match key.as_str() {
-                        "DeviceID" => "id",
-                        "Model" => "model",
-                        "Size" => "size_bytes",
-                        _ => return None,
-                    }
-                    .into(),
-                    value.clone(),
-                ))
-            })
-            .collect();
-    }
-    row.clone()
-}
 
 fn now() -> u64 {
     std::time::SystemTime::now()
@@ -293,6 +273,19 @@ fn title(q: &w::NativeQueryDefinition) -> String {
 }
 fn single(read: &ReadPlan, query: &w::NativeQuery) -> Result<ReadPlan, Error> {
     let mut result = read.clone();
+    let source = read
+        .plan
+        .spec()
+        .queries
+        .iter()
+        .find(|(_, candidate)| *candidate == query)
+        .map(|(id, _)| id)
+        .ok_or(Error::Protocol)?;
+    if let crate::collection_worker::ReadSource::Local { projection } = &read.source {
+        result.source = crate::collection_worker::ReadSource::Local {
+            projection: Box::new(projection.single(source)?),
+        };
+    }
     result.plan = w::NativeCollectionPlan::new(w::NativePlanSpec {
         version: 1,
         scope: read.plan.spec().scope.clone(),
@@ -302,17 +295,27 @@ fn single(read: &ReadPlan, query: &w::NativeQuery) -> Result<ReadPlan, Error> {
     Ok(result)
 }
 impl Data {
-    pub fn new(store: CollectedStore, redactor: CredentialRedactor) -> Self {
+    pub fn new(
+        store: CollectedStore,
+        redactor: CredentialRedactor,
+        service_id: uuid::Uuid,
+    ) -> Self {
         Self {
             store,
+            service_id,
             redactor,
             pinned: Default::default(),
             local_reads: Default::default(),
             enterprise: None,
         }
     }
-    pub fn bind_enterprise(&mut self, authority: Option<&Authority>) -> Result<(), Error> {
-        self.enterprise = authority.map(digest).transpose()?;
+    pub fn bind_enterprise(
+        &mut self,
+        binding: Option<&execution_app::ServiceBinding>,
+    ) -> Result<(), Error> {
+        self.enterprise = binding
+            .map(|b| digest(&(&b.authority, &b.device)))
+            .transpose()?;
         Ok(())
     }
     pub fn protect(
@@ -537,11 +540,39 @@ impl Data {
         }
         Ok(())
     }
+    fn policy_metadata(&self, a: &Association) -> Result<PolicyRead, Error> {
+        if a.kind != QueryKind::Policy {
+            return Err(Error::Denied);
+        }
+        let published: Published = decode(
+            self.store
+                .read(&format!("published/{}", a.query.id.as_str()))?
+                .ok_or(Error::NotFound)?,
+        )?;
+        if published.enterprise != self.enterprise
+            || self.enterprise.is_none()
+            || published.subject != a.subject
+            || published.descriptor.reference != a.query
+            || published.generated_uid != account_uid(&a.subject)?
+        {
+            return Err(Error::Denied);
+        }
+        Ok(PolicyRead {
+            enterprise: self.enterprise.clone(),
+            descriptor: published.descriptor,
+            generated_uid: published.generated_uid,
+            seen_at: now(),
+        })
+    }
     pub fn policy_result(
         &mut self,
         a: &Association,
         status: &w::SelfServiceStatus,
     ) -> Result<(), Error> {
+        let request = RequestId::new(status.request_id.to_string()).map_err(|_| Error::Protocol)?;
+        if self.captured(&request)? {
+            return Ok(());
+        }
         let Some(w::SelfServiceResult::Script { evidence }) = &status.result else {
             return Ok(());
         };
@@ -575,25 +606,7 @@ impl Data {
                 other => vec![other.clone()],
             };
         }
-        let published: Published = decode(
-            self.store
-                .read(&format!("published/{}", a.query.id.as_str()))?
-                .ok_or(Error::NotFound)?,
-        )?;
-        if published.enterprise != self.enterprise
-            || self.enterprise.is_none()
-            || published.subject != a.subject
-            || published.descriptor.reference != a.query
-            || published.generated_uid != account_uid(&a.subject)?
-        {
-            return Err(Error::Denied);
-        }
-        let metadata = PolicyRead {
-            enterprise: self.enterprise.clone(),
-            descriptor: published.descriptor,
-            generated_uid: published.generated_uid,
-            seen_at: now(),
-        };
+        let metadata = self.policy_metadata(a)?;
         self.snapshots(
             &[value],
             &[(
@@ -609,36 +622,27 @@ impl Data {
         at: i64,
         normalized: Option<BTreeMap<w::FieldKey, w::TelemetryReading>>,
     ) -> Result<(), Error> {
-        if let w::TelemetryCollector::Native { plan, .. } = &c.collector {
-            let read = ReadPlan {
-                plan: plan.clone(),
-                platform: plan.platform(),
-                deadline: c.expires_at,
-                execution: w::NativeExecutionBinding {
-                    identity: w::ExecutionIdentity::System,
-                    context_revision: 1,
-                    target: w::SoftwareExecutionTarget::Device,
-                    generated_uid: None,
-                },
-            };
-            self.native(
-                read,
+        if let w::TelemetryCollector::Native { .. } = &c.collector {
+            return self.capture_projected_read(
+                ReadPlan::periodic(c, c.expires_at)?,
                 None,
                 e,
                 u64::try_from(at / 1000).map_err(|_| Error::Clock)?,
-            )?;
+                normalized.as_ref(),
+            );
         }
         // Script/osquery periodic leases permit observation only. They never become a
         // manually executable script catalog or expose process diagnostics to readers.
         let revision = digest(c)?;
         let reference = QueryRef {
-            id: crate::backend::plan::id(format!("telemetry:{}", c.policy))?,
+            id: crate::backend::plan::id(format!("telemetry:{}", revision.as_str()))?,
             revision,
         };
         let descriptor = QueryDescriptor {
             reference: reference.clone(),
             title: c.policy.to_string(),
             kind: QueryKind::Telemetry,
+            origin: QueryOrigin::Enterprise,
             domains: Vec::new(),
             input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
             policy: None,
@@ -649,32 +653,43 @@ impl Data {
         self.store.write(
             &format!("observed/{}", reference.id.as_str()),
             &encode(&Observed {
-                enterprise: self.enterprise.clone(),
+                enterprise: {
+                    let b = crate::backend::plan::enterprise_binding(
+                        self.service_id,
+                        c.tenant_id,
+                        c.registration_id,
+                        c.generation,
+                        &c.device_id,
+                    )?;
+                    Some(digest(&(&b.authority, &b.device))?)
+                },
+                source: c.clone(),
                 descriptor,
             })?,
         )?;
-        let mut value = empty(reference, None, DataQuality::Failed);
+        let mut value = empty(reference.clone(), None, DataQuality::Failed);
         value.collected_at = Some(u64::try_from(at / 1_000_000).map_err(|_| Error::Clock)?);
-        if let Some(fields) = normalized {
-            let complete = fields
-                .values()
-                .all(|v| matches!(v, w::TelemetryReading::Valid { .. }));
-            value.fields = fields
-                .into_iter()
-                .map(|(k, v)| Ok((k.as_str().to_owned(), encode(&v)?)))
-                .collect::<Result<_, Error>>()?;
-            value.quality = if complete {
-                DataQuality::Complete
-            } else {
-                DataQuality::Partial
-            };
-            value.enumeration_complete = complete;
-        }
-        self.snapshot(&value)
+        // Remote scripts cannot acquire a local field grant from their own metadata.
+        value.quality = DataQuality::Denied;
+        self.snapshots(
+            &[value],
+            &[(
+                format!("latest/projected:{}", reference.id.as_str()),
+                encode(&(c, normalized))?,
+            )],
+        )
     }
     pub fn remember(&mut self, request: &RequestId, read: ReadPlan) -> Result<(), Error> {
-        for query in read.plan.spec().queries.values() {
-            self.register(single(&read, query)?)?;
+        read.validate()?;
+        if !matches!(
+            read.source,
+            crate::collection_worker::ReadSource::Local { .. }
+        ) {
+            self.register_projected(read.clone())?;
+        } else {
+            for query in read.plan.spec().queries.values() {
+                self.register(single(&read, query)?)?;
+            }
         }
         if self.captured(request)? {
             return Ok(());
@@ -738,6 +753,7 @@ impl Data {
             reference,
             title,
             kind: QueryKind::Policy,
+            origin: QueryOrigin::Enterprise,
             domains: Vec::new(),
             input_schema,
             policy,
@@ -817,7 +833,10 @@ impl Data {
                     .read(&format!("observed/{}", query.id.as_str()))?
                     .ok_or(Error::Unavailable)?,
             )?;
-            if observed.enterprise != self.enterprise || self.enterprise.is_none() {
+            if observed.enterprise != self.enterprise
+                || self.enterprise.is_none()
+                || observed.descriptor.domains.is_empty()
+            {
                 return Err(Error::Denied);
             }
             let d = observed.descriptor;
@@ -828,6 +847,13 @@ impl Data {
         Ok(())
     }
     pub fn register(&mut self, mut read: ReadPlan) -> Result<Definition, Error> {
+        if !matches!(
+            read.source,
+            crate::collection_worker::ReadSource::Local { .. }
+        ) {
+            return self.register_projected(read);
+        }
+        read.validate()?;
         let query = read
             .plan
             .spec()
@@ -848,6 +874,7 @@ impl Data {
             &read.plan.spec().scope,
             subject(&read),
             &read.execution.generated_uid,
+            &read.source,
         ))?;
         let mut spec: w::NativePlanSpec = read.plan.clone().into();
         spec.budget.timeout_seconds = spec.budget.timeout_seconds.min(60);
@@ -881,6 +908,7 @@ impl Data {
                         .definition,
                 ),
                 kind: QueryKind::Native,
+                origin: QueryOrigin::Local,
                 domains: domains(
                     read.plan
                         .spec()
@@ -903,6 +931,7 @@ impl Data {
             },
             read,
             seen_at: now(),
+            enterprise: None,
         };
         self.store.write(
             &format!("definition/{}", definition.descriptor.reference.id.as_str()),
@@ -928,7 +957,9 @@ impl Data {
         if definition.descriptor.reference != *query {
             return Err(Error::Conflict);
         }
-        if !visible(&definition.read, caller) {
+        if !visible(&definition.read, caller)
+            || (definition.enterprise.is_some() && definition.enterprise != self.enterprise)
+        {
             return Err(Error::Denied);
         }
         Ok(definition)
@@ -941,7 +972,10 @@ impl Data {
             let page = self.store.page("definition/", after.as_deref(), 128)?;
             for (_, v) in &page {
                 let mut d: Definition = decode(v.clone())?;
-                if visible(&d.read, caller) {
+                if visible(&d.read, caller)
+                    && (d.enterprise.is_none() || d.enterprise == self.enterprise)
+                    && !d.descriptor.domains.is_empty()
+                {
                     if !self.pinned.contains(&d.descriptor.reference.id) {
                         d.descriptor.available = false;
                         d.descriptor.reason = Some(DataQuality::Denied);
@@ -956,7 +990,10 @@ impl Data {
         }
         for (_, v) in self.store.page("observed/", None, 128)? {
             let observed: Observed = decode(v)?;
-            if observed.enterprise == self.enterprise && self.enterprise.is_some() {
+            if observed.enterprise == self.enterprise
+                && self.enterprise.is_some()
+                && !observed.descriptor.domains.is_empty()
+            {
                 result.push(observed.descriptor);
             }
         }
@@ -1104,6 +1141,13 @@ impl Data {
         evidence: &ProcessEvidence,
         at: u64,
     ) -> Result<(), Error> {
+        read.validate()?;
+        if !matches!(
+            read.source,
+            crate::collection_worker::ReadSource::Local { .. }
+        ) {
+            return self.capture_projected(read, request, evidence, at);
+        }
         let now = i64::try_from(at / 1000).map_err(|_| Error::Clock)?;
         let result = if evidence.finished
             && evidence.quiescent
@@ -1126,8 +1170,28 @@ impl Data {
             None
         };
         let mut values = Vec::new();
+        let mut material = Vec::new();
         for (source, q) in &read.plan.spec().queries {
             let definition = self.register(single(&read, q)?)?;
+            let baseline =
+                if let (Some(result), crate::collection_worker::ReadSource::Local { projection }) =
+                    (&result, &read.source)
+                {
+                    projection
+                        .queries
+                        .get(source)
+                        .ok_or(Error::Protocol)?
+                        .baseline_fields(&read.plan, result, now)?
+                } else {
+                    BTreeMap::new()
+                };
+            material.push((
+                format!(
+                    "latest/projected:{}",
+                    definition.descriptor.reference.id.as_str()
+                ),
+                encode(&baseline)?,
+            ));
             let mut value = empty(
                 definition.descriptor.reference,
                 request.clone(),
@@ -1139,7 +1203,6 @@ impl Data {
                 value.collected_at =
                     Some(u64::try_from(result.collected_at).map_err(|_| Error::Clock)?);
                 value.enumeration_complete = result.complete_for(q, now);
-                value.mapping_version = Some(MAPPING_VERSION);
                 value.quality = if value.enumeration_complete {
                     DataQuality::Complete
                 } else {
@@ -1161,15 +1224,26 @@ impl Data {
                             && result.rows.len() == 1
                             && q.cardinality == w::NativeCardinality::ExactlyOne
                         {
-                            for (key, field) in &result.rows[0] {
-                                if let Some(key) = mapped_field(&q.definition, key) {
-                                    value.fields.insert(key, field.clone());
-                                }
-                            }
+                            let crate::collection_worker::ReadSource::Local { projection } =
+                                &read.source
+                            else {
+                                return Err(Error::Protocol);
+                            };
+                            value.fields = projection
+                                .queries
+                                .get(source)
+                                .ok_or(Error::Protocol)?
+                                .fields(&result.rows[0])?;
                         }
                         let schema = q.definition.properties();
-                        value.rows=result.rows.iter().filter(|row| row.keys().eq(schema.keys()) && schema.iter().all(|(key,kind)| row.get(key).is_some_and(|value| kind.accepts(value))) && q.definition.accepts_row(row))
-                            .map(|row| json!({"source":source,"domain":kind,"definition":q.definition,"values":mapped_row(&q.definition,row)})).collect();
+                        let crate::collection_worker::ReadSource::Local { projection } =
+                            &read.source
+                        else {
+                            return Err(Error::Protocol);
+                        };
+                        let mapping = projection.queries.get(source).ok_or(Error::Protocol)?;
+                        value.rows = result.rows.iter().filter(|row| row.keys().eq(schema.keys()) && schema.iter().all(|(key,kind)| row.get(key).is_some_and(|value| kind.accepts(value))) && q.definition.accepts_row(row))
+                            .map(|row| Ok(json!({"source":source,"domain":kind,"definition":q.definition,"values":mapping.row(row)?}))).collect::<Result<Vec<_>, Error>>()?;
                         if value.rows.len() != result.rows.len() {
                             value.enumeration_complete = false;
                             value.quality = if value.rows.is_empty() {
@@ -1185,15 +1259,24 @@ impl Data {
                 } else {
                     value.quality = DataQuality::Unsupported;
                     value.enumeration_complete = false;
-                    value.mapping_version = None;
                 }
             } else if evidence.quality == OutputQuality::Truncated {
                 value.quality = DataQuality::Truncated;
             }
+            for (key, observed) in baseline {
+                if observed.quality == DataQuality::Complete {
+                    if let Some(projected) = observed.value {
+                        if !projected.is_array() {
+                            value.fields.entry(key).or_insert(projected);
+                        }
+                    }
+                }
+            }
             values.push(value);
         }
-        self.snapshots(&values, &[])
+        self.snapshots(&values, &material)
     }
+    #[cfg(test)]
     pub fn snapshot(&mut self, value: &CollectedData) -> Result<(), Error> {
         self.snapshots(std::slice::from_ref(value), &[])
     }
@@ -1217,7 +1300,16 @@ impl Data {
                 remove.push(format!("input/{}", request.as_str()));
             }
         }
-        writes.extend(extra.iter().cloned());
+        for (key, material) in extra {
+            if let Some(id) = key.strip_prefix("latest/projected:") {
+                if values.iter().any(|v| v.query.id.as_str() == id)
+                    && !writes.contains_key(&format!("latest/{id}"))
+                {
+                    continue;
+                }
+            }
+            writes.insert(key.clone(), material.clone());
+        }
         self.store
             .commit(&writes.into_iter().collect::<Vec<_>>(), &remove)
     }
@@ -1357,7 +1449,6 @@ fn empty(query: QueryRef, request: Option<RequestId>, quality: DataQuality) -> C
         collected_at: None,
         quality,
         enumeration_complete: false,
-        mapping_version: None,
         fields: BTreeMap::new(),
         rows: vec![],
         stale: false,

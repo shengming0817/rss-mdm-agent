@@ -15,6 +15,7 @@ const descriptor: QueryDescriptor = {
   domains: ["software.installations"],
   inputSchema: {},
   kind: "native",
+  origin: "local",
   policy: null,
   reason: null,
   scope: { kind: "device" },

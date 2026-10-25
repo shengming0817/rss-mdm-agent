@@ -743,9 +743,11 @@ mod tests {
         // SAFETY: the test launch exclusively transfers the two socket writers.
         assert!(unsafe { libc::dup2(196, 1) } >= 0);
         assert!(unsafe { libc::dup2(197, 2) } >= 0);
-        let material =
-            execution_runner::staging::read_worker_input(Path::new("/dev/fd/199"), 256 * 1024)
-                .unwrap();
+        let material = execution_runner::staging::read_worker_input(
+            Path::new("/dev/fd/199"),
+            super::INPUT_BYTES,
+        )
+        .unwrap();
         let input: Input = serde_json::from_slice(&material).unwrap();
         let q = &input.read.plan.spec().queries["items"];
         if mode == "broker_read_hang" {

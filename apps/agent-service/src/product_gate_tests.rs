@@ -4841,7 +4841,7 @@ async fn local_software_case() -> (Case, LocalSoftwareChoice) {
         .reference;
     let receipt = format!("org.rss.fixture.never-installed.{}", uuid::Uuid::new_v4());
     c.service.core.data.snapshot(&CollectedData{
-        query:query.clone(),scope:DataScope::Device,request:None,collected_at:Some(c.service.core.host.clock.millis().unwrap()/1000),quality:DataQuality::Complete,enumeration_complete:true,mapping_version:Some(1),fields:Default::default(),
+        query:query.clone(),scope:DataScope::Device,request:None,collected_at:Some(c.service.core.host.clock.millis().unwrap()/1000),quality:DataQuality::Complete,enumeration_complete:true,fields:Default::default(),
         rows:vec![serde_json::json!({"id":"fixture-receipt","native_id":receipt,"name":"Explicit receipt fixture","version":"1.0.0","scope":"device","owner":"","origin":"pkg_receipt"})],stale:false,next:None,
     }).unwrap();
     let (reply, receive) = tokio::sync::oneshot::channel();
