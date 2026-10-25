@@ -1,0 +1,36 @@
+[package]
+name = "passkey-vault"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+aes-gcm = { version = "=0.10.3", features = ["zeroize"] }
+argon2 = { version = "=0.5.3", features = ["zeroize"] }
+async-trait = "=0.1.92"
+passkey-authenticator = { path = "../../vendor/passkey-authenticator", version = "=0.6.0" }
+passkey-types = "=0.6.0"
+passkey-crypto = { version = "=0.1.0", features = ["rust-crypto"] }
+platform-private-storage = { path = "../platform-private-storage" }
+platform-credentials = { path = "../platform-credentials" }
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+sha2.workspace = true
+zeroize.workspace = true
+thiserror.workspace = true
+url.workspace = true
+uuid = { version = "=1.26.0", features = ["v4"] }
+psl = "=2.1.245"
+
+[target.'cfg(unix)'.dependencies]
+libc = "=0.2.189"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }
+ring = "=0.17.14"
