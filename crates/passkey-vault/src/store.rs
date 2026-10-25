@@ -96,9 +96,10 @@ impl Transaction {
 }
 
 #[cfg(test)]
-fn crash_at(name: &str, phase: &str) {
+pub(crate) fn crash_at(name: &str, phase: &str) {
     // Only a child test process sets this variable. No failpoint exists in production.
-    if name == "vault.json" && std::env::var("RSS_VAULT_TEST_CRASH").as_deref() == Ok(phase) {
+    let point = std::env::var("RSS_VAULT_TEST_CRASH").unwrap_or_default();
+    if (name == "vault.json" && point == phase) || point == format!("{name}:{phase}") {
         std::process::exit(86);
     }
 }

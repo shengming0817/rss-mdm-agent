@@ -23,6 +23,11 @@ fn window(app: &tauri::AppHandle) -> tauri::Result<()> {
             .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
             .build()?;
         appearance::bind(&created);
+        if let Some(vault) =
+            app.try_state::<rss_mdm_desktop::composition::personal_vault::PersonalVault>()
+        {
+            vault.bind(&created);
+        }
     }
     Ok(())
 }

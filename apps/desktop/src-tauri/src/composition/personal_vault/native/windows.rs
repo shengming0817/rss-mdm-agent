@@ -1,3 +1,4 @@
+use windows_sys::Win32::Graphics::Gdi::COLOR_WINDOW;
 // ref: Microsoft IUserConsentVerifierInterop; Win32 ES_PASSWORD / WM_WTSSESSION_CHANGE.
 use super::*;
 use std::{
@@ -7,7 +8,12 @@ use std::{
 use windows_sys::Win32::{
     Foundation::*,
     System::RemoteDesktop::*,
-    UI::{Shell::*, WindowsAndMessaging::*},
+    UI::{
+        Controls::EM_SETLIMITTEXT,
+        Input::KeyboardAndMouse::{EnableWindow, SetFocus},
+        Shell::*,
+        WindowsAndMessaging::*,
+    },
 };
 static MAIN: AtomicIsize = AtomicIsize::new(0);
 static DIALOG: AtomicIsize = AtomicIsize::new(0);

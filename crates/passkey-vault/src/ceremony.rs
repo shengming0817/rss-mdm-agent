@@ -8,7 +8,11 @@ use passkey_authenticator::{
     Authenticator, CredentialStore, DiscoverabilitySupport, StoreInfo, UiHint, UserCheck,
     UserValidationMethod,
 };
-use passkey_crypto::{coset::CborSerializable, iana, rust_crypto::RustCryptoBackend};
+use passkey_crypto::{
+    coset::{AsCborValue, CborSerializable},
+    iana,
+    rust_crypto::RustCryptoBackend,
+};
 use passkey_types::{
     ctap2::{get_assertion as get, make_credential as make, Ctap2Error, StatusCode},
     webauthn::PublicKeyCredentialDescriptor,
@@ -117,6 +121,36 @@ impl passkey_authenticator::PasskeyAccessor for Sensitive {
         std::borrow::Cow::Borrowed(&self.0.extensions)
     }
 }
+// Serialize borrowed COSE parameters: no intermediate Value owns a copied private scalar.
+struct BorrowedCose<'a>(&'a passkey_crypto::CoseKey);
+impl serde::Serialize for BorrowedCose<'_> {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        use serde::ser::{Error as _, SerializeMap};
+        let key = self.0;
+        if !key.key_id.is_empty() || !key.key_ops.is_empty() || !key.base_iv.is_empty() {
+            return Err(S::Error::custom("unsupported key metadata"));
+        }
+        let mut map = serializer
+            .serialize_map(Some(1 + usize::from(key.alg.is_some()) + key.params.len()))?;
+        map.serialize_entry(
+            &1,
+            &key.kty.clone().to_cbor_value().map_err(S::Error::custom)?,
+        )?;
+        if let Some(alg) = &key.alg {
+            map.serialize_entry(&3, &alg.clone().to_cbor_value().map_err(S::Error::custom)?)?;
+        }
+        for (label, value) in &key.params {
+            map.serialize_entry(
+                &label.clone().to_cbor_value().map_err(S::Error::custom)?,
+                value,
+            )?;
+        }
+        map.end()
+    }
+}
 struct Approved {
     verified: bool,
 }
@@ -197,32 +231,32 @@ impl CredentialStore for &Memory {
     }
     async fn save_credential(
         &mut self,
-        mut cred: Passkey,
+        cred: Passkey,
         _: make::PublicKeyCredentialUserEntity,
         _: make::PublicKeyCredentialRpEntity,
         _: make::Options,
     ) -> std::result::Result<(), StatusCode> {
-        let cose = cred.key.clone().to_vec().map_err(|_| Ctap2Error::Other)?;
-        // Clear owned COSE byte parameters after encoding; serialized bytes have zeroizing Drop.
-        for (_, value) in &mut cred.key.params {
-            if let passkey_crypto::coset::cbor::value::Value::Bytes(b) = value {
-                b.zeroize();
-            }
-        }
+        let cred = Sensitive(cred);
+        let mut cose = zeroize::Zeroizing::new(Vec::new());
+        passkey_crypto::coset::cbor::ser::into_writer(&BorrowedCose(&cred.0.key), &mut *cose)
+            .map_err(|_| Ctap2Error::Other)?;
+        let entry = Entry {
+            credential_id: cred.0.credential_id.to_vec(),
+            rp_id: cred.0.rp_id.clone(),
+            user_handle: cred
+                .0
+                .user_handle
+                .as_ref()
+                .ok_or(Ctap2Error::InvalidCredential)?
+                .to_vec(),
+            username: cred.0.username.clone().unwrap_or_default(),
+            display_name: cred.0.user_display_name.clone().unwrap_or_default(),
+            backup_eligible: true,
+            backed_up: false,
+        };
         let record = Record {
-            cose,
-            entry: Entry {
-                credential_id: cred.credential_id.to_vec(),
-                rp_id: cred.rp_id,
-                user_handle: cred
-                    .user_handle
-                    .ok_or(Ctap2Error::InvalidCredential)?
-                    .to_vec(),
-                username: cred.username.unwrap_or_default(),
-                display_name: cred.user_display_name.unwrap_or_default(),
-                backup_eligible: true,
-                backed_up: false,
-            },
+            cose: std::mem::take(&mut *cose),
+            entry,
         };
         self.content
             .lock()

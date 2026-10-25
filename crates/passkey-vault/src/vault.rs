@@ -176,6 +176,7 @@ impl Vault {
         }
     }
     pub fn status(&self) -> Result<Status> {
+        let epoch = self.generation();
         let value = self.store.transaction()?.load(&self.store.owner)?;
         let Some(value) = value else {
             if let Some(bytes) = self.store.transaction()?.read("initializing.json")? {
@@ -203,6 +204,7 @@ impl Vault {
         } else {
             vec![]
         };
+        self.current(epoch)?;
         Ok(Status {
             initialized: true,
             unlocked: key.is_some(),
@@ -258,6 +260,8 @@ impl Vault {
             Err(e) => return Err(e),
         };
         let protected_root = self.system.protect(&pending.key_id, key.as_ref())?;
+        #[cfg(test)]
+        crate::store::crash_at("system", "protected");
         let value = Envelope {
             format: 1,
             vault_id: pending.vault_id.clone(),
@@ -392,7 +396,11 @@ impl Vault {
         self.system.verify()?;
         self.current(epoch)?;
         let tx = self.store.transaction()?;
-        let original = tx.read("vault.json")?.ok_or(Error::NotFound)?;
+        let original = tx.read("vault.json")?;
+        let receipt = tx.read("initializing.json")?;
+        if original.is_none() && receipt.is_none() {
+            return Err(Error::NotFound);
+        }
         let id = uuid::Uuid::new_v4().to_string();
         let key_id = uuid::Uuid::new_v4().to_string();
         let key = Zeroizing::new(crypto::random()?);
@@ -414,7 +422,12 @@ impl Vault {
                 b"{\"records\":[]}",
             )?,
         };
-        tx.write(&format!("retired-{id}.json"), &original)?;
+        if let Some(original) = original {
+            tx.write(&format!("retired-{id}.json"), &original)?;
+        }
+        if let Some(receipt) = receipt {
+            tx.write(&format!("retired-{id}-receipt.json"), &receipt)?;
+        }
         self.current(epoch)?;
         tx.save(&value)?;
         Self::published(&tx, &value)?;

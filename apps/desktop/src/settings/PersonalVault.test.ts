@@ -59,6 +59,24 @@ describe("personal Vault", () => {
       revision: 3,
     });
   });
+  it("keeps deletion bound to the account displayed in confirmation", async () => {
+    const port = vi.fn<PersonalVaultPort>().mockResolvedValue(baseline());
+    const wrapper = app(port);
+    await flushPromises();
+    await wrapper.findAll('input[type="radio"]')[0]!.setValue();
+    await button(wrapper, "删除所选本地条目").trigger("click");
+    expect(wrapper.find('[aria-label="确认删除本地条目"]').text()).toContain(
+      "Alice",
+    );
+    await wrapper.findAll('input[type="radio"]')[1]!.setValue();
+    await button(wrapper, "确认删除").trigger("click");
+    await flushPromises();
+    expect(port).toHaveBeenCalledWith({
+      kind: "delete",
+      credential_id: [1],
+      revision: 3,
+    });
+  });
   it("requests native password UI without transporting password values", async () => {
     const port = vi.fn<PersonalVaultPort>().mockResolvedValue(baseline());
     const wrapper = app(port);

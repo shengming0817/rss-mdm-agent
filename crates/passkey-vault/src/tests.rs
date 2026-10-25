@@ -274,6 +274,7 @@ async fn password_lifecycle_preserves_credentials_and_recovers_missing_system_ke
         )
         .is_err());
     lab.keys.values.lock().unwrap().clear();
+    lab.keys.denied.store(true, Ordering::Release);
     assert!(lab
         .vault
         .unlock(UnlockMethod::System, None, &lab.vault.begin_interaction())
@@ -290,6 +291,11 @@ async fn password_lifecycle_preserves_credentials_and_recovers_missing_system_ke
         .vault
         .remove_password(&lab.vault.begin_interaction())
         .is_err()); // cannot destroy the only usable method
+    lab.vault
+        .assert("https://example.com", assertion(), &yes)
+        .await
+        .unwrap();
+    lab.keys.denied.store(false, Ordering::Release);
     lab.vault
         .repair_system("new password phrase", &lab.vault.begin_interaction())
         .unwrap();
@@ -571,4 +577,118 @@ fn missing_committed_snapshot_is_not_an_empty_vault_and_old_input_is_cancelled()
         lab.vault.create(&lab.vault.begin_interaction()),
         Err(Error::Corrupt)
     );
+}
+
+struct FileKeys(PathBuf);
+impl SystemProtection for FileKeys {
+    fn verify(&self) -> Result<()> {
+        Ok(())
+    }
+    fn protect(&self, id: &str, key: &[u8]) -> Result<Vec<u8>> {
+        let path = self.0.join(format!("test-key-{id}"));
+        match platform_private_storage::read(&path, 32) {
+            Ok(current) if current == key => Ok(vec![]),
+            Ok(_) => Err(Error::Conflict),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                platform_private_storage::write_new(&path, key).map_err(|_| Error::Storage)?;
+                Ok(vec![])
+            }
+            Err(_) => Err(Error::Storage),
+        }
+    }
+    fn unprotect(&self, id: &str, _: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
+        platform_private_storage::read(&self.0.join(format!("test-key-{id}")), 32)
+            .map(Zeroizing::new)
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    Error::NotFound
+                } else {
+                    Error::Storage
+                }
+            })
+    }
+}
+#[test]
+#[ignore = "child of initialization_recovers_exact_key_and_publication"]
+fn initialize_writer() {
+    let root = PathBuf::from(std::env::var_os("RSS_VAULT_TEST_ROOT").unwrap());
+    let vault = Vault::open(&root, Arc::new(FileKeys(root.clone()))).unwrap();
+    vault.create(&vault.begin_interaction()).unwrap();
+    panic!("initialization crash hook not reached");
+}
+#[test]
+fn initialization_recovers_exact_key_and_publication() {
+    for point in [
+        "initializing.json:published",
+        "system:protected",
+        "vault.json:published",
+    ] {
+        let lab = Lab::new();
+        let root = lab.path.join("initialization");
+        platform_private_storage::directory(&root).unwrap();
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", "tests::initialize_writer"])
+            .env("RSS_VAULT_TEST_ROOT", &root)
+            .env("RSS_VAULT_TEST_CRASH", point)
+            .output()
+            .unwrap();
+        assert_eq!(result.status.code(), Some(86));
+        let pending: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.join("initializing.json")).unwrap())
+                .unwrap();
+        let vault = Vault::open(&root, Arc::new(FileKeys(root.clone()))).unwrap();
+        if vault.status().unwrap().initialized {
+            assert_eq!(
+                vault.create(&vault.begin_interaction()),
+                Err(Error::Conflict)
+            );
+            vault
+                .unlock(UnlockMethod::System, None, &vault.begin_interaction())
+                .unwrap();
+        } else {
+            vault.create(&vault.begin_interaction()).unwrap();
+        }
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.join("vault.json")).unwrap()).unwrap();
+        assert_eq!(saved["vault_id"], pending["vault_id"]);
+        assert_eq!(saved["key_id"], pending["key_id"]);
+        assert_eq!(
+            std::fs::read_dir(&root)
+                .unwrap()
+                .filter(|e| e
+                    .as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("test-key-"))
+                .count(),
+            1
+        );
+        assert!(vault.status().unwrap().unlocked);
+    }
+}
+#[test]
+fn explicit_reset_after_snapshot_loss_preserves_receipt_and_restores_use() {
+    let lab = Lab::new();
+    let old = std::fs::read(lab.path.join("initializing.json")).unwrap();
+    std::fs::remove_file(lab.path.join("vault.json")).unwrap();
+    assert_eq!(
+        lab.vault.create(&lab.vault.begin_interaction()),
+        Err(Error::Corrupt)
+    );
+    lab.vault
+        .reset("DELETE LOCAL VAULT", &lab.vault.begin_interaction())
+        .unwrap();
+    assert!(lab.vault.status().unwrap().unlocked);
+    let archived = std::fs::read_dir(&lab.path)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| {
+            p.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .ends_with("-receipt.json")
+        })
+        .unwrap();
+    assert_eq!(std::fs::read(archived).unwrap(), old);
 }

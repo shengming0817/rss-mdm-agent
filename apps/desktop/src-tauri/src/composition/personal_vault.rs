@@ -149,6 +149,38 @@ pub async fn execute<R: Runtime>(
 mod tests {
     use super::*;
     #[test]
+    fn personal_commands_work_without_an_enterprise_runtime() {
+        use tauri::test::mock_builder;
+        let root = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("rss-personal-ipc-{}", uuid::Uuid::new_v4()));
+        let app = super::super::ipc::register(mock_builder())
+            .manage(PersonalVault::new(&root))
+            .build(tauri::generate_context!())
+            .unwrap();
+        assert!(app
+            .try_state::<super::super::runtime::DesktopRuntime>()
+            .is_none());
+        let main = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+        let status =
+            tauri::async_runtime::block_on(execute(main.clone(), Operation::Status)).unwrap();
+        assert!(!status.initialized);
+        let status = tauri::async_runtime::block_on(execute(main, Operation::Lock)).unwrap();
+        assert!(!status.unlocked);
+        let other = tauri::WebviewWindowBuilder::new(&app, "other", Default::default())
+            .build()
+            .unwrap();
+        assert_eq!(
+            tauri::async_runtime::block_on(execute(other, Operation::Status)).err(),
+            Some(Error::Owner)
+        );
+        drop(app);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn management_contract_cannot_transport_secrets_or_identity() {
         for input in [
             serde_json::json!({"kind":"unlock","method":"password","password":"CANARY_SECRET"}),

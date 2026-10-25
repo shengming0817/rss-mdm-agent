@@ -12,7 +12,10 @@ const state = shallowRef<PersonalVaultStatus>();
 const error = ref("");
 const busy = ref(false);
 const selected = ref("");
-const deleting = ref(false);
+const deleting = shallowRef<{
+  entry: PersonalVaultStatus["entries"][number];
+  revision: number;
+}>();
 const resetOpen = ref(false);
 const resetText = ref("");
 const authorization = ref<"system" | "password">("system");
@@ -43,7 +46,7 @@ async function refresh() {
     state.value = next;
     if (!next.unlocked) {
       selected.value = "";
-      deleting.value = false;
+      deleting.value = undefined;
     }
   } catch (e) {
     if (current === generation) {
@@ -64,7 +67,7 @@ async function run(operation: PersonalVaultOperation) {
     if (current !== generation) return;
     state.value = next;
     selected.value = "";
-    deleting.value = false;
+    deleting.value = undefined;
     resetOpen.value = false;
     resetText.value = "";
   } catch (e) {
@@ -79,13 +82,18 @@ function chosen() {
     (e) => e.credentialId.join("-") === selected.value,
   );
 }
-async function remove() {
+function confirmDeletion() {
   const entry = chosen();
   if (entry && state.value)
+    deleting.value = { entry, revision: state.value.revision };
+}
+async function remove() {
+  const target = deleting.value;
+  if (target)
     await run({
       kind: "delete",
-      credential_id: entry.credentialId,
-      revision: state.value.revision,
+      credential_id: target.entry.credentialId,
+      revision: target.revision,
     });
 }
 onMounted(() => {
@@ -163,16 +171,22 @@ onBeforeUnmount(() => {
           <button
             v-if="chosen() && !deleting"
             :disabled="busy"
-            @click="deleting = true"
+            @click="confirmDeletion"
           >
             删除所选本地条目
           </button>
           <div v-if="deleting" role="group" aria-label="确认删除本地条目">
             <p>
+              将删除 {{ deleting.entry.rpId }} ·
+              {{ deleting.entry.displayName || deleting.entry.username }}（{{
+                deleting.entry.username
+              }}）
+            </p>
+            <p>
               仅删除本地条目；不会删除网站端公钥或其他副本。没有备份时无法恢复，需要在网站重新注册。
             </p>
             <button :disabled="busy" @click="remove">确认删除</button>
-            <button @click="deleting = false">取消</button>
+            <button @click="deleting = undefined">取消</button>
           </div>
         </template>
         <div class="vault-actions">
