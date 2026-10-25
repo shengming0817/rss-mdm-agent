@@ -20,6 +20,7 @@ const resetOpen = ref(false);
 const resetText = ref("");
 const authorization = ref<"system" | "password">("system");
 let generation = 0;
+let readFailed = false;
 let timer: ReturnType<typeof setInterval> | undefined;
 const messages: Record<string, string> = {
   locked: "Vault 已锁定，请选择解锁方式。",
@@ -44,6 +45,10 @@ async function refresh() {
     const next = await port({ kind: "status" });
     if (current !== generation) return;
     state.value = next;
+    if (readFailed) {
+      error.value = "";
+      readFailed = false;
+    }
     if (!next.unlocked) {
       selected.value = "";
       deleting.value = undefined;
@@ -51,6 +56,7 @@ async function refresh() {
   } catch (e) {
     if (current === generation) {
       state.value = undefined;
+      readFailed = true;
       error.value = messages[String(e)] ?? "个人 Vault 暂不可用。";
     }
   }
@@ -59,6 +65,7 @@ async function run(operation: PersonalVaultOperation) {
   if (!port || (busy.value && operation.kind !== "lock")) return;
   const current = ++generation;
   busy.value = true;
+  readFailed = false;
   error.value = "";
   if (operation.kind === "lock" && state.value)
     state.value = { ...state.value, unlocked: false, entries: [] };

@@ -133,6 +133,20 @@ describe("personal Vault", () => {
       confirmation: "DELETE LOCAL VAULT",
     });
   });
+  it("recovers from startup lock contention without remounting", async () => {
+    vi.useFakeTimers();
+    const port = vi
+      .fn<PersonalVaultPort>()
+      .mockRejectedValueOnce("busy")
+      .mockResolvedValue(baseline());
+    const wrapper = app(port);
+    await flushPromises();
+    expect(wrapper.find('[role="alert"]').text()).toContain("稍后重试");
+    await vi.advanceTimersByTimeAsync(1500);
+    await flushPromises();
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false);
+    expect(wrapper.text()).toContain("Alice");
+  });
   it("clears metadata when native polling observes an OS lock", async () => {
     vi.useFakeTimers();
     const port = vi
