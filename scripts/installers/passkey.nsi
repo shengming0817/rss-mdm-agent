@@ -46,7 +46,6 @@ publish:
   ${EndIf}
   CreateShortCut "$SMPROGRAMS\RSS Personal Passkeys.lnk" "$INSTDIR\rss-passkey-provider.exe" "manage"
   WriteUninstaller "$INSTDIR\uninstall.exe"
-  WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RSS.PersonalPasskeys" "PlatformRemoved" 0
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RSS.PersonalPasskeys" "DisplayName" "RSS Personal Passkeys"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RSS.PersonalPasskeys" "UninstallString" '"$INSTDIR\uninstall.exe"'
 SectionEnd
@@ -55,13 +54,10 @@ Section "Uninstall"
   ${If} $Result == 1
     Goto platform_removed
   ${EndIf}
-  IfFileExists "$INSTDIR\platform-removed" record_removed 0
   ExecWait 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\identity.ps1" -Action remove' $Result
   ${If} $Result != 0
     Abort "Provider cleanup incomplete. Repair and retry; component and Vault retained."
   ${EndIf}
-record_removed:
-  WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RSS.PersonalPasskeys" "PlatformRemoved" 1
 platform_removed:
   SetOutPath "$TEMP"
   ClearErrors
@@ -80,7 +76,6 @@ platform_removed:
   ${If} ${Errors}
     Abort "Metadata cleanup incomplete. Uninstall entry retained."
   ${EndIf}
-  Delete "$INSTDIR\platform-removed"
   Delete "$SMPROGRAMS\RSS Personal Passkeys.lnk"
   Delete "$INSTDIR\uninstall.exe"
   ${If} ${Errors}

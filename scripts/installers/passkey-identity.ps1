@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 $Root = $PSScriptRoot
 $Provider = Join-Path $Root 'rss-passkey-provider.exe'
 $Identity = Join-Path $Root 'identity.msix'
+$Uninstall = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\RSS.PersonalPasskeys'
 $Deployment = Get-Content -LiteralPath (Join-Path $Root 'deployment.json') -Raw | ConvertFrom-Json
 function Run-Provider([string]$Operation) {
     & $Provider $Operation
@@ -25,18 +26,19 @@ if ($Action -eq 'remove') {
     Run-Provider 'unregister'
     foreach ($Package in $Packages) { Remove-AppxPackage -Package $Package.PackageFullName }
     if (@(Get-AppxPackage -Name 'RSS.PersonalPasskeys').Count -ne 0) { throw 'Identity removal incomplete' }
-    [IO.File]::WriteAllText((Join-Path $Root 'platform-removed'), 'RSS.PersonalPasskeys')
+    $null = New-Item -Path $Uninstall -Force
+    New-ItemProperty -LiteralPath $Uninstall -Name PlatformRemoved -Value 1 -PropertyType DWord -Force | Out-Null
     exit 0
 }
-if ($Packages.Count -eq 1 -and $Packages[0].Version -gt [version]$Deployment.version) { throw 'Program downgrade refused; Vault data is preserved' }
+# ref: WiX Burn registration.cpp UpdateResumeMode: invalidate resume state before activation.
+# The registry is the sole removal checkpoint; failed reset must stop before any registration.
+$null = New-Item -Path $Uninstall -Force
+New-ItemProperty -LiteralPath $Uninstall -Name PlatformRemoved -Value 0 -PropertyType DWord -Force | Out-Null
 $Arguments = @{ Path=$Identity; ExternalLocation=$Root; ErrorAction='Stop' }
 if (-not $Deployment.release) { $Arguments.AllowUnsigned=$true }
 if ($Packages.Count -eq 0 -or $Packages[0].Version -lt [version]$Deployment.version) { Add-AppxPackage @Arguments }
 Run-Provider 'register'
 # Successful repair also completes interrupted installer bookkeeping.
-$Uninstall = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\RSS.PersonalPasskeys'
-$null = New-Item -Path $Uninstall -Force
-New-ItemProperty -LiteralPath $Uninstall -Name PlatformRemoved -Value 0 -PropertyType DWord -Force | Out-Null
 Set-ItemProperty -LiteralPath $Uninstall -Name DisplayName -Value 'RSS Personal Passkeys'
 Set-ItemProperty -LiteralPath $Uninstall -Name UninstallString -Value ('"' + (Join-Path $Root 'uninstall.exe') + '"')
 $Previous = $Root + '.previous'
