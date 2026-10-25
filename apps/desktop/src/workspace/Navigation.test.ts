@@ -184,6 +184,7 @@ it("opens account settings directly with account first and no popup", async () =
       "account",
       "registration",
       "connection",
+      "personal-vault",
       "diagnostics",
       "about",
     ]);

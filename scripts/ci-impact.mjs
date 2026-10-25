@@ -96,6 +96,7 @@ export const testOwners = [
   ["scripts/build-platform-sso.mjs", "platform-sso-extension"],
   ["scripts/check-agent-dependencies.mjs", "agent-client"],
   ["scripts/build-installers.mjs", "agent-service"],
+  ["vendor/passkey-authenticator", "passkey-vault"],
   ["scripts/windows-packages.mjs", "agent-service"],
   ["scripts/windows-packages.mjs", "rss-mdm-desktop"],
   ["scripts/installers", "agent-service"],

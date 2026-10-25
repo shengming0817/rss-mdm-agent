@@ -427,3 +427,19 @@ Password 用户注册不登记用户签名密钥：注册与浏览器证明由�
 正式平台预检复用现有候选与旅程入口：`native-candidate.mjs freeze` 可增加 `--platform-sso <扩展可执行文件>` 和 `--installer <公证PKG>`，与 service／backend／desktop 一起冻结。执行 `verify-execution-macos.py --binary <服务> --backend <后端探针> --candidate <固定候选JSON> --output <证据目录> --psso-preflight`，只读核对实际 OS、签名团队及固定安装包公证。预检输出 `psso-preflight.json`，状态保持 blocked、`systemAccepted:false`，不执行安装或注册，也不证明包内映像与独立冻结映像一致；真实安装后须按候选摘要核对实际组件。
 
 受管测试机按同一候选依次验收：匹配 Team／容器／扩展的 MDM profile 与 AASA → 系统设备注册 → 两种用户模式 → 真实登录与指定应用 SSO → 上游改密、本地离线改密、重新联网与冲突 → 登录钥匙串实际访问 → 双用户切换 → 登录窗口、锁屏和 FileVault 冷启动 → Agent／Desktop 停止 → 修复、升级中断与注销卸载。分别记录系统回调、source/version、绑定代际、实际操作及结果；禁止用 `app-sso --messages` 的样本密钥证明硬件持钥，也不将含令牌或密码的原始诊断输出写入证据。没有实际执行的场景保持 notExecuted；真实平台支持与 #2872/#2923 关闭必须等待这些缺口闭合。
+
+
+## 个人 Vault 原生验证（#2928）
+
+使用独立测试 OS 用户与固定候选，记录 OS/架构、revision、实际入口和未覆盖项。
+先停止企业网络/Agent/AI Host，确认桌面个人 Vault 仍可进入；系统认证创建并解锁，设置个人
+口令后锁定，以口令解锁。依次验证修改口令、旧口令拒绝、系统保护不可用时口令仍可用、
+重新建立系统保护及移除口令。口令输入必须是原生窗口，WebView IPC 和诊断不得含秘密。
+
+验证锁屏、休眠、注销、输入取消、关闭窗口和进程重启；用第二个标准 OS 用户验证拒绝访问，
+用同一用户两个实例验证冲突不会覆盖更新。验证实际退管/卸载只处理企业资料，个人目录及
+Keychain/DPAPI 材料保持原样。损坏、文件丢失及重置仅在测试数据上操作，保留失败原件。
+
+组件受控 RP 测试负责注册/断言签名与多账号匹配；它不证明浏览器 Provider 已接通。
+原生管理 UI、真实系统认证、Windows/macOS Provider 和真实网站结果分别留证。开发机不得
+补装 Windows 环境或交叉编译代替 Windows 验证；未运行项保持未验证。

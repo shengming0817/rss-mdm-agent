@@ -281,6 +281,10 @@ test("each host boundary mutation independently fails the tree scan", () => {
   const dir = mkdtempSync(join(tmpdir(), "ui-host-boundaries-"));
   const mutations = [
     [
+      "apps/desktop/src-tauri/src/main.rs",
+      (s) => s.replace("vault.bind(&created);", ""),
+    ],
+    [
       "apps/desktop/src-tauri/Cargo.toml",
       (s) =>
         s.replace(

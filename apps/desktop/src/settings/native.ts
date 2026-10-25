@@ -80,3 +80,15 @@ export function nativeDiagnostics(): DiagnosticPort | undefined {
       invoke("diagnostics_discard", { input: { snapshot } }),
   };
 }
+
+export type PersonalVaultOperation =
+  import("../self-service/types").SelfServiceCommands["personal_vault"]["input"];
+export type PersonalVaultStatus =
+  import("../self-service/types").SelfServiceCommands["personal_vault"]["output"];
+export type PersonalVaultPort = (
+  operation: PersonalVaultOperation,
+) => Promise<PersonalVaultStatus>;
+export function nativePersonalVault(): PersonalVaultPort | undefined {
+  if (!isTauri()) return undefined;
+  return (input) => invoke<PersonalVaultStatus>("personal_vault", { input });
+}

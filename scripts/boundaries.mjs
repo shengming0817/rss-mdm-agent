@@ -44,6 +44,7 @@ const assistantCommands = [
   "execution_task_details",
 ];
 const settingsCommands = [
+  "personal_vault",
   "execution_service_status",
   "agent_registration_status",
   "mdm_registration_status",
@@ -407,6 +408,11 @@ export function checkSource(file, source) {
         "Set",
       ],
       "apps/desktop/src/App.vue": ["document", "setInterval", "clearInterval"],
+      "apps/desktop/src/settings/PersonalVault.vue": [
+        "setInterval",
+        "clearInterval",
+        "String",
+      ],
       "apps/desktop/src/settings/DeviceAccess.vue": ["Promise", "crypto"],
       "apps/desktop/src/settings/MdmRegistration.vue": [
         "Promise",
@@ -699,6 +705,7 @@ export function checkSource(file, source) {
           ? staticText(node.argumentExpression)
           : null;
       const dataRoots = {
+        "apps/desktop/src/settings/PersonalVault.vue": ["messages"],
         "packages/ui/src/components/UiList.vue": ["_ctx.modelValue"],
         "packages/ui/src/components/UiMenu.vue": ["_ctx.items"],
         "packages/ui/src/components/UiSlider.vue": ["$event!"],
@@ -989,6 +996,7 @@ export function checkTree(treeRoot = root, executable) {
         'native-process = { path = "../../../crates/native-process" }',
         'platform-private-storage = { path = "../../../crates/platform-private-storage" }',
         'platform-credentials = { path = "../../../crates/platform-credentials" }',
+        'passkey-vault = { path = "../../../crates/passkey-vault" }',
         'installation-security = { path = "../../../crates/installation-security" }',
         'windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_System_Threading"] }',
         'aes-gcm = { version = "=0.10.3", features = ["zeroize"] }',
@@ -998,9 +1006,10 @@ export function checkTree(treeRoot = root, executable) {
         'uuid = "=1.26.0"',
         'libc = "=0.2.189"',
         'window-vibrancy = "=0.6.0"',
-        'windows = { version = "=0.61.3", features = ["UI_ViewManagement", "Win32_Graphics_Dwm", "Win32_UI_Accessibility", "Win32_UI_WindowsAndMessaging"] }',
+        'windows = { version = "=0.61.3", features = ["Security_Credentials_UI", "Win32_System_WinRT", "UI_ViewManagement", "Win32_Graphics_Dwm", "Win32_UI_Accessibility", "Win32_UI_WindowsAndMessaging"] }',
         'windows-version = "=0.1.7"',
-        'windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security_Credentials", "Win32_UI_Controls_Dialogs", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_System_Com", "Win32_UI_Shell"] }',
+        'windows-future = "=0.2.1"',
+        'windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security_Credentials", "Win32_UI_Controls_Dialogs", "Win32_UI_Controls", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_RemoteDesktop", "Win32_UI_WindowsAndMessaging", "Win32_Graphics_Gdi", "Win32_System_Com", "Win32_UI_Shell"] }',
         'objc2 = "=0.6.4"',
         'objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "NSAlert", "NSButton", "NSControl", "NSSecureTextField", "NSTextField", "NSView", "NSResponder", "NSWindow", "NSApplication", "NSSavePanel", "NSOpenPanel", "NSPanel", "NSWorkspace", "NSAccessibility"] }',
         'objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSString", "NSGeometry", "NSURL"] }',
@@ -1099,6 +1108,10 @@ export function checkTree(treeRoot = root, executable) {
     )
   )
     errors.push("host must register navigation and new-window rejection");
+  if (!/vault\.bind\(&created\)/.test(main))
+    errors.push(
+      "main window creation must bind the personal Vault native lifecycle",
+    );
   const ipcPath = "apps/desktop/src-tauri/src/composition/ipc.rs";
   const ipc = read(ipcPath);
   const commands =
@@ -1110,11 +1123,11 @@ export function checkTree(treeRoot = root, executable) {
   if (
     JSON.stringify(commands.toSorted()) !==
       JSON.stringify(selfServiceCommands.toSorted()) ||
-    (main.match(/app\.manage\(/g) ?? []).length !== 2 ||
+    (main.match(/app\.manage\(/g) ?? []).length !== 3 ||
     (ipc.match(/\.invoke_handler\(/g) ?? []).length !== 2
   )
     errors.push(
-      "composition must register its exact command set and one state owner",
+      "composition must register its exact command set and fixed native state owners",
     );
   const registered =
     ipc

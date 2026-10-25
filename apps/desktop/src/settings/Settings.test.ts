@@ -243,6 +243,7 @@ it("keeps settings in one document with registration second and removes placehol
       "account",
       "registration",
       "connection",
+      "personal-vault",
       "diagnostics",
       "about",
     ]);

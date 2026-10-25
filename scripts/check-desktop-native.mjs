@@ -1709,6 +1709,14 @@ try {
     await wait(() => browser.$('[aria-label="测试用户名"]').isEnabled());
     await navigate("设置");
     await text("个人 AI 连接（0）");
+    const personalVault = await browser.$('[aria-label="个人 Passkey Vault"]');
+    assert.equal(await personalVault.isExisting(), true);
+    assert.equal(
+      await personalVault.$('input[type="password"]').isExisting(),
+      false,
+    );
+    assert.ok((await personalVault.getText()).includes("仅本机，尚未同步"));
+    result.checks.push("personal-vault-native-management-no-renderer-password");
     await (await field("名称")).setValue("Golden Codex");
     await selectValue(await field("认证来源"), "custom_api");
     await (await field("API 地址")).setValue(fixture.url);
