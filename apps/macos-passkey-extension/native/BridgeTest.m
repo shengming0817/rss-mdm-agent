@@ -12,7 +12,7 @@ int main(void) { @autoreleasepool {
     assert(rss_passkey_validate("{\"kind\":\"register\"}")!=0);
     NSData *idValue=[NSData dataWithBytes:"id" length:2];
     ASPasskeyCredentialIdentity *identity=[[ASPasskeyCredentialIdentity alloc]initWithRelyingPartyIdentifier:@"example.com" userName:@"test" credentialID:idValue userHandle:idValue recordIdentifier:@"id"];
-    ASPasskeyCredentialRequest *native=[[ASPasskeyCredentialRequest alloc]initWithCredentialIdentity:identity clientDataHash:[NSData dataWithLength:32] userVerificationPreference:ASAuthorizationPublicKeyCredentialUserVerificationPreferenceRequired supportedAlgorithms:@[@(-7)]];
+    ASPasskeyCredentialRequest *native=[[ASPasskeyCredentialRequest alloc]initWithCredentialIdentity:identity clientDataHash:[NSMutableData dataWithLength:32] userVerificationPreference:ASAuthorizationPublicKeyCredentialUserVerificationPreferenceRequired supportedAlgorithms:@[@(-7)]];
     assert(native.clientDataHash.length==32);
     ASPasskeyRegistrationCredential *registration=[[ASPasskeyRegistrationCredential alloc]initWithRelyingParty:@"example.com" clientDataHash:native.clientDataHash credentialID:idValue attestationObject:idValue];
     assert([registration.credentialID isEqual:idValue]);

@@ -224,10 +224,8 @@ pub async fn execute<R: Runtime>(
             }
         }
         #[cfg(target_os = "macos")]
-        if !repair_index {
-            if macos_passkey_provider::index::refresh(vault.clone()).is_err() {
-                eprintln!("personal passkey index refresh pending");
-            }
+        if !repair_index && macos_passkey_provider::index::refresh(vault.clone()).is_err() {
+            eprintln!("personal passkey index refresh pending");
         }
         status(&vault)
     })
