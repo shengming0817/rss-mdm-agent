@@ -6012,7 +6012,7 @@
   },
   {
     "annotations": { "openWorldHint": false, "readOnlyHint": false },
-    "description": "Invoke one exact tool discovered through execution_policy_tools, by ID, tool name or alias. Supply Resource inputs. Current publication and permissions are revalidated.",
+    "description": "Invoke one authorized Policy directly by formal ID, tool name or alias. Supply Resource inputs. Current configuration and entry permissions are resolved by the product owner.",
     "inputSchema": {
       "$defs": {
         "CapabilitySelector": {

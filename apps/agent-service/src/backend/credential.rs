@@ -31,7 +31,7 @@ pub(crate) fn compile(
     payload.validate()?;
     let mut normalized = payload.clone();
     normalized.permit = w::TaskPermit::Offer;
-    normalized.expires_at = 0;
+    normalized.expires_at = normalized.deadline;
     let payload = &normalized;
     if payload.platform
         != match plan::platform()? {
@@ -83,7 +83,7 @@ pub(crate) fn verify_input(
 ) -> Result<(), Error> {
     let mut normalized = task.clone();
     normalized.permit = w::TaskPermit::Offer;
-    normalized.expires_at = 0;
+    normalized.expires_at = normalized.deadline;
     let task = &normalized;
 
     let root = match plan.spec().request.parameters.get("credential-root") {

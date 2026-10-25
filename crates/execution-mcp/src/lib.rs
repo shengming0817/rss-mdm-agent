@@ -117,8 +117,13 @@ pub fn policy_tool(
     {
         return Err(ServiceError::Denied);
     }
-    let schema =
+    let mut schema =
         execution_contract::query_input_schema(item).map_err(|_| ServiceError::InvalidInput)?;
+    if let Some(object) = schema.as_object_mut() {
+        object
+            .entry("$id")
+            .or_insert_with(|| serde_json::json!(format!("urn:uuid:{}", item.policy_id)));
+    }
     let presentation = &item.self_service.presentation;
     let text = |key: &str| {
         presentation

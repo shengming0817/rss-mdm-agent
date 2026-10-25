@@ -30,7 +30,7 @@ pub(crate) fn compile(
     task.validate()?;
     let mut normalized = task.clone();
     normalized.permit = w::TaskPermit::Offer;
-    normalized.expires_at = 0;
+    normalized.expires_at = normalized.deadline;
     let task = &normalized;
     materials.validate_offer(offer)?;
     if !matches!(
@@ -99,7 +99,7 @@ pub(crate) fn compile(
 pub(crate) fn verify_input(plan: &FrozenExecution, task: &w::AccessTaskSpec) -> Result<(), Error> {
     let mut normalized = task.clone();
     normalized.permit = w::TaskPermit::Offer;
-    normalized.expires_at = 0;
+    normalized.expires_at = normalized.deadline;
     let task = &normalized;
 
     let root = crate::access_worker::plan_root(plan)?;

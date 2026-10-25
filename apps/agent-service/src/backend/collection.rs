@@ -33,7 +33,7 @@ pub(crate) fn compile(
         &{
             let mut input = payload.clone();
             input.permit = w::TaskPermit::Offer;
-            input.expires_at = 0;
+            input.expires_at = input.deadline;
             input.try_into()?
         },
         super::request_id(offer)?,
@@ -277,7 +277,7 @@ pub(crate) fn verify_input(
     read.validate()?;
     let mut normalized = task.clone();
     normalized.permit = w::TaskPermit::Offer;
-    normalized.expires_at = 0;
+    normalized.expires_at = normalized.deadline;
     let task = &normalized;
     if !matches!(&read.source, crate::collection_worker::ReadSource::Task { task: original, .. } if original.as_ref() == task)
     {

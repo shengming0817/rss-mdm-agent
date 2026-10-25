@@ -268,12 +268,6 @@ pub trait JournalPort {
         id: &Reference,
         host: &impl JournalHost,
     ) -> Result<Interaction, JournalError>;
-    /// Read the protected CAS revision for a subsequent trust refresh. Requires trust-management
-    /// access, independently of result/audit access; absence means the first refresh uses None.
-
-    /// Atomically install a complete freshly verified snapshot using expected local head revision.
-    /// Definitions are immutable; refresh cannot import, reset or refund local consumption counters.
-
     /// Save process facts and raw byte BLOBs atomically in the existing attempt namespace.
     fn record_process(
         &mut self,

@@ -37,11 +37,21 @@ function presentationText(value: unknown, fallback = "未提供"): string {
       <h3>
         {{
           presentationText(
-            record.action.presentation.displayName,
+            record.action.offer?.presentation.title ??
+              record.action.presentation.displayName,
             `策略 ${record.action.choice.policyId}`,
           )
         }}
       </h3>
+      <template v-if="record.action.offer">
+        <p>已受理执行摘要</p>
+        <pre>{{
+          JSON.stringify(record.action.offer.presentation.summary, null, 2)
+        }}</pre>
+      </template>
+      <p v-if="record.action.runId">
+        以下为提交前配置快照；实际执行内容以已受理任务及执行详情为准。
+      </p>
       <p>
         {{ presentationText(record.action.presentation.description) }}
       </p>
@@ -58,7 +68,7 @@ function presentationText(value: unknown, fallback = "未提供"): string {
         <dd>{{ request() }}</dd>
         <dt>策略</dt>
         <dd>{{ record.action.choice.policyId }}</dd>
-        <dt>资源版本</dt>
+        <dt>{{ record.action.runId ? "提交前资源版本" : "资源版本" }}</dt>
         <dd v-if="record.action.task.kind !== 'enrollment'">
           {{ record.action.task.resource.id }} /
           {{ record.action.task.resource.version }} /
@@ -94,12 +104,15 @@ function presentationText(value: unknown, fallback = "未提供"): string {
           </dd></template
         >
       </dl>
-      <PolicyExecutionContext :task="record.action.task" />
+      <PolicyExecutionContext
+        v-if="!record.action.runId"
+        :task="record.action.task"
+      />
       <button :disabled="disabled" @click="emit('query', request())">
         查询原请求与结果
       </button>
       <template v-if="record.action.task.kind === 'script'">
-        <p>最终参数</p>
+        <p>{{ record.action.runId ? "提交前参数快照" : "最终参数" }}</p>
         <pre>{{ JSON.stringify(resolved(), null, 2) }}</pre>
       </template>
       <p>风险：{{ record.risk?.level ?? "人工操作" }} · {{ record.state }}</p>

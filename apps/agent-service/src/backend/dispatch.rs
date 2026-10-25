@@ -296,7 +296,6 @@ fn dispatch_with_material<S: IdentityProvider>(
         &start,
         &plan,
         record.as_ref(),
-        service.core.available_risk.as_ref(),
         service.core.host.clock.millis()?,
     )?;
     // Linearize revocation with the sole owner's irreversible runner delivery.
@@ -310,12 +309,20 @@ fn dispatch_with_material<S: IdentityProvider>(
         .as_ref()
         .map(|(fences, subject, epoch)| fences.admit(subject, *epoch))
         .transpose()?;
-    service
+    if !service
         .core
         .host
         .materials
-        .register(&plan, artifacts)
-        .map_err(crate::error::app_error)?;
+        .registered(&plan)
+        .map_err(crate::error::app_error)?
+    {
+        service
+            .core
+            .host
+            .materials
+            .register(&plan, artifacts)
+            .map_err(crate::error::app_error)?;
+    }
     *service
         .core
         .host

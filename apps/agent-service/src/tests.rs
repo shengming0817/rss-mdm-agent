@@ -175,7 +175,6 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
             &start,
             &frozen,
             None,
-            None,
             host.clock.millis().unwrap(),
         )
         .unwrap(),

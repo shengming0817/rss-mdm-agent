@@ -772,10 +772,10 @@ async fn sdk_tracing_never_receives_raw_tool_arguments_metadata_or_cancel_reason
 }
 
 #[test]
-fn policy_mcp_descriptor_preserves_resource_input_constraints_and_versions() {
+fn policy_mcp_descriptor_preserves_resource_input_constraints_and_local_references() {
     use rss_mdm_agent_wire::runtime::SelfServiceDirectoryItem;
     let mut item: SelfServiceDirectoryItem = serde_json::from_value(json!({
-        "capability":{"id":"00000000-0000-4000-a000-000000000001","objectType":"policy","toolName":"policy_0000000000004000a000000000000001","alias":null,"scope":"00000000-0000-4000-a000-000000000003","instance":"fixture","tenant":"00000000-0000-4000-a000-000000000004","revision":3,"version":"00000000-0000-4000-a000-000000000002","operations":["invoke"],"inputSchema":{"type":"object","properties":{"name":{"type":"string","maxLength":32}},"required":["name"],"additionalProperties":false},"outputSchema":{}},
+        "capability":{"id":"00000000-0000-4000-a000-000000000001","objectType":"policy","toolName":"policy_0000000000004000a000000000000001","alias":null,"scope":"00000000-0000-4000-a000-000000000003","instance":"fixture","tenant":"00000000-0000-4000-a000-000000000004","revision":3,"version":"00000000-0000-4000-a000-000000000002","operations":["invoke"],"inputSchema":{"type":"object","$defs":{"name":{"type":"string","maxLength":32}},"properties":{"name":{"$ref":"#/$defs/name"}},"required":["name"],"additionalProperties":false},"outputSchema":{}},
         "policyId":"00000000-0000-4000-a000-000000000001","policyRevision":3,"policyVersion":"00000000-0000-4000-a000-000000000002",
             "subject":{"kind":"device"},
         "selfService":{"published": true, "allowAi": true, "riskLevel": 2, "presentation": {"displayName": "Repair", "description": "Repair app", "prerequisites": "Employee", "sideEffects": "Restart", "category": "Support", "keywords": []}},

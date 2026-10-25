@@ -275,6 +275,18 @@ export function operationProjection(
           : `资源：${action.task.resource.id} / ${action.task.resource.version}`,
         `前置条件：${presentationText(action.presentation.prerequisites)}`,
       ];
+      if (action.runId) {
+        snapshot.presentation.source = `已受理策略 ${action.choice.policyId}`;
+        snapshot.approval.elevation = "实际执行身份以已受理任务及执行详情为准";
+        snapshot.presentation.targetLabel = scope.target;
+        snapshot.logs = ["提交前配置快照：", ...snapshot.logs];
+        if (action.offer) {
+          snapshot.presentation.title = action.offer.presentation.title;
+          snapshot.logs.unshift(
+            `已受理执行摘要：${JSON.stringify(action.offer.presentation.summary)}`,
+          );
+        }
+      }
       if (form.blocked) {
         snapshot.allowed = snapshot.allowed.filter((a) => a !== "submit");
         snapshot.reason = "秘密输入接缝不可用，禁止提交。";

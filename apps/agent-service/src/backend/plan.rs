@@ -153,7 +153,7 @@ pub(crate) fn verify_script_projection(
                 serde_json::from_value(value.clone()).map_err(|_| Error::Protocol)?;
             let mut normalized = task.clone();
             normalized.permit = wire::TaskPermit::Offer;
-            normalized.expires_at = 0;
+            normalized.expires_at = normalized.deadline;
             if frozen != normalized {
                 return Err(Error::Untrusted);
             }
@@ -269,7 +269,7 @@ pub(crate) fn script(
                     value: serde_json::to_value({
                         let mut value = payload.clone();
                         value.permit = wire::TaskPermit::Offer;
-                        value.expires_at = 0;
+                        value.expires_at = value.deadline;
                         value
                     })
                     .map_err(|_| Error::Protocol)?,

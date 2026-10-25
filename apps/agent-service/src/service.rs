@@ -5,7 +5,7 @@ use crate::{
     backend::{self, host::EnterpriseHost, offered, plan, ExecutionBridge},
     DeviceSecrets, Interpreter, SystemClock,
 };
-use agent_client::{Client, CredentialRedactor, Error, IdentityProvider, Materials, Offer};
+use agent_client::{Client, Clock, CredentialRedactor, Error, IdentityProvider, Materials, Offer};
 use execution_app::{AppConfig, ExecutionApp, RequestContext};
 use execution_contract::{
     BackendRequest, BackendRequestFailure, BackendRequestState, BackendTrigger, PreparedAction,
@@ -579,7 +579,31 @@ impl<S: IdentityProvider> DeviceService<S> {
             .client
             .pending_tasks(self.client.configuration().limits.pending_tasks)?;
         for task in pending {
-            if let Err(error) = self.resume_task(task, commands).await {
+            if let Err(mut error) = self.resume_task(task, commands).await {
+                if error == Error::Expired && self.client.bound_request(task)?.is_none() {
+                    if self
+                        .waiting
+                        .as_ref()
+                        .is_some_and(|(offer, _)| offer.task_id() == task)
+                    {
+                        self.release_waiting();
+                    }
+                    let request = backend::request_id(&self.client.retained_offer(task)?)?;
+                    self.core.transition(
+                        &request,
+                        BackendRequestState::Failed,
+                        Some(BackendRequestFailure::Expired),
+                    )?;
+                    match self.abandon(task, commands).await {
+                        Ok(()) => {
+                            if self.core.stopping {
+                                return Ok(());
+                            }
+                            continue;
+                        }
+                        Err(failure) => error = failure,
+                    }
+                }
                 if matches!(
                     error,
                     Error::CredentialRevoked | Error::CertificateExpired | Error::CredentialRetired
@@ -752,6 +776,25 @@ impl<S: IdentityProvider> DeviceService<S> {
             return Ok(());
         }
         let retained = self.client.retained_offer(task)?;
+        let now = self.core.host.clock.now()?;
+        let expired = retained
+            .preparation_deadline()
+            .is_some_and(|deadline| now >= deadline);
+        if expired && self.client.bound_request(task)?.is_none() {
+            if self
+                .waiting
+                .as_ref()
+                .is_some_and(|(offer, _)| offer.task_id() == task)
+            {
+                self.release_waiting();
+            }
+            self.core.transition(
+                &backend::request_id(&retained)?,
+                BackendRequestState::Failed,
+                Some(BackendRequestFailure::Expired),
+            )?;
+            return self.abandon(task, commands).await;
+        }
         if matches!(retained.payload(), wire::TaskPayload::Unmanage(_)) {
             self.accept_retirement(&retained, commands).await?;
             return Ok(());
@@ -774,15 +817,25 @@ impl<S: IdentityProvider> DeviceService<S> {
             if status.as_ref().is_none_or(|s| {
                 s.attempt_id.is_none() && s.admission.is_none() && !s.cancel_requested
             }) {
-                let selection = if is_policy_offer(&retained) {
-                    Some(self.bind_policy_offer(&retained)?)
+                if expired {
+                    if !recovered {
+                        return self.abandon(task, commands).await;
+                    }
+                    self.core
+                        .app
+                        .cancel(&caller, binding.request())
+                        .map_err(map_app_error)?;
                 } else {
-                    None
-                };
-                let materials =
-                    network(self.client.prepare(&retained), &mut self.core, commands).await?;
-                backend::submit(self, retained, materials, selection, commands).await?;
-                return Ok(());
+                    let selection = if is_policy_offer(&retained) {
+                        Some(self.bind_policy_offer(&retained)?)
+                    } else {
+                        None
+                    };
+                    let materials =
+                        network(self.client.prepare(&retained), &mut self.core, commands).await?;
+                    backend::submit(self, retained, materials, selection, commands).await?;
+                    return Ok(());
+                }
             }
             let retained = self.client.retained_offer(task)?;
             if let wire::TaskPayload::Credential(spec) = retained.payload() {
@@ -1047,7 +1100,9 @@ impl<S: IdentityProvider> DeviceService<S> {
         )
         .await?;
         self.bridge
-            .finish_abandonment(&mut self.client, pending, &self.core.app)
+            .finish_abandonment(&mut self.client, pending, &self.core.app)?;
+        self.core.access.retire(task);
+        Ok(())
     }
     /// Start the single service owner; native callbacks never access SQLite or network directly.
     pub fn spawn(

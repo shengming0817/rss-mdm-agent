@@ -154,7 +154,6 @@ impl ProductGateProof {
         start: &Start,
         plan: &FrozenExecution,
         record: Option<&BackendRequest>,
-        risk: Option<&TrustedRisk>,
         now: u64,
     ) -> Result<Self, Error> {
         if start.payload().permit() != wire::TaskPermit::Start
@@ -171,7 +170,7 @@ impl ProductGateProof {
             return Err(Error::Expired);
         }
         let view = offered(offer)?;
-        let (trigger, _classification, until) = if view.user_initiated {
+        let trigger = if view.user_initiated {
             let record = record.ok_or(Error::Denied)?;
             if record.action.offer() != Some(&view)
                 || record.state != BackendRequestState::Submitting
@@ -180,7 +179,7 @@ impl ProductGateProof {
                 return Err(Error::Denied);
             }
             match &record.trigger {
-                BackendTrigger::Human { .. } => (record.trigger.clone(), None, until),
+                BackendTrigger::Human { .. } => record.trigger.clone(),
                 BackendTrigger::Ai { .. } => {
                     let authorization = match start.payload() {
                         wire::TaskPayload::Script(p) => &p.authorization,
@@ -201,20 +200,16 @@ impl ProductGateProof {
                     if !matches!(risk_level, 1 | 2) || (*risk_level == 2 && !confirmed) {
                         return Err(Error::Denied);
                     }
-                    (
-                        record.trigger.clone(),
-                        risk.and_then(|r| r.decision(&view.revision)).cloned(),
-                        until,
-                    )
+                    record.trigger.clone()
                 }
                 _ => return Err(Error::Denied),
             }
         } else {
-            // Absence of a local record is not sufficient: signed start mode is authoritative.
+            // Signed product authorization determines whether an original local request is required.
             if record.is_some() {
                 return Err(Error::Denied);
             }
-            (BackendTrigger::Automatic {}, None, until)
+            BackendTrigger::Automatic {}
         };
         if !matches!(&plan.spec().request.initiator, Initiator::Backend { trigger: actual, .. } if actual == &trigger)
         {

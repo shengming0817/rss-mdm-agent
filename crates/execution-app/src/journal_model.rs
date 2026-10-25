@@ -229,9 +229,8 @@ pub trait JournalHost {
     fn authorize(&self, request: AccessRequest<'_>) -> Result<(), JournalError>;
     /// Reliable UTC Unix milliseconds; uncertainty and rollback must return Clock.
     fn reliable_now(&self) -> Result<u64, JournalError>;
-    /// Obtain fresh full decisions for a NEW attempt. The verifier exposes protected definitions
-    /// and current local consumption counters in the same SQLite transaction.
-    /// Replay never calls this method and never needs a fresh execution approval.
+    /// Verify the product permit for a new attempt in this SQLite transaction.
+    /// Replay does not invoke this callback or return another first-dispatch right.
     fn admit(
         &self,
         _plan: &FrozenExecution,

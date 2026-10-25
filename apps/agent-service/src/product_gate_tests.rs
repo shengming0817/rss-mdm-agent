@@ -489,7 +489,7 @@ async fn one_desktop_confirmation_retains_ai_origin_and_cannot_be_replaced_by_st
 }
 
 #[tokio::test]
-async fn signed_start_needs_the_current_confirmed_request_and_frozen_action() {
+async fn signed_start_keeps_the_original_confirmed_request_and_frozen_action() {
     let _budget = crate::scenario_budget::enter();
     let mut c = Case::new(Some(RiskLevel::Two)).await;
     let ai = c.selection(false);
@@ -522,35 +522,28 @@ async fn signed_start_needs_the_current_confirmed_request_and_frozen_action() {
     };
     let frozen = FrozenExecution::freeze(spec, &plan::storage_limits().input).unwrap();
     let now = c.service.core.host.clock.millis().unwrap();
-    let risk = c.service.core.available_risk.as_ref();
-    let proof = ProductGateProof::verify_start(&c.offer, &start, &frozen, Some(&record), risk, now)
-        .unwrap();
+    let proof =
+        ProductGateProof::verify_start(&c.offer, &start, &frozen, Some(&record), now).unwrap();
     assert!(proof.verify(&frozen, now).is_ok());
     assert!(proof.verify(&frozen, proof.until()).is_err());
-    assert!(
-        ProductGateProof::verify_start(&c.offer, &start, &frozen, Some(&record), None, now)
-            .is_err()
-    );
     let mut cancelled = record.clone();
     cancelled.state = BackendRequestState::Cancelled;
     assert!(
-        ProductGateProof::verify_start(&c.offer, &start, &frozen, Some(&cancelled), risk, now)
-            .is_err()
+        ProductGateProof::verify_start(&c.offer, &start, &frozen, Some(&cancelled), now).is_err()
     );
     let mut changed = frozen.spec().clone();
     changed.budget.total_timeout_ms -= 1;
     let changed = FrozenExecution::freeze(changed, &plan::storage_limits().input).unwrap();
     assert!(proof.verify(&changed, now).is_err());
-    assert!(ProductGateProof::verify_start(&c.offer, &start, &frozen, None, risk, now).is_err());
+    assert!(ProductGateProof::verify_start(&c.offer, &start, &frozen, None, now).is_err());
     assert!(ProductGateProof::verify_start(
         &c.offer,
         &start,
         &frozen,
         Some(&record),
-        risk,
         record.confirmation.as_ref().unwrap().expires_at_unix_ms
     )
-    .is_err());
+    .is_ok());
 }
 
 fn complete_material_gc<S: agent_client::IdentityProvider>(
@@ -1873,13 +1866,11 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
                     trigger: bound.trigger.clone(),
                 };
                 let frozen = FrozenExecution::freeze(input, &plan::storage_limits().input).unwrap();
-                let risk = TrustedRisk::from_offer(&offer);
                 assert!(ProductGateProof::verify_start(
                     &offer,
                     &start,
                     &frozen,
                     Some(&bound),
-                    risk.as_ref(),
                     c.service.core.host.clock.millis().unwrap()
                 )
                 .is_ok());
@@ -3112,6 +3103,64 @@ impl Case {
 }
 
 #[tokio::test]
+async fn expired_unadmitted_task_releases_waiting_and_replays_abandonment_after_restart() {
+    let _budget = crate::scenario_budget::enter();
+    let mut c = Case::new(None).await;
+    let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
+    c.service.release_waiting();
+    c.service
+        .abandon(c.offer.task_id(), &mut commands)
+        .await
+        .unwrap();
+    let (original, offer) = c.accepted_policy_offer(true).await;
+    let task = offer.task_id();
+    let attempt = offer.attempt_id();
+    let materials = c.service.client.prepare(&offer).await.unwrap();
+    c.service.waiting = Some((offer.clone(), materials));
+    // Stage the original signed task at an elapsed Run deadline in the real communication DB.
+    let mut payload = offer.payload().clone();
+    let wire::TaskPayload::Script(spec) = &mut payload else {
+        panic!("script");
+    };
+    spec.deadline = c.service.core.host.clock.now().unwrap() - 1;
+    spec.expires_at = spec.deadline;
+    let signed = c._server.data.lock().unwrap().signed(payload);
+    let sql = rusqlite::Connection::open(c._root.path.join("communication.sqlite")).unwrap();
+    assert_eq!(
+        sql.execute(
+            "UPDATE tasks SET body=?1 WHERE id=?2",
+            rusqlite::params![serde_json::to_vec(&signed).unwrap(), task.to_string()]
+        )
+        .unwrap(),
+        1
+    );
+    drop(sql);
+    c._server.data.lock().unwrap().offer = Some(signed);
+    c._server.data.lock().unwrap().result_failure = true;
+    assert_eq!(
+        c.service.resume_task(task, &mut commands).await,
+        Err(Error::Unavailable)
+    );
+    assert!(c.service.waiting.is_none());
+    assert_eq!(c.service.client.pending_tasks(32).unwrap(), vec![task]);
+    assert_eq!(
+        c.policy_record(original.action.request()).failure,
+        Some(BackendRequestFailure::Expired)
+    );
+    let results = c._server.data.lock().unwrap().results.clone();
+    let mut c = c.reopen();
+    c.service.resume_task(task, &mut commands).await.unwrap();
+    assert!(c.service.client.pending_tasks(32).unwrap().is_empty());
+    let data = c._server.data.lock().unwrap();
+    assert_eq!(data.results, results);
+    assert!(data
+        .results
+        .values()
+        .any(|v| v["attemptId"] == attempt.to_string()));
+    assert!(data.start_ops.is_empty());
+}
+
+#[tokio::test]
 async fn device_recovery_reopens_both_journals_and_preserves_every_accepted_intent_at_capacity() {
     let _budget = crate::scenario_budget::enter();
     let mut c = Case::new(None).await;
@@ -3448,14 +3497,13 @@ async fn transient_start_replays_original_attempt_without_retiring_policy_or_con
         };
         *trigger = original.trigger.clone();
         let input = FrozenExecution::freeze(input, &plan::storage_limits().input).unwrap();
-        // The actual product gate needs restored signed risk as well as original consent.
+        // The product gate consumes original consent and the signed administrator configuration.
         // This fixture has no authenticated system/helper runner and grants no native launch.
         ProductGateProof::verify_start(
             &restored,
             &start,
             &input,
             Some(&retained),
-            c.service.core.available_risk.as_ref(),
             c.service.core.host.clock.millis().unwrap(),
         )
         .unwrap();

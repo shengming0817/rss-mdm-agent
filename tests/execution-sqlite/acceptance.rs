@@ -550,14 +550,14 @@ fn existing_writer_is_fenced_when_schema_changes_after_open() {
 fn reserved_terminal_receipts_survive_exhausted_normal_capacity() {
     let db = Database::new();
     let mut bounds = limits();
-    bounds.max_receipts = 9;
+    bounds.max_receipts = 8;
     let host = TestHost::new();
     let mut store = Store::initialize_test(&db.path, host.scope().authority, bounds).unwrap();
     host.prepare(&mut store);
     store
         .apply_command(&operation("start"), &host.scope(), &host.begin(), &host)
         .unwrap();
-    // 4 receipts + 5 terminal reservations exhaust ordinary allocation.
+    // 3 receipts + 5 terminal reservations exhaust ordinary allocation.
     assert_eq!(
         store
             .apply_command(
@@ -637,7 +637,7 @@ fn reserved_terminal_receipts_survive_exhausted_normal_capacity() {
             .unwrap(),
         lifecycle::Directive::Done
     );
-    assert_eq!(db.count("receipts"), 8);
+    assert_eq!(db.count("receipts"), 7);
 }
 
 #[test]
@@ -831,7 +831,7 @@ fn distinct_attempts_race_without_admitting_twice() {
     );
     assert_eq!(db.count("attempts"), 1);
 
-    assert_eq!(db.count("receipts"), 5);
+    assert_eq!(db.count("receipts"), 4);
 }
 
 #[test]
@@ -1085,7 +1085,7 @@ fn quota_accepts_uncertain_and_manual_review_before_final_evidence() {
     ] {
         let db = Database::new();
         let mut bounds = limits();
-        bounds.max_receipts = 9;
+        bounds.max_receipts = 8;
         let host = TestHost::new();
         let mut store = Store::initialize_test(&db.path, host.scope().authority, bounds).unwrap();
         host.prepare(&mut store);
@@ -1149,7 +1149,7 @@ fn quota_accepts_uncertain_and_manual_review_before_final_evidence() {
                 );
             }
         }
-        assert_eq!(db.count("receipts"), 9);
+        assert_eq!(db.count("receipts"), 8);
         assert_eq!(
             store
                 .execution(&host.scope(), &host)
@@ -1386,7 +1386,7 @@ fn invalid_call_input_is_not_storage_configuration() {
         JournalError::InvalidInput
     );
     assert_eq!(db.count("interactions"), 0);
-    assert_eq!(db.count("receipts"), 3);
+    assert_eq!(db.count("receipts"), 2);
 }
 
 #[test]
@@ -1517,7 +1517,7 @@ fn oversized_protected_records_fail_closed_at_every_read_entry() {
                     .unwrap_err(),
             ),
         }
-        assert_eq!(db.count("receipts"), 4);
+        assert_eq!(db.count("receipts"), 3);
         assert_eq!(db.count("attempts"), 0);
     }
 }
