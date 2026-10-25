@@ -43,7 +43,6 @@ pub use windows::worker;
 #[serde(deny_unknown_fields)]
 pub struct Candidate {
     pub windows_login: Option<Artifact>,
-    pub windows_publisher: Option<String>,
     pub platform_sso: Option<crate::deployment::PlatformSsoConfiguration>,
     pub version: u8,
     pub format: rss_mdm_agent_wire::enroll::configuration::InstallerFormat,
@@ -183,13 +182,6 @@ impl Candidate {
                 return Err(Error::Configuration);
             }
         }
-        if self.target.platform() == "win32" && self.signing_mode == SigningMode::Release {
-            if !self.windows_publisher.as_deref().is_some_and(digest_valid) {
-                return Err(Error::Identity);
-            }
-        } else if self.windows_publisher.is_some() {
-            return Err(Error::Configuration);
-        }
         self.format()?;
         Ok(())
     }
@@ -200,9 +192,7 @@ impl Candidate {
             .chain(self.windows_login.iter())
         {
             image.verify(&image.path).map_err(|_| Error::Identity)?;
-            self.target
-                .verify_image(&image.path)
-                .map_err(|_| Error::Identity)?;
+            validate_native_artifact(image)?;
         }
         if let Some(psso) = &self.platform_sso {
             psso.verify()?;
@@ -229,7 +219,6 @@ impl Candidate {
                 .map_err(|_| Error::Identity)?;
         }
         verify_runtime_files(&self.runtime_root, self.target)?;
-        platform::verify_signatures(self)?;
         Ok(())
     }
     fn format(&self) -> Result<String, Error> {

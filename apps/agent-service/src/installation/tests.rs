@@ -10,7 +10,6 @@ fn candidate_requires_current_format_and_valid_identity() {
     let target = Target::current().unwrap();
     let candidate = Candidate {
         windows_login: None,
-        windows_publisher: None,
         platform_sso: None,
         service_id: crate::protocol_test_support::SERVICE_ID,
         connections: crate::protocol_test_support::signed_connections(

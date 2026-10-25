@@ -4,7 +4,7 @@ const MAX_FRAME: usize = 65536;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
-pub use macos::{applications_directory, verify_apple_identity};
+pub use macos::applications_directory;
 mod external;
 mod policy;
 pub use external::read_external;

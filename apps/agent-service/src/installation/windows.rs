@@ -10,7 +10,7 @@ use std::{
 };
 use windows_sys::Win32::{
     Foundation::*,
-    Security::{Authorization::*, WinTrust::*, *},
+    Security::{Authorization::*, *},
     Storage::FileSystem::*,
     System::{Diagnostics::ToolHelp::*, Services::*, Threading::*},
 };
@@ -361,83 +361,6 @@ pub(super) fn interactive_profile() -> Result<Profile, Error> {
             PathBuf::from(home).join("AppData\\Local\\RSS MDM Agent\\helper"),
         )]),
     })
-}
-pub(super) fn verify_signatures(candidate: &Candidate) -> Result<(), Error> {
-    if candidate.signing_mode == SigningMode::Development {
-        return Ok(());
-    }
-    for image in [&candidate.service, &candidate.desktop]
-        .into_iter()
-        .chain(candidate.windows_login.iter())
-    {
-        let name = wide(&image.path);
-        let mut file = WINTRUST_FILE_INFO {
-            cbStruct: std::mem::size_of::<WINTRUST_FILE_INFO>() as u32,
-            pcwszFilePath: name.as_ptr(),
-            ..Default::default()
-        };
-        let mut data = WINTRUST_DATA {
-            cbStruct: std::mem::size_of::<WINTRUST_DATA>() as u32,
-            dwUIChoice: WTD_UI_NONE,
-            dwUnionChoice: WTD_CHOICE_FILE,
-            dwStateAction: WTD_STATEACTION_VERIFY,
-            dwProvFlags: WTD_CACHE_ONLY_URL_RETRIEVAL,
-            ..Default::default()
-        };
-        data.Anonymous.pFile = &mut file;
-        let mut action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
-        let status = unsafe {
-            WinVerifyTrust(
-                null_mut(),
-                &mut action,
-                (&mut data as *mut WINTRUST_DATA).cast(),
-            )
-        };
-        let publisher = if status == 0 {
-            unsafe {
-                let provider = WTHelperProvDataFromStateData(data.hWVTStateData);
-                let signer = if provider.is_null() {
-                    std::ptr::null_mut()
-                } else {
-                    WTHelperGetProvSignerFromChain(provider, 0, 0, 0)
-                };
-                if signer.is_null()
-                    || (*signer).csCertChain == 0
-                    || (*signer).pasCertChain.is_null()
-                {
-                    None
-                } else {
-                    let cert = (*(*signer).pasCertChain).pCert;
-                    if cert.is_null()
-                        || (*cert).cbCertEncoded == 0
-                        || (*cert).cbCertEncoded > 65536
-                        || (*cert).pbCertEncoded.is_null()
-                    {
-                        None
-                    } else {
-                        Some(hash(std::slice::from_raw_parts(
-                            (*cert).pbCertEncoded,
-                            (*cert).cbCertEncoded as usize,
-                        )))
-                    }
-                }
-            }
-        } else {
-            None
-        };
-        data.dwStateAction = WTD_STATEACTION_CLOSE;
-        unsafe {
-            WinVerifyTrust(
-                null_mut(),
-                &mut action,
-                (&mut data as *mut WINTRUST_DATA).cast(),
-            );
-        }
-        if status != 0 || publisher.as_ref() != candidate.windows_publisher.as_ref() {
-            return Err(Error::Identity);
-        }
-    }
-    Ok(())
 }
 pub(super) fn execution_resources(
     interpreters: &mut Vec<crate::Interpreter>,
