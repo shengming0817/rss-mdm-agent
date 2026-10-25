@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 pub mod current_user;
+pub mod filevault;
 pub(crate) mod pki;
 pub mod projection;
 pub mod self_service_software;
@@ -173,6 +174,7 @@ pub struct Data {
     pub renewal_lookup_authenticated: Vec<bool>,
     pub tls_required: bool,
     pub psso_calls: Vec<(String, Value)>,
+    pub filevault: filevault::Fixture,
     pub psso_status_override: Option<StatusCode>,
     pub employee_calls: Vec<(String, Value)>,
     pub employee_credentials: Vec<bool>,
@@ -671,6 +673,7 @@ impl Server {
             renewal_lookup_authenticated: Vec::new(),
             tls_required: tls,
             psso_calls: vec![],
+            filevault: Default::default(),
             psso_status_override: None,
             employee_calls: vec![],
             employee_credentials: vec![],
@@ -1093,6 +1096,15 @@ async fn handler(
         }
         let tenant = d.tenant;
         return current_user::response(&mut d.current_user, tenant, &method, &headers, value);
+    }
+    if path.contains("/filevault/") {
+        if !authenticated
+            || headers.contains_key("x-rss-user-session")
+            || headers.contains_key("cookie")
+        {
+            return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
+        }
+        return filevault::response(&mut d.filevault, path, value);
     }
     if path.contains("/platform-sso/") {
         if !authenticated

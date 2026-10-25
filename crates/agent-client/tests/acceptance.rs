@@ -1590,6 +1590,13 @@ async fn signed_retirement_requires_start_drain_and_exact_installation_and_repla
     drop(client);
     let mut client = server.client(&root, OpenMode::Existing);
     let permit = client.authorize_unmanage(&offer, install).await.unwrap();
+    assert_eq!(
+        client
+            .drive_filevault(|| panic!("retirement must stop new CMS collection"))
+            .await
+            .unwrap(),
+        execution_contract::FilevaultState::Retired
+    );
     assert!(!permit.drained());
     assert!(client.unmanage_transport(&permit).is_err());
     assert!(client.accepted_unmanage(Uuid::new_v4()).is_err());

@@ -24,6 +24,8 @@ pub struct Envelope {
     deny_unknown_fields
 )]
 pub enum Command {
+    /// Read the current user login-keychain state without accessing any item.
+    MacKeychain,
     /// Read this helper user's native Hello state; no caller-selected account or query.
     WindowsHello,
     /// User-requested native sign-in settings only; never clears a container.
@@ -151,6 +153,8 @@ pub enum Command {
     deny_unknown_fields
 )]
 pub enum Reply {
+    /// Local accessibility diagnostic; not proof of password synchronization.
+    MacKeychain(crate::device_access::KeychainStatus),
     /// Independently sampled user registration; hardware provenance may be Unknown.
     WindowsHello(crate::device_access::WindowsHelloUser),
     /// Facts of the helper's current native login.

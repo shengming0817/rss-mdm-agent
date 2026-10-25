@@ -178,6 +178,9 @@ pub struct RegistrationContext {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DeviceOverview {
+    /// Independent CMS custody diagnostic, never a PSSO/login gate.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filevault: Option<execution_contract::FilevaultState>,
     /// Extensible device facts; OS peer identity is held separately.
     pub attributes: DeviceAttributes,
 }
@@ -1340,6 +1343,7 @@ mod tests {
             value["request"].as_object_mut().unwrap().remove(field);
         }
         let overview = super::DeviceOverview {
+            filevault: None,
             attributes: super::DeviceAttributes {
                 computer_name: Some("Studio Mac".into()),
                 ip_addresses: Some(vec!["192.0.2.24".into()]),

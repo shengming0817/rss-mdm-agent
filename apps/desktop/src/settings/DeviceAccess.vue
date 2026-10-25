@@ -369,6 +369,23 @@ onUnmounted(() => {
     <p v-if="!available">请登录 RSS 账户并保持当前本地会话解锁。</p>
     <template v-else>
       <button :disabled="busy" @click="refresh">刷新状态</button>
+      <p v-if="mac" role="status">
+        系统配置读回：{{
+          macStatus?.nativeConfigurationMatches === true
+            ? "匹配"
+            : macStatus?.nativeConfigurationMatches === false
+              ? "不匹配"
+              : "待核验"
+        }}； 登录钥匙串：{{
+          macStatus?.loginKeychain === "unlocked"
+            ? "已解锁"
+            : macStatus?.loginKeychain === "locked"
+              ? "已锁定"
+              : macStatus?.loginKeychain === "missing"
+                ? "未找到"
+                : "暂不可读"
+        }}。 钥匙串状态仅用于本地诊断，RSS 不读取其中的秘密或主动解锁。
+      </p>
       <p v-if="!mac && rssPolicy" role="status">
         本机当前状态：{{
           windowsStatus

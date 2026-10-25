@@ -43,7 +43,13 @@ fn request(client: &ServiceClient, operation: Operation) -> Result<Response, ()>
         _ => Err(()),
     }
 }
-fn begin(scope: u32, method: u32, signing: &[u8], encryption: &[u8]) -> Result<Handle, i32> {
+fn begin(
+    scope: u32,
+    method: u32,
+    callback_generation: u64,
+    signing: &[u8],
+    encryption: &[u8],
+) -> Result<Handle, i32> {
     let kind = match scope {
         0 => w::Kind::Device,
         1 => w::Kind::User,
@@ -54,6 +60,7 @@ fn begin(scope: u32, method: u32, signing: &[u8], encryption: &[u8]) -> Result<H
     let (context, challenge) = match request(
         &client,
         Operation::Bootstrap {
+            callback_generation,
             scope: kind,
             authentication,
         },
@@ -67,6 +74,7 @@ fn begin(scope: u32, method: u32, signing: &[u8], encryption: &[u8]) -> Result<H
     let registration = Registration::prepare(
         context,
         &challenge,
+        callback_generation,
         authentication,
         platform_sso::public_key(signing).map_err(|_| -1)?,
         platform_sso::public_key(encryption).map_err(|_| -1)?,
@@ -103,6 +111,7 @@ fn begin(scope: u32, method: u32, signing: &[u8], encryption: &[u8]) -> Result<H
 pub unsafe extern "C" fn rss_psso_begin(
     scope: u32,
     method: u32,
+    callback_generation: u64,
     signing: *const u8,
     encryption: *const u8,
     status: *mut i32,
@@ -118,6 +127,7 @@ pub unsafe extern "C" fn rss_psso_begin(
         begin(
             scope,
             method,
+            callback_generation,
             std::slice::from_raw_parts(signing, 65),
             std::slice::from_raw_parts(encryption, 65),
         )
@@ -252,6 +262,7 @@ pub unsafe extern "C" fn rss_psso_string_free(value: *mut c_char) {
 #[no_mangle]
 pub unsafe extern "C" fn rss_psso_observe(
     metadata: *const c_char,
+    configuration: *const c_char,
     device: bool,
     user: bool,
 ) -> i32 {
@@ -261,6 +272,8 @@ pub unsafe extern "C" fn rss_psso_observe(
         request(
             &client,
             Operation::Observe {
+                callback_generation: registration.callback_generation,
+                configuration: serde_json::from_str(text(configuration)?).map_err(|_| ())?,
                 scope: registration.context.kind,
                 source: registration.source_id,
                 source_version: registration.source_version,

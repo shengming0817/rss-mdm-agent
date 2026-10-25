@@ -10,6 +10,8 @@ use rss_mdm_agent_wire::runtime::Secret;
 mod credential_escrow;
 mod delivery;
 mod device_access;
+/// Independent FileVault CMS collection and protected pending upload.
+pub mod filevault;
 pub use device_access::device_access_complete;
 mod platform_sso;
 mod unmanage;

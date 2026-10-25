@@ -4,6 +4,8 @@
 use rss_mdm_agent_wire::platform_sso as w;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+mod observation;
+pub use observation::NativeConfiguration;
 
 /// Closed errors: no remote body, nonce, token or account password is formatted.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -98,6 +100,7 @@ impl Context {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Registration {
+    pub callback_generation: u64,
     pub context: Context,
     pub source_id: Uuid,
     pub source_version: i64,
@@ -112,12 +115,16 @@ impl Registration {
     pub fn prepare(
         context: Context,
         response: &w::BootstrapResponse,
+        callback_generation: u64,
         authentication: w::AuthenticationMode,
         proof_key: w::PublicKey,
         encryption_key: w::PublicKey,
         now: i64,
     ) -> Result<Self, Error> {
         context.check_bootstrap(response, now)?;
+        if callback_generation == 0 {
+            return Err(Error::Identity);
+        }
         if context
             .configuration
             .as_ref()
@@ -134,6 +141,7 @@ impl Registration {
             };
         encryption_key.key_id().map_err(|_| Error::Protocol)?;
         Ok(Self {
+            callback_generation,
             context,
             source_id: response.source_id,
             source_version: response.source_version,
@@ -377,6 +385,7 @@ mod tests {
         assert!(Registration::prepare(
             context.clone(),
             &challenge,
+            1,
             w::AuthenticationMode::SecureEnclave,
             key.clone(),
             key.clone(),
@@ -386,6 +395,7 @@ mod tests {
         let registration = Registration::prepare(
             context,
             &challenge,
+            1,
             w::AuthenticationMode::Password,
             key.clone(),
             key.clone(),
@@ -432,6 +442,7 @@ mod tests {
         let registration = Registration::prepare(
             context,
             &challenge,
+            1,
             w::AuthenticationMode::SecureEnclave,
             key.clone(),
             key,
@@ -503,6 +514,7 @@ mod tests {
         let registration = Registration::prepare(
             context,
             &challenge,
+            1,
             w::AuthenticationMode::SecureEnclave,
             key.clone(),
             key.clone(),
@@ -543,6 +555,7 @@ mod tests {
         let mut registration = Registration::prepare(
             context,
             &challenge,
+            1,
             w::AuthenticationMode::SecureEnclave,
             key.clone(),
             key,
@@ -576,6 +589,7 @@ mod tests {
         let registration = Registration::prepare(
             context,
             &challenge,
+            1,
             w::AuthenticationMode::SecureEnclave,
             key.clone(),
             key,

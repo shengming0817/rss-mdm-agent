@@ -129,10 +129,28 @@ pub struct MacStatus {
     pub login_ready: Option<bool>,
     /// System observation from the authenticated extension.
     pub native_device_registered: Option<bool>,
+    /// Actual LoginManager readback matches the retained registration.
+    pub native_configuration_matches: Option<bool>,
+    /// Current user login-keychain accessibility only; never a synchronization fact.
+    pub login_keychain: KeychainStatus,
     /// System user-registration observation.
     pub native_user_registered: Option<bool>,
     /// Native observation UTC milliseconds.
     pub observed_at: Option<u64>,
+}
+
+/// Read-only current-user login-keychain diagnostic, never a login gate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum KeychainStatus {
+    /// Login keychain is unlocked.
+    Unlocked,
+    /// Login keychain is locked; RSS does not unlock it.
+    Locked,
+    /// No login keychain was found.
+    Missing,
+    /// The current helper cannot establish the state.
+    Unavailable,
 }
 
 /// Current credential-provider installation observation.

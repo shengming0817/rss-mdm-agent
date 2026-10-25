@@ -641,7 +641,7 @@ impl execution_ipc::host::Handler for Diagnostic {
         };
         match request {
             Request::DeviceOverview {} if peer.session_binding().is_ok() => {
-                crate::device_overview::read(&subject, peer.session())
+                crate::device_overview::read(&subject, peer.session(), None)
             }
             Request::ServiceStatus {} => Reply::ServiceStatus {
                 value: ServiceStatus::new(self.readiness.clone()),

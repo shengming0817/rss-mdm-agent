@@ -162,7 +162,9 @@ impl PrivateDirectory {
         } // File publication uses the existing write-through Windows operation.
     }
 }
-fn validate_file_handle(file: &File) -> io::Result<()> {
+/// Validate an already-open regular file's private ownership, mode and ACL.
+/// Callers opening external files must separately validate links, path identity and snapshot changes.
+pub fn validate_file_handle(file: &File) -> io::Result<()> {
     if !file.metadata()?.is_file() {
         return Err(io::Error::other("private regular file required"));
     }

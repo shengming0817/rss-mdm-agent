@@ -51,7 +51,7 @@ int main(void) { @autoreleasepool {
     [passwordMetadata removeObjectForKey:@"proofKey"];
     assert(!rss_psso_browser(1,point.bytes,json(passwordMetadata).UTF8String,issuer.UTF8String,target.UTF8String,body.UTF8String,token.UTF8String,testSign,(void *)key));
     assert(signingCalls==2);
-    int32_t status=0;assert(!rss_psso_begin(1,2,NULL,NULL,&status) && status==-1);
+    int32_t status=0;assert(!rss_psso_begin(1,2,1,NULL,NULL,&status) && status==-1);
     NSString *suite=[@"com.rss.psso.test." stringByAppendingString:NSUUID.UUID.UUIDString];
     NSUserDefaults *defaults=[[NSUserDefaults alloc]initWithSuiteName:suite];
     RSSQueueRetirements(defaults);assert(RSSPendingRetirements(defaults).count==0);

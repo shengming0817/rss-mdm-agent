@@ -24,6 +24,30 @@ const props = withDefaults(
   }>(),
   { active: true },
 );
+const filevaultText = computed(() => {
+  switch (props.device?.filevault) {
+    case "notConfigured":
+      return "缺少采集授权或收件配置";
+    case "missingMaterial":
+      return "未发现系统恢复密钥托管材料";
+    case "pending":
+      return "上传待确认，正在恢复原操作结果";
+    case "recipientMismatch":
+      return "材料收件证书与当前托管配置不匹配";
+    case "escrowedUnverified":
+      return "已托管，恢复有效性尚未验证";
+    case "unsafeMaterial":
+      return "材料文件检查未通过";
+    case "rejected":
+      return "上传被拒绝，等待材料或授权变化";
+    case "unavailable":
+      return "暂时无法采集或联系托管服务";
+    case "retired":
+      return "设备正在退管，已停止新采集";
+    default:
+      return null;
+  }
+});
 const emit = defineEmits<{
   navigation: [state: PageNavigation];
   assistant: [];
@@ -215,6 +239,18 @@ emit("navigation", reactive({ openSection, reset, section, sections, path }));
             </div>
           </dl>
         </div>
+        <section
+          v-if="filevaultText"
+          class="settings-card"
+          aria-label="FileVault 恢复密钥托管"
+        >
+          <h3>FileVault 恢复密钥托管</h3>
+          <p role="status">{{ filevaultText }}</p>
+          <p>
+            独立于 Platform SSO
+            注册。已托管只表示材料已保存，实际恢复解锁仍需验证。
+          </p>
+        </section>
         <LocalService
           :port="servicePort"
           :execution-port="selfServicePort"

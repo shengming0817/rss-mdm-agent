@@ -45,6 +45,8 @@ impl crate::deployment::PlatformSsoConfiguration {
     }
 }
 struct Pending {
+    callback_generation: u64,
+    authentication: w::AuthenticationMode,
     subject: String,
     session: u32,
     session_binding: Option<execution_contract::Id>,
@@ -163,9 +165,13 @@ impl<S: IdentityProvider> DeviceService<S> {
         };
         match input {
             Operation::Bootstrap {
+                callback_generation,
                 scope,
                 authentication,
             } => {
+                if *callback_generation == 0 {
+                    return Err(Error::Identity);
+                }
                 if self.core.psso.pending.len() >= 16 {
                     return Err(Error::Capacity);
                 }
@@ -196,6 +202,8 @@ impl<S: IdentityProvider> DeviceService<S> {
                 self.core.psso.pending.insert(
                     challenge.id,
                     Pending {
+                        callback_generation: *callback_generation,
+                        authentication: *authentication,
                         subject: command.subject.clone(),
                         session: command.session,
                         session_binding: command.binding.clone(),
@@ -230,6 +238,9 @@ impl<S: IdentityProvider> DeviceService<S> {
                     return Err(Error::Identity);
                 }
                 let coordinate = Coordinate {
+                    client_id: pending.challenge.client_id,
+                    authentication: pending.authentication,
+                    callback_generation: pending.callback_generation,
                     context: current.clone(),
                     source: pending.challenge.source_id,
                     source_version: pending.challenge.source_version,
@@ -290,46 +301,29 @@ impl<S: IdentityProvider> DeviceService<S> {
                     _ => None,
                 };
                 if let Some(source) = source {
-                    let coordinate = Coordinate {
-                        context,
-                        source: source.id,
-                        source_version: source.version,
-                    };
+                    // Recover only the protected original registering intent. Server status alone
+                    // cannot reconstruct the expected native configuration.
+                    let coordinate = retained_coordinate(
+                        &self.core.access.root,
+                        &context,
+                        source.id,
+                        source.version,
+                    )?;
                     if !retain_registration(&self.core.access.root, &coordinate)? {
                         return Err(Error::Denied);
                     }
                 }
                 Ok(Response::Status { value })
             }
-            Operation::Observe {
-                scope,
-                source,
-                source_version,
-                device_registered,
-                user_registered,
-            } => {
+            Operation::Observe { scope, .. } => {
                 let context = self.psso_context(command, *scope, false)?;
-                let account = context.generated_uid.as_deref().unwrap_or("device");
-                let _lock = state::lock(&self.core.access.root)?;
-                let retained: Coordinate = state::read_optional(
+                record_observation(
                     &self.core.access.root,
-                    &format!("{account}.psso-source"),
-                )?
-                .ok_or(Error::Identity)?;
-                if !retained.same_owner(&context)
-                    || retained.source != *source
-                    || retained.source_version != *source_version
-                {
-                    return Err(Error::Identity);
-                }
-                // Native observations remain available while HTTPS is unavailable.
-                state::write(
-                    &self.core.access.root,
-                    &format!("{account}.psso-observation"),
-                    &serde_json::json!({
-                    "source": source, "sourceVersion": source_version,
-                    "bindingGeneration": retained.context.binding_generation, "observedAt": crate::wall()?,
-                    "deviceRegistered": device_registered, "userRegistered": user_registered }),
+                    &context,
+                    input,
+                    &command.subject,
+                    command.session,
+                    command.binding.as_ref(),
                 )?;
                 Ok(Response::Observed {})
             }
@@ -339,11 +333,12 @@ impl<S: IdentityProvider> DeviceService<S> {
                 source_version,
             } => {
                 let context = self.psso_context(command, *scope, false)?;
-                let coordinate = Coordinate {
-                    context,
-                    source: *source,
-                    source_version: *source_version,
-                };
+                let coordinate = retained_coordinate(
+                    &self.core.access.root,
+                    &context,
+                    *source,
+                    *source_version,
+                )?;
                 if coordinate.source.is_nil() || coordinate.source_version < 1 {
                     return Err(Error::Identity);
                 }
@@ -361,6 +356,63 @@ impl<S: IdentityProvider> DeviceService<S> {
     }
 }
 
+fn record_observation(
+    root: &std::path::Path,
+    context: &::platform_sso::Context,
+    input: &Operation,
+    subject: &str,
+    session: u32,
+    session_binding: Option<&execution_contract::Id>,
+) -> Result<(), Error> {
+    let Operation::Observe {
+        callback_generation,
+        configuration,
+        source,
+        source_version,
+        device_registered,
+        user_registered,
+        ..
+    } = input
+    else {
+        return Err(Error::Protocol);
+    };
+    let account = context.generated_uid.as_deref().unwrap_or("device");
+    let _lock = state::lock(root)?;
+    let retained: Coordinate =
+        state::read_optional(root, &format!("{account}.psso-source"))?.ok_or(Error::Identity)?;
+    if !retained.same_owner(context)
+        || retained.source != *source
+        || retained.source_version != *source_version
+        || retained.callback_generation != *callback_generation
+    {
+        return Err(Error::Identity);
+    }
+    let observation = NativeObservation {
+        source: *source,
+        source_version: *source_version,
+        binding_generation: retained.context.binding_generation,
+        observed_at: crate::wall()?,
+        callback_generation: *callback_generation,
+        subject: subject.into(),
+        session,
+        session_binding: session_binding.cloned(),
+        configuration: configuration
+            .as_ref()
+            .map(|actual| {
+                actual.matches(
+                    &retained.context,
+                    retained.client_id,
+                    retained.authentication,
+                    retained.source,
+                )
+            })
+            .transpose()
+            .map_err(|_| Error::Identity)?,
+        device_registered: *device_registered,
+        user_registered: *user_registered,
+    };
+    state::write(root, &format!("{account}.psso-observation"), &observation)
+}
 fn observation_owner(
     retained: &::platform_sso::Context,
     current: &::platform_sso::Context,
@@ -456,20 +508,106 @@ fn native_cleared(c: &Coordinate, in_flight: bool, native: Option<&NativeObserva
             n.source == c.source
                 && n.source_version == c.source_version
                 && n.binding_generation == c.context.binding_generation
+                && n.callback_generation == c.callback_generation
                 && !n.user_registered
                 && (c.context.kind == w::Kind::User || !n.device_registered)
         })
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct NativeObservation {
+    callback_generation: u64,
+    subject: String,
+    session: u32,
+    session_binding: Option<execution_contract::Id>,
+    configuration: Option<bool>,
     source: Uuid,
     source_version: i64,
     binding_generation: Option<i64>,
     observed_at: u64,
     device_registered: bool,
     user_registered: bool,
+}
+impl NativeObservation {
+    fn belongs_to(&self, c: &Coordinate) -> bool {
+        self.source == c.source
+            && self.source_version == c.source_version
+            && self.callback_generation == c.callback_generation
+            && self.binding_generation == c.context.binding_generation
+    }
+    fn live_session(&self) -> bool {
+        #[cfg(target_os = "macos")]
+        {
+            self.session_binding.as_ref().is_some_and(|binding| {
+                execution_ipc::macos_identity::verify_console(&self.subject, self.session, binding)
+                    .is_ok()
+            })
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            false
+        }
+    }
+}
+/// Protected native observations for the exact signed local binding; no network or account writes.
+pub(crate) fn native_facts(
+    root: &std::path::Path,
+    binding: &::platform_sso::LocalBinding,
+) -> Result<Option<wire::AccessMacPlatformSsoFacts>, Error> {
+    native_facts_in_session(root, binding, NativeObservation::live_session)
+}
+fn native_facts_in_session(
+    root: &std::path::Path,
+    binding: &::platform_sso::LocalBinding,
+    session: impl FnOnce(&NativeObservation) -> bool,
+) -> Result<Option<wire::AccessMacPlatformSsoFacts>, Error> {
+    if !binding.enabled || enabled(root, binding.installation).is_err() {
+        return Ok(None);
+    }
+    let Some(c) = state::read_optional::<Coordinate>(
+        root,
+        &format!("{}.psso-source", binding.generated_uid),
+    )?
+    else {
+        return Ok(None);
+    };
+    let mut context = c.context.clone();
+    context.binding = Some(binding.binding);
+    context.binding_generation = Some(binding.binding_generation);
+    context.binding_revision = binding.revision;
+    context.configuration = Some(binding.configuration.clone());
+    if c.context.installation != binding.installation
+        || c.context.tenant != binding.tenant
+        || c.context.agent_registration != binding.agent_registration
+        || c.context.generated_uid.as_deref() != Some(binding.generated_uid.as_str())
+        || !observation_owner(&c.context, &context)
+        || retirement_requested(root, &c)?
+    {
+        return Ok(None);
+    }
+    let Some(o) = state::read_optional::<NativeObservation>(root, &c.file("observation")?)? else {
+        return Ok(None);
+    };
+    if !o.belongs_to(&c) || !session(&o) {
+        return Ok(None);
+    }
+    let fact = |v| {
+        if v {
+            wire::AccessObservation::Present
+        } else {
+            wire::AccessObservation::Absent
+        }
+    };
+    Ok(Some(wire::AccessMacPlatformSsoFacts {
+        configuration: o
+            .configuration
+            .map_or(wire::AccessObservation::Unknown, fact),
+        device_registered: fact(o.device_registered),
+        user_registered: fact(o.user_registered),
+        user_source_id: o.source,
+        user_source_version: o.source_version,
+    }))
 }
 impl<S: IdentityProvider> DeviceService<S> {
     pub(super) async fn mac_access_status(
@@ -490,6 +628,8 @@ impl<S: IdentityProvider> DeviceService<S> {
             device_registered: None,
             user_registered: None,
             login_ready: None,
+            native_configuration_matches: None,
+            login_keychain: execution_ipc::device_access::KeychainStatus::Unavailable,
             native_device_registered: None,
             native_user_registered: None,
             observed_at: None,
@@ -512,12 +652,16 @@ impl<S: IdentityProvider> DeviceService<S> {
             )?;
             if let Some(o) = observation.filter(|o| {
                 context.binding_generation == o.binding_generation
+                    && o.live_session()
                     && retained.as_ref().is_some_and(|c| {
                         observation_owner(&c.context, &context)
+                            && o.belongs_to(c)
+                            && !retirement_requested(&self.core.access.root, c).unwrap_or(true)
                             && c.source == o.source
                             && c.source_version == o.source_version
                     })
             }) {
+                result.native_configuration_matches = o.configuration;
                 result.native_device_registered = Some(o.device_registered);
                 result.native_user_registered = Some(o.user_registered);
                 result.observed_at = Some(o.observed_at);
@@ -545,9 +689,33 @@ impl<S: IdentityProvider> DeviceService<S> {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Coordinate {
+    client_id: Uuid,
+    authentication: w::AuthenticationMode,
+    callback_generation: u64,
     context: ::platform_sso::Context,
     source: Uuid,
     source_version: i64,
+}
+fn retained_coordinate(
+    root: &std::path::Path,
+    context: &::platform_sso::Context,
+    source: Uuid,
+    version: i64,
+) -> Result<Coordinate, Error> {
+    let account = context.generated_uid.as_deref().unwrap_or("device");
+    for file in [
+        format!("{account}.psso-source"),
+        format!("{account}-{source}-{version}.psso-registering"),
+        format!("{account}-{source}-{version}.psso-retire"),
+        format!("{account}-{source}-{version}.psso-retired"),
+    ] {
+        if let Some(c) = state::read_optional::<Coordinate>(root, &file)? {
+            if c.source == source && c.source_version == version && c.same_owner(context) {
+                return Ok(c);
+            }
+        }
+    }
+    Err(Error::Identity)
 }
 impl Coordinate {
     fn same_owner(&self, current: &::platform_sso::Context) -> bool {
@@ -1046,6 +1214,9 @@ mod tests {
     use super::*;
     fn coordinate() -> Coordinate {
         Coordinate {
+            client_id: Uuid::from_u128(7),
+            authentication: w::AuthenticationMode::SecureEnclave,
+            callback_generation: 1,
             context: ::platform_sso::Context {
                 tenant: Uuid::from_u128(1),
                 agent_registration: Uuid::from_u128(2),
@@ -1110,6 +1281,7 @@ mod tests {
             &c.file("observation").unwrap(),
             &serde_json::json!({
                 "source": c.source, "sourceVersion": c.source_version, "bindingGeneration": 1,
+                "callbackGeneration": 1, "subject": "501", "session": 1, "sessionBinding": null, "configuration": null,
                 "observedAt": 10, "deviceRegistered": true, "userRegistered": false
             }),
         )
@@ -1166,6 +1338,7 @@ mod tests {
             &c.file("observation").unwrap(),
             &serde_json::json!({
                 "source": c.source, "sourceVersion": c.source_version, "bindingGeneration": 1,
+                "callbackGeneration": 1, "subject": "501", "session": 1, "sessionBinding": null, "configuration": null,
                 "observedAt": 10, "deviceRegistered": true, "userRegistered": false
             }),
         )
@@ -1334,3 +1507,7 @@ mod tests {
         assert!(!old.same_owner(&current));
     }
 }
+
+#[cfg(all(test, target_os = "macos"))]
+#[path = "platform_sso_completion.rs"]
+mod completion_tests;

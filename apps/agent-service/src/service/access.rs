@@ -423,7 +423,24 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
                 );
                 Out::Prepared {}
             }
-            Op::MacStatus {} => Out::MacStatus(self.mac_access_status(command, commands).await?),
+            Op::MacStatus {} => {
+                let mut status = self.mac_access_status(command, commands).await?;
+                #[cfg(target_os = "macos")]
+                if owner.validate(&self.core.access.fences).is_ok() {
+                    if let Ok(peer) = self.core.helpers.connect_peer(
+                        &owner.subject,
+                        owner.session,
+                        &owner.binding,
+                    ) {
+                        if let Ok(execution_ipc::helper::Reply::MacKeychain(value)) =
+                            peer.exchange(execution_ipc::helper::Command::MacKeychain)
+                        {
+                            status.login_keychain = value;
+                        }
+                    }
+                }
+                Out::MacStatus(status)
+            }
             Op::OpenWindowsHello {} => {
                 #[cfg(windows)]
                 {
