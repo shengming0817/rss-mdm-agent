@@ -158,9 +158,9 @@ pub(crate) fn drain(root: &Path, installation: uuid::Uuid) -> Result<bool, Error
         if !record.retired {
             continue;
         }
-        if let Ok((facts, owned)) = engine::Native::hello(&mut native, &record, false) {
+        if let Ok((facts, _)) = engine::Native::hello(&mut native, &record, false) {
             store
-                .observe_hello(&record, facts, owned)
+                .observe_retired_hello(&record, facts)
                 .map_err(|_| Error::Storage)?;
         }
     }

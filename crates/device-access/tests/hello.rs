@@ -303,3 +303,35 @@ fn lagging_remote_key_never_replaces_the_newer_local_generation_fence() {
         w::AccessObservation::Present
     );
 }
+
+#[test]
+fn retired_registration_can_observe_cleanup_but_never_admit_old_mutations() {
+    let mut f = Fixture::new();
+    let mut s = f.store();
+    let active = s.prepare_hello(&f.task, f.authority.clone()).unwrap();
+    assert!(s
+        .observe_retired_hello(&active, f.facts(None, 1800000000))
+        .is_err());
+    let old_task = f.task.clone();
+    let old_authority = f.authority.clone();
+    f.authority.registration = Uuid::new_v4();
+    f.authority.registration_generation += 1;
+    s.bind_registration(f.authority.registration()).unwrap();
+    let retired = s.hello_records().unwrap().pop().unwrap();
+    assert!(retired.retired);
+    assert!(s.prepare_hello(&old_task, old_authority.clone()).is_err());
+    assert!(s.begin_hello_policy(&retired, None).is_err());
+    let mut cleanup = f.facts(None, 1800000001);
+    cleanup.policy = w::AccessObservation::Absent;
+    assert!(s.observe_hello(&retired, cleanup.clone(), false).is_err());
+    s.observe_retired_hello(&retired, cleanup.clone()).unwrap();
+    assert!(s.hello_cleanup_complete().unwrap());
+    f.next();
+    f.authority.binding = Uuid::new_v4();
+    f.task.registration_id = f.authority.registration;
+    f.task.generation = f.authority.registration_generation;
+    f.task.binding_id = f.authority.binding;
+    s.prepare_hello(&f.task, f.authority.clone()).unwrap();
+    // A delayed cleanup cannot overwrite the replacement's exact authority.
+    assert!(s.observe_retired_hello(&retired, cleanup).is_err());
+}

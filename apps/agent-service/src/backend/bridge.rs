@@ -662,6 +662,9 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         evidence: &execution_app::DeliveryEvidence,
     ) -> Result<Option<wire::TaskEvent>, Error> {
         if let wire::TaskPayload::DeviceAccess(spec) = payload {
+            if let Some(terminal) = evidence.terminal {
+                return Ok(Some(access_terminal(spec, terminal)));
+            }
             let stopped = evidence.terminal.is_some()
                 || evidence.process.as_ref().is_some_and(|p| p.finished);
             if !stopped {
@@ -913,6 +916,22 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
             crate::access_worker::retire(&input, spec)?;
         }
         client.release_result(ack)
+    }
+}
+// A trusted pre-dispatch terminal is evidence itself; there can be no worker result file.
+fn access_terminal(
+    spec: &wire::AccessTaskSpec,
+    terminal: execution_app::DeliveryTerminal,
+) -> wire::TaskEvent {
+    if terminal == execution_app::DeliveryTerminal::Cancelled {
+        wire::TaskEvent::Cancelled
+    } else {
+        wire::TaskEvent::DeviceAccessResult(crate::access_worker::report(
+            spec,
+            wire::AccessEffect::Failed {
+                reason: wire::AccessFailure::NativeFailure,
+            },
+        ))
     }
 }
 /// Shared proof of safe terminal state; Unknown and an unquiesced attempt remain retained.
@@ -1238,6 +1257,103 @@ mod result_tests {
         AttemptId, Digest, Id, PackageValue, ProcessEvidence, ProcessFailureKind, ProcessScope,
         SoftwareCheckpoint as C, SoftwarePhase as P, SoftwareProgress, SoftwareState as S,
     };
+    #[test]
+    fn access_pre_dispatch_terminals_preserve_cancellation_and_failure() {
+        let id = Uuid::new_v4();
+        let task = wire::AccessTaskSpec {
+            wire_version: 1,
+            tenant_id: id,
+            device_id: "device".into(),
+            registration_id: id,
+            generation: 1,
+            platform: wire::TaskPlatform::Windows,
+            architecture: wire::TaskArchitecture::X86_64,
+            task_id: id,
+            attempt_id: id,
+            permit: wire::TaskPermit::Start,
+            expires_at: 10,
+            deadline: 20,
+            binding_id: id,
+            instance_id: id,
+            principal_id: id,
+            binding_generation: 1,
+            factor_generation: 1,
+            revision: 1,
+            definition_digest: [7; 32],
+            action: wire::AccessAction::Apply {
+                account: wire::AccessAccount::Windows {
+                    sid: "S-1-12-1-1-2-3-4".into(),
+                    authority: wire::AccessWindowsAuthority::Entra {
+                        tenant_id: id,
+                        object_id: Uuid::from_bytes_le([
+                            1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0,
+                        ]),
+                    },
+                },
+                configuration: wire::AccessConfiguration {
+                    windows: wire::AccessWindowsConfiguration::Whfb,
+                    mac: None,
+                    enabled: true,
+                    self_enrollment: true,
+                    role: None,
+                },
+            },
+            windows: Some(wire::AccessWindowsPlan::Whfb {
+                retire: false,
+                previous_key: None,
+            }),
+            authorization: wire::TaskAuthorization::Policy {
+                policy_id: id,
+                policy_version: id,
+            },
+        };
+        task.validate().unwrap();
+        let input = std::sync::Arc::new(crate::backend::test_support::local::plan());
+        let mut evidence = execution_app::DeliveryEvidence {
+            receipt: execution_app::Receipt {
+                sequence: 1,
+                event_id: execution_contract::EventId::new("terminal").unwrap(),
+                operation_id: execution_app::OperationRequestId::new("terminal-op").unwrap(),
+                scope: execution_app::Scope::from_input(&input),
+                kind: execution_app::OperationKind::Execution,
+                outcome: execution_app::Outcome::Cancelled,
+                admission: None,
+                revision: 1,
+                attempt_id: None,
+                occurred_at_unix_ms: 1000,
+            },
+            input,
+            process: None,
+            software_progress: None,
+            current_attempt: None,
+            terminal: Some(execution_app::DeliveryTerminal::Cancelled),
+            observed_at_unix_ms: 1000,
+        };
+        let bridge = ExecutionBridge::new(Id::new("terminal-consumer").unwrap(), Redact);
+        let payload = wire::TaskPayload::DeviceAccess(Box::new(task.clone()));
+        // The input deliberately has no native worker root or result file.
+        assert!(matches!(
+            bridge.project(&payload, &evidence).unwrap(),
+            Some(wire::TaskEvent::Cancelled)
+        ));
+        evidence.terminal = Some(execution_app::DeliveryTerminal::NeverDispatched);
+        let Some(wire::TaskEvent::DeviceAccessResult(report)) =
+            bridge.project(&payload, &evidence).unwrap()
+        else {
+            panic!("missing failure")
+        };
+        evidence.terminal = None;
+        assert!(bridge.project(&payload, &evidence).unwrap().is_none());
+        assert_eq!(report.binding_id, task.binding_id);
+        assert_eq!(report.definition_digest, task.definition_digest);
+        assert!(matches!(
+            report.effect,
+            wire::AccessEffect::Failed {
+                reason: wire::AccessFailure::NativeFailure
+            }
+        ));
+        report.validate_for(task.platform).unwrap();
+    }
     struct Redact;
     impl OutputPolicy for Redact {
         fn redact(&self, text: &str) -> Result<String, Error> {

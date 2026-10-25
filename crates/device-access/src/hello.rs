@@ -278,7 +278,7 @@ impl Store {
             .query_map([], |row| row.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()?;
         sids.iter()
-            .map(|sid| self.hello(sid)?.ok_or(Error::Invalid))
+            .map(|sid| load_hello(&self.conn, sid)?.ok_or(Error::Invalid))
             .collect()
     }
     /// Read retained ownership; callers still establish current OS identity independently.
@@ -294,8 +294,27 @@ impl Store {
     pub fn observe_hello(
         &mut self,
         expected: &HelloRecord,
+        facts: w::AccessWhfbFacts,
+        policy_owned: bool,
+    ) -> Result<w::AccessWhfbFacts, Error> {
+        self.record_hello_observation(expected, facts, policy_owned, false)
+    }
+    /// An existing retired row may receive cleanup observations after registration changes.
+    /// This never grants task admission, policy ownership, or credential generation changes.
+    pub fn observe_retired_hello(
+        &mut self,
+        expected: &HelloRecord,
+        facts: w::AccessWhfbFacts,
+    ) -> Result<(), Error> {
+        self.record_hello_observation(expected, facts, false, true)
+            .map(|_| ())
+    }
+    fn record_hello_observation(
+        &mut self,
+        expected: &HelloRecord,
         mut facts: w::AccessWhfbFacts,
         policy_owned: bool,
+        retirement_only: bool,
     ) -> Result<w::AccessWhfbFacts, Error> {
         facts
             .validate(&AccessAccount::Windows {
@@ -310,8 +329,14 @@ impl Store {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        registration::require(&tx, &expected.authority)?;
         let mut current = load_hello(&tx, &expected.authority.sid)?.ok_or(Error::Changed)?;
+        if retirement_only {
+            if !current.retired || !expected.retired {
+                return Err(Error::Changed);
+            }
+        } else {
+            registration::require(&tx, &expected.authority)?;
+        }
         if current.authority != expected.authority
             || current.revision != expected.revision
             || current.definition_digest != expected.definition_digest
@@ -329,7 +354,7 @@ impl Store {
             facts.registration = w::AccessObservation::Unknown;
             facts.hardware_key = w::AccessObservation::Unknown;
         }
-        if facts.registration == w::AccessObservation::Present {
+        if !retirement_only && facts.registration == w::AccessObservation::Present {
             current.last_key = facts.key_id;
         }
         if policy_owned {

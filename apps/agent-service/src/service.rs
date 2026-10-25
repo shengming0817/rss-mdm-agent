@@ -360,6 +360,13 @@ impl<S: IdentityProvider> DeviceService<S> {
         &mut self,
         commands: &mut tokio::sync::mpsc::Receiver<Command>,
     ) -> Result<(), Error> {
+        // Retired observations remain useful after registration changes, even without unmanage.
+        #[cfg(windows)]
+        let hello_drained = crate::access_worker::hello::drain(
+            &self.core.access.root,
+            self.core.access.installation,
+        )
+        .map_err(|_| Error::Storage)?;
         if let Some(deployment) = self
             .installation
             .clone()
@@ -375,12 +382,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                     return Ok(());
                 }
                 #[cfg(windows)]
-                if !crate::access_worker::hello::drain(
-                    &self.core.access.root,
-                    self.core.access.installation,
-                )
-                .map_err(|_| Error::Storage)?
-                {
+                if !hello_drained {
                     while let Ok(command) = commands.try_recv() {
                         self.core.handle(command);
                     }

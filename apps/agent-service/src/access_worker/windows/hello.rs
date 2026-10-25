@@ -121,7 +121,7 @@ fn user_path(record: &HelloRecord) -> Result<String, Failure> {
         record.authority.sid
     ))
 }
-fn conflicts(record: &HelloRecord) -> Result<bool, Failure> {
+fn conflicts(record: &HelloRecord, cleanup: bool) -> Result<bool, Failure> {
     let sid = &record.authority.sid;
     for (root, path) in [
         (
@@ -149,7 +149,7 @@ fn conflicts(record: &HelloRecord) -> Result<bool, Failure> {
     {
         return Ok(true);
     }
-    Ok(!record.policy.accepts(policy_value(record)?))
+    Ok(!cleanup && !record.policy.accepts(policy_value(record)?))
 }
 fn policy_value(record: &HelloRecord) -> Result<Option<bool>, Failure> {
     let path = user_path(record)?;
@@ -164,12 +164,15 @@ fn policy_value(record: &HelloRecord) -> Result<Option<bool>, Failure> {
     }
 }
 fn policy(record: &HelloRecord) -> Result<O, Failure> {
-    if matches!(record.policy, HelloPolicy::Unmanaged) || conflicts(record)? {
+    if conflicts(record, record.retired)?
+        || (!record.retired && matches!(record.policy, HelloPolicy::Unmanaged))
+    {
         return Ok(O::Unknown);
     }
     Ok(match policy_value(record)? {
         Some(true) => O::Present,
         Some(false) => O::Absent,
+        None if record.retired => O::Absent,
         None => O::Unknown,
     })
 }
@@ -179,7 +182,7 @@ pub(super) fn prepare(
     record: &HelloRecord,
 ) -> Result<Option<bool>, Failure> {
     verify(native, record)?;
-    if conflicts(record)? {
+    if conflicts(record, false)? {
         return Err(Failure::Unsupported);
     }
     policy_value(record)
@@ -247,7 +250,7 @@ pub(super) fn observe(
         return Err(Failure::Unsupported);
     };
     if mutate
-        && (conflicts(record)?
+        && (conflicts(record, false)?
             || !matches!(record.policy, HelloPolicy::WritePending { enabled, .. } if enabled == record.enabled))
     {
         return Err(Failure::Unsupported);
@@ -318,7 +321,7 @@ pub(crate) fn status(root: &Path, installation: uuid::Uuid, subject: &str) -> Wi
     };
     status.desired_enabled = Some(record.enabled);
     status.retired = record.retired;
-    if conflicts(&record).unwrap_or(true) {
+    if conflicts(&record, record.retired).unwrap_or(true) {
         status.availability = Availability::Conflict;
         return status;
     }
