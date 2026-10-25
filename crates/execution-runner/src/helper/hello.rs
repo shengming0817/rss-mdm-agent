@@ -30,18 +30,13 @@ fn parse(bytes: &[u8], now: i64) -> WindowsHelloUser {
             continue;
         }
         if let Some((name, value)) = line.split_once(':') {
-            match name.trim() {
-                "NgcSet" => {
-                    if set.replace(value.trim()).is_some() {
-                        return result;
-                    }
-                }
-                "NgcKeyId" => {
-                    if key.replace(value.trim()).is_some() {
-                        return result;
-                    }
-                }
-                _ => (),
+            let slot = match name.trim() {
+                "NgcSet" => &mut set,
+                "NgcKeyId" => &mut key,
+                _ => continue,
+            };
+            if slot.replace(value.trim()).is_some() {
+                return result;
             }
         }
     }

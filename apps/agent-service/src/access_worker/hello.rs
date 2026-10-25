@@ -42,13 +42,11 @@ pub(super) fn apply(
             native
                 .dispose(&account, *disposition)
                 .map_err(|_| Error::Unavailable)?;
-            ()
         }
         Action::Apply { configuration, .. } => {
             if let Some(role) = configuration.role {
                 native.role(sid, role).map_err(|_| Error::Unavailable)?;
             }
-            ()
         }
         _ => return Err(Error::Protocol),
     };
