@@ -16,13 +16,17 @@ pub(super) fn collect(
             let image = std::env::current_exe()?;
             let evidence = signature::inspect(&image, None)?;
             c.check()?;
-            let running = match (&evidence.identifier, &evidence.team) {
-                (Some(id), Some(team))
-                    if signature::process_matches(unsafe { libc::getppid() }, id, team)? =>
-                {
-                    "enabled"
-                }
-                _ => "unknown",
+            let image = installation_security::Artifact {
+                path: image,
+                sha256: c.input.image_sha256.as_str().to_owned(),
+                cdhash: evidence.cdhash,
+            };
+            let running = if image.cdhash.is_some()
+                && signature::pinned_process_matches(unsafe { libc::getppid() }, &image)?
+            {
+                "enabled"
+            } else {
+                "unknown"
             };
             (
                 "rss-mdm-agent".to_owned(),

@@ -18,6 +18,9 @@ unsafe extern "C" {
     fn CFStringGetCString(value: Ref, buffer: *mut c_char, size: isize, encoding: u32) -> u8;
     fn CFGetTypeID(value: Ref) -> usize;
     fn CFStringGetTypeID() -> usize;
+    fn CFDataGetTypeID() -> usize;
+    fn CFDataGetLength(data: Ref) -> isize;
+    fn CFDataGetBytePtr(data: Ref) -> *const u8;
 }
 #[link(name = "Security", kind = "framework")]
 unsafe extern "C" {
@@ -27,6 +30,7 @@ unsafe extern "C" {
     fn SecCodeCopySigningInformation(code: Ref, flags: u32, info: *mut Ref) -> i32;
     static kSecCodeInfoTeamIdentifier: Ref;
     static kSecCodeInfoIdentifier: Ref;
+    static kSecCodeInfoUnique: Ref;
     static kSecGuestAttributePid: Ref;
     fn SecCodeCopyGuestWithAttributes(
         host: Ref,
@@ -48,6 +52,7 @@ pub(super) struct Evidence {
     pub status: &'static str,
     pub team: Option<String>,
     pub identifier: Option<String>,
+    pub cdhash: Option<String>,
 }
 pub(super) fn inspect(path: &Path, approved: Option<(&str, &str)>) -> Result<Evidence> {
     let requirement = approved
@@ -72,6 +77,7 @@ pub(super) fn inspect(path: &Path, approved: Option<(&str, &str)>) -> Result<Evi
             status: "unknown",
             team: None,
             identifier: None,
+            cdhash: None,
         });
     }
     let code = Owned(code);
@@ -92,6 +98,7 @@ pub(super) fn inspect(path: &Path, approved: Option<(&str, &str)>) -> Result<Evi
             status,
             team: None,
             identifier: None,
+            cdhash: None,
         });
     }
     let info = Owned(info);
@@ -99,7 +106,27 @@ pub(super) fn inspect(path: &Path, approved: Option<(&str, &str)>) -> Result<Evi
         status,
         team: string(info.0, unsafe { kSecCodeInfoTeamIdentifier })?,
         identifier: string(info.0, unsafe { kSecCodeInfoIdentifier })?,
+        cdhash: code_hash(info.0)?,
     })
+}
+fn code_hash(info: Ref) -> Result<Option<String>> {
+    let data = unsafe { CFDictionaryGetValue(info, kSecCodeInfoUnique) };
+    if data.is_null() {
+        return Ok(None);
+    }
+    if unsafe { CFGetTypeID(data) != CFDataGetTypeID() || CFDataGetLength(data) != 20 } {
+        return Err(Status::Invalid.into());
+    }
+    let bytes = unsafe { CFDataGetBytePtr(data) };
+    if bytes.is_null() {
+        return Err(Status::Invalid.into());
+    }
+    Ok(Some(
+        unsafe { std::slice::from_raw_parts(bytes, 20) }
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
+    ))
 }
 fn string(info: Ref, key: Ref) -> Result<Option<String>> {
     let value = unsafe { CFDictionaryGetValue(info, key) };
@@ -137,8 +164,7 @@ unsafe extern "C" {
         value_callbacks: Ref,
     ) -> Ref;
 }
-pub(super) fn process_matches(pid: i32, bundle: &str, team: &str) -> Result<bool> {
-    let requirement = requirement(bundle, team)?;
+fn process_code(pid: i32) -> Result<Option<Owned>> {
     let number = Owned(unsafe { CFNumberCreate(std::ptr::null(), 3, (&pid as *const i32).cast()) });
     if number.0.is_null() {
         return Err(Status::Failed.into());
@@ -161,9 +187,16 @@ pub(super) fn process_matches(pid: i32, bundle: &str, team: &str) -> Result<bool
     let mut code = std::ptr::null();
     if unsafe { SecCodeCopyGuestWithAttributes(std::ptr::null(), attributes.0, 0, &mut code) } != 0
     {
-        return Ok(false);
+        return Ok(None);
     }
     let code = Owned(code);
+    Ok(Some(code))
+}
+pub(super) fn process_matches(pid: i32, bundle: &str, team: &str) -> Result<bool> {
+    let requirement = requirement(bundle, team)?;
+    let Some(code) = process_code(pid)? else {
+        return Ok(false);
+    };
     if unsafe { SecCodeCheckValidity(code.0, 0, requirement.0) } != 0 {
         return Ok(false);
     }
@@ -176,6 +209,33 @@ pub(super) fn process_matches(pid: i32, bundle: &str, team: &str) -> Result<bool
         string(info.0, unsafe { kSecCodeInfoIdentifier })?.as_deref() == Some(bundle)
             && string(info.0, unsafe { kSecCodeInfoTeamIdentifier })?.as_deref() == Some(team),
     )
+}
+
+// The query worker's parent is the supervisor running the same fixed Agent image.
+// ref: rust-security-framework v3.5.1 security-framework/src/os/macos/code_signing.rs.
+pub(super) fn pinned_process_matches(
+    pid: i32,
+    image: &installation_security::Artifact,
+) -> Result<bool> {
+    #[link(name = "proc")]
+    unsafe extern "C" {
+        fn proc_pidpath(pid: i32, buffer: *mut c_void, size: u32) -> i32;
+    }
+    let mut path = [0u8; 4096];
+    if unsafe { proc_pidpath(pid, path.as_mut_ptr().cast(), path.len() as u32) } <= 0 {
+        return Ok(false);
+    }
+    let path = std::ffi::CStr::from_bytes_until_nul(&path).map_err(|_| Status::Invalid)?;
+    let path = Path::new(std::ffi::OsStr::from_bytes(path.to_bytes()));
+    if image.verify(path).is_err() {
+        return Ok(false);
+    }
+    let expression = image.requirement().map_err(|_| Status::Invalid)?;
+    let requirement = code_requirement(&expression)?;
+    let Some(code) = process_code(pid)? else {
+        return Ok(false);
+    };
+    Ok(unsafe { SecCodeCheckValidity(code.0, 0, requirement.0) } == 0)
 }
 
 fn requirement(bundle: &str, team: &str) -> Result<Owned> {
@@ -193,6 +253,9 @@ fn requirement(bundle: &str, team: &str) -> Result<Owned> {
         return Err(Status::Invalid.into());
     }
     let expression = CString::new(format!("anchor apple generic and identifier \"{bundle}\" and certificate leaf[subject.OU] = \"{team}\"")).map_err(|_| Status::Invalid)?;
+    code_requirement(&expression)
+}
+fn code_requirement(expression: &std::ffi::CStr) -> Result<Owned> {
     let text = Owned(unsafe {
         CFStringCreateWithCString(std::ptr::null(), expression.as_ptr(), 0x08000100)
     });
@@ -208,6 +271,48 @@ fn requirement(bundle: &str, team: &str) -> Result<Owned> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn fixed_process_identity_does_not_require_an_apple_team() {
+        // A system image without a Team is a real, protected fixture, independent
+        // of whether the developer has any signing certificate in their Keychain.
+        let path = PathBuf::from("/bin/sleep");
+        let evidence = inspect(&path, None).unwrap();
+        assert_eq!(evidence.status, "signed");
+        assert!(evidence.team.is_none());
+        let mut image = installation_security::Artifact {
+            sha256: crate::installation::hash(&std::fs::read(&path).unwrap()),
+            cdhash: evidence.cdhash,
+            path,
+        };
+        let mut child = std::process::Command::new(&image.path)
+            .arg("10")
+            .spawn()
+            .unwrap();
+        let pid = child.id() as i32;
+        // Wait for exec; a PID alone does not establish the new image identity.
+        let until = Instant::now() + Duration::from_secs(3);
+        let matched = loop {
+            if pinned_process_matches(pid, &image).unwrap() {
+                break true;
+            }
+            if Instant::now() >= until {
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        let wrong_pid = pinned_process_matches(std::process::id() as i32, &image).unwrap();
+        image.sha256 = "0".repeat(64);
+        let wrong_sha = pinned_process_matches(pid, &image).unwrap();
+        image.sha256 = crate::installation::hash(&std::fs::read(&image.path).unwrap());
+        image.cdhash = Some("0".repeat(40));
+        let wrong_code = pinned_process_matches(pid, &image).unwrap();
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert!(matched);
+        assert!(!wrong_pid);
+        assert!(!wrong_sha);
+        assert!(!wrong_code);
+    }
     #[test]
     fn untrusted_code_cannot_satisfy_an_approved_apple_team() {
         // The developer test image has no approved Apple team certificate.
