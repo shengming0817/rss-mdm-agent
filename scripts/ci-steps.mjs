@@ -33,6 +33,8 @@ export const steps = [
       "--test",
       "scripts/ci-workspace.test.mjs",
       "scripts/native-candidate.test.mjs",
+      "scripts/passkey-package.test.mjs",
+      "scripts/passkey-rp.test.mjs",
       "scripts/desktop-dev.test.mjs",
       "tests/assistant/fixture.test.mjs",
       "scripts/desktop-organization.test.mjs",

@@ -124,6 +124,8 @@ pub async fn execute<R: Runtime>(
     // Renderer cannot send passwords, caller identity, OS paths, key references or UV claims.
     tauri::async_runtime::spawn_blocking(move || {
         let _busy = busy;
+        #[cfg(windows)]
+        let changes = !matches!(&input, Operation::Status {} | Operation::Unlock { .. });
         match input {
             Operation::Create {} => vault.create(&token)?,
             Operation::Unlock { method } => {
@@ -159,6 +161,13 @@ pub async fn execute<R: Runtime>(
             } => vault.delete(&credential_id, revision, &token)?,
             Operation::Reset { confirmation } => vault.reset(&confirmation, &token)?,
             Operation::Status {} | Operation::Lock {} => return Err(Error::Input),
+        }
+        #[cfg(windows)]
+        if changes {
+            passkey_vault::platform::notify_management_change();
+            if windows_passkey_provider::registration::invalidate_index().is_err() {
+                eprintln!("personal passkey index refresh pending");
+            }
         }
         vault.status()
     })

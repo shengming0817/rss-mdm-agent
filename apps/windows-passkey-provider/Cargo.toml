@@ -1,0 +1,11 @@
+[package]
+name = "rss-passkey-provider"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+windows-passkey-provider = { path = "../../crates/windows-passkey-provider" }
+serde_json.workspace = true

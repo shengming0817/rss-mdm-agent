@@ -44,6 +44,7 @@ export function freezeCandidate(
     platformSso,
     installer,
     windowsLogin,
+    windowsPasskey,
     runtime,
   },
 ) {
@@ -56,13 +57,14 @@ export function freezeCandidate(
       untrustedProbe,
       platformSso,
       windowsLogin,
+      windowsPasskey,
     })
       .filter(([, path]) => path)
       .map(([name, path]) => [name, image(path)]),
   );
   assert.ok(
-    binaries.service && binaries.backend,
-    "service and backend candidates required",
+    (binaries.service && binaries.backend) || binaries.windowsPasskey,
+    "service/backend or Windows Passkey candidate required",
   );
   const source = sourceEvidence(root);
   const manifest = JSON.parse(
@@ -111,7 +113,10 @@ export function verifyCandidate(path) {
   assert.equal(candidate.version, 1);
   assert.equal(candidate.platform, process.platform);
   assert.equal(candidate.architecture, process.arch);
-  assert.ok(candidate.binaries.service && candidate.binaries.backend);
+  assert.ok(
+    (candidate.binaries.service && candidate.binaries.backend) ||
+      candidate.binaries.windowsPasskey,
+  );
   for (const expected of Object.values(candidate.binaries))
     assert.deepEqual(image(expected.path), expected, "candidate image changed");
   if (candidate.installer)
@@ -184,6 +189,7 @@ if (
           "security-probe": "securityProbe",
           "untrusted-probe": "untrustedProbe",
           "windows-login": "windowsLogin",
+          "windows-passkey": "windowsPasskey",
           "platform-sso": "platformSso",
         }[rawName] ?? rawName;
       assert.ok(
@@ -193,6 +199,7 @@ if (
           "desktop",
           "securityProbe",
           "windowsLogin",
+          "windowsPasskey",
           "platformSso",
           "installer",
           "untrustedProbe",

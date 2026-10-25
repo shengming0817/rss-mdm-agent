@@ -48,7 +48,12 @@ fn run(_data_root: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::error:
             app.manage(appearance::Appearance::default());
             let personal_root = match &_data_root {
                 Some(root) => root.join("personal-passkeys"),
-                None => app.path().app_local_data_dir()?.join("personal-passkeys"),
+                None => {
+                    #[cfg(windows)]
+                    { passkey_vault::platform::default_root()? }
+                    #[cfg(not(windows))]
+                    { app.path().app_local_data_dir()?.join("personal-passkeys") }
+                },
             };
             app.manage(rss_mdm_desktop::composition::personal_vault::PersonalVault::new(&personal_root));
             eprintln!("RSS_DESKTOP_ASSEMBLY {}", serde_json::json!({"mode": if cfg!(feature = "dev-fixture") { "fixture" } else { "production" }, "productionIPC": !cfg!(feature = "dev-fixture")}));

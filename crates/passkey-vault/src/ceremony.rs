@@ -1,5 +1,5 @@
-//! Native Provider seam, not a browser/JSON signing endpoint. The calling adapter
-//! must establish the actual origin from its OS/browser request before calling here.
+//! Native authenticator seam. The adapter authenticates the OS request and owns
+//! origin validation at the client/platform boundary; no fabricated origin is accepted.
 use crate::{
     model::{Content, Record},
     Entry, Error, Result, Vault,
@@ -30,7 +30,6 @@ pub enum Kind {
 }
 pub struct Context<'a> {
     pub kind: Kind,
-    pub origin: &'a str,
     pub rp_id: &'a str,
     pub client_data_hash: &'a [u8],
     pub accounts: &'a [Entry],
@@ -45,21 +44,25 @@ pub trait Authorizer {
     /// Obtain explicit consent and, if required, verification for this exact request.
     /// Cancellation returns an error; implementations must bound interactive waits.
     fn authorize(&self, request: &Context<'_>) -> Result<Decision>;
+    /// Recheck cancellation/host lifetime at publication and response boundaries.
+    fn check(&self) -> Result<()> {
+        Ok(())
+    }
 }
-fn origin(rp: &str, source: &str) -> Result<()> {
-    let url = url::Url::parse(source).map_err(|_| Error::Input)?;
-    let host = url.host_str().ok_or(Error::Input)?;
-    if url.scheme() != "https"
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-        || url.path() != "/"
-        || rp.len() > 253
+fn rp_id(rp: &str) -> Result<()> {
+    if rp.len() > 253
         || rp != rp.to_ascii_lowercase()
         || rp.ends_with('.')
         || psl::domain(rp.as_bytes()).is_none()
-        || !(host == rp || host.strip_suffix(rp).is_some_and(|p| p.ends_with('.')))
+        || rp.split('.').any(|label| {
+            label.is_empty()
+                || label.len() > 63
+                || label.starts_with('-')
+                || label.ends_with('-')
+                || !label
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        })
     {
         return Err(Error::Input);
     }
@@ -278,11 +281,11 @@ impl CredentialStore for &Memory {
 impl Vault {
     pub async fn register(
         &self,
-        source: &str,
         request: make::Request,
         authorizer: &dyn Authorizer,
     ) -> Result<make::Response> {
-        origin(&request.rp.id, source)?;
+        rp_id(&request.rp.id)?;
+        authorizer.check()?;
         bounded(request.exclude_list.as_deref())?;
         if request.client_data_hash.len() != 32
             || request.user.id.is_empty()
@@ -300,7 +303,6 @@ impl Vault {
         let started = Instant::now();
         let decision = authorizer.authorize(&Context {
             kind: Kind::Register,
-            origin: source,
             rp_id: &request.rp.id,
             client_data_hash: &request.client_data_hash,
             accounts: &[],
@@ -310,6 +312,7 @@ impl Vault {
             return Err(Error::Cancelled);
         }
         self.current(epoch)?;
+        authorizer.check()?;
         let tx = self.store.transaction()?;
         let mut value = tx.load(&self.store.owner)?.ok_or(Error::NotFound)?;
         let key = self.session_key(&value)?;
@@ -338,17 +341,19 @@ impl Vault {
             &*memory.content.lock().map_err(|_| Error::Busy)?,
         )?;
         self.current(epoch)?;
+        authorizer.check()?;
         tx.save(&value)?;
         self.current(epoch)?;
+        authorizer.check()?;
         Ok(response)
     }
     pub async fn assert(
         &self,
-        source: &str,
         request: get::Request,
         authorizer: &dyn Authorizer,
     ) -> Result<get::Response> {
-        origin(&request.rp_id, source)?;
+        rp_id(&request.rp_id)?;
+        authorizer.check()?;
         bounded(request.allow_list.as_deref())?;
         if request.client_data_hash.len() != 32
             || !request.options.up
@@ -381,7 +386,6 @@ impl Vault {
             .collect();
         let decision = authorizer.authorize(&Context {
             kind: Kind::Assert,
-            origin: source,
             rp_id: &request.rp_id,
             client_data_hash: &request.client_data_hash,
             accounts: &accounts,
@@ -395,6 +399,7 @@ impl Vault {
             return Err(Error::NotFound);
         }
         self.current(epoch)?;
+        authorizer.check()?;
         let tx = self.store.transaction()?;
         let value = tx.load(&self.store.owner)?.ok_or(Error::NotFound)?;
         if value.revision != initial.revision {
@@ -421,6 +426,7 @@ impl Vault {
             .await
             .map_err(protocol)?;
         self.current(epoch)?;
+        authorizer.check()?;
         Ok(response)
     }
 }

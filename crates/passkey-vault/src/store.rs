@@ -87,7 +87,16 @@ impl Transaction {
         crash_at(name, "published");
         Ok(())
     }
+    pub fn remove_index_notice(&self) -> Result<()> {
+        match std::fs::remove_file(self.root.join("provider-index-dirty")) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(_) => Err(Error::Storage),
+        }
+    }
     pub fn save(&self, value: &Envelope) -> Result<()> {
+        // A crash may leave a conservative dirty index; never an authoritative stale index.
+        self.write("provider-index-dirty", b"dirty")?;
         self.write(
             "vault.json",
             &serde_json::to_vec(value).map_err(|_| Error::Corrupt)?,

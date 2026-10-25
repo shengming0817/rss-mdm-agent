@@ -80,7 +80,7 @@ impl SystemProtection for OsProtection {
     }
 }
 
-pub(crate) fn owner() -> Result<String> {
+pub fn owner() -> Result<String> {
     #[cfg(target_os = "macos")]
     {
         unsafe extern "C" {
@@ -153,4 +153,57 @@ pub(crate) fn owner() -> Result<String> {
     {
         Err(Error::Unsupported)
     }
+}
+
+/// The existing desktop location, independent of package family and enterprise identity.
+#[cfg(windows)]
+pub fn default_root() -> Result<std::path::PathBuf> {
+    use windows_sys::Win32::{
+        System::Com::CoTaskMemFree,
+        UI::Shell::{FOLDERID_LocalAppData, SHGetKnownFolderPath},
+    };
+    let mut value = std::ptr::null_mut();
+    // SAFETY: Windows allocates a NUL-terminated path for the current user.
+    unsafe {
+        if SHGetKnownFolderPath(&FOLDERID_LocalAppData, 0, std::ptr::null_mut(), &mut value) < 0 {
+            return Err(Error::Owner);
+        }
+        let mut length = 0;
+        while *value.add(length) != 0 {
+            length += 1;
+        }
+        let result =
+            String::from_utf16(std::slice::from_raw_parts(value, length)).map_err(|_| Error::Owner);
+        CoTaskMemFree(value.cast());
+        Ok(std::path::PathBuf::from(result?)
+            .join("com.rss.mdmagent")
+            .join("personal-passkeys"))
+    }
+}
+/// Notify any active Provider; no waiting behind native UI or a store transaction.
+#[cfg(windows)]
+pub(crate) fn notify_lock() {
+    use windows_sys::Win32::{
+        Foundation::CloseHandle,
+        System::Threading::{OpenEventW, SetEvent, EVENT_MODIFY_STATE},
+    };
+    if let Ok(owner) = owner() {
+        let name: Vec<u16> = format!("Local\\RSS.PersonalPasskeys.Cancel.{owner}")
+            .encode_utf16()
+            .chain([0])
+            .collect();
+        // SAFETY: name is live and terminated; an absent Provider needs no notification.
+        unsafe {
+            let event = OpenEventW(EVENT_MODIFY_STATE, 0, name.as_ptr());
+            if !event.is_null() {
+                SetEvent(event);
+                CloseHandle(event);
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+pub fn notify_management_change() {
+    notify_lock();
 }
