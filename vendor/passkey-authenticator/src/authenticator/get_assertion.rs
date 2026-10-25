@@ -129,9 +129,13 @@ where
         //      concatenation is safe to use here because the authenticator data describes its own
         //      length. The hash of the serialized client data (which potentially has a variable
         //      length) is always the last element.
-        let auth_data = AuthenticatorData::new(&input.rp_id, credential.counter(), &self.crypto)
-            .set_flags(flags | Flags::BE)
-            .set_assertion_extensions(extensions.signed)?;
+        let mut auth_data =
+            AuthenticatorData::new(&input.rp_id, credential.counter(), &self.crypto)
+                .set_flags(flags | Flags::BE)
+                .set_assertion_extensions(extensions.signed)?;
+
+        // RSS: upstream defaults BE|BS. This local-only product has no backup.
+        auth_data.flags.remove(Flags::BS);
 
         let mut signature_target = auth_data.to_vec();
         signature_target.extend(input.client_data_hash);

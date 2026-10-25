@@ -162,10 +162,13 @@ where
         )
         .unwrap();
 
-        let auth_data = AuthenticatorData::new(&input.rp.id, passkey.counter, &self.crypto)
+        let mut auth_data = AuthenticatorData::new(&input.rp.id, passkey.counter, &self.crypto)
             .set_flags(flags | Flags::BE)
             .set_attested_credential_data(acd)
             .set_make_credential_extensions(extensions.signed)?;
+
+        // RSS: upstream defaults BE|BS. This local-only product has no backup.
+        auth_data.flags.remove(Flags::BS);
 
         let response = Response {
             fmt: "none".into(),

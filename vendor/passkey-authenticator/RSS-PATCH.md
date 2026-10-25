@@ -7,6 +7,8 @@ License: MIT OR Apache-2.0 (included).
 
 #2928: set BE before authenticator data serialization/signing in make_credential
 and get_assertion. All credentials admitted by this product are backup eligible;
-BS remains zero because this product has no backup publication path. No response
+Explicitly remove upstream default BS before serialization/signing because this product has no backup publication path. No response
 is modified after signing. Core crypto/types remain registry dependencies.
 Remove this source patch when a pinned upstream release supports this policy.
+
+The normalized manifest has a standalone workspace boundary for nested worktree tooling.

@@ -143,3 +143,6 @@ unused_must_use = "forbid"
 
 [lints.rustdoc]
 broken_intra_doc_links = "deny"
+
+# Keep cargo fmt --all from discovering the parent checkout outside an isolated worktree.
+[workspace]

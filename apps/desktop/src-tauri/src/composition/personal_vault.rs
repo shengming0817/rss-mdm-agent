@@ -16,17 +16,17 @@ use tauri::{Manager, Runtime, WebviewWindow};
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "PersonalVaultOperation")]
 pub enum Operation {
-    Status,
-    Create,
+    Status {},
+    Create {},
     Unlock {
         method: UnlockMethod,
     },
-    Lock,
+    Lock {},
     SetPassword {
         authorization: UnlockMethod,
     },
-    RemovePassword,
-    RepairSystem,
+    RemovePassword {},
+    RepairSystem {},
     Delete {
         credential_id: Vec<u8>,
         revision: u64,
@@ -88,11 +88,11 @@ pub async fn execute<R: Runtime>(
     }
     let state = window.state::<PersonalVault>();
     let vault = state.vault.as_ref().map_err(|e| *e)?.clone();
-    if matches!(input, Operation::Lock) {
+    if matches!(input, Operation::Lock {}) {
         state.lock();
         return vault.status();
     }
-    if matches!(input, Operation::Status) {
+    if matches!(input, Operation::Status {}) {
         return vault.status();
     }
     if state.busy.swap(true, Ordering::AcqRel) {
@@ -104,7 +104,7 @@ pub async fn execute<R: Runtime>(
     tauri::async_runtime::spawn_blocking(move || {
         let _busy = busy;
         match input {
-            Operation::Create => vault.create(&token)?,
+            Operation::Create {} => vault.create(&token)?,
             Operation::Unlock { method } => {
                 let password = match method {
                     UnlockMethod::Password => Some(native::password("输入个人 Vault 口令")?),
@@ -127,8 +127,8 @@ pub async fn execute<R: Runtime>(
                     &token,
                 )?;
             }
-            Operation::RemovePassword => vault.remove_password(&token)?,
-            Operation::RepairSystem => {
+            Operation::RemovePassword {} => vault.remove_password(&token)?,
+            Operation::RepairSystem {} => {
                 let password = native::password("输入个人口令，以重新建立此 OS 用户的系统解锁")?;
                 vault.repair_system(&password, &token)?;
             }
@@ -137,7 +137,7 @@ pub async fn execute<R: Runtime>(
                 revision,
             } => vault.delete(&credential_id, revision, &token)?,
             Operation::Reset { confirmation } => vault.reset(&confirmation, &token)?,
-            Operation::Status | Operation::Lock => return Err(Error::Input),
+            Operation::Status {} | Operation::Lock {} => return Err(Error::Input),
         }
         vault.status()
     })
@@ -166,15 +166,15 @@ mod tests {
             .build()
             .unwrap();
         let status =
-            tauri::async_runtime::block_on(execute(main.clone(), Operation::Status)).unwrap();
+            tauri::async_runtime::block_on(execute(main.clone(), Operation::Status {})).unwrap();
         assert!(!status.initialized);
-        let status = tauri::async_runtime::block_on(execute(main, Operation::Lock)).unwrap();
+        let status = tauri::async_runtime::block_on(execute(main, Operation::Lock {})).unwrap();
         assert!(!status.unlocked);
         let other = tauri::WebviewWindowBuilder::new(&app, "other", Default::default())
             .build()
             .unwrap();
         assert_eq!(
-            tauri::async_runtime::block_on(execute(other, Operation::Status)).err(),
+            tauri::async_runtime::block_on(execute(other, Operation::Status {})).err(),
             Some(Error::Owner)
         );
         drop(app);
