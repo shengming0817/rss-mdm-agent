@@ -19,8 +19,8 @@ pub(crate) struct LocalQueryProjection {
     pub domain: Option<String>,
     fields: BTreeMap<String, w::ValueMapping>,
     types: BTreeMap<String, w::ValueType>,
-    rows: w::ValueMapping,
-    row_type: w::ValueType,
+    rows: BTreeMap<String, w::ValueMapping>,
+    row_types: BTreeMap<String, w::ValueType>,
     baselines: Vec<SharedProjection>,
 }
 
@@ -122,14 +122,8 @@ impl LocalProjection {
                     domain: domain(&query.definition).map(str::to_owned),
                     fields,
                     types,
-                    rows: w::ValueMapping {
-                        pointer: String::new(),
-                        conversion: w::Conversion::Identity,
-                        columns,
-                    },
-                    row_type: w::ValueType::Object {
-                        properties: row_types,
-                    },
+                    rows: columns,
+                    row_types,
                     baselines,
                 },
             );
@@ -147,7 +141,12 @@ impl LocalProjection {
             for (key, mapping) in &query.fields {
                 mapping.validate_type(&query.types[key])?;
             }
-            query.rows.validate_type(&query.row_type)?;
+            if !query.rows.keys().eq(query.row_types.keys()) {
+                return Err(Error::Protocol);
+            }
+            for (key, mapping) in &query.rows {
+                mapping.validate_type(&query.row_types[key])?;
+            }
             for baseline in &query.baselines {
                 if baseline.fields.len() != baseline.mappings.len() {
                     return Err(Error::Protocol);
@@ -208,7 +207,24 @@ impl LocalQueryProjection {
             .collect()
     }
     pub(super) fn row(&self, row: &BTreeMap<String, Value>) -> Result<Value, Error> {
-        projection::project(&encode(row)?, &self.rows, &self.row_type)
+        let input = encode(row)?;
+        // Local presentation names (including WMI's original mixed case) are not
+        // enterprise Record property declarations. Each value uses the shared evaluator.
+        Ok(Value::Object(
+            self.rows
+                .iter()
+                .map(|(key, mapping)| {
+                    Ok((
+                        key.clone(),
+                        projection::project(
+                            &input,
+                            mapping,
+                            self.row_types.get(key).ok_or(Error::Protocol)?,
+                        )?,
+                    ))
+                })
+                .collect::<Result<_, Error>>()?,
+        ))
     }
     pub(super) fn baseline_fields(
         &self,
@@ -330,12 +346,12 @@ impl Data {
         )?;
         Ok(definition)
     }
-    fn projection_fields<'a>(
-        read: &'a ReadPlan,
+    fn projection_fields(
+        read: &ReadPlan,
     ) -> Result<
         (
-            &'a [w::FieldDefinition],
-            &'a BTreeMap<String, w::AgentCollectionMapping>,
+            &[w::FieldDefinition],
+            &BTreeMap<String, w::AgentCollectionMapping>,
         ),
         Error,
     > {

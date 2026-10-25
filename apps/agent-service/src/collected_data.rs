@@ -844,6 +844,18 @@ impl Data {
             return self.register_projected(read);
         }
         read.validate()?;
+        if read.plan.spec().queries.len() != 1 {
+            return Err(Error::Protocol);
+        }
+        let physical = read
+            .plan
+            .spec()
+            .queries
+            .values()
+            .next()
+            .cloned()
+            .ok_or(Error::Protocol)?;
+        read = single(&read, &physical)?;
         let query = read
             .plan
             .spec()
@@ -851,9 +863,6 @@ impl Data {
             .values()
             .next()
             .ok_or(Error::Protocol)?;
-        if read.plan.spec().queries.len() != 1 {
-            return Err(Error::Protocol);
-        }
         // Physical semantics and scope form the identity. A periodic budget, source
         // label, deadline or login incarnation must not split the same local facts.
         let cardinality = query.cardinality;

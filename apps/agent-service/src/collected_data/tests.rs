@@ -263,6 +263,7 @@ async fn metadata_is_bounded_titles_survive_capture_and_published_inputs_remain_
     query.budget.timeout_seconds = 15;
     spec.queries.insert("serverLabelChanged".into(), query);
     changed.plan = w::NativeCollectionPlan::new(spec).unwrap();
+    changed.source = crate::collection_worker::ReadSource::local(&changed.plan).unwrap();
     assert_eq!(
         data.register(changed).unwrap().descriptor.reference,
         definition.descriptor.reference
@@ -937,6 +938,7 @@ async fn frozen_enterprise_projection_is_generic_private_and_isolated_from_local
     // A different delivery attempt retains the mapping identity; a different mapping does not.
     let mut again = task.clone();
     again.attempt_id = uuid::Uuid::new_v4();
+    let refreshed_attempt = again.attempt_id;
     assert_eq!(
         data.register(again.try_into().unwrap())
             .unwrap()
@@ -982,9 +984,14 @@ async fn frozen_enterprise_projection_is_generic_private_and_isolated_from_local
             .unwrap(),
     )
     .unwrap();
+    let mut expected = read.source.clone();
+    let crate::collection_worker::ReadSource::Task { task, .. } = &mut expected else {
+        panic!("task source");
+    };
+    task.attempt_id = refreshed_attempt;
     assert_eq!(
         encode(&restored.read.source).unwrap(),
-        encode(&read.source).unwrap()
+        encode(&expected).unwrap()
     );
     assert_eq!(
         data.store.read(&key).unwrap().unwrap(),
