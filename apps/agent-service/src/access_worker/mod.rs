@@ -10,12 +10,14 @@ use std::{
 };
 #[cfg(any(windows, test))]
 mod engine;
+#[cfg(any(windows, test))]
+pub(crate) mod hello;
 #[cfg(target_os = "macos")]
 pub(crate) mod macos;
 #[cfg(test)]
 mod tests;
 #[cfg(windows)]
-mod windows;
+pub(crate) mod windows;
 /// Both activation and the health CLI require a usable component, not merely a readable status.
 #[cfg(any(windows, test))]
 pub(crate) fn component_health(
@@ -252,3 +254,5 @@ pub(crate) fn retire(
     }
     Ok(())
 }
+
+pub(crate) use agent_client::device_access_complete as complete;

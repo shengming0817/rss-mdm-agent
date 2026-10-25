@@ -155,10 +155,12 @@ impl execution_lifecycle::ObservationVerifier for EffectEvidence<'_> {
         let result = crate::access_worker::stored_result(&root, &task)
             .map_err(|_| E::Untrusted)?
             .ok_or(E::Unavailable)?;
-        let assessment = match result.effect {
-            w::AccessEffect::Applied { .. } | w::AccessEffect::Unbound { .. } => A::Satisfied,
-            w::AccessEffect::Failed { .. } => A::NoEffect,
-            w::AccessEffect::Unknown => return Err(E::Unavailable),
+        let assessment = if crate::access_worker::complete(&task, &result.effect) {
+            A::Satisfied
+        } else if matches!(result.effect, w::AccessEffect::Failed { .. }) {
+            A::NoEffect
+        } else {
+            A::Unknown
         };
         Ok(ObservationFacts {
             request_id: plan.spec().request.request_id.clone(),

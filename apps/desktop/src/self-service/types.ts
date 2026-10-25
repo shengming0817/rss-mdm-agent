@@ -530,6 +530,9 @@ export type Operation =
       kind: "windowsStatus";
     }
   | {
+      kind: "openWindowsHello";
+    }
+  | {
       /**
        * Policy cursor.
        */
@@ -587,6 +590,9 @@ export type Operation =
  */
 export type Response =
   | {
+      kind: "windowsHelloSettingsRequested";
+    }
+  | {
       /**
        * Desired signed policy, not proof of native profile application.
        */
@@ -634,6 +640,10 @@ export type Response =
        * Current bound factor is enabled; null means observation unavailable.
        */
       factorActive: boolean | null;
+      /**
+       * Native Hello observations are independent of the RSS credential provider.
+       */
+      hello: WindowsHelloStatus;
       kind: "windowsStatus";
       /**
        * First Entra binding needs a Windows session newer than the observed join.
@@ -773,6 +783,28 @@ export type WindowsComponentState =
   | "maintenanceDisabled"
   | "unavailable";
 /**
+ * Configuration prerequisites; not a platform certification or login claim.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "WindowsHelloAvailability".
+ */
+export type WindowsHelloAvailability =
+  | "eligible"
+  | "unsupported"
+  | "conflict"
+  | "unavailable";
+/**
+ * One independent native capability observation, never inferred from transport success.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "AccessObservation".
+ */
+export type AccessObservation =
+  | "present"
+  | "absent"
+  | "unknown"
+  | "needs_administrator";
+/**
  * Stable local account identity, never a display name or a transient Unix UID.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -840,6 +872,26 @@ export type AccessAccountDisposition = "keep" | "disable" | "standard";
  */
 export type AccessRole = "standard" | "administrator";
 /**
+ * Current Windows policy, with no implicit fallback between authentication mechanisms.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "AccessWindowsConfiguration".
+ */
+export type AccessWindowsConfiguration =
+  | {
+      kind: "disabled";
+    }
+  | {
+      /**
+       * Explicit admitted account authorities.
+       */
+      accounts: AccessWindowsKind[];
+      kind: "rss_factor";
+    }
+  | {
+      kind: "whfb";
+    };
+/**
  * Windows account classes admitted by the selected policy.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -853,6 +905,21 @@ export type AccessWindowsKind = "local" | "active_directory" | "entra";
  * via the `definition` "AccessEffect".
  */
 export type AccessEffect =
+  | {
+      /**
+       * Exact Entra account.
+       */
+      account: AccessAccount;
+      /**
+       * Independently observed OS disposition.
+       */
+      disposition: AccessAccountDisposition;
+      /**
+       * Local observations, not directory revocation or a successful login.
+       */
+      facts: AccessWhfbFacts;
+      state: "whfb_retired";
+    }
   | {
       /**
        * Identity actually changed or confirmed.
@@ -890,16 +957,58 @@ export type AccessEffect =
       state: "failed";
     };
 /**
- * One independent native capability observation, never inferred from transport success.
+ * Mechanism-specific observations; an RSS escrow receipt cannot prove Hello registration.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "AccessObservation".
+ * via the `definition` "AccessWindowsFacts".
  */
-export type AccessObservation =
-  | "present"
-  | "absent"
-  | "unknown"
-  | "needs_administrator";
+export type AccessWindowsFacts =
+  | {
+      /**
+       * Exact installed factor generation.
+       */
+      factorGeneration: number;
+      kind: "rss_factor";
+      /**
+       * Exact recovery material retained on this endpoint.
+       */
+      recovery: CredentialReceipt;
+    }
+  | {
+      /**
+       * Exact requested credential generation.
+       */
+      factorGeneration: number;
+      /**
+       * TPM-backed native credential, independent of policy configuration.
+       */
+      hardwareKey: AccessObservation;
+      /**
+       * Current native key identity; no private or secret material.
+       */
+      keyId: string | null;
+      kind: "whfb";
+      /**
+       * Current Entra account.
+       */
+      objectId: string;
+      /**
+       * UTC seconds at native observation.
+       */
+      observedAt: number;
+      /**
+       * Effective policy after conflict checks and native readback.
+       */
+      policy: AccessObservation;
+      /**
+       * Current user's native registration observation.
+       */
+      registration: AccessObservation;
+      /**
+       * Entra authority observed on this device.
+       */
+      tenantId: string;
+    };
 /**
  * An exact Windows object, never an account display name or drive letter.
  *
@@ -2502,6 +2611,74 @@ export interface PasswordExchangeStatus {
   state: PasswordExchangeState;
 }
 /**
+ * Desired state and independently observed native facts for the current user.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "WindowsHelloStatus".
+ */
+export interface WindowsHelloStatus {
+  /**
+   * Current native configuration prerequisites.
+   */
+  availability: WindowsHelloAvailability;
+  /**
+   * Exact retained desired policy; absent before a signed task.
+   */
+  desiredEnabled: boolean | null;
+  /**
+   * Current observations, not proof of an actual login.
+   */
+  facts: AccessWhfbFacts | null;
+  /**
+   * A previously observed key cannot satisfy the new credential generation.
+   */
+  replacementRequired: boolean;
+  /**
+   * The RSS binding has been retired; native keys may still remain.
+   */
+  retired: boolean;
+}
+/**
+ * Native account-scoped observations, never a claim that LogonUI authenticated a user.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "AccessWhfbFacts".
+ */
+export interface AccessWhfbFacts {
+  /**
+   * Exact requested credential generation.
+   */
+  factorGeneration: number;
+  /**
+   * TPM-backed native credential, independent of policy configuration.
+   */
+  hardwareKey: AccessObservation;
+  /**
+   * Current native key identity; no private or secret material.
+   */
+  keyId: string | null;
+  /**
+   * Current Entra account.
+   */
+  objectId: string;
+  /**
+   * UTC seconds at native observation.
+   */
+  observedAt: number;
+  /**
+   * Effective policy after conflict checks and native readback.
+   */
+  policy: AccessObservation;
+  /**
+   * Current user's native registration observation.
+   */
+  registration: AccessObservation;
+  /**
+   * Entra authority observed on this device.
+   */
+  tenantId: string;
+}
+/**
  * Safe employee-facing binding projection. This is not a login credential.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -2579,7 +2756,7 @@ export interface AccessConfiguration {
   /**
    * Explicit admitted Windows account authorities.
    */
-  windowsAccounts: AccessWindowsKind[];
+  windows: AccessWindowsConfiguration;
 }
 /**
  * Apple account facts are separate from PSSO registration and Secure Enclave keys.
@@ -2608,22 +2785,6 @@ export interface AccessMacFacts {
    * Apple silicon volume ownership.
    */
   volumeOwner: AccessObservation;
-}
-/**
- * Installed factor identity is independent of the account association and configuration revision.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "AccessWindowsFacts".
- */
-export interface AccessWindowsFacts {
-  /**
-   * Exact installed factor generation.
-   */
-  factorGeneration: number;
-  /**
-   * Exact recovery material retained on this endpoint.
-   */
-  recovery: CredentialReceipt;
 }
 /**
  * Durable escrow coordinates returned only for the exact accepted task event.

@@ -1,4 +1,7 @@
 //! Per-login process mechanism. The system service owns every business intent and durable fact.
+#[cfg(any(windows, test))]
+#[path = "helper/hello.rs"]
+mod hello;
 use crate::{Artifacts, MaterialRegistry, NativeRunner};
 use execution_app::{DispatchOutcome, Error, RunnerPort};
 use execution_contract::*;
@@ -245,6 +248,34 @@ impl Helper {
                     self.physical.remove(&key);
                 }
                 Reply::Acknowledged
+            }
+            Command::WindowsHello | Command::OpenWindowsHello
+                if !host::active_login()
+                    || host::current_subject()? != self.subject
+                    || host::current_session_binding()? != self.binding =>
+            {
+                return Err(Error::Unbound)
+            }
+            Command::WindowsHello => {
+                #[cfg(windows)]
+                {
+                    Reply::WindowsHello(hello::observe()?)
+                }
+                #[cfg(not(windows))]
+                {
+                    return Err(Error::Unsupported);
+                }
+            }
+            Command::OpenWindowsHello => {
+                #[cfg(windows)]
+                {
+                    hello::open_settings()?;
+                    Reply::Submitted
+                }
+                #[cfg(not(windows))]
+                {
+                    return Err(Error::Unsupported);
+                }
             }
             Command::Ready if host::active_login() => Reply::Ready {
                 subject: self.subject.clone(),

@@ -816,8 +816,12 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         tx.execute("DELETE FROM cache_refs WHERE task=?1", [task.to_string()])?;
         tx.execute("DELETE FROM tasks WHERE id=?1", [task.to_string()])?;
         tx.execute(
-            "DELETE FROM state WHERE key IN(?1,?2)",
-            rusqlite::params![format!("binding/{task}"), format!("projection/{task}")],
+            "DELETE FROM state WHERE key IN(?1,?2,?3)",
+            rusqlite::params![
+                format!("binding/{task}"),
+                format!("projection/{task}"),
+                format!("access-observation-last/{task}")
+            ],
         )?;
         tx.commit()?;
         Ok(())
@@ -825,6 +829,12 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
 }
 pub(crate) fn same_input(a: &wire::TaskPayload, b: &wire::TaskPayload) -> bool {
     match (a, b) {
+        (wire::TaskPayload::DeviceAccess(a), wire::TaskPayload::DeviceAccess(b)) => {
+            let mut b = b.clone();
+            b.permit = a.permit;
+            b.expires_at = a.expires_at;
+            a == &b
+        }
         (wire::TaskPayload::Unmanage(a), wire::TaskPayload::Unmanage(b)) => {
             let mut b = b.clone();
             b.permit = a.permit;

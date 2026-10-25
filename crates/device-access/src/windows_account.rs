@@ -466,3 +466,29 @@ pub fn dispose(
         }
     }
 }
+
+/// Read back the requested disposition without reapplying an account mutation.
+pub fn disposition_matches(
+    account: &rss_mdm_agent_wire::runtime::AccessAccount,
+    disposition: AccessAccountDisposition,
+) -> Result<bool, F> {
+    let rss_mdm_agent_wire::runtime::AccessAccount::Windows { sid, authority } = account else {
+        return Err(F::Unsupported);
+    };
+    account.validate().map_err(|_| F::AccountChanged)?;
+    directory::validate_source(sid, authority)?;
+    match disposition {
+        AccessAccountDisposition::Keep => Ok(true),
+        AccessAccountDisposition::Standard => Ok(configured_role(sid)? == Role::Standard),
+        AccessAccountDisposition::Disable => {
+            if matches!(
+                authority,
+                rss_mdm_agent_wire::runtime::AccessWindowsAuthority::Local
+            ) {
+                Ok(!inspect_local(sid)?.enabled)
+            } else {
+                directory::has_deny_interactive(sid)
+            }
+        }
+    }
+}

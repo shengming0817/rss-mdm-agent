@@ -492,6 +492,7 @@ impl Deployment {
             values.push(C::CredentialsWindowsV1);
             if cfg!(target_arch = "x86_64") {
                 values.push(C::DeviceAccessV1);
+                values.push(C::DeviceAccessWhfbV1);
             }
         }
         let has = |profile| {
@@ -568,7 +569,7 @@ impl Deployment {
         values.dedup();
         values
     }
-    fn helpers(&self) -> crate::UserResources {
+    pub(crate) fn helpers(&self) -> crate::UserResources {
         crate::UserResources {
             image: self.service.clone(),
             work_roots: self.helper_work_roots.clone(),

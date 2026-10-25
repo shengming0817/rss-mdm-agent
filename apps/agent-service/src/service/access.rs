@@ -424,6 +424,30 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
                 Out::Prepared {}
             }
             Op::MacStatus {} => Out::MacStatus(self.mac_access_status(command, commands).await?),
+            Op::OpenWindowsHello {} => {
+                #[cfg(windows)]
+                {
+                    owner.validate(&self.core.access.fences)?;
+                    let peer = self.core.helpers.connect_peer(
+                        &owner.subject,
+                        owner.session,
+                        &owner.binding,
+                    )?;
+                    match peer
+                        .exchange(execution_ipc::helper::Command::OpenWindowsHello)
+                        .map_err(super::helper_error)?
+                    {
+                        execution_ipc::helper::Reply::Submitted => {
+                            Out::WindowsHelloSettingsRequested {}
+                        }
+                        _ => return Err(Error::Unavailable),
+                    }
+                }
+                #[cfg(not(windows))]
+                {
+                    return Err(Error::Unsupported);
+                }
+            }
             Op::WindowsStatus {} => {
                 #[cfg(windows)]
                 {
@@ -436,6 +460,11 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
                         .unwrap_or(WindowsComponentState::Unavailable),
                         factor_active: None,
                         sign_in_required: false,
+                        hello: crate::access_worker::windows::hello::status(
+                            &self.core.access.root,
+                            self.core.access.installation,
+                            &owner.subject,
+                        ),
                     };
                     if let Ok(mut store) = device_access::Store::open(
                         &self.core.access.root,
@@ -745,7 +774,7 @@ mod tests {
                 1,
                 true,
                 operation,
-                w::AccessWindowsFacts {
+                w::AccessRssFacts {
                     factor_generation: 1,
                     recovery: w::CredentialReceipt {
                         subject: w::CredentialSubject::RssLogin {

@@ -381,6 +381,18 @@ Windows x64 NSIS 候选包含 CP DLL；其他架构及 MSI/MSIX 未装配该组�
 
 人工验收分别记录本地、AD、Entra joined 的 Windows 版本、架构、加入状态、固定 revision、Agent/DLL/安装包 SHA256、签名身份与结果：登录/解锁/取消/用户切换、改密、域控/IdP 不可达、后台及服务停止、OTP 并发重放、重启限速、时钟异常、持久化失败、损坏、重绑/离职、升级中断、卸载和独立维修。使用 `native-candidate.mjs freeze --windows-login <DLL>` 将 DLL 纳入固定候选；`verify-execution-windows.ps1 -Phase DeviceAccessHealth` 从该候选读取 DLL，并要求服务与 DLL 签名有效、发布者一致，仍只作组件健康记录；交互效果须人工独立观察。本轮 Windows 原生构建、签名包与实机交互留待人工执行，不作为实现 PR ready 的阻塞，不得记为通过。
 
+### Windows Hello for Business 实现边界
+
+当前 Device Access 合同将 RSS 附加因子和 WHfB 分开；WHfB 仅面向 Windows 11 x64、纯 Entra joined、TPM 2.0＋PIN。服务通过固定 WMI Bridge PassportForWork 用户/租户策略配置原生能力，拒绝无法确认的资格或策略冲突。WHfB 不要求安装 RSS Credential Provider、不准备 TOTP、不托管 RSS 恢复材料；RSS TOTP 仍走自身完整流程。
+
+Desktop 只能请求当前已核验控制台用户的系统登录选项及刷新状态。PIN、MFA、注册和 PIN 遗忘恢复均由 Windows/Entra 系统交互负责；RSS 恢复密钥仅恢复 RSS 附加因子。打开设置、策略回读、注册存在和服务端 ACK 都不是本次登录成功证明。
+
+当前原生观察使用同一已认证用户 helper 的用户注册状态。设备注册密钥的 `TpmProtected` 不能证明该用户 Hello 密钥受硬件保护；无法独立确证时 `hardware_key` 保持 Unknown，任务继续待核验，不放宽服务端完成条件。这是已明确接受的实现限制，不代表 WHfB 已获平台验证或可宣称完整生效。
+
+停用新注册不删除已有凭据。重新注册、TPM 故障或换机需要新的凭据代际，旧密钥观察不能恢复新代。解绑分别保留策略、用户凭据清理和账号处置事实；目录撤销由目录管理员完成。Hello 容器可能还包含其他用途凭据，只有明确授权并确认关联影响后才由系统维护流程处理；Agent 没有通用删密钥或清 TPM 接口，也不会自动重试容器删除。普通卸载不清除 Hello 密钥。正式退管在停止服务和删除本地记录前要求已观察到原生策略停用与凭据清理，否则保留服务及状态并返回未完成。
+
+安装升级复用既有固定候选和恢复流程，保留当前格式的原生观察与撤销记录。当前格式直接替换，不迁移历史格式、不从备用依赖读取、不以清库绕过格式或代际校验。本次实现仅执行开发机逻辑、存储和界面验证；Windows 代码未编译、未运行、未签名、未打包、未安装、未部署、未实机验证。这些活动不属于本实现项的交付门禁。
+
 ### macOS Platform SSO 开发组件（Apple silicon / 26.4）
 
 候选只针对 macOS 26.4 / SDK 26.4、Apple silicon；实际系统加载和回调必须在已获授权的受管测试机验证。`crates/platform-sso` 持有协议组合与恢复决策，`apps/platform-sso-extension` 是 Apple 系统入口和本地 FFI；私钥、系统令牌及注册数据库由 Apple Framework 持有。PSSO 1.0 使用共享设备密钥，候选支持 `UserSecureEnclaveKey` 与 Password 注册／认证协议。Password 同步与登录策略由 Apple 系统执行；RSS 不持有密码权威或第二套同步引擎。SE 保留本地密码登录；Password 按签名任务消费登录窗口、锁屏、FileVault 各自的 Local／Attempt／Require，缺少独立维护账号时不得启用 Require。不提供 ADE/JIT 或 Authorization Plugin。

@@ -1,3 +1,4 @@
+pub(crate) mod hello;
 use super::*;
 use device_access::{windows::account, Protector, SystemProtector};
 use execution_ipc::device_access::WindowsComponentState as Component;
@@ -15,6 +16,26 @@ impl Protector for NativeWindows {
     }
 }
 impl engine::Native for NativeWindows {
+    fn hello_prepare(
+        &self,
+        record: &device_access::hello::HelloRecord,
+    ) -> Result<Option<bool>, w::AccessFailure> {
+        hello::prepare(self, record)
+    }
+    fn hello(
+        &mut self,
+        record: &device_access::hello::HelloRecord,
+        mutate: bool,
+    ) -> Result<(w::AccessWhfbFacts, bool), w::AccessFailure> {
+        hello::observe(self, record, mutate)
+    }
+    fn disposition(
+        &self,
+        target: &w::AccessAccount,
+        disposition: w::AccessAccountDisposition,
+    ) -> Result<bool, w::AccessFailure> {
+        account::disposition_matches(target, disposition)
+    }
     fn identity(
         &self,
         sid: &str,

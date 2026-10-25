@@ -18,6 +18,13 @@ function portWithSetup(setup: () => Promise<Reply>) {
         component: "ready",
         factorActive: false,
         signInRequired: false,
+        hello: {
+          availability: "unsupported",
+          desiredEnabled: null,
+          retired: false,
+          replacementRequired: false,
+          facts: null,
+        },
       };
     if (input.kind === "directory") return directory;
     if (input.kind === "tasks") return { kind: "tasks", tasks: [task] };
@@ -103,6 +110,13 @@ it("Mac setup uses native password preparation and keeps backend and system fact
         component: "ready",
         factorActive: false,
         signInRequired: false,
+        hello: {
+          availability: "unsupported",
+          desiredEnabled: null,
+          retired: false,
+          replacementRequired: false,
+          facts: null,
+        },
       };
     if (input.kind === "directory") return directory;
     if (input.kind === "tasks") return { kind: "tasks", tasks: [task] };
@@ -172,6 +186,13 @@ it("passes the opaque directory cursor unchanged", async () => {
         component: "ready",
         factorActive: false,
         signInRequired: false,
+        hello: {
+          availability: "unsupported",
+          desiredEnabled: null,
+          retired: false,
+          replacementRequired: false,
+          facts: null,
+        },
       };
     if (input.kind === "directory")
       return { ...directory, nextCursor: input.cursor ? null : cursor };
@@ -198,6 +219,13 @@ it("shows native account provenance and the actual unbind disposition", async ()
         component: "ready",
         factorActive: false,
         signInRequired: false,
+        hello: {
+          availability: "unsupported",
+          desiredEnabled: null,
+          retired: false,
+          replacementRequired: false,
+          facts: null,
+        },
       };
     if (input.kind === "directory")
       return {
@@ -223,7 +251,7 @@ it("shows native account provenance and the actual unbind disposition", async ()
             },
             configuration: {
               mac: null,
-              windowsAccounts: ["entra"],
+              windows: { kind: "rss_factor", accounts: ["entra"] },
               selfEnrollment: true,
               enabled: false,
               role: null,
@@ -255,6 +283,13 @@ it.each([
           component,
           factorActive: true,
           signInRequired: false,
+          hello: {
+            availability: "unsupported",
+            desiredEnabled: null,
+            retired: false,
+            replacementRequired: false,
+            facts: null,
+          },
         };
       if (input.kind === "tasks") return { kind: "tasks", tasks: [] };
       if (input.kind === "directory")
@@ -277,7 +312,7 @@ it.each([
               },
               configuration: {
                 mac: null,
-                windowsAccounts: ["local"],
+                windows: { kind: "rss_factor", accounts: ["local"] },
                 selfEnrollment: true,
                 enabled: true,
                 role: null,
@@ -313,6 +348,13 @@ it("keeps local diagnosis when the server is unavailable", async () => {
         component: "rebootRequired",
         factorActive: false,
         signInRequired: true,
+        hello: {
+          availability: "unsupported",
+          desiredEnabled: null,
+          retired: false,
+          replacementRequired: false,
+          facts: null,
+        },
       };
     throw new Error("offline");
   });
@@ -321,5 +363,135 @@ it("keeps local diagnosis when the server is unavailable", async () => {
   expect(wrapper.text()).toContain("请重启电脑后重试应用");
   expect(wrapper.text()).toContain("请注销 Windows 并重新登录");
   expect(wrapper.text()).toContain("操作尚未确认");
+  wrapper.unmount();
+});
+
+it("keeps Hello hardware proof pending independently of RSS CP installation", async () => {
+  const port = vi.fn<DeviceAccessPort>(async (input) => {
+    if (input.kind === "windowsStatus")
+      return {
+        kind: "windowsStatus",
+        component: "notInstalled",
+        factorActive: false,
+        signInRequired: false,
+        hello: {
+          availability: "eligible",
+          desiredEnabled: true,
+          retired: false,
+          replacementRequired: false,
+          facts: {
+            factorGeneration: 1,
+            tenantId: "tenant",
+            objectId: "object",
+            policy: "present",
+            registration: "present",
+            hardwareKey: "unknown",
+            keyId: "key",
+            observedAt: 100,
+          },
+        },
+      };
+    if (input.kind === "directory") return directory;
+    if (input.kind === "tasks") return { kind: "tasks", tasks: [] };
+    if (input.kind === "openWindowsHello")
+      return { kind: "windowsHelloSettingsRequested" };
+    throw new Error("unexpected operation");
+  });
+  const wrapper = mount(DeviceAccess, { props: { port } });
+  await flushPromises();
+  expect(wrapper.text()).toContain("Windows Hello 企业登录");
+  expect(wrapper.text()).toContain("用户密钥硬件保护：待核验");
+  expect(wrapper.text()).not.toContain("组件未安装，请联系管理员");
+  expect(wrapper.text()).not.toContain("设置验证器");
+  await wrapper
+    .findAll("button")
+    .find((b) => b.text() === "打开 Windows 登录选项")!
+    .trigger("click");
+  await flushPromises();
+  expect(port).toHaveBeenCalledWith({ kind: "openWindowsHello" });
+  expect(wrapper.text()).toContain("打开设置不代表注册成功");
+  wrapper.unmount();
+});
+
+it("shows completed Hello retirement without asking for cleanup again", async () => {
+  const facts = {
+    factorGeneration: 1,
+    tenantId: "tenant",
+    objectId: "object",
+    policy: "absent" as const,
+    registration: "absent" as const,
+    hardwareKey: "unknown" as const,
+    keyId: null,
+    observedAt: 100,
+  };
+  const port = vi.fn<DeviceAccessPort>(async (input) => {
+    if (input.kind === "windowsStatus")
+      return {
+        kind: "windowsStatus",
+        component: "notInstalled",
+        factorActive: false,
+        signInRequired: false,
+        hello: {
+          availability: "eligible",
+          desiredEnabled: false,
+          retired: true,
+          replacementRequired: false,
+          facts,
+        },
+      };
+    if (input.kind === "tasks") return { kind: "tasks", tasks: [] };
+    if (input.kind === "directory")
+      return {
+        ...directory,
+        bindings: [
+          {
+            id: "binding",
+            bindingGeneration: 1,
+            factorGeneration: 1,
+            revision: 2,
+            accountDisposition: "keep",
+            appliedRevision: 2,
+            receivedRevision: 2,
+            revoked: true,
+            account: {
+              platform: "windows",
+              sid: "S-1-12-1-1-2-3-4",
+              authority: {
+                kind: "entra",
+                tenantId: "tenant",
+                objectId: "object",
+              },
+            },
+            configuration: {
+              windows: { kind: "whfb" },
+              mac: null,
+              enabled: false,
+              selfEnrollment: false,
+              role: null,
+            },
+            effect: {
+              state: "whfb_retired",
+              account: {
+                platform: "windows",
+                sid: "S-1-12-1-1-2-3-4",
+                authority: {
+                  kind: "entra",
+                  tenantId: "tenant",
+                  objectId: "object",
+                },
+              },
+              disposition: "keep",
+              facts,
+            },
+          },
+        ],
+      };
+    throw new Error("unexpected operation");
+  });
+  const wrapper = mount(DeviceAccess, { props: { port } });
+  await flushPromises();
+  expect(wrapper.text()).toContain("WHfB 原生策略与用户凭据清理已确认");
+  expect(wrapper.text()).not.toContain("请按管理员指引完成原生清理");
+  expect(wrapper.text()).not.toContain("已请求移除，等待本机确认");
   wrapper.unmount();
 });

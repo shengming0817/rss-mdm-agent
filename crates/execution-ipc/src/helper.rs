@@ -24,6 +24,10 @@ pub struct Envelope {
     deny_unknown_fields
 )]
 pub enum Command {
+    /// Read this helper user's native Hello state; no caller-selected account or query.
+    WindowsHello,
+    /// User-requested native sign-in settings only; never clears a container.
+    OpenWindowsHello,
     /// Start one step of an admitted software program.
     Invoke {
         /// Frozen execution specification from the system service.
@@ -147,6 +151,8 @@ pub enum Command {
     deny_unknown_fields
 )]
 pub enum Reply {
+    /// Independently sampled user registration; hardware provenance may be Unknown.
+    WindowsHello(crate::device_access::WindowsHelloUser),
     /// Facts of the helper's current native login.
     Ready {
         /// Actual OS subject.

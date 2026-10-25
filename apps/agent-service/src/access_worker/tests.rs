@@ -18,6 +18,7 @@ impl Drop for Root {
 }
 struct Fake {
     clock: Clock,
+    hello_facts: Option<w::AccessWhfbFacts>,
     creates: usize,
     enables: usize,
     role: w::AccessRole,
@@ -37,10 +38,43 @@ impl Protector for Fake {
     }
 }
 impl engine::Native for Fake {
+    fn hello_prepare(
+        &self,
+        _: &device_access::hello::HelloRecord,
+    ) -> Result<Option<bool>, w::AccessFailure> {
+        Ok(None)
+    }
+    fn hello(
+        &mut self,
+        _: &device_access::hello::HelloRecord,
+        _: bool,
+    ) -> Result<(w::AccessWhfbFacts, bool), w::AccessFailure> {
+        self.hello_facts
+            .clone()
+            .map(|f| (f, true))
+            .ok_or(w::AccessFailure::Unsupported)
+    }
+    fn disposition(
+        &self,
+        _: &w::AccessAccount,
+        kind: w::AccessAccountDisposition,
+    ) -> Result<bool, w::AccessFailure> {
+        Ok(kind != w::AccessAccountDisposition::Standard || self.role == w::AccessRole::Standard)
+    }
     fn identity(
         &self,
         _: &str,
     ) -> Result<(w::AccessWindowsAuthority, String, String), w::AccessFailure> {
+        if let Some(f) = &self.hello_facts {
+            return Ok((
+                w::AccessWindowsAuthority::Entra {
+                    tenant_id: f.tenant_id,
+                    object_id: f.object_id,
+                },
+                "AzureAD\\user".into(),
+                "entra-join".into(),
+            ));
+        }
         Ok((
             w::AccessWindowsAuthority::Local,
             "LOCAL\\test".into(),
@@ -128,6 +162,7 @@ fn fixture(create: bool) -> (Root, Input, Fake, Vec<u8>, String) {
     platform_private_storage::directory(&root.0).unwrap();
     let now = (crate::wall().unwrap() / 1000) as i64;
     let mut native = Fake {
+        hello_facts: None,
         clock: Clock {
             utc: now,
             monotonic: 1000,
@@ -145,7 +180,9 @@ fn fixture(create: bool) -> (Root, Input, Fake, Vec<u8>, String) {
     };
     let configuration = w::AccessConfiguration {
         mac: None,
-        windows_accounts: vec![w::AccessWindowsKind::Local],
+        windows: rss_mdm_agent_wire::runtime::AccessWindowsConfiguration::RssFactor {
+            accounts: vec![w::AccessWindowsKind::Local],
+        },
         self_enrollment: true,
         enabled: true,
         role: None,
@@ -277,7 +314,7 @@ fn initialize_preserve_and_unbind_use_real_factor_state_and_exact_ack() {
     let result = engine::execute(&input, &mut native).unwrap();
     let receipt = ack.join().unwrap();
     let w::AccessEffect::Applied {
-        windows: Some(facts),
+        windows: Some(w::AccessWindowsFacts::RssFactor(facts)),
         role,
         ..
     } = result.effect
@@ -319,13 +356,18 @@ fn initialize_preserve_and_unbind_use_real_factor_state_and_exact_ack() {
     assert!(engine::execute(&input, &mut native)
         .unwrap()
         .effect
-        .complete(&w::AccessConfiguration {
-            mac: None,
-            windows_accounts: vec![w::AccessWindowsKind::Local],
-            self_enrollment: true,
-            enabled: true,
-            role: None
-        }));
+        .complete(
+            &w::AccessConfiguration {
+                mac: None,
+                windows: rss_mdm_agent_wire::runtime::AccessWindowsConfiguration::RssFactor {
+                    accounts: vec![w::AccessWindowsKind::Local]
+                },
+                self_enrollment: true,
+                enabled: true,
+                role: None
+            },
+            w::TaskPlatform::Windows
+        ));
     assert_eq!(
         store
             .verify(
@@ -376,13 +418,18 @@ fn creation_activates_before_enable_and_replay_does_not_recreate_account() {
     assert!(engine::execute(&input, &mut native)
         .unwrap()
         .effect
-        .complete(&w::AccessConfiguration {
-            mac: None,
-            windows_accounts: vec![w::AccessWindowsKind::Local],
-            self_enrollment: true,
-            enabled: true,
-            role: None
-        }));
+        .complete(
+            &w::AccessConfiguration {
+                mac: None,
+                windows: rss_mdm_agent_wire::runtime::AccessWindowsConfiguration::RssFactor {
+                    accounts: vec![w::AccessWindowsKind::Local]
+                },
+                self_enrollment: true,
+                enabled: true,
+                role: None
+            },
+            w::TaskPlatform::Windows
+        ));
     ack.join().unwrap();
     assert_eq!(native.role, w::AccessRole::Standard);
     assert_eq!(native.creates, 1);
@@ -390,13 +437,18 @@ fn creation_activates_before_enable_and_replay_does_not_recreate_account() {
     assert!(engine::execute(&input, &mut native)
         .unwrap()
         .effect
-        .complete(&w::AccessConfiguration {
-            mac: None,
-            windows_accounts: vec![w::AccessWindowsKind::Local],
-            self_enrollment: true,
-            enabled: true,
-            role: None
-        }));
+        .complete(
+            &w::AccessConfiguration {
+                mac: None,
+                windows: rss_mdm_agent_wire::runtime::AccessWindowsConfiguration::RssFactor {
+                    accounts: vec![w::AccessWindowsKind::Local]
+                },
+                self_enrollment: true,
+                enabled: true,
+                role: None
+            },
+            w::TaskPlatform::Windows
+        ));
     assert_eq!(native.creates, 1);
     assert_eq!(native.enables, 1);
 }
@@ -437,7 +489,7 @@ fn different_valid_provider_store_rejects_enable_disable_and_unbind_before_mutat
     let initial = engine::execute(&input, &mut native).unwrap();
     ack.join().unwrap();
     let w::AccessEffect::Applied {
-        windows: Some(facts),
+        windows: Some(w::AccessWindowsFacts::RssFactor(facts)),
         ..
     } = initial.effect
     else {
@@ -453,7 +505,9 @@ fn different_valid_provider_store_rejects_enable_disable_and_unbind_before_mutat
             },
             configuration: w::AccessConfiguration {
                 mac: None,
-                windows_accounts: vec![w::AccessWindowsKind::Local],
+                windows: rss_mdm_agent_wire::runtime::AccessWindowsConfiguration::RssFactor {
+                    accounts: vec![w::AccessWindowsKind::Local],
+                },
                 enabled: true,
                 self_enrollment: true,
                 role: Some(w::AccessRole::Standard),
@@ -466,7 +520,9 @@ fn different_valid_provider_store_rejects_enable_disable_and_unbind_before_mutat
             },
             configuration: w::AccessConfiguration {
                 mac: None,
-                windows_accounts: vec![w::AccessWindowsKind::Local],
+                windows: rss_mdm_agent_wire::runtime::AccessWindowsConfiguration::RssFactor {
+                    accounts: vec![w::AccessWindowsKind::Local],
+                },
                 enabled: false,
                 self_enrollment: true,
                 role: None,
@@ -536,7 +592,7 @@ fn absent_provider_allows_disable_and_unbind_of_the_current_store() {
     let initial = engine::execute(&input, &mut native).unwrap();
     ack.join().unwrap();
     let w::AccessEffect::Applied {
-        windows: Some(facts),
+        windows: Some(w::AccessWindowsFacts::RssFactor(facts)),
         ..
     } = initial.effect
     else {
@@ -679,7 +735,7 @@ fn disabling_factors_does_not_require_an_interactive_role_observation() {
     let (_root, mut input, mut native, _, recovery) = fixture(false);
     let ack = ack(&input, recovery.clone());
     let w::AccessEffect::Applied {
-        windows: Some(facts),
+        windows: Some(w::AccessWindowsFacts::RssFactor(facts)),
         ..
     } = engine::execute(&input, &mut native).unwrap().effect
     else {
@@ -730,4 +786,56 @@ fn health_success_requires_ready_not_merely_an_observed_state() {
     ] {
         assert_eq!(component_health(state), Err(Error::Unavailable));
     }
+}
+
+#[test]
+fn hello_ignores_cp_and_totp_but_keeps_uncertain_hardware_pending() {
+    let (_root, mut input, mut native, _, _) = fixture(false);
+    let object = Uuid::from_bytes_le([1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0]);
+    let source = w::AccessWindowsAuthority::Entra {
+        tenant_id: input.task.tenant_id,
+        object_id: object,
+    };
+    input.task.action = w::AccessAction::Apply {
+        account: w::AccessAccount::Windows {
+            sid: "S-1-12-1-1-2-3-4".into(),
+            authority: source,
+        },
+        configuration: w::AccessConfiguration {
+            windows: w::AccessWindowsConfiguration::Whfb,
+            mac: None,
+            enabled: true,
+            self_enrollment: true,
+            role: None,
+        },
+    };
+    input.task.windows = Some(w::AccessWindowsPlan::Whfb {
+        retire: false,
+        previous_key: None,
+    });
+    native.installed = false;
+    native.registered = None;
+    native.hello_facts = Some(w::AccessWhfbFacts {
+        factor_generation: 1,
+        tenant_id: input.task.tenant_id,
+        object_id: object,
+        policy: w::AccessObservation::Present,
+        registration: w::AccessObservation::Present,
+        hardware_key: w::AccessObservation::Unknown,
+        key_id: Some(Uuid::new_v4()),
+        observed_at: native.clock.utc,
+    });
+    let report = engine::execute(&input, &mut native).unwrap();
+    assert!(matches!(
+        report.effect,
+        w::AccessEffect::Applied {
+            windows: Some(w::AccessWindowsFacts::Whfb(_)),
+            ..
+        }
+    ));
+    assert!(!complete(&input.task, &report.effect));
+    assert!(pending(&input.root, &input.task).unwrap().is_none());
+    assert!(prepared(&input.root, &input.task).unwrap().is_none());
+    assert_eq!(native.creates, 0);
+    assert_eq!(native.enables, 0);
 }

@@ -1692,6 +1692,18 @@ fn event_response(d: &mut Data, value: Value) -> Response {
                 .collect();
             axum::Json(TaskEventAck::new(None, false).with_credentials(receipts)).into_response()
         }
+        TaskEvent::DeviceAccessResult(_) => {
+            d.result_calls += 1;
+            if d.results.get(&operation).is_some_and(|old| old != &value) {
+                return StatusCode::CONFLICT.into_response();
+            }
+            d.results.insert(operation.clone(), value);
+            if std::mem::take(&mut d.result_failure) {
+                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            }
+            d.acknowledged.insert(operation);
+            axum::Json(TaskEventAck::new(None, false)).into_response()
+        }
         TaskEvent::OutputChunk(chunk) => {
             d.chunk_calls.push(value);
             if d.chunks.get(&chunk.index()).is_some_and(|v| v != chunk) {
@@ -1730,7 +1742,10 @@ fn start_event(d: &mut Data, operation: String) -> Response {
         let mut payload = d.offer.as_ref().unwrap().payload.clone();
         let expiry = d.time.now().unwrap() + d.start_validity_seconds;
         match &mut payload {
-            TaskPayload::DeviceAccess(_) => panic!("unsupported fixture task"),
+            TaskPayload::DeviceAccess(v) => {
+                v.permit = TaskPermit::Start;
+                v.expires_at = expiry;
+            }
             TaskPayload::Unmanage(v) => {
                 v.permit = TaskPermit::Start;
                 v.expires_at = expiry;

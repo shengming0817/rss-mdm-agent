@@ -24,6 +24,8 @@ pub enum Operation {
     MacStatus {},
     /// Current local component and factor observations, independent of historical receipts.
     WindowsStatus {},
+    /// Open the current user's native sign-in settings; never accepts a URL, PIN or account.
+    OpenWindowsHello {},
     /// Discover eligible first-enrollment policies and own binding states.
     Directory {
         /// Policy cursor.
@@ -75,6 +77,8 @@ pub struct SetupTask {
     deny_unknown_fields
 )]
 pub enum Response {
+    /// Shell accepted the fixed native settings URI; this is not registration success.
+    WindowsHelloSettingsRequested {},
     /// Diagnostic facts do not authorize login or prove a complete application SSO flow.
     MacStatus(MacStatus),
     /// Local observations do not prove a successful Windows login.
@@ -156,4 +160,47 @@ pub struct WindowsStatus {
     pub factor_active: Option<bool>,
     /// First Entra binding needs a Windows session newer than the observed join.
     pub sign_in_required: bool,
+    /// Native Hello observations are independent of the RSS credential provider.
+    pub hello: WindowsHelloStatus,
+}
+/// Read-only current-user facts from the authenticated helper, not a device-key assertion.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WindowsHelloUser {
+    /// Current user's native registration, never inferred from policy.
+    pub registration: w::AccessObservation,
+    /// Current user's Hello key identifier; no private material.
+    pub key_id: Option<Uuid>,
+    /// Exact user-key hardware evidence; Unknown when unavailable.
+    pub hardware_key: w::AccessObservation,
+    /// UTC seconds sampled in the user helper.
+    pub observed_at: i64,
+}
+/// Configuration prerequisites; not a platform certification or login claim.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum WindowsHelloAvailability {
+    /// Windows/Entra/TPM prerequisites are present.
+    Eligible,
+    /// This account or platform combination is outside the selected profile.
+    Unsupported,
+    /// Another policy authority conflicts with RSS management.
+    Conflict,
+    /// Native evidence could not be obtained.
+    Unavailable,
+}
+/// Desired state and independently observed native facts for the current user.
+#[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WindowsHelloStatus {
+    /// Current native configuration prerequisites.
+    pub availability: WindowsHelloAvailability,
+    /// Exact retained desired policy; absent before a signed task.
+    pub desired_enabled: Option<bool>,
+    /// The RSS binding has been retired; native keys may still remain.
+    pub retired: bool,
+    /// A previously observed key cannot satisfy the new credential generation.
+    pub replacement_required: bool,
+    /// Current observations, not proof of an actual login.
+    pub facts: Option<w::AccessWhfbFacts>,
 }
