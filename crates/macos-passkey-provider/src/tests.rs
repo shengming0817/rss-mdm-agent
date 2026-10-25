@@ -185,3 +185,17 @@ fn malformed_or_unsupported_native_requests_are_rejected() {
     }
     assert!(value.validate().is_err());
 }
+
+#[test]
+fn request_created_before_external_lock_cannot_adopt_the_new_generation() {
+    let lab = Lab::new();
+    let session = lab.session(register(1));
+    lab.vault.lock().unwrap();
+    assert_eq!(
+        session.unlock(UnlockMethod::System, None),
+        Err(Error::Cancelled)
+    );
+    let fresh = lab.session(register(1));
+    fresh.unlock(UnlockMethod::System, None).unwrap();
+    assert!(fresh.execute(None).is_ok());
+}

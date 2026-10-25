@@ -187,7 +187,11 @@ static id consume(char *text) {
     NSMutableArray *allowed=[NSMutableArray new]; for(NSData *idValue in parameters.allowedCredentials)[allowed addObject:numbers(idValue)];
     [self start:@{@"kind":@"assert",@"rp":parameters.relyingPartyIdentifier,@"hash":numbers(parameters.clientDataHash),@"allowed":allowed,@"identity":NSNull.null}];
 }
-- (void)provideCredentialWithoutUserInteractionForRequest:(id<ASCredentialRequest>)request { (void)request; [self fail:ASExtensionErrorCodeUserInteractionRequired]; }
+- (void)provideCredentialWithoutUserInteractionForRequest:(id<ASCredentialRequest>)request {
+    (void)request;
+    // This is an escalation to the interactive callback, not a terminal UI session.
+    [self.extensionContext cancelRequestWithError:[NSError errorWithDomain:ASExtensionErrorDomain code:ASExtensionErrorCodeUserInteractionRequired userInfo:nil]];
+}
 - (void)performPasskeyRegistrationWithoutUserInteractionIfPossible:(ASPasskeyCredentialRequest *)request { (void)request; [self fail:ASExtensionErrorCodeFailed]; }
 - (void)prepareCredentialListForServiceIdentifiers:(NSArray<ASCredentialServiceIdentifier *> *)identifiers { (void)identifiers; [self fail:ASExtensionErrorCodeFailed]; }
 - (void)prepareInterfaceForExtensionConfiguration {

@@ -4,7 +4,7 @@ use std::{
     ffi::{c_char, c_void, CString},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Weak,
     },
 };
 static PUBLISHING: AtomicBool = AtomicBool::new(false);
@@ -17,19 +17,23 @@ unsafe extern "C" {
     fn rss_passkey_index_state() -> i32;
 }
 struct Publication {
-    vault: Arc<Vault>,
+    vault: Weak<Vault>,
     snapshot: IndexSnapshot,
 }
 extern "C" fn complete(context: *mut c_void, success: i32) {
     // SAFETY: native completion invokes exactly once and owns this publication until then.
     let work = unsafe { Box::from_raw(context.cast::<Publication>()) };
-    let result = if success == 1 {
-        work.vault.acknowledge_index(&work.snapshot)
-    } else {
-        Err(Error::SystemUnavailable)
-    };
-    if result.is_err() {
-        let _ = work.vault.invalidate_index();
+    // Do not retain an unlocked Vault (and its root key) for an unbounded OS callback.
+    // If its owner has exited, the preexisting dirty notice remains for the next activation.
+    if let Some(vault) = work.vault.upgrade() {
+        let result = if success == 1 {
+            vault.acknowledge_index(&work.snapshot)
+        } else {
+            Err(Error::SystemUnavailable)
+        };
+        if result.is_err() {
+            let _ = vault.invalidate_index();
+        }
     }
     PUBLISHING.store(false, Ordering::Release);
 }
@@ -50,7 +54,10 @@ pub fn refresh(vault: Arc<Vault>) -> Result<()> {
             return Err(error);
         }
     };
-    let context = Box::into_raw(Box::new(Publication { vault, snapshot }));
+    let context = Box::into_raw(Box::new(Publication {
+        vault: Arc::downgrade(&vault),
+        snapshot,
+    }));
     // SAFETY: native copies JSON before returning and transfers context to exactly one completion.
     unsafe {
         rss_passkey_index_replace(json.as_ptr(), context.cast(), complete);

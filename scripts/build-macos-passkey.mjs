@@ -131,6 +131,19 @@ export function passkeyEntitlements(existing) {
     ],
   };
 }
+export function assemblePasskeyHost({
+  app,
+  output,
+  identity = "-",
+  release = true,
+}) {
+  buildMacosPasskey({
+    output: join(app, "Contents/PlugIns/RSSPasskeyProvider.appex"),
+    identity,
+    release,
+  });
+  return configurePasskeyHost(app, output);
+}
 export function configurePasskeyHost(app, output) {
   const infoPath = join(app, "Contents/Info.plist");
   const info = JSON.parse(

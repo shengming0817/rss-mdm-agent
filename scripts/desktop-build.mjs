@@ -53,9 +53,7 @@ if (process.platform === "darwin" && !native) {
   const { mkdirSync } = await import("node:fs");
   const { execFileSync } = await import("node:child_process");
   const { cargoTargetDir } = await import("./cargo-target.mjs");
-  const { buildMacosPasskey, configurePasskeyHost } = await import(
-    "./build-macos-passkey.mjs"
-  );
+  const { assemblePasskeyHost } = await import("./build-macos-passkey.mjs");
   const root = fileURLToPath(new URL("../", import.meta.url));
   const app = join(
     cargoTargetDir(root),
@@ -65,17 +63,14 @@ if (process.platform === "darwin" && !native) {
     process.env.RSS_MACOS_APP_SIGNING_IDENTITY ??
     process.env.RSS_MACOS_DEVELOPMENT_SIGNING_IDENTITY ??
     "-";
-  buildMacosPasskey({
-    output: join(app, "Contents/PlugIns/RSSPasskeyProvider.appex"),
+  const output = join(root, ".local-ci-runs/macos-passkey");
+  mkdirSync(output, { recursive: true });
+  const entitlements = assemblePasskeyHost({
+    app,
+    output: join(output, "host-entitlements.plist"),
     identity,
     release: true,
   });
-  const output = join(root, ".local-ci-runs/macos-passkey");
-  mkdirSync(output, { recursive: true });
-  const entitlements = configurePasskeyHost(
-    app,
-    join(output, "host-entitlements.plist"),
-  );
   execFileSync(
     "/usr/bin/codesign",
     [

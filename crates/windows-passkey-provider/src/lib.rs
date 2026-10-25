@@ -1,6 +1,8 @@
 //! Embeddable current-user Windows authenticator. Hosts own composition, not UV.
 //! ref: microsoft/webauthn@ef82c157125a0490e05f6ea82a7adb1b8e1bad08
 //! pluginauthenticator.idl and webauthnplugin.h (MIT).
+#[cfg(any(windows, test))]
+mod cache;
 #[cfg(windows)]
 mod native;
 mod operation;

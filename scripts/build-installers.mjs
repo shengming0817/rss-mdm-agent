@@ -1,4 +1,4 @@
-import { configurePasskeyHost } from "./build-macos-passkey.mjs";
+import { assemblePasskeyHost } from "./build-macos-passkey.mjs";
 // Fixed organization packages contain only public trust. Device enrollment is a separate operation.
 // ref: Apple pkgbuild(1); NSIS 3.11 Docs/Chapter4.html (per-machine execution level).
 import { execFileSync, spawnSync } from "node:child_process";
@@ -281,10 +281,12 @@ if (windows) {
     identity: macosIdentity,
     release: true,
   });
-  configurePasskeyHost(
+  assemblePasskeyHost({
     app,
-    join(output, "passkey-container-entitlements.plist"),
-  );
+    output: join(output, "passkey-container-entitlements.plist"),
+    identity: macosIdentity,
+    release: true,
+  });
   // Public installed resources must be readable by the actual login, including
   // codesign's resource verification under a restrictive build umask.
   const publicModes = (path) => {

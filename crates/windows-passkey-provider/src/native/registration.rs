@@ -277,6 +277,9 @@ pub(crate) fn verify_owner() -> Result<()> {
     Ok(())
 }
 pub(crate) fn clear_dirty() -> Result<()> {
+    crate::cache::update(clear_dirty_locked)
+}
+fn clear_dirty_locked() -> Result<()> {
     let root = passkey_vault::platform::default_root()?;
     let directory =
         platform_private_storage::PrivateDirectory::open(&root).map_err(|_| Error::Storage)?;

@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 /// One system callback, one user decision, one completion. No reusable authorization token.
 pub struct Session {
     request: Request,
+    interaction: passkey_vault::Interaction,
     vault: Arc<Vault>,
     cancelled: AtomicBool,
     completed: AtomicBool,
@@ -27,6 +28,7 @@ impl Session {
         request.validate()?;
         Ok(Self {
             request,
+            interaction: vault.begin_interaction(),
             vault,
             cancelled: AtomicBool::new(false),
             completed: AtomicBool::new(false),
@@ -51,8 +53,7 @@ impl Session {
         if self.completed.load(Ordering::Acquire) {
             return Err(Error::Cancelled);
         }
-        let token = self.vault.begin_interaction();
-        self.vault.unlock(method, password, &token)?;
+        self.vault.unlock(method, password, &self.interaction)?;
         self.check()?;
         self.verified.store(true, Ordering::Release);
         Ok(())
