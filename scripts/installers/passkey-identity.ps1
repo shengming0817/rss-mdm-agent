@@ -50,4 +50,4 @@ if (Test-Path -LiteralPath $Previous) {
     if ((Test-Path -LiteralPath $Assets) -and @(Get-ChildItem -LiteralPath $Assets -Force).Count -eq 0) { Remove-Item -LiteralPath $Assets }
     if (@(Get-ChildItem -LiteralPath $Previous -Force).Count -eq 0) { Remove-Item -LiteralPath $Previous }
 }
-Run-Provider 'enable' 
+Run-Provider 'enable'

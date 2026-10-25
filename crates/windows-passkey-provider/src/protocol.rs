@@ -96,7 +96,7 @@ fn scan(input: &mut &[u8], depth: u8, budget: &mut usize) -> Result<()> {
                 scan(input, depth + 1, budget)?;
             }
         }
-        7 if matches!(first, 0xf4 | 0xf5 | 0xf6) => {}
+        7 if matches!(first, 0xf4..=0xf6) => {}
         _ => return Err(Error::Input),
     }
     Ok(())
