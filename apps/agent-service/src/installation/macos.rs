@@ -372,33 +372,6 @@ pub(super) fn interactive_profile() -> Result<Profile, Error> {
         )]),
     })
 }
-pub(super) fn verify_signatures(candidate: &Candidate) -> Result<(), Error> {
-    for image in [&candidate.service, &candidate.desktop] {
-        let cdhash = image.cdhash.as_ref().ok_or(Error::Identity)?;
-        if cdhash.len() != 40 || !cdhash.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err(Error::Identity);
-        }
-        let requirement = format!(
-            "=cdhash H\"{cdhash}\"{}",
-            if candidate.signing_mode == SigningMode::Release {
-                " and anchor apple generic"
-            } else {
-                ""
-            }
-        );
-        command(
-            Path::new("/usr/bin/codesign"),
-            &[
-                "--verify".into(),
-                "--strict".into(),
-                "-R".into(),
-                requirement.into(),
-                image.path.clone().into(),
-            ],
-        )?;
-    }
-    Ok(())
-}
 pub(super) fn execution_resources(
     interpreters: &mut Vec<crate::Interpreter>,
     managers: &mut Vec<crate::SoftwareManager>,

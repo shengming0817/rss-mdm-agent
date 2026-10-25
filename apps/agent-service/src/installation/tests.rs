@@ -10,7 +10,6 @@ fn candidate_requires_current_format_and_valid_identity() {
     let target = Target::current().unwrap();
     let candidate = Candidate {
         windows_login: None,
-        windows_publisher: None,
         platform_sso: None,
         service_id: crate::protocol_test_support::SERVICE_ID,
         connections: crate::protocol_test_support::signed_connections(
@@ -70,6 +69,26 @@ fn candidate_requires_current_format_and_valid_identity() {
     let decoded: Candidate = serde_json::from_value(current.clone()).unwrap();
     // Current metadata reaches native artifact checks; this pure fixture has no installed images.
     assert_eq!(decoded.validate(), Err(Error::Identity));
+    // Current PSSO configuration is the fixed image and origin, without a Team.
+    let mut psso = current.clone();
+    psso["platform_sso"] = serde_json::json!({
+        "extension": { "path": root.path.join("extension"), "sha256": "d".repeat(64), "cdhash": "e".repeat(40) },
+        "origin": "https://console.example.org"
+    });
+    let decoded: Candidate = serde_json::from_value(psso.clone()).unwrap();
+    // Installer metadata and artifact checks are independent of the optional
+    // PSSO runtime's exact OS version; non-Mac payloads cannot claim this role.
+    if target == Target::MacosArm64 {
+        assert_eq!(decoded.validate_trust(), Ok(()));
+        assert_eq!(decoded.validate(), Err(Error::Identity));
+        psso["platform_sso"]["origin"] = "http://console.example.org".into();
+        assert!(serde_json::from_value::<Candidate>(psso)
+            .unwrap()
+            .validate_trust()
+            .is_err());
+    } else {
+        assert_eq!(decoded.validate_trust(), Err(Error::Configuration));
+    }
     let mut old = current.clone();
     old["version"] = 99.into();
     let decoded: Candidate = serde_json::from_value(old).unwrap();

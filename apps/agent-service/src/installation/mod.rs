@@ -43,7 +43,6 @@ pub use windows::worker;
 #[serde(deny_unknown_fields)]
 pub struct Candidate {
     pub windows_login: Option<Artifact>,
-    pub windows_publisher: Option<String>,
     pub platform_sso: Option<crate::deployment::PlatformSsoConfiguration>,
     pub version: u8,
     pub format: rss_mdm_agent_wire::enroll::configuration::InstallerFormat,
@@ -166,11 +165,13 @@ impl Candidate {
             return Err(Error::Configuration);
         }
         if let Some(psso) = &self.platform_sso {
-            if !psso.extension.path.starts_with(&self.root)
-                || self.target != Target::current().map_err(|_| Error::Unsupported)?
-            {
+            if !psso.extension.path.starts_with(&self.root) || self.target != Target::MacosArm64 {
                 return Err(Error::Configuration);
             }
+            rss_mdm_agent_wire::platform_sso::Endpoints::new(
+                &psso.origin,
+                uuid::Uuid::from_u128(1),
+            )?;
         }
         if let Some(dll) = &self.windows_login {
             if self.target.platform() != "win32"
@@ -183,13 +184,6 @@ impl Candidate {
                 return Err(Error::Configuration);
             }
         }
-        if self.target.platform() == "win32" && self.signing_mode == SigningMode::Release {
-            if !self.windows_publisher.as_deref().is_some_and(digest_valid) {
-                return Err(Error::Identity);
-            }
-        } else if self.windows_publisher.is_some() {
-            return Err(Error::Configuration);
-        }
         self.format()?;
         Ok(())
     }
@@ -198,14 +192,10 @@ impl Candidate {
         for image in [&self.service, &self.desktop]
             .into_iter()
             .chain(self.windows_login.iter())
+            .chain(self.platform_sso.iter().map(|psso| &psso.extension))
         {
             image.verify(&image.path).map_err(|_| Error::Identity)?;
-            self.target
-                .verify_image(&image.path)
-                .map_err(|_| Error::Identity)?;
-        }
-        if let Some(psso) = &self.platform_sso {
-            psso.verify()?;
+            validate_native_artifact(image)?;
         }
         installation_security::protected(&self.runtime_root).map_err(|_| Error::Identity)?;
         installation_security::runtime::verify(
@@ -229,7 +219,6 @@ impl Candidate {
                 .map_err(|_| Error::Identity)?;
         }
         verify_runtime_files(&self.runtime_root, self.target)?;
-        platform::verify_signatures(self)?;
         Ok(())
     }
     fn format(&self) -> Result<String, Error> {

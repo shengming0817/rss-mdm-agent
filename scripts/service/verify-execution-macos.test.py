@@ -46,6 +46,26 @@ class PssoPreflightTests(unittest.TestCase):
             self.assertTrue(receipt['blockers'])
             self.assertTrue(all(s['status']=='notExecuted' for s in receipt['scenarios'].values()))
 
+    def test_fixed_candidate_without_team_or_notarization_passes_project_preflight(self):
+        from types import SimpleNamespace
+        frozen = dict(architecture='arm64', binaries={
+            name: dict(signature=dict(teamId=None, mode='controlled-ad-hoc'))
+            for name in ('service', 'desktop', 'platformSso')
+        }, installer=dict(path='/fixed/agent.pkg', sha256='a'*64))
+        def run(*command):
+            if command == ('/usr/bin/sw_vers', '-productVersion'):
+                return SimpleNamespace(stdout='26.4\n')
+            if command == ('/usr/bin/sw_vers', '-buildVersion'):
+                return SimpleNamespace(stdout='fixture-build\n')
+            raise AssertionError(f'unexpected external prerequisite: {command}')
+        with tempfile.TemporaryDirectory() as directory, patch.object(acceptance, 'run', side_effect=run):
+            args = SimpleNamespace(output=Path(directory))
+            self.assertEqual(acceptance.psso_preflight(args, frozen), 0)
+            receipt = json.loads((args.output/'psso-preflight.json').read_text())
+            self.assertEqual(receipt['status'], 'passed')
+            self.assertFalse(receipt['systemAccepted'])
+            self.assertTrue(all(s['status']=='notExecuted' for s in receipt['scenarios'].values()))
+
 
 class BackendLifecycleTests(unittest.TestCase):
     def test_completed_offer_is_bound_to_the_original_policy_request_and_execution(self):

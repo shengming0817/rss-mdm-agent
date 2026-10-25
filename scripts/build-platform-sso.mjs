@@ -100,6 +100,7 @@ export function buildPlatformSso({
     "--entitlements",
     join(root, "apps/platform-sso-extension/resources/Entitlements.plist"),
     ...(identity === "-" ? [] : ["--options", "runtime"]),
+    ...(process.env.RSS_MACOS_NOTARY_PROFILE ? ["--timestamp"] : []),
     output,
   ]);
   run("/usr/bin/codesign", ["--verify", "--strict", output]);
@@ -109,10 +110,7 @@ export function buildPlatformSso({
     { encoding: "utf8", timeout: 20000 },
   );
   if (display.status !== 0) throw Error("PSSO signing inspection failed");
-  const teamId =
-    /^TeamIdentifier=([A-Z0-9]{10})$/m.exec(display.stderr)?.[1] ?? null;
-  if (identity !== "-" && !teamId) throw Error("Apple signing team required");
-  return { binary, teamId, sdk, systemAccepted: false };
+  return { binary, sdk, systemAccepted: false };
 }
 export function containerEntitlements(app, output) {
   const display = spawnSync(
@@ -144,12 +142,15 @@ if (
     (process.argv.length === 3 && process.argv[2] !== "--verify-abi")
   )
     throw Error(
-      "Configure development identity through RSS_MACOS_DEVELOPMENT_SIGNING_IDENTITY",
+      "Configure signing through RSS_MACOS_APP_SIGNING_IDENTITY or RSS_MACOS_DEVELOPMENT_SIGNING_IDENTITY",
     );
   const output = join(root, ".local-ci-runs/platform-sso/RSSPlatformSSO.appex");
   const result = buildPlatformSso({
     output,
-    identity: process.env.RSS_MACOS_DEVELOPMENT_SIGNING_IDENTITY ?? "-",
+    identity:
+      process.env.RSS_MACOS_APP_SIGNING_IDENTITY ??
+      process.env.RSS_MACOS_DEVELOPMENT_SIGNING_IDENTITY ??
+      "-",
     verifyAbi: process.argv.includes("--verify-abi"),
   });
   console.log(JSON.stringify({ output, ...result }));

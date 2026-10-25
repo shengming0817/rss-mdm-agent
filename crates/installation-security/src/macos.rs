@@ -30,39 +30,6 @@ pub fn applications_directory() -> Result<(), Rejected> {
     Ok(())
 }
 
-/// Verify a real Apple signing team and exact bundle identifier, in addition to protected image pins.
-pub fn verify_apple_identity(
-    path: &std::path::Path,
-    team: &str,
-    identifier: &str,
-) -> Result<(), Rejected> {
-    use std::os::unix::ffi::OsStrExt;
-    if team.len() != 10
-        || !team
-            .bytes()
-            .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
-        || identifier.is_empty()
-        || identifier.len() > 255
-        || !identifier
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
-    {
-        return Err(Rejected);
-    }
-    extern "C" {
-        fn rss_signed_identity(path: *const c_char, requirement: *const c_char) -> i32;
-    }
-    let path = std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(|_| Rejected)?;
-    let requirement = std::ffi::CString::new(format!("anchor apple generic and certificate leaf[subject.OU] = \"{team}\" and identifier \"{identifier}\""))
-        .map_err(|_| Rejected)?;
-    // SAFETY: both strings are owned, bounded and NUL-terminated for this synchronous call.
-    if unsafe { rss_signed_identity(path.as_ptr(), requirement.as_ptr()) } == 1 {
-        Ok(())
-    } else {
-        Err(Rejected)
-    }
-}
-
 #[cfg(test)]
 mod permission_tests {
     #[test]

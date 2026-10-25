@@ -10,7 +10,9 @@
 
 组织输入使用当前格式的 `service_id`（后端安装 instance_id）、`tenant`、`connections`（后端下载的完整签名 Agent 连接配置）、`label`、`signing_keys`（安装时独立保护的注册/配置验签公钥）与必填 `ca_pem`（HTTPS bootstrap CA）。打包器把连接文件交给生产 Rust 校验器验签和核对身份，不在 Node 重写 wire 验证器。设备 CA/CRL 经已授权 Agent HTTPS 入口获取；任务公钥由已认证设备通道提供，独立于安装公钥。桌面登录和会话仍使用根 `.env` 的 `RSS_MDM_ORIGIN`、租户与可选 `RSS_MDM_CA_FILE`，通过登录会话中的稳定实例与租户核对机器身份，地址变化不授权披露网站 Cookie。Agent bootstrap CA 不用于网站，签名地址更新不扩大 CA 或软件源凭据权限。输入不允许 grant、secret、账号目录或私钥。包内固定生产服务、桌面、Node、AI Host、worker 和资源；安装文件与 `package-manifest.json` 位于忽略的 `.local-ci-runs/installers/`。上传后端仅需要实际安装文件；本地资源清单用于部署与代码身份完整性。
 
-默认 macOS 为 ad-hoc 开发签名，Windows 为明确标记的开发包。正式包增加 `--release`：macOS 设置 `RSS_MACOS_APP_SIGNING_IDENTITY`、`RSS_MACOS_INSTALLER_SIGNING_IDENTITY` 和已存在的 `RSS_MACOS_NOTARY_PROFILE` Keychain 引用；Windows 设置 `RSS_WINDOWS_SIGNING_THUMBPRINT`，可选 `RSS_SIGNTOOL` 完整路径。构建不会接收证书密码；正式 macOS 包完成 notarization / stapling，正式 Windows 包与原生资源进行 Authenticode 签名。只有显式请求 `--release` 时才要求这些正式签名材料；默认包可正常上传、发布和注册，无测试/试点/生产环门槛。
+开发与生产包均不强制发布者证书或公证：macOS 默认 ad-hoc，可使用自签名或 Apple Development；Windows 未提供签名材料时生成未签名包。`--release` 只标记包模式，不提高证书准入要求；该模式仍用于阻止 SIT 重置入口清理 release 安装。macOS 签名身份依次读取 `RSS_MACOS_APP_SIGNING_IDENTITY`、`RSS_MACOS_DEVELOPMENT_SIGNING_IDENTITY`，均缺失时使用 ad-hoc；`RSS_MACOS_INSTALLER_SIGNING_IDENTITY` 和已有的 `RSS_MACOS_NOTARY_PROFILE` Keychain 引用分别显式启用安装包签名、公证与 stapling。Windows 提供 `RSS_WINDOWS_SIGNING_THUMBPRINT` 才执行签名，可用 `RSS_SIGNTOOL` 指定工具。显式选择的签名或公证操作失败仍报错，构建不接收证书密码。固定路径、SHA-256/CDHash 和实际进程身份继续校验；系统加载、MDM、entitlement 和设备安全策略的实际接纳须独立取证。
+
+当前候选不再包含 `windows_publisher`，PSSO 配置不再包含 `teamId`。旧字段会被严格解码拒绝，不提供兼容读取或自动迁移；应使用当前构建/安装入口生成新候选和部署记录。旧格式失败不触发本机状态清理。不要手改受保护清单或其摘要，也不要把 SIT 重置当作保留原身份的升级。
 
 默认部署验收是首次安装、首次注册；重复验证全新安装时使用下述显式 SIT 清理脚本。每个安装包使用独立版本目录。检测到既有部署时会进入已有升级校验；凭据不可读或候选活动未确认停止时拒绝切换，不清库、重注册或自动放宽钥匙串授权。旧格式配置不迁移或兼容读取。
 
@@ -265,7 +267,7 @@ Brew v2 只读取批准 prefix 内 Cellar/Caskroom 的安装记录与可识别 J
 
 互注册由管理员的两条 Policy 分别控制：`ensure_agent_installed` 部署 Agent，`request_mdm_enrollment` 发起原生 MDM 注册。未配置或停用策略不会因检测到缺少通道而自动注册。设置页只有收到组织发布且当前可调用的自助注册策略时，才提供人工申请入口；组织与地址由策略确定。系统确认仍需用户完成，打开界面不表示注册成功。
 
-Windows 构建可显式选择 `--format windows_exe|windows_msi|windows_msix`，默认仍为独立安装的 NSIS；macOS 使用 `macos_pkg`。MSI 使用 WiX 的 v4 XML 格式与 `wix build`，可用 `RSS_WIX` 指定工具。MSIX 使用 Windows SDK `makeappx`（可由 `RSS_MAKEAPPX` 指定），必须配置格式需要的 `RSS_WINDOWS_PUBLISHER`；只有显式 `--release` 才要求匹配的 `RSS_WINDOWS_SIGNING_THUMBPRINT`。默认包不强制签名，实际安装仍由操作系统与企业策略判断。各格式独立发布，不自动替换或回退格式。MSIX 的机器服务由 Package Manager 管理；机器配置、密钥和 journal 位于原有 ProgramData 目录，卸载包不等于退管。
+Windows 构建可显式选择 `--format windows_exe|windows_msi|windows_msix`，默认仍为独立安装的 NSIS；macOS 使用 `macos_pkg`。MSI 使用 WiX 的 v4 XML 格式与 `wix build`，可用 `RSS_WIX` 指定工具。MSIX 使用 Windows SDK `makeappx`（可由 `RSS_MAKEAPPX` 指定），必须配置格式需要的 `RSS_WINDOWS_PUBLISHER`；开发与生产均不强制 `RSS_WINDOWS_SIGNING_THUMBPRINT`。无材料时仍生成候选；实际安装是否被接纳由操作系统与企业策略判断，不能据构建成功声明 Windows 接纳。各格式独立发布，不自动替换或回退格式。MSIX 的机器服务由 Package Manager 管理；机器配置、密钥和 journal 位于原有 ProgramData 目录，卸载包不等于退管。
 
 受管激活读取系统安装的专用短期引导证书，通过原生密钥句柄完成 mTLS，再使用独立本地日常密钥完成 Agent 激活。包和证书可以先后到达；私钥不可访问时等待/报错，不导出 MDM 私钥，也不自动放宽 ACL。没有交互登录时仍可运行机器注册；未配置桌面用户的安装保留空 IPC 用户集合，后续通过既有安装 profile/刷新流程配置用户访问。
 
@@ -361,7 +363,7 @@ Windows 登录增强使用单个 Credential Provider 和同一个受保护离线
 
 解绑先撤销 RSS 因子，保留撤销代际，再执行明确授权的 `Keep / Disable / Standard`。Keep 保留 OS 状态；Disable 对 SAM 禁用账号，对目录账号设置精确 SID 的本机拒绝交互登录权限；Standard 只处理该账号的本机管理员资格。目录账号处置不代表目录全局停用，不强制注销已登录会话，不扩大到 RDP。不移除整个目录组来降权单个用户；不能确认实际效果时保留失败/未知。内置恢复管理员及最后可用本地管理员受保护，重绑、因子恢复和卸载不会自动解除 OS 限制。
 
-Windows x64 NSIS 候选包含 CP DLL；其他架构及 MSI/MSIX 未装配该组件，不得据 Agent 安装成功宣称 RSS 登录可用。`--release` 对 Agent、Desktop、CP DLL 和安装包签名；运行时同时核对固定摘要、签名链及候选发布者证书指纹。候选、离线库均只支持当前格式，旧格式在切换服务/组件前拒绝，无自动迁移、双读或清库重建。拒绝升级时保留原部署及材料，由管理员通过原部署的正式退役流程处理。
+Windows x64 NSIS 候选包含 CP DLL；其他架构及 MSI/MSIX 未装配该组件，不得据 Agent 安装成功宣称 RSS 登录可用。开发与生产均不要求 Agent、Desktop、CP DLL 或安装包持有发布者证书；显式提供材料时可签名，运行时核对受保护固定路径和摘要，登录健康检查不强制 Authenticode Valid 或同发布者。候选、离线库均只支持当前格式，旧格式在切换服务/组件前拒绝，无自动迁移、双读或清库重建。拒绝升级时保留原部署及材料，由管理员通过原部署的正式退役流程处理。
 
 组件由 SYSTEM 服务在离线库初始化后从同一个固定安装候选注册；独立维修也消费已安装候选，不接受任意 DLL 路径作为另一条准入入口。新安装或 DLL 候选变化后须重启 Windows，重启前组件不宣称可用于认证。版本目录避免覆盖 LogonUI 已加载的 DLL；升级保留安装身份、限速、因子和撤销记录。
 
@@ -397,9 +399,9 @@ Desktop 只能请求当前已核验控制台用户的系统登录选项及刷新
 
 候选只针对 macOS 26.4 / SDK 26.4、Apple silicon；实际系统加载和回调必须在已获授权的受管测试机验证。`crates/platform-sso` 持有协议组合与恢复决策，`apps/platform-sso-extension` 是 Apple 系统入口和本地 FFI；私钥、系统令牌及注册数据库由 Apple Framework 持有。PSSO 1.0 使用共享设备密钥，候选支持 `UserSecureEnclaveKey` 与 Password 注册／认证协议。Password 同步与登录策略由 Apple 系统执行；RSS 不持有密码权威或第二套同步引擎。SE 保留本地密码登录；Password 按签名任务消费登录窗口、锁屏、FileVault 各自的 Local／Attempt／Require，缺少独立维护账号时不得启用 Require。不提供 ADE/JIT 或 Authorization Plugin。
 
-使用现有构建 runner 执行 `node scripts/build-platform-sso.mjs --verify-abi`，生成原生 `.appex` 并运行 C/Rust/系统签名 ABI 测试（测试进程不执行系统注册）。默认 ad-hoc 仅用于编译、链接和包结构检查，不证明系统接纳。指定 `RSS_MACOS_DEVELOPMENT_SIGNING_IDENTITY` 时，使用已获批准的开发签名材料；签名团队、profile 的 AppIdentifier、扩展 ID `com.rss.mdmagent.psso`、容器 `com.rss.mdmagent` 及 HTTPS AASA 必须匹配。现有 installer builder 嵌入同一子产物并重签容器；正式公证及安装升级验收由发布流程提供。构建输出 `systemAccepted: false` 不得改读为注册通过。
+使用现有构建 runner 执行 `node scripts/build-platform-sso.mjs --verify-abi`，生成原生 `.appex` 并运行 C/Rust/系统签名 ABI 测试（测试进程不执行系统注册）。默认 ad-hoc 可完成项目侧构建与代码身份检查；自签名和 Apple Development 不因缺 Team 被项目拒绝。可用 `RSS_MACOS_APP_SIGNING_IDENTITY` 或 `RSS_MACOS_DEVELOPMENT_SIGNING_IDENTITY` 选择已有材料。现有 installer builder 嵌入同一子产物并重签容器，缺 Team 不会省略 PSSO。受管 profile、entitlement、扩展 ID `com.rss.mdmagent.psso`、容器 `com.rss.mdmagent`、HTTPS AASA 和 IdP 的真实系统要求按目标环境独立验证；项目不要求关闭系统保护。构建及项目预检的 `systemAccepted: false` 不得改读为注册通过，缺签名材料及未执行旅程应如实记录。
 
-部署的可选 `platform_sso` 配置包含固定扩展 artifact、`team_id` 和配置中的 console HTTPS `origin`。仅真实安装的受保护映像通过摘要、Apple 签名与精确平台核对后才公布能力。扩展通过既有 XPC 服务调用有限注册操作，其实际进程身份不能调用 Desktop、AI 或通用执行入口。普通认证由系统直接处理，Desktop 可以退出。
+部署的可选 `platform_sso` 配置仅包含固定扩展 artifact 和配置中的 console HTTPS `origin`。真实安装的受保护映像通过路径、SHA-256、CDHash 与精确平台核对后公布能力，无 Apple Team/发布者证书前置。扩展通过既有 XPC 服务调用有限注册操作，其实际进程身份不能调用 Desktop、AI 或通用执行入口。普通认证由系统直接处理，Desktop 可以退出。
 
 Mac 设备访问页面复用员工确认及签名任务。已有账号按真实控制台会话和 GeneratedUID 关联；建号及角色变更必须由后台授权任务发起。Mac 路径不使用 Windows TOTP。密码只经短暂本机受控输入进入固定系统工具，Secure Token 需要合格管理员的系统交互授权；页面准备完成不代表账号任务或系统注册成功。Secure Token、volume ownership、FileVault 资格分别回读，无法证明的状态保持未知。解绑保留账号、数据及既有 Secure Token。
 
@@ -451,10 +453,11 @@ Windows 登录。支持 Windows 11 24H2 的正式插件更新（26100.7171；25H
 具备所需 API 的后续版本。源码入口固定 Windows SDK 10.0.26100.7175；当前产物为 x64。
 
 在目标 Windows 执行 `node scripts/build-passkey-provider.mjs`，生成独立 NSIS EXE 和内置
-外部位置身份包。默认开发身份使用 Windows 的 unsigned package OID 与 `AllowUnsigned`；
-系统策略或安装权限不允许时如实报错，不关闭签名/安全策略。正式交付使用 `--release`，设置
-`RSS_WINDOWS_PUBLISHER` 与现有证书的 `RSS_WINDOWS_SIGNING_THUMBPRINT`。正式签名检查分别
-覆盖 Provider、身份包与 EXE；开发身份与正式身份不同，不能作为同一包直接升级。
+外部位置身份包。开发与 `--release` 均允许无证书候选，使用 Windows 的 unsigned package OID
+与 `AllowUnsigned`；系统策略或安装权限不允许时如实报错，不关闭系统保护。显式提供
+`RSS_WINDOWS_SIGNING_THUMBPRINT` 和匹配的 `RSS_WINDOWS_PUBLISHER` 才对 Provider、身份包与
+EXE 签名。安装保留固定摘要和现有包身份归属校验，不强制 Authenticode Valid/同发布者；
+未签名与签名包的系统身份不同，不能作为同一包直接升级。
 
 先安装已有 RSS 桌面管理器并在个人 Passkey 页面创建 Vault；独立安装器不附带第二套管理 UI。
 开始菜单的 RSS Personal Passkeys 或 `rss-passkey-provider.exe manage` 打开已有桌面；未安装时

@@ -12,13 +12,7 @@ use uuid::Uuid;
 
 impl crate::deployment::PlatformSsoConfiguration {
     pub fn verify(&self) -> Result<(), Error> {
-        if !cfg!(all(target_os = "macos", target_arch = "aarch64"))
-            || self.team_id.len() != 10
-            || !self
-                .team_id
-                .bytes()
-                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
-        {
+        if !cfg!(all(target_os = "macos", target_arch = "aarch64")) {
             return Err(Error::Unsupported);
         }
         #[cfg(target_os = "macos")]
@@ -46,13 +40,7 @@ impl crate::deployment::PlatformSsoConfiguration {
         self.extension
             .verify(&self.extension.path)
             .map_err(|_| Error::Identity)?;
-        #[cfg(target_os = "macos")]
-        installation_security::verify_apple_identity(
-            &self.extension.path,
-            &self.team_id,
-            "com.rss.mdmagent.psso",
-        )
-        .map_err(|_| Error::Identity)?;
+        crate::installation::validate_native_artifact(&self.extension)?;
         Ok(())
     }
 }

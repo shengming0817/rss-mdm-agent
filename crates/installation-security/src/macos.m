@@ -20,22 +20,3 @@ int rss_acl_empty(const char *path) {
     acl_free(acl);
     return empty;
 }
-
-// ref: Apple Security/SecStaticCode.h; verify a Developer-ID/development team and exact bundle ID.
-#include <Security/Security.h>
-int rss_signed_identity(const char *path, const char *requirement) {
-    CFURLRef url = CFURLCreateFromFileSystemRepresentation(NULL, (const UInt8 *)path, strlen(path), false);
-    CFStringRef expression = CFStringCreateWithCString(NULL, requirement, kCFStringEncodingUTF8);
-    SecStaticCodeRef code = NULL;
-    SecRequirementRef rule = NULL;
-    OSStatus result = errSecParam;
-    if (url && expression && SecStaticCodeCreateWithPath(url, kSecCSDefaultFlags, &code) == errSecSuccess
-        && SecRequirementCreateWithString(expression, kSecCSDefaultFlags, &rule) == errSecSuccess) {
-        result = SecStaticCodeCheckValidity(code, kSecCSStrictValidate | kSecCSCheckAllArchitectures, rule);
-    }
-    if (rule) CFRelease(rule);
-    if (code) CFRelease(code);
-    if (expression) CFRelease(expression);
-    if (url) CFRelease(url);
-    return result == errSecSuccess;
-}

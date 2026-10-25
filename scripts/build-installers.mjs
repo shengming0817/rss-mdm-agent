@@ -143,16 +143,17 @@ const output = join(root, ".local-ci-runs/installers", target, id);
 rmSync(output, { recursive: true, force: true });
 mkdirSync(output, { recursive: true });
 const suffix = windows ? ".exe" : "";
+const macosIdentity =
+  process.env.RSS_MACOS_APP_SIGNING_IDENTITY ??
+  process.env.RSS_MACOS_DEVELOPMENT_SIGNING_IDENTITY ??
+  "-";
 const sign = (file, entitlements) => {
   if (windows) {
-    if (release)
+    if (process.env.RSS_WINDOWS_SIGNING_THUMBPRINT)
       run(process.env.RSS_SIGNTOOL ?? "signtool.exe", [
         "sign",
         "/sha1",
-        process.env.RSS_WINDOWS_SIGNING_THUMBPRINT ??
-          (() => {
-            throw Error("RSS_WINDOWS_SIGNING_THUMBPRINT required");
-          })(),
+        process.env.RSS_WINDOWS_SIGNING_THUMBPRINT,
         "/fd",
         "SHA256",
         "/tr",
@@ -165,21 +166,12 @@ const sign = (file, entitlements) => {
     run("/usr/bin/codesign", [
       "--force",
       "--sign",
-      release
-        ? (process.env.RSS_MACOS_APP_SIGNING_IDENTITY ??
-          (() => {
-            throw Error("RSS_MACOS_APP_SIGNING_IDENTITY required");
-          })())
-        : (process.env.RSS_MACOS_DEVELOPMENT_SIGNING_IDENTITY ?? "-"),
-      ...(entitlements ? ["--entitlements", entitlements] : []),
-      ...(release
-        ? [
-            "--options",
-            "runtime",
-            "--timestamp",
-            ...(entitlements ? [] : ["--preserve-metadata=entitlements"]),
-          ]
-        : []),
+      macosIdentity,
+      ...(entitlements
+        ? ["--entitlements", entitlements]
+        : ["--preserve-metadata=entitlements"]),
+      ...(macosIdentity === "-" ? [] : ["--options", "runtime"]),
+      ...(process.env.RSS_MACOS_NOTARY_PROFILE ? ["--timestamp"] : []),
       file,
     ]);
   }
@@ -285,9 +277,7 @@ if (windows) {
   packagedRuntime = join(app, "Contents/Resources/ai-host-runtime");
   psso = buildPlatformSso({
     output: join(app, "Contents/PlugIns/RSSPlatformSSO.appex"),
-    identity: release
-      ? process.env.RSS_MACOS_APP_SIGNING_IDENTITY
-      : (process.env.RSS_MACOS_DEVELOPMENT_SIGNING_IDENTITY ?? "-"),
+    identity: macosIdentity,
     release: true,
   });
   // Public installed resources must be readable by the actual login, including
@@ -338,31 +328,12 @@ function image(path) {
   }
   return result;
 }
-let windowsPublisher = null;
-if (windows && release) {
-  const literal = service.replaceAll("'", "''");
-  const result = spawnSync(
-    "powershell.exe",
-    [
-      "-NoProfile",
-      "-NonInteractive",
-      "-Command",
-      `$s=Get-AuthenticodeSignature -LiteralPath '${literal}'; if ($s.Status -ne 'Valid' -or !$s.SignerCertificate) { exit 1 }; ([System.Security.Cryptography.SHA256]::Create().ComputeHash($s.SignerCertificate.RawData) | ForEach-Object { $_.ToString('x2') }) -join ''`,
-    ],
-    { encoding: "utf8", timeout: 20000 },
-  );
-  windowsPublisher = result.stdout?.trim();
-  if (result.status !== 0 || !/^[a-f0-9]{64}$/.test(windowsPublisher ?? ""))
-    throw Error("Release publisher identity unavailable");
-}
 const candidate = {
   windows_login: windowsLogin ? image(windowsLogin) : null,
-  windows_publisher: windowsPublisher,
-  platform_sso: psso?.teamId
+  platform_sso: psso
     ? {
         extension: image(psso.binary),
         origin: desktopConfiguration.origin,
-        teamId: psso.teamId,
       }
     : null,
   version: 2,
@@ -515,24 +486,14 @@ if (windows && format === "windows_msi") {
   run("/usr/bin/productbuild", [
     "--package",
     component,
-    ...(release
-      ? [
-          "--sign",
-          process.env.RSS_MACOS_INSTALLER_SIGNING_IDENTITY ??
-            (() => {
-              throw Error("RSS_MACOS_INSTALLER_SIGNING_IDENTITY required");
-            })(),
-        ]
+    ...(process.env.RSS_MACOS_INSTALLER_SIGNING_IDENTITY
+      ? ["--sign", process.env.RSS_MACOS_INSTALLER_SIGNING_IDENTITY]
       : []),
     packagePath,
   ]);
 }
-if (release && !windows) {
-  const profile =
-    process.env.RSS_MACOS_NOTARY_PROFILE ??
-    (() => {
-      throw Error("RSS_MACOS_NOTARY_PROFILE keychain reference required");
-    })();
+if (!windows && process.env.RSS_MACOS_NOTARY_PROFILE) {
+  const profile = process.env.RSS_MACOS_NOTARY_PROFILE;
   run("/usr/bin/xcrun", [
     "notarytool",
     "submit",
@@ -564,7 +525,6 @@ writeFileSync(
       version: 1,
       target,
       productVersion: version,
-      signingMode: candidate.signing_mode,
       source,
 
       installationManifestSha256: hash(candidateBytes),

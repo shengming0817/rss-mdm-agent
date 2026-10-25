@@ -270,6 +270,7 @@ mod tests {
                 status: "signed",
                 team: None,
                 identifier: None,
+                cdhash: None,
             })
         });
         assert!(matches!(changed, Err(Fault::Query(Status::Invalid))));

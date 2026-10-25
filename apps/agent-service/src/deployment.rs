@@ -17,7 +17,6 @@ use std::{
 pub struct PlatformSsoConfiguration {
     pub extension: installation_security::Artifact,
     pub origin: String,
-    pub team_id: String,
 }
 
 /// Administrator-owned deployment data. It contains references and public trust pins, never secrets.
