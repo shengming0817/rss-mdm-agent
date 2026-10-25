@@ -102,6 +102,7 @@ export function fixtureLocalPorts(): LocalPorts {
     software: {
       read: async () => ({
         query: descriptors[0].reference,
+        coverage: ["4".repeat(64)],
         collectedAt: Math.floor(Date.now() / 1000),
         quality: "complete",
         enumerationComplete: true,
