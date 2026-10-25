@@ -21,6 +21,7 @@ Section "Install"
     Abort "Provider is busy; cancel its current operation and retry."
   ${EndIf}
 stopped:
+  SetOutPath "$TEMP"
   ; A previous interrupted attempt is kept for diagnosis, never restored over Vault data.
   IfFileExists "$INSTDIR.previous\*" 0 backup
   IfFileExists "$INSTDIR\*" 0 publish
@@ -43,24 +44,49 @@ publish:
   ${If} $Result != 0
     Abort "Identity registration incomplete. Run identity.ps1 -Action install from the installed directory to repair. Files and previous version retained."
   ${EndIf}
+  CreateShortCut "$SMPROGRAMS\RSS Personal Passkeys.lnk" "$INSTDIR\rss-passkey-provider.exe" "manage"
   WriteUninstaller "$INSTDIR\uninstall.exe"
+  WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RSS.PersonalPasskeys" "PlatformRemoved" 0
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RSS.PersonalPasskeys" "DisplayName" "RSS Personal Passkeys"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RSS.PersonalPasskeys" "UninstallString" '"$INSTDIR\uninstall.exe"'
 SectionEnd
 Section "Uninstall"
+  ReadRegDWORD $Result HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RSS.PersonalPasskeys" "PlatformRemoved"
+  ${If} $Result == 1
+    Goto platform_removed
+  ${EndIf}
+  IfFileExists "$INSTDIR\platform-removed" record_removed 0
   ExecWait 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\identity.ps1" -Action remove' $Result
   ${If} $Result != 0
     Abort "Provider cleanup incomplete. Repair and retry; component and Vault retained."
   ${EndIf}
+record_removed:
+  WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RSS.PersonalPasskeys" "PlatformRemoved" 1
+platform_removed:
+  SetOutPath "$TEMP"
+  ClearErrors
   Delete "$INSTDIR\rss-passkey-provider.exe"
-  Delete "$INSTDIR\identity.msix"
-  Delete "$INSTDIR\identity.ps1"
-  Delete "$INSTDIR\deployment.json"
   Delete "$INSTDIR\Assets\StoreLogo.png"
   Delete "$INSTDIR\Assets\Logo.png"
   Delete "$INSTDIR\Assets\SmallLogo.png"
   RMDir "$INSTDIR\Assets"
+  ${If} ${Errors}
+    Abort "Program cleanup incomplete. Uninstaller and repair payload retained; retry uninstall."
+  ${EndIf}
+  ClearErrors
+  Delete "$INSTDIR\identity.msix"
+  Delete "$INSTDIR\identity.ps1"
+  Delete "$INSTDIR\deployment.json"
+  ${If} ${Errors}
+    Abort "Metadata cleanup incomplete. Uninstall entry retained."
+  ${EndIf}
+  Delete "$INSTDIR\platform-removed"
+  Delete "$SMPROGRAMS\RSS Personal Passkeys.lnk"
   Delete "$INSTDIR\uninstall.exe"
+  ${If} ${Errors}
+    Abort "Final cleanup incomplete. Uninstall entry retained."
+  ${EndIf}
+  ; Leave an unrelated file, if any, in the otherwise empty program directory.
   RMDir "$INSTDIR"
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\RSS.PersonalPasskeys"
 SectionEnd

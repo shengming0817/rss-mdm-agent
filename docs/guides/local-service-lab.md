@@ -456,13 +456,15 @@ Windows 登录。支持 Windows 11 24H2 的正式插件更新（26100.7171；25H
 `RSS_WINDOWS_PUBLISHER` 与现有证书的 `RSS_WINDOWS_SIGNING_THUMBPRINT`。正式签名检查分别
 覆盖 Provider、身份包与 EXE；开发身份与正式身份不同，不能作为同一包直接升级。
 
-安装后在 Windows 设置 → 账户 → 通行密钥 → 高级选项启用 RSS Personal Passkeys，并完成 Hello。
+先安装已有 RSS 桌面管理器并在个人 Passkey 页面创建 Vault；独立安装器不附带第二套管理 UI。
+开始菜单的 RSS Personal Passkeys 或 `rss-passkey-provider.exe manage` 打开已有桌面；未安装时
+明确提示前置条件，不后台创建无管理入口的 Vault。安装后在 Windows 设置 → 账户 → 通行密钥 → 高级选项启用 RSS Personal Passkeys，并完成 Hello。
 安装、注册、启用、实际回调分别确认。Provider 每次操作都要求交易绑定的 Hello；桌面口令解锁
 不等于 Provider 获得签名权限。一次只接收一个交互，取消不自动重试；缺少 Hello 时明确失败。
 个人凭据仍在现有桌面的个人 Passkey 页面管理。删除使系统缓存失效；缓存更新失败保留待同步
 标记，下次 Provider 激活继续清理，缓存永远不授予签名权限。
 
-安装目录下 `rss-passkey-provider.exe` 输出注册/启用/锁定状态；`stop` 请求有界安全停机，
+安装目录下 `rss-passkey-provider.exe inspect` 输出注册/启用/锁定状态；`stop` 请求有界安全停机，
 `repair` 修复本组件注册，`enable` 打开 Windows 设置。运行中的 COM host 会持有用户级实例锁。
 安装中断后保留 `.incoming`/`.previous` 中的程序文件，绝不从这些目录恢复 Vault。
 发布目录已存在但注册未完成时，执行其中 `identity.ps1 -Action install` 完成修复；完成修复后再

@@ -46,6 +46,7 @@ pub struct AddResponse {
 }
 #[repr(C)]
 pub struct Update {
+    pub name: *const u16,
     pub clsid: *const GUID,
     pub new_clsid: *const GUID,
     pub light: *const u16,
@@ -220,4 +221,21 @@ impl Api {
             result
         }
     }
+}
+
+#[cfg(all(test, target_arch = "x86_64"))]
+#[test]
+fn official_v1_x64_abi_layout() {
+    use std::mem::{offset_of, size_of};
+    assert_eq!(size_of::<Request>(), 56);
+    assert_eq!(offset_of!(Request, encoded), 48);
+    assert_eq!(size_of::<Response>(), 16);
+    assert_eq!(size_of::<Cancel>(), 32);
+    assert_eq!(size_of::<Add>(), 72);
+    assert_eq!(size_of::<Update>(), 72);
+    assert_eq!(offset_of!(Update, name), 0);
+    assert_eq!(offset_of!(Update, clsid), 8);
+    assert_eq!(offset_of!(Update, rps), 64);
+    assert_eq!(size_of::<Credential>(), 64);
+    assert_eq!(size_of::<Uv>(), 32);
 }

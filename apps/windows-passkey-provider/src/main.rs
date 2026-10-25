@@ -2,11 +2,13 @@
 #[cfg(windows)]
 fn main() {
     use std::sync::Arc;
-    use windows_passkey_provider::{registration, NativeUi, ProviderRuntime};
+    use windows_passkey_provider::{registration, HostUi, NativeUi, ProviderRuntime};
     let result = (|| {
         let args: Vec<_> = std::env::args().skip(1).collect();
         match args.as_slice() {
-            [] => {
+            [] => NativeUi.open_management(),
+            [arg] if arg == "manage" => NativeUi.open_management(),
+            [arg] if arg == "inspect" => {
                 println!(
                     "{}",
                     serde_json::to_string(&registration::inspect()?)

@@ -85,15 +85,47 @@ impl HostUi for NativeUi {
             .ok_or(Error::Input)
     }
     fn open_management(&self) -> Result<()> {
-        // Independent host retains the existing desktop's Vault-management ownership.
-        let text=wide("请打开 RSS MDM Agent 的个人 Passkey 页面管理凭据。Windows Passkey 设置只管理 Provider 的启用状态。");
-        unsafe {
-            MessageBoxW(
+        use windows_sys::Win32::{
+            System::Com::CoTaskMemFree,
+            UI::Shell::{FOLDERID_CommonPrograms, SHGetKnownFolderPath, ShellExecuteW},
+        };
+        // The existing installer owns this stable all-users shortcut; do not guess versioned paths.
+        let mut value = std::ptr::null_mut();
+        let path = unsafe {
+            api::hr(SHGetKnownFolderPath(
+                &FOLDERID_CommonPrograms,
+                0,
                 std::ptr::null_mut(),
-                text.as_ptr(),
-                wide("个人 Passkey 管理").as_ptr(),
-                MB_OK,
+                &mut value,
+            ))?;
+            let mut len = 0;
+            while *value.add(len) != 0 {
+                len += 1;
+            }
+            let result = String::from_utf16(std::slice::from_raw_parts(value, len))
+                .map_err(|_| Error::Owner);
+            CoTaskMemFree(value.cast());
+            std::path::PathBuf::from(result?).join("RSS MDM Agent.lnk")
+        };
+        if !path.is_file() {
+            unsafe {
+                MessageBoxW(std::ptr::null_mut(),wide("尚未安装 RSS MDM Agent 桌面管理器。请先安装桌面并在个人 Passkey 页面创建 Vault，再启用此 Provider。个人 Vault 不要求企业登录或 Agent 在线。").as_ptr(),wide("缺少个人 Vault 管理器").as_ptr(),MB_OK|MB_ICONINFORMATION);
+            }
+            return Err(Error::NotFound);
+        }
+        unsafe {
+            MessageBoxW(std::ptr::null_mut(),wide("将在 RSS MDM Agent 桌面打开管理入口；请进入个人 Passkey 页面进行锁定、删除或恢复操作。").as_ptr(),wide("个人 Passkey 管理").as_ptr(),MB_OK|MB_ICONINFORMATION);
+            let result = ShellExecuteW(
+                std::ptr::null_mut(),
+                wide("open").as_ptr(),
+                wide(&path.to_string_lossy()).as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                SW_SHOWNORMAL,
             );
+            if result as isize <= 32 {
+                return Err(Error::SystemUnavailable);
+            }
         }
         Ok(())
     }

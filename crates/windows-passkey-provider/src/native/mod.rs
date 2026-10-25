@@ -181,7 +181,8 @@ impl ProviderRuntime {
             let token = vault.begin_interaction();
             let status = vault.status()?;
             if !status.initialized {
-                vault.create(&token)?;
+                self.ui.open_management()?;
+                return Err(Error::NotFound);
             } else {
                 vault.unlock(UnlockMethod::System, None, &token)?;
             }

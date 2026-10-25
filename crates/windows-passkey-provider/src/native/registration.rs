@@ -157,7 +157,9 @@ pub fn register() -> Result<()> {
     Ok(())
 }
 fn update(api: &api::Api, info: &[u8]) -> Result<()> {
+    let name = wide("RSS Personal Passkeys");
     let options = api::Update {
+        name: name.as_ptr(),
         clsid: &api::ID,
         new_clsid: &api::ID,
         light: std::ptr::null(),

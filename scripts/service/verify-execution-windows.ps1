@@ -39,7 +39,7 @@ try {
             $Installed=[IO.Path]::GetFullPath($CurrentBinary)
             if ((Get-FileHash -LiteralPath $Installed -Algorithm SHA256).Hash -ine $Frozen.binaries.windowsPasskey.sha256) { throw 'Installed Provider differs from candidate' }
             $Receipt.signature=(Get-AuthenticodeSignature -LiteralPath $Installed).Status.ToString()
-            $Receipt.scenarios.provider=(& $Installed | ConvertFrom-Json)
+            $Receipt.scenarios.provider=(& $Installed inspect | ConvertFrom-Json)
             if ($LASTEXITCODE -ne 0 -or !$Receipt.scenarios.provider.registered) { throw 'Provider registration/identity unavailable' }
             $Receipt.scenarios.systemAccepted=$false
             $Receipt.unexecuted=@('real browser create/assert and RP acceptance','Hello cancellation and lock','cross-user requests','upgrade interruption and repair','uninstall/reinstall and deleted-credential rollback','Google/GitHub acceptance')

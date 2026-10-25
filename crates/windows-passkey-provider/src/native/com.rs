@@ -249,34 +249,7 @@ pub fn run(runtime: Arc<ProviderRuntime>) -> Result<()> {
             }
         }
         let _com = Com;
-        // Local current user and Windows broker only; reject remote activation and anonymous calls.
-        let mut descriptor = std::ptr::null_mut();
-        if ConvertStringSecurityDescriptorToSecurityDescriptorW(
-            wide(&format!(
-                "O:{0}G:{0}D:(A;;0xB;;;{0})(A;;0xB;;;SY)",
-                runtime.owner
-            ))
-            .as_ptr(),
-            1,
-            &mut descriptor,
-            std::ptr::null_mut(),
-        ) == 0
-        {
-            return Err(Error::Owner);
-        }
-        let security = CoInitializeSecurity(
-            descriptor,
-            -1,
-            std::ptr::null(),
-            std::ptr::null(),
-            RPC_C_AUTHN_LEVEL_PKT_PRIVACY,
-            RPC_C_IMP_LEVEL_IDENTIFY,
-            std::ptr::null(),
-            EOAC_DISABLE_AAA as u32,
-            std::ptr::null(),
-        );
-        LocalFree(descriptor.cast());
-        api::hr(security)?;
+        initialize_security(&runtime.owner)?;
         let factory = object(runtime.clone(), true);
         let mut cookie = 0;
         let result = CoRegisterClassObject(
@@ -374,5 +347,63 @@ pub fn refresh_index() -> Result<()> {
         (table.base.release)(object);
         CoUninitialize();
         api::hr(result)
+    }
+}
+
+fn initialize_security(owner: &str) -> Result<()> {
+    use windows_sys::Win32::Security::*;
+    // CoInitializeSecurity requires an absolute descriptor. Its pointer fields borrow
+    // the relative descriptor's SID/ACL backing allocation through the complete call.
+    unsafe {
+        let mut relative = std::ptr::null_mut();
+        if ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            wide(&format!("O:{0}G:{0}D:(A;;0xB;;;{0})(A;;0xB;;;SY)", owner)).as_ptr(),
+            1,
+            &mut relative,
+            std::ptr::null_mut(),
+        ) == 0
+        {
+            return Err(Error::Owner);
+        }
+        struct Relative(PSECURITY_DESCRIPTOR);
+        impl Drop for Relative {
+            fn drop(&mut self) {
+                unsafe {
+                    LocalFree(self.0.cast());
+                }
+            }
+        }
+        let _backing = Relative(relative);
+        let (mut sid, mut group, mut dacl) = (
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        );
+        let (mut defaulted, mut present) = (0, 0);
+        let mut absolute: SECURITY_DESCRIPTOR = std::mem::zeroed();
+        let descriptor = (&mut absolute as *mut SECURITY_DESCRIPTOR).cast();
+        if GetSecurityDescriptorOwner(relative, &mut sid, &mut defaulted) == 0
+            || GetSecurityDescriptorGroup(relative, &mut group, &mut defaulted) == 0
+            || GetSecurityDescriptorDacl(relative, &mut present, &mut dacl, &mut defaulted) == 0
+            || present == 0
+            || dacl.is_null()
+            || InitializeSecurityDescriptor(descriptor, 1) == 0
+            || SetSecurityDescriptorOwner(descriptor, sid, 0) == 0
+            || SetSecurityDescriptorGroup(descriptor, group, 0) == 0
+            || SetSecurityDescriptorDacl(descriptor, 1, dacl, 0) == 0
+        {
+            return Err(Error::Owner);
+        }
+        api::hr(CoInitializeSecurity(
+            descriptor,
+            -1,
+            std::ptr::null(),
+            std::ptr::null(),
+            RPC_C_AUTHN_LEVEL_PKT_PRIVACY,
+            RPC_C_IMP_LEVEL_IDENTIFY,
+            std::ptr::null(),
+            EOAC_DISABLE_AAA as u32,
+            std::ptr::null(),
+        ))
     }
 }
