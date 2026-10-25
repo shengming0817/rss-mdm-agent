@@ -165,11 +165,13 @@ impl Candidate {
             return Err(Error::Configuration);
         }
         if let Some(psso) = &self.platform_sso {
-            if !psso.extension.path.starts_with(&self.root)
-                || self.target != Target::current().map_err(|_| Error::Unsupported)?
-            {
+            if !psso.extension.path.starts_with(&self.root) || self.target != Target::MacosArm64 {
                 return Err(Error::Configuration);
             }
+            rss_mdm_agent_wire::platform_sso::Endpoints::new(
+                &psso.origin,
+                uuid::Uuid::from_u128(1),
+            )?;
         }
         if let Some(dll) = &self.windows_login {
             if self.target.platform() != "win32"
@@ -190,12 +192,10 @@ impl Candidate {
         for image in [&self.service, &self.desktop]
             .into_iter()
             .chain(self.windows_login.iter())
+            .chain(self.platform_sso.iter().map(|psso| &psso.extension))
         {
             image.verify(&image.path).map_err(|_| Error::Identity)?;
             validate_native_artifact(image)?;
-        }
-        if let Some(psso) = &self.platform_sso {
-            psso.verify()?;
         }
         installation_security::protected(&self.runtime_root).map_err(|_| Error::Identity)?;
         installation_security::runtime::verify(
