@@ -19,13 +19,21 @@ pub(super) fn apply(
     let record = store
         .prepare_hello(task, authority(task, sid, native)?)
         .map_err(|_| Error::Identity)?;
-    let (facts, owned) = match native.hello(&record, true) {
-        Ok(facts) => facts,
+    let before = match native.hello_prepare(&record) {
+        Ok(value) => value,
         Err(reason) => return Ok(Effect::Failed { reason }),
     };
+    let record = store
+        .begin_hello_policy(&record, before)
+        .map_err(|_| Error::Storage)?;
     if native.clock()?.utc >= task.deadline {
         return Ok(Effect::Unknown);
     }
+    let (facts, owned) = match native.hello(&record, true) {
+        Ok(facts) => facts,
+        // The intent is durable: a failed call may already have changed native state.
+        Err(_) => return Ok(Effect::Unknown),
+    };
     let facts = store
         .observe_hello(&record, facts, owned)
         .map_err(|_| Error::Storage)?;
@@ -134,4 +142,29 @@ pub(crate) fn refresh(
         .map_err(|_| Error::Storage)?;
     let effect = effect(task, &record, facts, &native)?;
     state::write(root, &name(task, "result"), &report(task, effect))
+}
+
+/// Accepted unmanage keeps observations running without policy or destructive retries.
+#[cfg(windows)]
+pub(crate) fn drain(root: &Path, installation: uuid::Uuid) -> Result<bool, Error> {
+    if !root.exists() {
+        return Ok(true);
+    }
+    let _lock = state::lock(root)?;
+    let mut store = device_access::Store::open(root, installation).map_err(|_| Error::Storage)?;
+    let mut native = super::windows::NativeWindows {
+        root: root.into(),
+        installation,
+    };
+    for record in store.hello_records().map_err(|_| Error::Storage)? {
+        if !record.retired {
+            continue;
+        }
+        if let Ok((facts, owned)) = engine::Native::hello(&mut native, &record, false) {
+            store
+                .observe_hello(&record, facts, owned)
+                .map_err(|_| Error::Storage)?;
+        }
+    }
+    store.hello_cleanup_complete().map_err(|_| Error::Storage)
 }

@@ -2,7 +2,7 @@
 //! ref: MicrosoftDocs/win32 desktop-src/DMWmiBridgeProv/mdm-passportforwork-policies02.md;
 //! microsoft/windows-rs 0.61.3 Win32/System/Wmi (IWbemContext, GetObject, PutInstance).
 use super::super::*;
-use device_access::hello::HelloRecord;
+use device_access::hello::{HelloPolicy, HelloRecord};
 use execution_ipc::device_access::{WindowsHelloAvailability as Availability, WindowsHelloStatus};
 use w::{AccessFailure as Failure, AccessObservation as O};
 use windows_sys::Win32::System::Registry::*;
@@ -149,24 +149,40 @@ fn conflicts(record: &HelloRecord) -> Result<bool, Failure> {
     {
         return Ok(true);
     }
-    let path = user_path(record)?;
-    Ok(!record.policy_owned
-        && (dword(HKEY_LOCAL_MACHINE, &path, "UsePassportForWork")?.is_some()
-            || dword(HKEY_LOCAL_MACHINE, &path, "RequireSecurityDevice")?.is_some()))
+    Ok(!record.policy.accepts(policy_value(record)?))
 }
-fn policy(record: &HelloRecord) -> Result<O, Failure> {
-    if !record.policy_owned || conflicts(record)? {
-        return Ok(O::Unknown);
-    }
+fn policy_value(record: &HelloRecord) -> Result<Option<bool>, Failure> {
     let path = user_path(record)?;
     match (
         dword(HKEY_LOCAL_MACHINE, &path, "UsePassportForWork")?,
         dword(HKEY_LOCAL_MACHINE, &path, "RequireSecurityDevice")?,
     ) {
-        (Some(1), Some(1)) => Ok(O::Present),
-        (Some(0), _) => Ok(O::Absent),
-        _ => Ok(O::Unknown),
+        (None, None) => Ok(None),
+        (Some(0), Some(1)) => Ok(Some(false)),
+        (Some(1), Some(1)) => Ok(Some(true)),
+        _ => Err(Failure::Unsupported),
     }
+}
+fn policy(record: &HelloRecord) -> Result<O, Failure> {
+    if matches!(record.policy, HelloPolicy::Unmanaged) || conflicts(record)? {
+        return Ok(O::Unknown);
+    }
+    Ok(match policy_value(record)? {
+        Some(true) => O::Present,
+        Some(false) => O::Absent,
+        None => O::Unknown,
+    })
+}
+/// Read-only eligibility and exact before-state, persisted by the worker before PutInstance.
+pub(super) fn prepare(
+    native: &super::NativeWindows,
+    record: &HelloRecord,
+) -> Result<Option<bool>, Failure> {
+    verify(native, record)?;
+    if conflicts(record)? {
+        return Err(Failure::Unsupported);
+    }
+    policy_value(record)
 }
 fn user(subject: &str) -> Result<execution_ipc::device_access::WindowsHelloUser, Failure> {
     let deployment = crate::deployment::Deployment::metadata(
@@ -194,11 +210,7 @@ fn user(subject: &str) -> Result<execution_ipc::device_access::WindowsHelloUser,
         _ => Err(Failure::NativeFailure),
     }
 }
-pub(super) fn observe(
-    native: &super::NativeWindows,
-    record: &HelloRecord,
-    mutate: bool,
-) -> Result<(w::AccessWhfbFacts, bool), Failure> {
+fn verify(native: &super::NativeWindows, record: &HelloRecord) -> Result<(), Failure> {
     let deployment = crate::deployment::Deployment::metadata(
         &crate::deployment::Deployment::default_path().map_err(|_| Failure::NativeFailure)?,
     )
@@ -210,6 +222,23 @@ pub(super) fn observe(
     }
     device_access::windows::require_system().map_err(|_| Failure::NativeFailure)?;
     device_access::windows::account::verify_bound(&record.authority)?;
+    if !matches!(
+        record.authority.source,
+        w::AccessWindowsAuthority::Entra { .. }
+    ) {
+        return Err(Failure::Unsupported);
+    }
+    if record.enabled && !supported() {
+        return Err(Failure::Unsupported);
+    }
+    Ok(())
+}
+pub(super) fn observe(
+    native: &super::NativeWindows,
+    record: &HelloRecord,
+    mutate: bool,
+) -> Result<(w::AccessWhfbFacts, bool), Failure> {
+    verify(native, record)?;
     let w::AccessWindowsAuthority::Entra {
         tenant_id,
         object_id,
@@ -217,16 +246,18 @@ pub(super) fn observe(
     else {
         return Err(Failure::Unsupported);
     };
-    if record.enabled && !supported() {
-        return Err(Failure::Unsupported);
-    }
-    if mutate && conflicts(record)? {
+    if mutate
+        && (conflicts(record)?
+            || !matches!(record.policy, HelloPolicy::WritePending { enabled, .. } if enabled == record.enabled))
+    {
         return Err(Failure::Unsupported);
     }
     let mut observed = record.clone();
     if mutate {
         set_policy(record)?;
-        observed.policy_owned = true;
+        observed.policy = HelloPolicy::Owned {
+            enabled: record.enabled,
+        };
     }
     let policy = policy(&observed)?;
     let current = user(&record.authority.sid).ok();
@@ -248,7 +279,14 @@ pub(super) fn observe(
         })
         .map_err(|_| Failure::NativeFailure)?;
     device_access::windows::account::verify_bound(&record.authority)?;
-    Ok((facts, observed.policy_owned))
+    let confirmed = !matches!(observed.policy, HelloPolicy::Unmanaged)
+        && policy
+            == if record.enabled {
+                O::Present
+            } else {
+                O::Absent
+            };
+    Ok((facts, confirmed))
 }
 pub(crate) fn status(root: &Path, installation: uuid::Uuid, subject: &str) -> WindowsHelloStatus {
     let mut status = WindowsHelloStatus {
@@ -294,8 +332,7 @@ pub(crate) fn status(root: &Path, installation: uuid::Uuid, subject: &str) -> Wi
     ) {
         Ok((mut facts, _)) => {
             status.availability = Availability::Eligible;
-            status.replacement_required =
-                record.previous_key.is_some() && facts.key_id == record.previous_key;
+            status.replacement_required = record.rejects_key(facts.key_id);
             if status.replacement_required && !record.retired {
                 facts.registration = O::Unknown;
                 facts.hardware_key = O::Unknown;
@@ -459,7 +496,9 @@ fn set_policy(record: &HelloRecord) -> Result<(), Failure> {
             .PutInstance(&object, WBEM_GENERIC_FLAG_TYPE(0), Some(&context), None)
             .map_err(|_| Failure::NativeFailure)?;
         let mut confirmed = record.clone();
-        confirmed.policy_owned = true;
+        confirmed.policy = HelloPolicy::Owned {
+            enabled: record.enabled,
+        };
         if policy(&confirmed)?
             != if record.enabled {
                 O::Present

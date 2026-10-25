@@ -2,6 +2,30 @@
 use super::*;
 use rss_mdm_agent_wire::runtime as w;
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
+pub enum HelloPolicy {
+    Unmanaged,
+    WritePending {
+        previous: Option<bool>,
+        enabled: bool,
+    },
+    Owned {
+        enabled: bool,
+    },
+}
+impl HelloPolicy {
+    /// Only the exact before/after state of an authorized write may be recovered.
+    pub fn accepts(&self, actual: Option<bool>) -> bool {
+        match self {
+            Self::Unmanaged => actual.is_none(),
+            Self::WritePending { previous, enabled } => {
+                actual == *previous || actual == Some(*enabled)
+            }
+            Self::Owned { enabled } => actual == Some(*enabled),
+        }
+    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HelloRecord {
@@ -12,8 +36,21 @@ pub struct HelloRecord {
     pub retired: bool,
     pub previous_key: Option<Uuid>,
     pub last_key: Option<Uuid>,
-    pub policy_owned: bool,
+    pub policy: HelloPolicy,
+    pub replacement_key: Option<Uuid>,
     pub observation: Option<w::AccessWhfbFacts>,
+}
+impl HelloRecord {
+    pub fn rejects_key(&self, key: Option<Uuid>) -> bool {
+        key.is_some() && (key == self.previous_key || key == self.replacement_key)
+    }
+    pub fn cleanup_complete(&self) -> bool {
+        self.retired
+            && self.observation.as_ref().is_some_and(|facts| {
+                facts.policy == w::AccessObservation::Absent
+                    && facts.registration == w::AccessObservation::Absent
+            })
+    }
 }
 fn load_hello(conn: &Connection, sid: &str) -> Result<Option<HelloRecord>, Error> {
     let bytes: Option<Vec<u8>> = conn
@@ -115,6 +152,13 @@ impl Store {
             }
         }
         let old = load_hello(&tx, &authority.sid)?;
+        if old.is_none()
+            && tx.query_row("SELECT count(*) FROM hello_bindings", [], |row| {
+                row.get::<_, i64>(0)
+            })? >= 128
+        {
+            return Err(Error::Invalid);
+        }
         if let Some(old) = &old {
             let same = old.authority.registration() == authority.registration()
                 && old.authority.binding == authority.binding;
@@ -134,40 +178,36 @@ impl Store {
                 {
                     return Err(Error::Changed);
                 }
-            } else if !old.retired
-                || !old
-                    .observation
-                    .as_ref()
-                    .is_some_and(|f| f.registration == w::AccessObservation::Absent)
-            {
+            } else if !old.cleanup_complete() {
                 return Err(Error::Changed);
             }
         }
-        let previous_key = (*previous_key).or_else(|| {
-            old.as_ref().and_then(|old| {
-                if old.authority.binding != authority.binding
-                    || old.authority.factor_generation < authority.factor_generation
-                {
-                    old.last_key.or(old.previous_key)
-                } else {
-                    old.previous_key
-                }
+        let replacement_key = old.as_ref().and_then(|old| {
+            if old.authority.binding != authority.binding
+                || old.authority.factor_generation < authority.factor_generation
+            {
+                old.last_key.or(old.replacement_key)
+            } else {
+                old.replacement_key
+            }
+        });
+        let policy = old
+            .as_ref()
+            .filter(|v| {
+                v.authority.source == authority.source
+                    && v.authority.registration() == authority.registration()
             })
-        });
-        let policy_owned = old.as_ref().is_some_and(|v| {
-            v.policy_owned
-                && v.authority.source == authority.source
-                && v.authority.registration() == authority.registration()
-        });
+            .map_or(HelloPolicy::Unmanaged, |v| v.policy.clone());
         let mut value = HelloRecord {
             authority,
             revision: task.revision,
             definition_digest: task.definition_digest,
             enabled,
             retired: *retire,
-            previous_key,
+            previous_key: *previous_key,
+            replacement_key,
             last_key: old.as_ref().and_then(|v| v.last_key),
-            policy_owned,
+            policy,
             observation: None,
         };
         if let Some(old) = old {
@@ -193,16 +233,53 @@ impl Store {
             .collect::<Result<Vec<_>, _>>()?;
         for sid in sids {
             let record = load_hello(&self.conn, &sid)?.ok_or(Error::Invalid)?;
-            if !record.retired
-                || !record.observation.as_ref().is_some_and(|facts| {
-                    facts.policy == w::AccessObservation::Absent
-                        && facts.registration == w::AccessObservation::Absent
-                })
-            {
+            if !record.cleanup_complete() {
                 return Ok(false);
             }
         }
         Ok(true)
+    }
+    /// Persist the authorized write before any external effect, under the same task fence.
+    pub fn begin_hello_policy(
+        &mut self,
+        expected: &HelloRecord,
+        previous: Option<bool>,
+    ) -> Result<HelloRecord, Error> {
+        self.check_files()?;
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        registration::require(&tx, &expected.authority)?;
+        let mut current = load_hello(&tx, &expected.authority.sid)?.ok_or(Error::Changed)?;
+        if current.authority != expected.authority
+            || current.revision != expected.revision
+            || current.definition_digest != expected.definition_digest
+            || !current.policy.accepts(previous)
+        {
+            return Err(Error::Changed);
+        }
+        if !matches!(current.policy, HelloPolicy::WritePending { enabled, .. } if enabled == current.enabled)
+        {
+            current.policy = HelloPolicy::WritePending {
+                previous,
+                enabled: current.enabled,
+            };
+            save_hello(&tx, &current)?;
+        }
+        tx.commit()?;
+        Ok(current)
+    }
+    /// Retained native records for read-only retirement drain; never grants mutation authority.
+    pub fn hello_records(&self) -> Result<Vec<HelloRecord>, Error> {
+        self.check_files()?;
+        let sids = self
+            .conn
+            .prepare("SELECT sid FROM hello_bindings")?
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        sids.iter()
+            .map(|sid| self.hello(sid)?.ok_or(Error::Invalid))
+            .collect()
     }
     /// Read retained ownership; callers still establish current OS identity independently.
     pub fn hello(&self, sid: &str) -> Result<Option<HelloRecord>, Error> {
@@ -247,8 +324,7 @@ impl Store {
         }
         if !current.retired
             && facts.registration == w::AccessObservation::Present
-            && current.previous_key.is_some()
-            && facts.key_id == current.previous_key
+            && current.rejects_key(facts.key_id)
         {
             facts.registration = w::AccessObservation::Unknown;
             facts.hardware_key = w::AccessObservation::Unknown;
@@ -256,7 +332,21 @@ impl Store {
         if facts.registration == w::AccessObservation::Present {
             current.last_key = facts.key_id;
         }
-        current.policy_owned |= policy_owned;
+        if policy_owned {
+            if matches!(current.policy, HelloPolicy::Unmanaged)
+                || facts.policy
+                    != if current.enabled {
+                        w::AccessObservation::Present
+                    } else {
+                        w::AccessObservation::Absent
+                    }
+            {
+                return Err(Error::Changed);
+            }
+            current.policy = HelloPolicy::Owned {
+                enabled: current.enabled,
+            };
+        }
         current.observation = Some(facts.clone());
         save_hello(&tx, &current)?;
         tx.commit()?;
@@ -279,13 +369,7 @@ pub(super) fn retire_all(conn: &Connection) -> Result<(), Error> {
 }
 
 pub(super) fn require_rss(conn: &Connection, sid: &str) -> Result<(), Error> {
-    if load_hello(conn, sid)?.is_some_and(|r| {
-        !r.retired
-            || !r
-                .observation
-                .as_ref()
-                .is_some_and(|f| f.registration == w::AccessObservation::Absent)
-    }) {
+    if load_hello(conn, sid)?.is_some_and(|r| !r.cleanup_complete()) {
         Err(Error::Changed)
     } else {
         Ok(())

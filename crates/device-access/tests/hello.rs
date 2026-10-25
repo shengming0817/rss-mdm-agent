@@ -136,6 +136,7 @@ fn current_format_reopens_pending_native_state_and_rejects_stale_observations() 
     let mut f = Fixture::new();
     let mut s = f.store();
     let record = s.prepare_hello(&f.task, f.authority.clone()).unwrap();
+    let record = s.begin_hello_policy(&record, None).unwrap();
     let key = Uuid::new_v4();
     let facts = s
         .observe_hello(&record, f.facts(Some(key), 1800000000), true)
@@ -144,7 +145,10 @@ fn current_format_reopens_pending_native_state_and_rejects_stale_observations() 
     drop(s);
     let mut s = Store::open(&f.root, f.installation).unwrap();
     let retained = s.hello(&f.authority.sid).unwrap().unwrap();
-    assert!(retained.policy_owned);
+    assert!(matches!(
+        retained.policy,
+        device_access::hello::HelloPolicy::Owned { enabled: true }
+    ));
     assert_eq!(retained.last_key, Some(key));
     assert!(s
         .observe_hello(&record, f.facts(None, 1799999999), false)
@@ -161,6 +165,7 @@ fn replacement_generation_cannot_reuse_old_key_or_erase_key_fence() {
     let mut f = Fixture::new();
     let mut s = f.store();
     let record = s.prepare_hello(&f.task, f.authority.clone()).unwrap();
+    let record = s.begin_hello_policy(&record, None).unwrap();
     let old = Uuid::new_v4();
     s.observe_hello(&record, f.facts(Some(old), 1800000000), true)
         .unwrap();
@@ -168,7 +173,7 @@ fn replacement_generation_cannot_reuse_old_key_or_erase_key_fence() {
     f.authority.factor_generation += 1;
     f.task.factor_generation += 1;
     let replacement = s.prepare_hello(&f.task, f.authority.clone()).unwrap();
-    assert_eq!(replacement.previous_key, Some(old));
+    assert_eq!(replacement.replacement_key, Some(old));
     let reused = s
         .observe_hello(&replacement, f.facts(Some(old), 1800000001), false)
         .unwrap();
@@ -211,12 +216,90 @@ fn retirement_blocks_replay_and_new_binding_until_native_cleanup_observed() {
     f.task.action = old.action.clone();
     f.task.windows = old.windows.clone();
     assert!(s.prepare_hello(&f.task, f.authority.clone()).is_err());
-    s.observe_hello(&retired, f.facts(None, 1800000000), true)
+    s.observe_hello(&retired, f.facts(None, 1800000000), false)
         .unwrap();
+    assert!(!s.hello_cleanup_complete().unwrap());
+    assert!(s.prepare_hello(&f.task, f.authority.clone()).is_err());
+    let mut cleared = f.facts(None, 1800000001);
+    cleared.policy = w::AccessObservation::Absent;
+    s.observe_hello(&retired, cleared, false).unwrap();
+    assert!(s.hello_cleanup_complete().unwrap());
     s.prepare_hello(&f.task, f.authority.clone()).unwrap();
     s.retire_registration().unwrap();
     assert!(s.prepare_hello(&f.task, f.authority.clone()).is_err());
     assert!(s
         .observe_hello(&retired, f.facts(None, 1800000001), true)
         .is_err());
+}
+
+#[test]
+fn interrupted_policy_write_retains_precise_before_and_after_states() {
+    use device_access::hello::HelloPolicy;
+    let f = Fixture::new();
+    let mut s = f.store();
+    let record = s.prepare_hello(&f.task, f.authority.clone()).unwrap();
+    assert!(s.begin_hello_policy(&record, Some(true)).is_err());
+    let intent = s.begin_hello_policy(&record, None).unwrap();
+    drop(s);
+    let mut s = Store::open(&f.root, f.installation).unwrap();
+    let retained = s.hello(&f.authority.sid).unwrap().unwrap();
+    assert_eq!(
+        retained.policy,
+        HelloPolicy::WritePending {
+            previous: None,
+            enabled: true
+        }
+    );
+    assert!(retained.policy.accepts(None));
+    assert!(retained.policy.accepts(Some(true)));
+    assert!(!retained.policy.accepts(Some(false)));
+    // The native write may have succeeded without its checkpoint. Exact readback confirms it.
+    s.observe_hello(&intent, f.facts(None, 1800000000), true)
+        .unwrap();
+    assert_eq!(
+        s.hello(&f.authority.sid).unwrap().unwrap().policy,
+        HelloPolicy::Owned { enabled: true }
+    );
+}
+#[test]
+fn lagging_remote_key_never_replaces_the_newer_local_generation_fence() {
+    let mut f = Fixture::new();
+    let mut s = f.store();
+    let record = s.prepare_hello(&f.task, f.authority.clone()).unwrap();
+    let local = Uuid::new_v4();
+    s.observe_hello(&record, f.facts(Some(local), 1800000000), false)
+        .unwrap();
+    f.next();
+    f.authority.factor_generation += 1;
+    f.task.factor_generation += 1;
+    let remote = Uuid::new_v4();
+    f.task.windows = Some(w::AccessWindowsPlan::Whfb {
+        retire: false,
+        previous_key: Some(remote),
+    });
+    let replacement = s.prepare_hello(&f.task, f.authority.clone()).unwrap();
+    assert!(replacement.rejects_key(Some(remote)));
+    assert!(replacement.rejects_key(Some(local)));
+    assert_eq!(
+        s.observe_hello(&replacement, f.facts(Some(local), 1800000001), false)
+            .unwrap()
+            .registration,
+        w::AccessObservation::Unknown
+    );
+    assert_eq!(
+        s.observe_hello(&replacement, f.facts(Some(remote), 1800000002), false)
+            .unwrap()
+            .registration,
+        w::AccessObservation::Unknown
+    );
+    assert_eq!(
+        s.observe_hello(
+            &replacement,
+            f.facts(Some(Uuid::new_v4()), 1800000003),
+            false
+        )
+        .unwrap()
+        .registration,
+        w::AccessObservation::Present
+    );
 }

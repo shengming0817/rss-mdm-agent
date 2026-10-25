@@ -8,6 +8,10 @@ use w::{
 use zeroize::Zeroizing;
 
 pub(super) trait Native: Protector {
+    fn hello_prepare(
+        &self,
+        record: &device_access::hello::HelloRecord,
+    ) -> Result<Option<bool>, w::AccessFailure>;
     fn hello(
         &mut self,
         record: &device_access::hello::HelloRecord,

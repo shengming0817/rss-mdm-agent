@@ -42,13 +42,43 @@ const directory = ref<Directory>(),
   tasks = ref<Task[]>([]),
   selected = ref<Task>();
 const hello = computed(() => windowsStatus.value?.hello);
-const helloPolicy = computed(() => hello.value?.desiredEnabled != null || directory.value?.bindings.some((b) => b.configuration.windows.kind === "whfb") || directory.value?.policies.some((p) => p.configuration.windows.kind === "whfb"));
-const rssPolicy = computed(() => !helloPolicy.value || directory.value?.bindings.some((b) => b.configuration.windows.kind === "rss_factor") || directory.value?.policies.some((p) => p.configuration.windows.kind === "rss_factor"));
+const helloPolicy = computed(
+  () =>
+    hello.value?.desiredEnabled != null ||
+    directory.value?.bindings.some(
+      (b) => b.configuration.windows.kind === "whfb",
+    ) ||
+    directory.value?.policies.some(
+      (p) => p.configuration.windows.kind === "whfb",
+    ),
+);
+const rssPolicy = computed(
+  () =>
+    !helloPolicy.value ||
+    directory.value?.bindings.some(
+      (b) => b.configuration.windows.kind === "rss_factor",
+    ) ||
+    directory.value?.policies.some(
+      (p) => p.configuration.windows.kind === "rss_factor",
+    ),
+);
 function nativeFact(value?: string) {
-  return value === "present" ? "已确认存在" : value === "absent" ? "已确认不存在" : value === "needs_administrator" ? "需要管理员" : "待核验";
+  return value === "present"
+    ? "已确认存在"
+    : value === "absent"
+      ? "已确认不存在"
+      : value === "needs_administrator"
+        ? "需要管理员"
+        : "待核验";
 }
 function helloAvailability(value?: string) {
-  return value === "eligible" ? "具备本机配置前提" : value === "unsupported" ? "此账号或平台不在配置范围" : value === "conflict" ? "存在其他管理策略，请联系管理员" : "尚无法取得本机状态";
+  return value === "eligible"
+    ? "具备本机配置前提"
+    : value === "unsupported"
+      ? "此账号或平台不在配置范围"
+      : value === "conflict"
+        ? "存在其他管理策略，请联系管理员"
+        : "尚无法取得本机状态";
 }
 const secret = ref(""),
   code = ref(""),
@@ -164,8 +194,10 @@ async function openHello() {
   await action(async (port, valid) => {
     const result = await port({ kind: "openWindowsHello" });
     if (!valid()) return;
-    if (result.kind !== "windowsHelloSettingsRequested") throw new Error("response");
-    message.value = "已请求打开 Windows 登录选项。请在系统中完成注册或 PIN 恢复，再刷新状态；打开设置不代表注册成功。";
+    if (result.kind !== "windowsHelloSettingsRequested")
+      throw new Error("response");
+    message.value =
+      "已请求打开 Windows 登录选项。请在系统中完成注册或 PIN 恢复，再刷新状态；打开设置不代表注册成功。";
   });
 }
 async function prepare(task: Task) {
@@ -244,6 +276,31 @@ function accountText(binding: Directory["bindings"][number]) {
   }
 }
 function bindingText(binding: Directory["bindings"][number]) {
+  if (binding.configuration.windows.kind === "whfb") {
+    const effect = binding.effect;
+    if (
+      effect?.state === "whfb_retired" &&
+      binding.appliedRevision === binding.revision
+    ) {
+      const account =
+        effect.disposition === "disable"
+          ? "系统账号登录已限制"
+          : effect.disposition === "standard"
+            ? "管理员资格已移除"
+            : "系统账号保持原状";
+      return `WHfB 原生策略与用户凭据清理已确认；${account}`;
+    }
+    if (binding.revoked) return "WHfB 绑定已退役，等待策略与用户凭据清理确认";
+    if (
+      effect?.state === "applied" &&
+      binding.appliedRevision === binding.revision
+    )
+      return binding.configuration.enabled
+        ? "WHfB 配置与注册已确认；不代表本次登录成功"
+        : "WHfB 新注册已停用；已有凭据可能仍保留";
+    if (effect?.state === "failed") return "WHfB 配置失败，请联系管理员处理";
+    return "WHfB 状态待核验";
+  }
   if (binding.effect?.state === "unbound") {
     switch (binding.effect.disposition) {
       case "keep":
@@ -301,7 +358,9 @@ onUnmounted(() => {
       Token、FileVault 和 SSO 是独立状态。
     </p>
     <p v-else>
-      按组织配置使用 RSS 附加因子或 Windows Hello 企业登录。RSS 恢复密钥只替代 RSS 验证码；Windows Hello 的 PIN 和恢复由系统处理。系统原有登录选项继续保留。
+      按组织配置使用 RSS 附加因子或 Windows Hello 企业登录。RSS 恢复密钥只替代
+      RSS 验证码；Windows Hello 的 PIN
+      和恢复由系统处理。系统原有登录选项继续保留。
     </p>
     <p v-if="!mac">
       首次启用或设备重新加入 Entra 后，请注销 Windows
@@ -330,13 +389,50 @@ onUnmounted(() => {
       </p>
       <section v-if="!mac && helloPolicy" aria-label="Windows Hello 企业登录">
         <h4>Windows Hello 企业登录</h4>
-        <p role="status">{{ helloAvailability(hello?.availability) }}。期望配置：{{ hello?.desiredEnabled == null ? "待接收" : hello.desiredEnabled ? "启用" : "停用" }}。</p>
-        <p>原生策略：{{ nativeFact(hello?.facts?.policy) }}；用户注册：{{ nativeFact(hello?.facts?.registration) }}；用户密钥硬件保护：{{ nativeFact(hello?.facts?.hardwareKey) }}。</p>
-        <p v-if="hello?.facts?.hardwareKey !== 'present'">当前无法确证用户登录密钥的硬件保护，完整生效状态保持待核验。设备 TPM 存在或策略已配置不等于该证明。</p>
-        <p v-if="hello?.replacementRequired">原密钥不能满足新的凭据代际，请通过 Windows 原生恢复或重新注册后刷新。</p>
-        <p v-if="hello?.retired">RSS 绑定已退役；停止注册不等于已有凭据已删除。请按管理员指引完成原生清理。</p>
-        <button :disabled="busy || hello?.availability === 'unsupported'" @click="openHello">打开 Windows 登录选项</button>
-        <p>PIN 不会进入 RSS。忘记 PIN 请使用系统恢复；清空 Hello 容器可能同时删除其他本机 Passkey，须由管理员明确确认影响后处理。</p>
+        <p role="status">
+          {{ helloAvailability(hello?.availability) }}。期望配置：{{
+            hello?.desiredEnabled == null
+              ? "待接收"
+              : hello.desiredEnabled
+                ? "启用"
+                : "停用"
+          }}。
+        </p>
+        <p>
+          原生策略：{{ nativeFact(hello?.facts?.policy) }}；用户注册：{{
+            nativeFact(hello?.facts?.registration)
+          }}；用户密钥硬件保护：{{ nativeFact(hello?.facts?.hardwareKey) }}。
+        </p>
+        <p v-if="hello?.facts?.hardwareKey !== 'present'">
+          当前无法确证用户登录密钥的硬件保护，完整生效状态保持待核验。设备 TPM
+          存在或策略已配置不等于该证明。
+        </p>
+        <p v-if="hello?.replacementRequired">
+          原密钥不能满足新的凭据代际，请通过 Windows 原生恢复或重新注册后刷新。
+        </p>
+        <p
+          v-if="
+            hello?.retired &&
+            hello.facts?.policy === 'absent' &&
+            hello.facts?.registration === 'absent'
+          "
+        >
+          原生策略与用户凭据清理已确认；目录撤销由管理员独立确认。
+        </p>
+        <p v-else-if="hello?.retired">
+          RSS
+          绑定已退役；停止注册不等于已有凭据已删除。请按管理员指引完成原生清理。
+        </p>
+        <button
+          :disabled="busy || hello?.availability === 'unsupported'"
+          @click="openHello"
+        >
+          打开 Windows 登录选项
+        </button>
+        <p>
+          PIN 不会进入 RSS。忘记 PIN 请使用系统恢复；清空 Hello
+          容器可能同时删除其他本机 Passkey，须由管理员明确确认影响后处理。
+        </p>
       </section>
       <p v-if="macStatus" role="status">
         模式：{{
@@ -398,7 +494,11 @@ onUnmounted(() => {
       <div v-for="policy in directory?.policies" :key="policy.policy">
         <p>策略 {{ policy.policy }} · 版本 {{ policy.version }}</p>
         <p>
-          {{ !mac && policy.configuration.windows.kind === "whfb" ? "Windows Hello 企业登录" : "RSS 登录" }}：{{ policy.configuration.enabled ? "启用" : "停用" }}；
+          {{
+            !mac && policy.configuration.windows.kind === "whfb"
+              ? "Windows Hello 企业登录"
+              : "RSS 登录"
+          }}：{{ policy.configuration.enabled ? "启用" : "停用" }}；
           账户角色：{{
             policy.configuration.role === "administrator"
               ? "管理员"

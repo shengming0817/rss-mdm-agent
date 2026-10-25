@@ -16,6 +16,12 @@ impl Protector for NativeWindows {
     }
 }
 impl engine::Native for NativeWindows {
+    fn hello_prepare(
+        &self,
+        record: &device_access::hello::HelloRecord,
+    ) -> Result<Option<bool>, w::AccessFailure> {
+        hello::prepare(self, record)
+    }
     fn hello(
         &mut self,
         record: &device_access::hello::HelloRecord,

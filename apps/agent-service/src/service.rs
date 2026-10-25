@@ -374,6 +374,18 @@ impl<S: IdentityProvider> DeviceService<S> {
                 if !self.drain_platform_sso(commands).await? {
                     return Ok(());
                 }
+                #[cfg(windows)]
+                if !crate::access_worker::hello::drain(
+                    &self.core.access.root,
+                    self.core.access.installation,
+                )
+                .map_err(|_| Error::Storage)?
+                {
+                    while let Ok(command) = commands.try_recv() {
+                        self.core.handle(command);
+                    }
+                    return Ok(());
+                }
                 if self
                     .core
                     .app

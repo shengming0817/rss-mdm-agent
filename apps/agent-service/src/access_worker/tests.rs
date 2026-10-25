@@ -38,6 +38,12 @@ impl Protector for Fake {
     }
 }
 impl engine::Native for Fake {
+    fn hello_prepare(
+        &self,
+        _: &device_access::hello::HelloRecord,
+    ) -> Result<Option<bool>, w::AccessFailure> {
+        Ok(None)
+    }
     fn hello(
         &mut self,
         _: &device_access::hello::HelloRecord,
