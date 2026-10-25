@@ -212,6 +212,8 @@ pub(super) fn process_matches(pid: i32, bundle: &str, team: &str) -> Result<bool
 }
 
 // The query worker's parent is the supervisor running the same fixed Agent image.
+// run() and the supervisor already hold verify_retained leases for the frozen SHA.
+// Rehashing here would bypass the query's native-read budget.
 // ref: rust-security-framework v3.5.1 security-framework/src/os/macos/code_signing.rs.
 pub(super) fn pinned_process_matches(
     pid: i32,
@@ -227,7 +229,7 @@ pub(super) fn pinned_process_matches(
     }
     let path = std::ffi::CStr::from_bytes_until_nul(&path).map_err(|_| Status::Invalid)?;
     let path = Path::new(std::ffi::OsStr::from_bytes(path.to_bytes()));
-    if image.verify(path).is_err() {
+    if path != image.path {
         return Ok(false);
     }
     let expression = image.requirement().map_err(|_| Status::Invalid)?;
@@ -284,6 +286,8 @@ mod tests {
             cdhash: evidence.cdhash,
             path,
         };
+        let digest = execution_contract::Digest::new(image.sha256.clone()).unwrap();
+        let _lease = execution_runner::staging::verify_retained(&image.path, &digest).unwrap();
         let mut child = std::process::Command::new(&image.path)
             .arg("10")
             .spawn()
@@ -301,16 +305,12 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         };
         let wrong_pid = pinned_process_matches(std::process::id() as i32, &image).unwrap();
-        image.sha256 = "0".repeat(64);
-        let wrong_sha = pinned_process_matches(pid, &image).unwrap();
-        image.sha256 = crate::installation::hash(&std::fs::read(&image.path).unwrap());
         image.cdhash = Some("0".repeat(40));
         let wrong_code = pinned_process_matches(pid, &image).unwrap();
         child.kill().unwrap();
         child.wait().unwrap();
         assert!(matched);
         assert!(!wrong_pid);
-        assert!(!wrong_sha);
         assert!(!wrong_code);
     }
     #[test]

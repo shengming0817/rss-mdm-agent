@@ -11,12 +11,6 @@ function Run-Provider([string]$Operation) {
 }
 if ((Get-FileHash -LiteralPath $Provider -Algorithm SHA256).Hash.ToLowerInvariant() -ne $Deployment.providerSha256 -or
     (Get-FileHash -LiteralPath $Identity -Algorithm SHA256).Hash.ToLowerInvariant() -ne $Deployment.identitySha256) { throw 'Component digest mismatch' }
-if ($Deployment.release) {
-    foreach ($File in @($Provider,$Identity)) {
-        $Signature = Get-AuthenticodeSignature -LiteralPath $File
-        if ($Signature.Status -ne 'Valid' -or $Signature.SignerCertificate.Subject -ne $Deployment.publisher) { throw 'Component signer mismatch' }
-    }
-}
 $Packages = @(Get-AppxPackage -Name 'RSS.PersonalPasskeys')
 if ($Packages.Count -gt 1 -or ($Packages.Count -eq 1 -and $Packages[0].Publisher -ne $Deployment.publisher)) { throw 'Another host owns the Passkey package identity' }
 if ($Packages.Count -eq 1 -and $Packages[0].Version -gt [version]$Deployment.version) { throw 'Program downgrade refused; Vault data is preserved' }
@@ -35,7 +29,9 @@ if ($Action -eq 'remove') {
 $null = New-Item -Path $Uninstall -Force
 New-ItemProperty -LiteralPath $Uninstall -Name PlatformRemoved -Value 0 -PropertyType DWord -Force | Out-Null
 $Arguments = @{ Path=$Identity; ExternalLocation=$Root; ErrorAction='Stop' }
-if (-not $Deployment.release) { $Arguments.AllowUnsigned=$true }
+# The unsigned-package OID selects the OS registration recipe, independent of build mode.
+# ref: Microsoft MSIX package/unsigned-package.
+if ($Deployment.publisher.EndsWith(', OID.2.25.311729368913984317654407730594956997722=1')) { $Arguments.AllowUnsigned=$true }
 if ($Packages.Count -eq 0 -or $Packages[0].Version -lt [version]$Deployment.version) { Add-AppxPackage @Arguments }
 Run-Provider 'register'
 # Successful repair also completes interrupted installer bookkeeping.

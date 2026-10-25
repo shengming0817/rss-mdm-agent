@@ -22,13 +22,13 @@ const flags = new Set(process.argv.slice(2));
 if ([...flags].some((v) => v !== "--release"))
   throw Error("Usage: node scripts/build-passkey-provider.mjs [--release]");
 const release = flags.has("--release");
-const publisher = release
+const thumbprint = process.env.RSS_WINDOWS_SIGNING_THUMBPRINT;
+const publisher = thumbprint
   ? process.env.RSS_WINDOWS_PUBLISHER
   : unsignedPublisher;
-const thumbprint = process.env.RSS_WINDOWS_SIGNING_THUMBPRINT;
-if (release && (!publisher || !/^[a-f0-9]{40}$/i.test(thumbprint ?? "")))
+if (thumbprint && (!publisher || !/^[a-f0-9]{40}$/i.test(thumbprint)))
   throw Error(
-    "Release requires publisher and installed signing certificate thumbprint",
+    "Selected signing requires publisher and installed certificate thumbprint",
   );
 const bin = join(
   process.env["ProgramFiles(x86)"] ?? "C:\\Program Files (x86)",
@@ -38,7 +38,7 @@ const bin = join(
   sdk,
   "x64",
 );
-for (const name of ["makeappx.exe", "signtool.exe"])
+for (const name of ["makeappx.exe", ...(thumbprint ? ["signtool.exe"] : [])])
   if (!existsSync(join(bin, name)))
     throw Error(`Pinned Windows SDK ${sdk} missing: ${name}`);
 const run = (cmd, args, env = process.env) =>
@@ -88,7 +88,7 @@ run(join(bin, "makeappx.exe"), [
   packagePath,
 ]);
 const sign = (path) => {
-  if (release)
+  if (thumbprint)
     run(join(bin, "signtool.exe"), [
       "sign",
       "/fd",
@@ -112,7 +112,6 @@ writeFileSync(
     {
       version,
       publisher,
-      release,
       providerSha256: sha256(join(payload, "rss-passkey-provider.exe")),
       identitySha256: sha256(packagePath),
     },
@@ -142,6 +141,6 @@ console.log(
     installer,
     sha256: sha256(installer),
     platformVerified: false,
-    signingMode: release ? "signed" : "development-unsigned",
+    signingMode: thumbprint ? "signed" : "unsigned",
   }),
 );

@@ -142,7 +142,7 @@ if (
     (process.argv.length === 3 && process.argv[2] !== "--verify-abi")
   )
     throw Error(
-      "Configure development identity through RSS_MACOS_DEVELOPMENT_SIGNING_IDENTITY",
+      "Configure signing through RSS_MACOS_APP_SIGNING_IDENTITY or RSS_MACOS_DEVELOPMENT_SIGNING_IDENTITY",
     );
   const output = join(root, ".local-ci-runs/platform-sso/RSSPlatformSSO.appex");
   const result = buildPlatformSso({

@@ -363,7 +363,7 @@ Windows 登录增强使用单个 Credential Provider 和同一个受保护离线
 
 解绑先撤销 RSS 因子，保留撤销代际，再执行明确授权的 `Keep / Disable / Standard`。Keep 保留 OS 状态；Disable 对 SAM 禁用账号，对目录账号设置精确 SID 的本机拒绝交互登录权限；Standard 只处理该账号的本机管理员资格。目录账号处置不代表目录全局停用，不强制注销已登录会话，不扩大到 RDP。不移除整个目录组来降权单个用户；不能确认实际效果时保留失败/未知。内置恢复管理员及最后可用本地管理员受保护，重绑、因子恢复和卸载不会自动解除 OS 限制。
 
-Windows x64 NSIS 候选包含 CP DLL；其他架构及 MSI/MSIX 未装配该组件，不得据 Agent 安装成功宣称 RSS 登录可用。`--release` 对 Agent、Desktop、CP DLL 和安装包签名；运行时同时核对固定摘要、签名链及候选发布者证书指纹。候选、离线库均只支持当前格式，旧格式在切换服务/组件前拒绝，无自动迁移、双读或清库重建。拒绝升级时保留原部署及材料，由管理员通过原部署的正式退役流程处理。
+Windows x64 NSIS 候选包含 CP DLL；其他架构及 MSI/MSIX 未装配该组件，不得据 Agent 安装成功宣称 RSS 登录可用。开发与生产均不要求 Agent、Desktop、CP DLL 或安装包持有发布者证书；显式提供材料时可签名，运行时核对受保护固定路径和摘要，登录健康检查不强制 Authenticode Valid 或同发布者。候选、离线库均只支持当前格式，旧格式在切换服务/组件前拒绝，无自动迁移、双读或清库重建。拒绝升级时保留原部署及材料，由管理员通过原部署的正式退役流程处理。
 
 组件由 SYSTEM 服务在离线库初始化后从同一个固定安装候选注册；独立维修也消费已安装候选，不接受任意 DLL 路径作为另一条准入入口。新安装或 DLL 候选变化后须重启 Windows，重启前组件不宣称可用于认证。版本目录避免覆盖 LogonUI 已加载的 DLL；升级保留安装身份、限速、因子和撤销记录。
 
@@ -453,10 +453,11 @@ Windows 登录。支持 Windows 11 24H2 的正式插件更新（26100.7171；25H
 具备所需 API 的后续版本。源码入口固定 Windows SDK 10.0.26100.7175；当前产物为 x64。
 
 在目标 Windows 执行 `node scripts/build-passkey-provider.mjs`，生成独立 NSIS EXE 和内置
-外部位置身份包。默认开发身份使用 Windows 的 unsigned package OID 与 `AllowUnsigned`；
-系统策略或安装权限不允许时如实报错，不关闭签名/安全策略。正式交付使用 `--release`，设置
-`RSS_WINDOWS_PUBLISHER` 与现有证书的 `RSS_WINDOWS_SIGNING_THUMBPRINT`。正式签名检查分别
-覆盖 Provider、身份包与 EXE；开发身份与正式身份不同，不能作为同一包直接升级。
+外部位置身份包。开发与 `--release` 均允许无证书候选，使用 Windows 的 unsigned package OID
+与 `AllowUnsigned`；系统策略或安装权限不允许时如实报错，不关闭系统保护。显式提供
+`RSS_WINDOWS_SIGNING_THUMBPRINT` 和匹配的 `RSS_WINDOWS_PUBLISHER` 才对 Provider、身份包与
+EXE 签名。安装保留固定摘要和现有包身份归属校验，不强制 Authenticode Valid/同发布者；
+未签名与签名包的系统身份不同，不能作为同一包直接升级。
 
 先安装已有 RSS 桌面管理器并在个人 Passkey 页面创建 Vault；独立安装器不附带第二套管理 UI。
 开始菜单的 RSS Personal Passkeys 或 `rss-passkey-provider.exe manage` 打开已有桌面；未安装时
