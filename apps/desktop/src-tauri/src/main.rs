@@ -27,12 +27,6 @@ fn window(app: &tauri::AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 fn run(_data_root: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
-    #[cfg(not(feature = "dev-fixture"))]
-    let default = rss_mdm_desktop::composition::account::bundled_organization()?.ok_or(
-        rss_mdm_desktop::organization_config::ConfigurationError(
-            "the backend connection before startup",
-        ),
-    )?;
     if (std::env::var("RSS_DESKTOP_ASSEMBLY").as_deref() == Ok("fixture"))
         != cfg!(feature = "dev-fixture")
     {
@@ -47,6 +41,11 @@ fn run(_data_root: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::error:
     let app = builder
         .setup(move |app| {
             app.manage(appearance::Appearance::default());
+            let personal_root = match &_data_root {
+                Some(root) => root.join("personal-passkeys"),
+                None => app.path().app_local_data_dir()?.join("personal-passkeys"),
+            };
+            app.manage(rss_mdm_desktop::composition::personal_vault::PersonalVault::new(&personal_root));
             eprintln!("RSS_DESKTOP_ASSEMBLY {}", serde_json::json!({"mode": if cfg!(feature = "dev-fixture") { "fixture" } else { "production" }, "productionIPC": !cfg!(feature = "dev-fixture")}));
             #[cfg(not(feature = "dev-fixture"))]
             {
@@ -74,18 +73,12 @@ fn run(_data_root: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::error:
                 &artifact,
                 source,
                 native_e2e::keychain(&root)?,
-            ))?;
+            ));
             #[cfg(not(all(feature = "native-e2e", target_os = "macos")))]
             let runtime =
-                tauri::async_runtime::block_on(DesktopRuntime::start(&root, &artifact, source))?;
-            eprintln!(
-                "RSS_AI_HOST_STATUS {}",
-                serde_json::to_string(&runtime.status())?
-            );
-            eprintln!(
-                "RSS_DEFAULT_ORGANIZATION {}",
-                serde_json::to_string(&default)?
-            );
+                tauri::async_runtime::block_on(DesktopRuntime::start(&root, &artifact, source));
+            if let Ok(runtime) = runtime {
+            eprintln!("RSS_AI_HOST_STATUS {}", serde_json::to_string(&runtime.status())?);
             app.manage(runtime);
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -98,6 +91,9 @@ fn run(_data_root: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::error:
                     let _ = runtime.verify_account().await;
                 }
             });
+            } else {
+                eprintln!("RSS_ENTERPRISE_RUNTIME_UNAVAILABLE");
+            }
             }
             use tauri::menu::{Menu, MenuItem, Submenu};
             let show = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;

@@ -28,3 +28,5 @@ mod identity;
 
 mod supervisor;
 mod views;
+
+pub mod personal_vault;

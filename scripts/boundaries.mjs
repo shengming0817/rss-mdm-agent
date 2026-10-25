@@ -44,6 +44,7 @@ const assistantCommands = [
   "execution_task_details",
 ];
 const settingsCommands = [
+  "personal_vault",
   "execution_service_status",
   "agent_registration_status",
   "mdm_registration_status",
@@ -407,6 +408,11 @@ export function checkSource(file, source) {
         "Set",
       ],
       "apps/desktop/src/App.vue": ["document", "setInterval", "clearInterval"],
+      "apps/desktop/src/settings/PersonalVault.vue": [
+        "setInterval",
+        "clearInterval",
+        "String",
+      ],
       "apps/desktop/src/settings/DeviceAccess.vue": ["Promise", "crypto"],
       "apps/desktop/src/settings/MdmRegistration.vue": [
         "Promise",

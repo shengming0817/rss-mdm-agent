@@ -3,6 +3,7 @@
   "description": "Local main window: controlled execution service and private AI transport.",
   "windows": ["main"],
   "permissions": [
+    "allow-personal-vault",
     "allow-query-directory",
     "allow-data-read",
     "allow-device-access",

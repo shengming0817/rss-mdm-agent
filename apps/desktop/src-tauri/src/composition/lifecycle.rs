@@ -6,7 +6,6 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
 };
-#[cfg(not(feature = "dev-fixture"))]
 use tauri::Manager;
 
 #[derive(Default)]
@@ -61,10 +60,15 @@ impl Lifecycle {
                 ..
             } if label == "main" => {
                 self.closing_view = true;
+                if let Some(vault) = app.try_state::<super::personal_vault::PersonalVault>() {
+                    vault.lock();
+                }
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move {
                     #[cfg(not(feature = "dev-fixture"))]
-                    app.state::<DesktopRuntime>().detach_views().await;
+                    if let Some(runtime) = app.try_state::<DesktopRuntime>() {
+                        runtime.detach_views().await;
+                    }
                     #[cfg(feature = "dev-fixture")]
                     let _ = app;
                 });
@@ -74,17 +78,21 @@ impl Lifecycle {
                 Exit::KeepAlive => api.prevent_exit(),
                 Exit::Shutdown(code) => {
                     api.prevent_exit();
+                    if let Some(vault) = app.try_state::<super::personal_vault::PersonalVault>() {
+                        vault.lock();
+                    }
                     let app = app.clone();
                     let completed = self.shutdown_complete.clone();
                     let failed = self.shutdown_failed.clone();
                     tauri::async_runtime::spawn(async move {
                         #[cfg(not(feature = "dev-fixture"))]
                         {
-                            let runtime = app.state::<DesktopRuntime>();
-                            runtime.shutdown().await;
-                            if !runtime.closed() {
-                                failed.store(true, Ordering::Release);
-                                return;
+                            if let Some(runtime) = app.try_state::<DesktopRuntime>() {
+                                runtime.shutdown().await;
+                                if !runtime.closed() {
+                                    failed.store(true, Ordering::Release);
+                                    return;
+                                }
                             }
                         }
                         #[cfg(feature = "dev-fixture")]

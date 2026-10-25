@@ -6,6 +6,7 @@ import type { DeviceOverview, SelfServicePort } from "../self-service/types";
 import type { PageNavigation } from "../workspace/page-navigation";
 import DiagnosticsPanel from "./DiagnosticsPanel.vue";
 import LocalService from "./LocalService.vue";
+import PersonalVault from "./PersonalVault.vue";
 import type { ServicePort } from "./native";
 import ConnectionSettings from "./ConnectionSettings.vue";
 import SessionDiagnostics from "./SessionDiagnostics.vue";
@@ -34,6 +35,7 @@ const sections = [
   { id: "account", title: "账号与组织" },
   { id: "registration", title: "设备注册与 MDM", kind: "display" },
   { id: "connection", title: "AI 与连接" },
+  { id: "personal-vault", title: "个人 Passkey" },
   { id: "diagnostics", title: "运行与诊断", kind: "tools" },
   { id: "about", title: "关于与隐私" },
   ...(props.fixture ? [{ id: "development", title: "开发预览" }] : []),
@@ -263,6 +265,16 @@ emit("navigation", reactive({ openSection, reset, section, sections, path }));
             登录或选择使用身份后，可配置 AI 连接。
           </p>
         </div>
+      </section>
+      <section
+        class="settings-section"
+        data-settings-section="personal-vault"
+        aria-label="个人 Passkey"
+      >
+        <header class="settings-section-heading">
+          <h2 tabindex="-1">个人 Passkey</h2>
+        </header>
+        <div class="settings-surface"><PersonalVault /></div>
       </section>
       <section
         class="settings-section"
