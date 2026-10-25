@@ -104,13 +104,18 @@ function fixture(t) {
   const artifacts = join(root, "artifacts");
   mkdirSync(artifacts);
   const binaries = Object.fromEntries(
-    ["service", "backend", "desktop", "securityProbe", "untrustedProbe"].map(
-      (name) => {
-        const path = join(artifacts, name);
-        copyFileSync("/bin/sh", path);
-        return [name, path];
-      },
-    ),
+    [
+      "service",
+      "backend",
+      "desktop",
+      "platformSso",
+      "securityProbe",
+      "untrustedProbe",
+    ].map((name) => {
+      const path = join(artifacts, name);
+      copyFileSync("/bin/sh", path);
+      return [name, path];
+    }),
   );
   const runtime = join(artifacts, "runtime");
   mkdirSync(join(runtime, "bin"), { recursive: true });
@@ -171,6 +176,8 @@ test(
   native,
   (t) => {
     const { root, candidate, file, commit } = fixture(t);
+    assert.equal(candidate.binaries.platformSso.signature.teamId, null);
+    assert.ok(candidate.binaries.platformSso.signature.cdhash);
     const verify = () => assert.deepEqual(verifyCandidate(file), candidate);
     verify();
     writeFileSync(join(root, "README.md"), "documentation changed");
