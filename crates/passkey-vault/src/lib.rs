@@ -50,3 +50,10 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[cfg(test)]
 mod tests;
+
+/// A derived identity projection; it contains no private key material.
+pub struct IndexSnapshot {
+    pub vault_id: String,
+    pub revision: u64,
+    pub entries: Vec<Entry>,
+}

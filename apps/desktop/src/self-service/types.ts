@@ -29,6 +29,9 @@ export type PersonalVaultOperation =
       kind: "repair_system";
     }
   | {
+      kind: "repair_index";
+    }
+  | {
       credential_id: number[];
       revision: number;
       kind: "delete";
@@ -2005,6 +2008,7 @@ export interface PersonalVaultStatus {
   passwordEnabled: boolean;
   revision: number;
   entries: PersonalVaultEntry[];
+  provider: ProviderStatus | null;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -2018,6 +2022,14 @@ export interface PersonalVaultEntry {
   displayName: string;
   backupEligible: boolean;
   backedUp: boolean;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ProviderStatus".
+ */
+export interface ProviderStatus {
+  enabled: boolean | null;
+  indexPending: boolean;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema

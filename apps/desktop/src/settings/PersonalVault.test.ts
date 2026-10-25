@@ -3,6 +3,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import PersonalVault from "./PersonalVault.vue";
 import type { PersonalVaultPort, PersonalVaultStatus } from "./native";
 const baseline = (): PersonalVaultStatus => ({
+  provider: null,
   initialized: true,
   unlocked: true,
   passwordEnabled: true,
@@ -160,4 +161,29 @@ describe("personal Vault", () => {
     await flushPromises();
     expect(wrapper.text()).not.toContain("Alice");
   });
+});
+
+it("shows pending Provider repair without claiming that a website accepted a credential", async () => {
+  const state = {
+    ...baseline(),
+    provider: { enabled: false, indexPending: true },
+  };
+  const port = vi.fn<PersonalVaultPort>().mockResolvedValue(state);
+  const wrapper = app(port);
+  await flushPromises();
+  expect(wrapper.text()).toContain("系统尚未启用");
+  expect(wrapper.text()).toContain("凭据提示索引待修复");
+  await button(wrapper, "修复凭据提示索引").trigger("click");
+  await flushPromises();
+  expect(port).toHaveBeenLastCalledWith({ kind: "repair_index" });
+  expect(wrapper.text()).toContain("凭据提示索引待修复");
+});
+
+it("shared-container denial leaves an explicit unavailable state", async () => {
+  const wrapper = app(
+    vi.fn<PersonalVaultPort>().mockRejectedValue("system_unavailable"),
+  );
+  await flushPromises();
+  expect(wrapper.get('[role="alert"]').text()).toContain("共享容器权限不可用");
+  expect(wrapper.text()).not.toContain("创建个人 Vault");
 });

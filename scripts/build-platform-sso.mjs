@@ -5,6 +5,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { cargoTargetDir } from "./cargo-target.mjs";
+import { passkeyEntitlements } from "./build-macos-passkey.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
 export function buildPlatformSso({
   output,
@@ -129,7 +130,7 @@ export function containerEntitlements(app, output) {
     );
   existing["com.apple.developer.associated-domains.mdm-managed"] = true;
   existing["com.apple.developer.associated-domains"] ??= [];
-  writeFileSync(output, JSON.stringify(existing));
+  writeFileSync(output, JSON.stringify(passkeyEntitlements(existing)));
   execFileSync("/usr/bin/plutil", ["-convert", "xml1", output]);
   return output;
 }

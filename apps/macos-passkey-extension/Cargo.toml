@@ -1,0 +1,16 @@
+[package]
+name = "macos-passkey-extension"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+macos-passkey-provider = { path = "../../crates/macos-passkey-provider" }
+passkey-vault = { path = "../../crates/passkey-vault" }
+serde_json.workspace = true
+zeroize.workspace = true

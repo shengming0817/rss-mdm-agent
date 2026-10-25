@@ -1,6 +1,42 @@
 //! Personal Vault has an OS-user owner, independent of enterprise/AI runtime state.
 mod native;
-use passkey_vault::{Error, Status, UnlockMethod, Vault};
+use passkey_vault::{Error, UnlockMethod, Vault};
+
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+#[schemars(rename = "PersonalVaultStatus")]
+pub struct Status {
+    #[serde(flatten)]
+    pub vault: passkey_vault::Status,
+    pub provider: Option<ProviderStatus>,
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderStatus {
+    pub enabled: Option<bool>,
+    pub index_pending: bool,
+}
+fn status(vault: &Vault) -> Result<Status, Error> {
+    #[cfg(target_os = "macos")]
+    let provider = {
+        use macos_passkey_provider::index::{self, Availability};
+        let state = index::status(vault)?;
+        Some(ProviderStatus {
+            enabled: match state.availability {
+                Availability::Unknown => None,
+                Availability::Enabled => Some(true),
+                Availability::Disabled => Some(false),
+            },
+            index_pending: state.index_pending,
+        })
+    };
+    #[cfg(not(target_os = "macos"))]
+    let provider = None;
+    Ok(Status {
+        vault: vault.status()?,
+        provider,
+    })
+}
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -27,6 +63,7 @@ pub enum Operation {
     },
     RemovePassword {},
     RepairSystem {},
+    RepairIndex {},
     Delete {
         credential_id: Vec<u8>,
         revision: u64,
@@ -37,7 +74,7 @@ pub enum Operation {
 }
 pub(super) type SharedVault = Arc<Mutex<Option<Arc<Vault>>>>;
 pub struct PersonalVault {
-    root: PathBuf,
+    root: Result<PathBuf, Error>,
     vault: SharedVault,
     busy: Arc<AtomicBool>,
     #[cfg(target_os = "macos")]
@@ -45,8 +82,11 @@ pub struct PersonalVault {
 }
 impl PersonalVault {
     pub fn new(root: &Path) -> Self {
+        Self::from_root(Ok(root.into()))
+    }
+    pub fn from_root(root: Result<PathBuf, Error>) -> Self {
         let state = Self {
-            root: root.into(),
+            root,
             vault: Arc::new(Mutex::new(None)),
             busy: Arc::new(AtomicBool::new(false)),
             #[cfg(target_os = "macos")]
@@ -64,7 +104,10 @@ impl PersonalVault {
             return Ok(vault.clone());
         }
         let protection = Arc::new(passkey_vault::platform::OsProtection::new(native::verify));
-        let vault = Arc::new(Vault::open(&self.root, protection)?);
+        let vault = Arc::new(Vault::open(
+            self.root.as_ref().map_err(|e| *e)?,
+            protection,
+        )?);
         *slot = Some(vault.clone());
         Ok(vault)
     }
@@ -84,7 +127,9 @@ impl PersonalVault {
 pub(super) fn lock_slot(slot: &Mutex<Option<Arc<Vault>>>) {
     if let Ok(slot) = slot.lock() {
         if let Some(vault) = &*slot {
-            vault.lock();
+            if vault.lock().is_err() {
+                eprintln!("personal vault cancellation persistence failed");
+            }
         }
     }
 }
@@ -110,11 +155,12 @@ pub async fn execute<R: Runtime>(
     let state = window.state::<PersonalVault>();
     let vault = state.open()?;
     if matches!(input, Operation::Lock {}) {
-        state.lock();
-        return vault.status();
+        native::cancel();
+        vault.lock()?;
+        return status(&vault);
     }
     if matches!(input, Operation::Status {}) {
-        return vault.status();
+        return status(&vault);
     }
     if state.busy.swap(true, Ordering::AcqRel) {
         return Err(Error::Busy);
@@ -126,6 +172,8 @@ pub async fn execute<R: Runtime>(
         let _busy = busy;
         #[cfg(windows)]
         let changes = !matches!(&input, Operation::Status {} | Operation::Unlock { .. });
+        #[cfg(target_os = "macos")]
+        let repair_index = matches!(input, Operation::RepairIndex {});
         match input {
             Operation::Create {} => vault.create(&token)?,
             Operation::Unlock { method } => {
@@ -151,6 +199,12 @@ pub async fn execute<R: Runtime>(
                 )?;
             }
             Operation::RemovePassword {} => vault.remove_password(&token)?,
+            Operation::RepairIndex {} => {
+                #[cfg(target_os = "macos")]
+                macos_passkey_provider::index::refresh(vault.clone())?;
+                #[cfg(not(target_os = "macos"))]
+                return Err(Error::Unsupported);
+            }
             Operation::RepairSystem {} => {
                 let password = native::password("输入个人口令，以重新建立此 OS 用户的系统解锁")?;
                 vault.repair_system(&password, &token)?;
@@ -169,7 +223,13 @@ pub async fn execute<R: Runtime>(
                 eprintln!("personal passkey index refresh pending");
             }
         }
-        vault.status()
+        #[cfg(target_os = "macos")]
+        if !repair_index {
+            if macos_passkey_provider::index::refresh(vault.clone()).is_err() {
+                eprintln!("personal passkey index refresh pending");
+            }
+        }
+        status(&vault)
     })
     .await
     .map_err(|_| Error::Cancelled)?
@@ -227,9 +287,9 @@ mod tests {
             .unwrap();
         let status =
             tauri::async_runtime::block_on(execute(main.clone(), Operation::Status {})).unwrap();
-        assert!(!status.initialized);
+        assert!(!status.vault.initialized);
         let status = tauri::async_runtime::block_on(execute(main, Operation::Lock {})).unwrap();
-        assert!(!status.unlocked);
+        assert!(!status.vault.unlocked);
         let other = tauri::WebviewWindowBuilder::new(&app, "other", Default::default())
             .build()
             .unwrap();

@@ -29,7 +29,8 @@ const messages: Record<string, string> = {
   input:
     "输入无效。新口令须至少 12 个字符、至多 1024 个 UTF-8 字节，两次输入须相同。",
   authentication: "认证失败，请核对口令或系统验证。",
-  system_unavailable: "系统解锁不可用；如已设置个人口令，可使用口令解锁。",
+  system_unavailable:
+    "系统保护或共享容器权限不可用；请检查当前原生应用权限。已有口令只在共享存储可访问时可用于解锁。",
   not_found: "材料不存在；如已设置个人口令，可使用口令解锁并重新建立系统保护。",
   corrupt: "Vault 材料损坏或不可用。原文件已保留，请勿覆盖。",
   unsupported: "此 Vault 格式或平台能力不受支持，原数据保持不变。",
@@ -132,6 +133,27 @@ onBeforeUnmount(() => {
       >
         创建个人 Vault
       </button>
+      <div v-if="state?.provider" role="status">
+        Provider：{{
+          state.provider.enabled === true
+            ? "系统已启用"
+            : state.provider.enabled === false
+              ? "系统尚未启用"
+              : "系统状态待确认"
+        }}
+        ·
+        {{
+          state.provider.indexPending
+            ? "凭据提示索引待修复"
+            : "凭据提示索引无待处理更新"
+        }}
+        <button
+          :disabled="busy || !state.unlocked"
+          @click="run({ kind: 'repair_index' })"
+        >
+          修复凭据提示索引
+        </button>
+      </div>
       <template v-if="state?.initialized">
         <p>
           {{ state.unlocked ? "已解锁" : "已锁定" }} ·
@@ -155,7 +177,8 @@ onBeforeUnmount(() => {
         </div>
         <template v-if="state.unlocked">
           <p v-if="!state.entries.length">
-            尚无 Passkey。网站创建与使用入口由后续平台 Provider 提供。
+            尚无 Passkey。启用系统 Provider
+            后，可在支持的网站创建凭据；浏览器实际兼容结果需单独验证。
           </p>
           <fieldset v-else>
             <legend>选择网站账号</legend>

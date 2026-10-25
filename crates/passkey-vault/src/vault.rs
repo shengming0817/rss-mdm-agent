@@ -24,12 +24,15 @@ pub trait SystemProtection: Send + Sync {
 pub(crate) struct Session {
     pub id: String,
     pub key: Key,
+    generation: Generation,
 }
 /// Opaque cancellation snapshot captured before native input or worker dispatch.
 pub struct Interaction {
     instance: uuid::Uuid,
-    epoch: u64,
+    epoch: Generation,
 }
+type Generation = (u64, Result<[u8; 16]>);
+
 pub struct Vault {
     instance: uuid::Uuid,
     pub(crate) store: Store,
@@ -60,6 +63,9 @@ impl Vault {
         };
         // Repair only a publication receipt, never missing/corrupt credential data.
         let tx = vault.store.transaction()?;
+        if tx.read("cancel-generation")?.is_none() {
+            tx.write("cancel-generation", uuid::Uuid::new_v4().as_bytes())?;
+        }
         if let Ok(Some(value)) = tx.load(&vault.store.owner) {
             Self::published(&tx, &value)?;
         }
@@ -85,46 +91,56 @@ impl Vault {
             epoch: self.generation(),
         }
     }
-    fn interaction(&self, token: &Interaction) -> Result<u64> {
+    fn interaction(&self, token: &Interaction) -> Result<Generation> {
         if token.instance != self.instance {
             return Err(Error::Cancelled);
         }
         self.current(token.epoch)?;
         Ok(token.epoch)
     }
-    pub(crate) fn generation(&self) -> u64 {
-        self.epoch.load(Ordering::Acquire)
+    pub(crate) fn generation(&self) -> Generation {
+        (
+            self.epoch.load(Ordering::Acquire),
+            self.store.cancellation(),
+        )
     }
-    pub(crate) fn current(&self, epoch: u64) -> Result<()> {
-        if self.generation() != epoch {
+    pub(crate) fn current(&self, epoch: Generation) -> Result<()> {
+        epoch.1?;
+        let current = self.generation();
+        current.1?;
+        if current != epoch {
             Err(Error::Cancelled)
         } else {
             Ok(())
         }
     }
     /// Lock is never queued behind a password KDF or native dialog.
-    pub fn lock(&self) {
-        #[cfg(windows)]
-        crate::platform::notify_lock();
+    pub fn lock(&self) -> Result<()> {
         self.epoch.fetch_add(1, Ordering::AcqRel);
         if let Ok(mut session) = self.session.lock() {
             *session = None;
         }
+        let result = self.store.revoke();
+        #[cfg(any(windows, target_os = "macos"))]
+        crate::platform::notify_lock();
+        result
     }
     pub(crate) fn session_key(&self, value: &Envelope) -> Result<Key> {
         let guard = self.session.lock().map_err(|_| Error::Locked)?;
         let session = guard.as_ref().ok_or(Error::Locked)?;
+        self.current(session.generation)?;
         if session.id != value.vault_id {
             return Err(Error::Conflict);
         }
         Ok(Zeroizing::new(*session.key))
     }
-    fn install(&self, value: &Envelope, key: Key, epoch: u64) -> Result<()> {
+    fn install(&self, value: &Envelope, key: Key, epoch: Generation) -> Result<()> {
         let mut guard = self.session.lock().map_err(|_| Error::Locked)?;
         self.current(epoch)?;
         *guard = Some(Session {
             id: value.vault_id.clone(),
             key,
+            generation: epoch,
         });
         Ok(())
     }
@@ -435,15 +451,41 @@ impl Vault {
         Self::published(&tx, &value)?;
         self.install(&value, key, epoch)
     }
-    /// Publish a derived OS index from one committed snapshot while excluding concurrent writers.
-    pub fn synchronize_index(&self, publish: impl FnOnce(&[Entry]) -> Result<()>) -> Result<()> {
+    /// Capture a committed snapshot without retaining the storage lock across an OS callback.
+    pub fn index_snapshot(&self) -> Result<crate::IndexSnapshot> {
         let tx = self.store.transaction()?;
         let value = tx.load(&self.store.owner)?.ok_or(Error::NotFound)?;
         let key = self.session_key(&value)?;
         let content = Self::content(&value, &key)?;
-        let entries: Vec<_> = content.records.iter().map(|r| r.entry.clone()).collect();
-        publish(&entries)?;
+        tx.write("provider-index-dirty", b"dirty")?;
+        Ok(crate::IndexSnapshot {
+            vault_id: value.vault_id,
+            revision: value.revision,
+            entries: content.records.iter().map(|r| r.entry.clone()).collect(),
+        })
+    }
+    /// Only acknowledge the exact current snapshot. A late callback makes repair necessary.
+    pub fn acknowledge_index(&self, snapshot: &crate::IndexSnapshot) -> Result<()> {
+        let tx = self.store.transaction()?;
+        let value = tx.load(&self.store.owner)?.ok_or(Error::NotFound)?;
+        if value.vault_id != snapshot.vault_id || value.revision != snapshot.revision {
+            tx.write("provider-index-dirty", b"dirty")?;
+            return Err(Error::Conflict);
+        }
         tx.remove_index_notice()
+    }
+    pub fn index_pending(&self) -> Result<bool> {
+        Ok(self
+            .store
+            .transaction()?
+            .read("provider-index-dirty")?
+            .is_some())
+    }
+    /// Retain a repair notice after a failed or timed-out external publication.
+    pub fn invalidate_index(&self) -> Result<()> {
+        self.store
+            .transaction()?
+            .write("provider-index-dirty", b"dirty")
     }
     pub fn entries(&self, rp_id: &str) -> Result<Vec<Entry>> {
         Ok(self

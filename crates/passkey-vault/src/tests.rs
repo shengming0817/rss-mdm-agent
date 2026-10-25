@@ -225,7 +225,7 @@ async fn password_lifecycle_preserves_credentials_and_recovers_missing_system_ke
             &lab.vault.begin_interaction(),
         )
         .unwrap();
-    lab.vault.lock();
+    lab.vault.lock().unwrap();
     assert!(!lab.vault.status().unwrap().unlocked);
     assert!(lab
         .vault
@@ -251,7 +251,7 @@ async fn password_lifecycle_preserves_credentials_and_recovers_missing_system_ke
             &lab.vault.begin_interaction(),
         )
         .unwrap();
-    lab.vault.lock();
+    lab.vault.lock().unwrap();
     assert!(lab
         .vault
         .unlock(
@@ -286,7 +286,7 @@ async fn password_lifecycle_preserves_credentials_and_recovers_missing_system_ke
     lab.vault
         .remove_password(&lab.vault.begin_interaction())
         .unwrap();
-    lab.vault.lock();
+    lab.vault.lock().unwrap();
     assert!(lab
         .vault
         .unlock(
@@ -459,7 +459,7 @@ fn cancelled_system_authentication_never_installs_a_late_session() {
         other.unlock(UnlockMethod::System, None, &other.begin_interaction())
     });
     entered.recv().unwrap();
-    vault.lock();
+    vault.lock().unwrap();
     leave.send(()).unwrap();
     assert_eq!(thread.join().unwrap(), Err(Error::Cancelled));
     assert!(!vault.status().unwrap().unlocked);
@@ -543,7 +543,7 @@ async fn process_crash_never_selects_half_a_commit() {
 fn missing_committed_snapshot_is_not_an_empty_vault_and_old_input_is_cancelled() {
     let lab = Lab::new();
     let token = lab.vault.begin_interaction();
-    lab.vault.lock();
+    lab.vault.lock().unwrap();
     assert_eq!(
         lab.vault.unlock(UnlockMethod::System, None, &token),
         Err(Error::Cancelled)
@@ -737,4 +737,46 @@ async fn native_request_rejects_invalid_rp_and_changed_credential_selection() {
         lab.vault.assert(assertion(), &Unknown).await,
         Err(Error::NotFound)
     ));
+}
+
+#[tokio::test]
+async fn index_snapshot_does_not_hold_writer_lock_and_late_ack_preserves_repair() {
+    let lab = Lab::new();
+    let first = lab.vault.index_snapshot().unwrap();
+    lab.vault
+        .register(
+            register(1),
+            &Consent {
+                index: 0,
+                verified: true,
+            },
+        )
+        .await
+        .unwrap();
+    let second = lab.vault.index_snapshot().unwrap();
+    lab.vault.acknowledge_index(&second).unwrap();
+    assert!(!lab.vault.index_pending().unwrap());
+    assert_eq!(lab.vault.acknowledge_index(&first), Err(Error::Conflict));
+    assert!(lab.vault.index_pending().unwrap());
+    lab.vault.acknowledge_index(&second).unwrap();
+    assert!(!lab.vault.index_pending().unwrap());
+}
+
+#[test]
+fn another_instance_lock_revokes_session_and_pending_native_interaction() {
+    let lab = Lab::new();
+    let other = Vault::open(&lab.path, lab.keys.clone()).unwrap();
+    let pending = lab.vault.begin_interaction();
+    other.lock().unwrap();
+    assert!(!lab.vault.status().unwrap().unlocked);
+    assert_eq!(
+        lab.vault.unlock(UnlockMethod::System, None, &pending),
+        Err(Error::Cancelled)
+    );
+    lab.vault
+        .unlock(UnlockMethod::System, None, &lab.vault.begin_interaction())
+        .unwrap();
+    assert!(lab.vault.status().unwrap().unlocked);
+    std::fs::write(lab.path.join("cancel-generation"), b"corrupt").unwrap();
+    assert_eq!(lab.vault.status().err(), Some(Error::Corrupt));
 }

@@ -3093,6 +3093,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4050469837a6ff301cd14c1f8f24f88549e6d548f24f64e2148eb0f72cebc51f"
 
 [[package]]
+name = "macos-passkey-extension"
+version = "0.1.0"
+dependencies = [
+ "macos-passkey-provider",
+ "passkey-vault",
+ "serde_json",
+ "zeroize",
+]
+
+[[package]]
+name = "macos-passkey-provider"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "passkey-crypto",
+ "passkey-types",
+ "passkey-vault",
+ "schemars 1.2.2",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+ "zeroize",
+]
+
+[[package]]
 name = "markup5ever"
 version = "0.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3850,6 +3876,7 @@ dependencies = [
  "aes-gcm",
  "argon2",
  "async-trait",
+ "cc",
  "libc",
  "passkey-authenticator",
  "passkey-crypto",
@@ -4645,6 +4672,7 @@ dependencies = [
  "futures-util",
  "installation-security",
  "libc",
+ "macos-passkey-provider",
  "native-process",
  "objc2",
  "objc2-app-kit",
