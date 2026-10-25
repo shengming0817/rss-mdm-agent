@@ -453,12 +453,14 @@ impl Vault {
     }
     /// Capture a committed snapshot without retaining the storage lock across an OS callback.
     pub fn index_snapshot(&self) -> Result<crate::IndexSnapshot> {
+        let publication = self.store.lock("provider-index.lock")?;
         let tx = self.store.transaction()?;
         let value = tx.load(&self.store.owner)?.ok_or(Error::NotFound)?;
         let key = self.session_key(&value)?;
         let content = Self::content(&value, &key)?;
         tx.write("provider-index-dirty", b"dirty")?;
         Ok(crate::IndexSnapshot {
+            _publication: publication,
             vault_id: value.vault_id,
             revision: value.revision,
             entries: content.records.iter().map(|r| r.entry.clone()).collect(),

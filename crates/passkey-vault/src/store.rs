@@ -48,18 +48,25 @@ impl Store {
             .replace(stage, Path::new("cancel-generation"))
             .map_err(|_| Error::Storage)
     }
-    pub fn transaction(&self) -> Result<Transaction> {
+    // ref: Rust 1.96 library/std/src/sys/fs/unix.rs File::try_lock (flock LOCK_EX|LOCK_NB).
+    // A stable, independently owned lock file; never rename/unlink it during normal operation.
+    pub fn lock(&self, name: &str) -> Result<File> {
         let directory = PrivateDirectory::open(&self.root).map_err(|_| Error::Owner)?;
-        let lock = match directory.create_file(Path::new("vault.lock")) {
+        let lock = match directory.create_file(Path::new(name)) {
             Ok(file) => file,
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => directory
-                .open_file(Path::new("vault.lock"))
+                .open_file(Path::new(name))
                 .map_err(|_| Error::Storage)?,
             Err(_) => return Err(Error::Storage),
         };
-        platform_private_storage::validate_single_link(&self.root.join("vault.lock"))
+        platform_private_storage::validate_single_link(&self.root.join(name))
             .map_err(|_| Error::Owner)?;
         lock.try_lock().map_err(|_| Error::Busy)?;
+        Ok(lock)
+    }
+    pub fn transaction(&self) -> Result<Transaction> {
+        let lock = self.lock("vault.lock")?;
+        let directory = PrivateDirectory::open(&self.root).map_err(|_| Error::Owner)?;
         Ok(Transaction {
             directory,
             _lock: lock,

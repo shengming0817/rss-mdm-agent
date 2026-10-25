@@ -2,12 +2,8 @@
 use passkey_vault::{Error, IndexSnapshot, Result, Vault};
 use std::{
     ffi::{c_char, c_void, CString},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Weak,
-    },
+    sync::{Arc, Weak},
 };
-static PUBLISHING: AtomicBool = AtomicBool::new(false);
 unsafe extern "C" {
     fn rss_passkey_index_replace(
         json: *const c_char,
@@ -35,25 +31,13 @@ extern "C" fn complete(context: *mut c_void, success: i32) {
             let _ = vault.invalidate_index();
         }
     }
-    PUBLISHING.store(false, Ordering::Release);
 }
 pub fn refresh(vault: Arc<Vault>) -> Result<()> {
-    if PUBLISHING.swap(true, Ordering::AcqRel) {
-        return Err(Error::Busy);
-    }
-    let prepared = (|| {
-        let snapshot = vault.index_snapshot()?;
-        let json = CString::new(serde_json::to_vec(&snapshot.entries).map_err(|_| Error::Input)?)
-            .map_err(|_| Error::Input)?;
-        Ok((snapshot, json))
-    })();
-    let (snapshot, json) = match prepared {
-        Ok(value) => value,
-        Err(error) => {
-            PUBLISHING.store(false, Ordering::Release);
-            return Err(error);
-        }
-    };
+    // Snapshot owns the cross-process publication lock until native completion drops it.
+    // No timeout may release it while the external operation could still write the index.
+    let snapshot = vault.index_snapshot()?;
+    let json = CString::new(serde_json::to_vec(&snapshot.entries).map_err(|_| Error::Input)?)
+        .map_err(|_| Error::Input)?;
     let context = Box::into_raw(Box::new(Publication {
         vault: Arc::downgrade(&vault),
         snapshot,

@@ -740,9 +740,29 @@ async fn native_request_rejects_invalid_rp_and_changed_credential_selection() {
 }
 
 #[tokio::test]
-async fn index_snapshot_does_not_hold_writer_lock_and_late_ack_preserves_repair() {
+async fn index_publication_is_cross_process_and_does_not_hold_writer_lock() {
     let lab = Lab::new();
     let first = lab.vault.index_snapshot().unwrap();
+    // A different process cannot take a snapshot while the first OS write/callback is outstanding.
+    let child = |busy: bool| {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::index_publication_lock_child",
+                "--nocapture",
+            ])
+            .env("RSS_INDEX_LOCK_TEST_ROOT", &lab.path)
+            .env("RSS_INDEX_LOCK_TEST_BUSY", if busy { "1" } else { "0" })
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    child(true);
+    // A Vault writer proceeds while the independent publication lock is retained.
     lab.vault
         .register(
             register(1),
@@ -753,13 +773,35 @@ async fn index_snapshot_does_not_hold_writer_lock_and_late_ack_preserves_repair(
         )
         .await
         .unwrap();
+    assert_eq!(lab.vault.acknowledge_index(&first), Err(Error::Conflict));
+    assert!(lab.vault.index_pending().unwrap());
+    // Even after a failed/late acknowledgement, ownership persists until completion returns.
+    child(true);
+    assert_eq!(lab.vault.index_snapshot().err(), Some(Error::Busy));
+    drop(first);
+    child(false);
     let second = lab.vault.index_snapshot().unwrap();
     lab.vault.acknowledge_index(&second).unwrap();
     assert!(!lab.vault.index_pending().unwrap());
-    assert_eq!(lab.vault.acknowledge_index(&first), Err(Error::Conflict));
-    assert!(lab.vault.index_pending().unwrap());
-    lab.vault.acknowledge_index(&second).unwrap();
-    assert!(!lab.vault.index_pending().unwrap());
+    // Completion acknowledgement does not release the external publication's lifetime guard.
+    child(true);
+    drop(second);
+    child(false);
+}
+
+#[test]
+fn index_publication_lock_child() {
+    let Some(root) = std::env::var_os("RSS_INDEX_LOCK_TEST_ROOT") else {
+        return;
+    };
+    let store =
+        crate::store::Store::new(&PathBuf::from(root), crate::platform::owner().unwrap()).unwrap();
+    let lock = store.lock("provider-index.lock");
+    if std::env::var("RSS_INDEX_LOCK_TEST_BUSY").as_deref() == Ok("1") {
+        assert_eq!(lock.err(), Some(Error::Busy));
+    } else {
+        assert!(lock.is_ok());
+    }
 }
 
 #[test]
