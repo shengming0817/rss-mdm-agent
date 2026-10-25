@@ -292,6 +292,9 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         if let wire::TaskPayload::Credential(task) = start.payload() {
             super::credential::verify_input(plan, task)?;
         }
+        if let wire::TaskPayload::Script(task) = start.payload() {
+            super::plan::verify_script_projection(plan, task)?;
+        }
         if let wire::TaskPayload::Collection(task) = start.payload() {
             super::collection::verify_input(plan, task)?;
         }

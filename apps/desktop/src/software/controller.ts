@@ -78,12 +78,54 @@ export function createSoftware(
     state.prepared.set(value.prepared.request, value.prepared);
     state.requests.add(value.prepared.request);
   }
+  // Each physical inventory needs one complete observation; delivery identities
+  // (local recipe, enterprise task or periodic policy) may cover the same inventory.
+  const complete = (s: Source) =>
+    !!s.page &&
+    !s.after &&
+    !s.page.stale &&
+    s.page.collectedAt != null &&
+    s.page.collectedAt * 1000 <= state.now &&
+    state.now - s.page.collectedAt * 1000 <= 300_000 &&
+    s.page.quality === "complete" &&
+    s.page.enumerationComplete &&
+    !s.error;
+  const observations = computed(() => {
+    const selected = new Map<string, Source>();
+    for (const source of state.sources) {
+      for (const coverage of source.page?.coverage ?? []) {
+        const previous = selected.get(coverage);
+        if (
+          !previous ||
+          (complete(source) && !complete(previous)) ||
+          (complete(source) === complete(previous) &&
+            (source.page?.collectedAt ?? 0) >=
+              (previous.page?.collectedAt ?? 0))
+        )
+          selected.set(coverage, source);
+      }
+    }
+    return selected;
+  });
+  const coverageComplete = computed(() =>
+    state.sources.every(
+      (s) =>
+        s.page &&
+        s.page.coverage.length > 0 &&
+        s.page.coverage.every((key) => {
+          const selected = observations.value.get(key);
+          return selected && complete(selected);
+        }),
+    ),
+  );
   const installed = computed(() => {
     const rows = new Map<string, InstalledSoftware>();
     for (const source of [...state.sources].sort(
       (a, b) => (a.page?.collectedAt ?? 0) - (b.page?.collectedAt ?? 0),
     ))
-      for (const item of source.items) rows.set(installationKey(item), item);
+      for (const item of source.items)
+        if (observations.value.get(item.coverage) === source)
+          rows.set(installationKey(item), item);
     return [...rows.values()].filter(
       (item) =>
         ![...state.operations.values()].some(
@@ -107,25 +149,16 @@ export function createSoftware(
       state.directoryComplete &&
       !state.windowed &&
       state.sources.length > 0 &&
-      state.sources.every(
-        (s) =>
-          s.page &&
-          !s.after &&
-          !s.page.stale &&
-          s.page.collectedAt != null &&
-          s.page.collectedAt * 1000 <= state.now &&
-          state.now - s.page.collectedAt * 1000 <= 300_000 &&
-          s.page.quality === "complete" &&
-          s.page.enumerationComplete &&
-          !s.error,
-      ),
+      coverageComplete.value,
     read: state.sources.some(
       (s) =>
         s.page && ["complete", "partial", "truncated"].includes(s.page.quality),
     ),
     loading: state.loading || state.sources.some((s) => s.busy),
     error: state.error || state.sources.find((s) => s.error)?.error || "",
-    collectedAt: state.sources.reduce<number | null>(
+    collectedAt: [...new Set(observations.value.values())].reduce<
+      number | null
+    >(
       (time, s) =>
         s.page?.collectedAt == null
           ? time
@@ -157,6 +190,8 @@ export function createSoftware(
         JSON.stringify(source.descriptor.reference)
       )
         throw Error("query changed");
+      if (page.items.some((item) => !page.coverage.includes(item.coverage)))
+        throw Error("inventory coverage changed");
       const key = JSON.stringify(page.next);
       if (
         page.next &&

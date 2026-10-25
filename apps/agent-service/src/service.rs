@@ -271,13 +271,14 @@ impl<S: IdentityProvider> DeviceService<S> {
         let mut data = crate::collected_data::Data::new(
             client.collected_store_for_installation(installation)?,
             client.output_policy()?,
+            client.configuration().service_id,
         );
         data.bind_enterprise(
             matches!(
                 host.binding.authority,
                 execution_contract::Authority::Enterprise { .. }
             )
-            .then_some(&host.binding.authority),
+            .then_some(&host.binding),
         )?;
         if let Err(error) = data.install_local() {
             eprintln!("agent_collected_data: {error}");
@@ -1117,7 +1118,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         if binding == self.core.host.binding {
             return Ok(());
         }
-        self.core.data.bind_enterprise(Some(&binding.authority))?;
+        self.core.data.bind_enterprise(Some(&binding))?;
         self.core.host.binding = binding;
         self.core.host.actor = actor;
         self.core.host.namespaces = self

@@ -10,7 +10,7 @@ use std::{
 };
 mod collector;
 mod environment;
-mod mapping;
+pub(crate) mod mapping;
 pub(crate) mod performance;
 
 struct Slot {
@@ -51,10 +51,19 @@ pub(crate) enum Event {
     GapReceipt(w::TelemetryGapReceipt),
 }
 impl Telemetry {
-    pub(crate) fn data_sources(&self) -> std::collections::BTreeSet<String> {
+    pub(crate) fn data_sources(
+        &self,
+        data: &crate::collected_data::Data,
+    ) -> Result<std::collections::BTreeSet<String>, Error> {
         self.slots
-            .keys()
-            .map(|id| format!("telemetry:{id}"))
+            .values()
+            .map(|s| {
+                Ok(data
+                    .periodic_reference(s.configuration.payload())?
+                    .id
+                    .as_str()
+                    .to_owned())
+            })
             .collect()
     }
     pub fn open<S: IdentityProvider, C: Clock>(client: &Client<S, C>) -> Result<Self, Error> {

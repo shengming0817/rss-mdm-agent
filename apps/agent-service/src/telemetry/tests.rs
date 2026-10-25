@@ -521,3 +521,100 @@ async fn native_memory_version_withdrawal_survives_restart_and_preserves_upload(
         "history is still uploadable"
     );
 }
+
+#[tokio::test]
+async fn active_native_definitions_survive_count_and_capacity_cleanup_until_withdrawal() {
+    let _budget = crate::scenario_budget::enter();
+    let server = protocol::Server::tls().await;
+    server.time.set(timestamp().unwrap() / 1_000_000);
+    let root = protocol::Root::new();
+    let mut config = server.config();
+    config.limits.pending_tasks = 8; // 256 records, with a 192-record maintenance target.
+    let mut client = agent_client::Client::open(
+        &root.path,
+        config,
+        agent_client::OpenMode::Create,
+        server.secrets.clone(),
+        server.time.clone(),
+    )
+    .unwrap();
+    let r = server.register(&mut client).await;
+    let mut data = crate::collected_data::Data::new(
+        client.collected_store().unwrap(),
+        client.output_policy().unwrap(),
+        client.configuration().service_id,
+    );
+    let (binding, _) = crate::backend::plan::context(
+        client.configuration().service_id,
+        client.configuration().tenant,
+        &r,
+    )
+    .unwrap();
+    data.bind_enterprise(Some(&binding)).unwrap();
+    let mut t = Telemetry::open(&client).unwrap();
+    let mut references = Vec::new();
+    let template = fixture::native_performance_configuration(&server, &r).configuration;
+    let at = timestamp().unwrap();
+    for n in 0..65 {
+        let mut payload = template.clone();
+        payload.policy = uuid::Uuid::from_u128(n + 1);
+        let signed = fixture::sign(&server.data.lock().unwrap(), payload);
+        let configuration = client.verify_telemetry(signed).unwrap();
+        let payload = configuration.payload();
+        let e = native_evidence(
+            payload,
+            at,
+            vec![serde_json::from_value(
+                serde_json::json!({"total_bytes":"4294967296","available_bytes":"100"}),
+            )
+            .unwrap()],
+            true,
+        );
+        data.periodic(payload, &e, at, None).unwrap();
+        references.push(data.periodic_reference(payload).unwrap());
+        t.install(configuration).unwrap();
+    }
+    let active = t.data_sources(&data).unwrap();
+    assert_eq!(active.len(), 65);
+    assert!(client.collected_store().unwrap().records().unwrap() > 192);
+    data.maintain(&[], &Default::default(), &active).unwrap();
+    drop(data);
+    let mut data = crate::collected_data::Data::new(
+        client.collected_store().unwrap(),
+        client.output_policy().unwrap(),
+        client.configuration().service_id,
+    );
+    data.bind_enterprise(Some(&binding)).unwrap();
+    for reference in &references {
+        assert!(data.definition(reference, "501").is_ok());
+        assert!(client
+            .collected_store()
+            .unwrap()
+            .read(&format!("latest/{}", reference.id.as_str()))
+            .unwrap()
+            .is_some());
+    }
+    // Script identities still use the same reference as their observed registration.
+    let script = client
+        .verify_telemetry(fixture::configuration(&server, &r))
+        .unwrap();
+    let reference = data.periodic_reference(script.payload()).unwrap();
+    t.install(script).unwrap();
+    assert!(t
+        .data_sources(&data)
+        .unwrap()
+        .contains(reference.id.as_str()));
+    t.apply(
+        &Action::Directory,
+        Ok(Event::Directory(w::TelemetryDirectory {
+            assignments: vec![],
+        })),
+    )
+    .unwrap();
+    let active = t.data_sources(&data).unwrap();
+    assert!(active.is_empty());
+    data.maintain(&[], &Default::default(), &active).unwrap();
+    assert!(references
+        .iter()
+        .any(|reference| data.definition(reference, "501").is_err()));
+}

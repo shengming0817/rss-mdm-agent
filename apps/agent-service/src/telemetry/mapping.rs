@@ -1,8 +1,11 @@
 //! Exact frozen-field projections. Producer JSON never becomes an undeclared series.
+use crate::collection_projection::{project, scalar};
 use agent_client::Error;
 use execution_contract::{OutputQuality, ProcessEvidence};
 use rss_mdm_agent_wire::runtime as w;
-use serde_json::{json, Value as Json};
+#[cfg(test)]
+use serde_json::json;
+use serde_json::Value as Json;
 use std::collections::BTreeMap;
 
 pub(super) fn readings(
@@ -26,30 +29,14 @@ pub(super) fn readings(
             max_rows,
             ..
         } => {
-            if output
-                .as_array()
-                .is_some_and(|v| v.len() > *max_rows as usize)
-            {
-                return Err(Error::Capacity);
-            }
-            admit_schema(output_schema)?;
-            if serde_json::to_vec(output_schema)
-                .map_err(|_| Error::Protocol)?
-                .len()
-                .saturating_mul(e.stdout.len())
-                > 16 * 1024 * 1024
-            {
-                return Err(Error::Capacity);
-            }
-            let validator =
-                jsonschema::validator_for(output_schema).map_err(|_| Error::Protocol)?;
-            if !validator.is_valid(&output) {
-                return Err(Error::Protocol);
-            }
+            validate_script_output(output_schema, &output, e.stdout.len(), *max_rows)?;
             check_keys(c, mappings.keys())?;
             for field in &c.fields {
                 let mapping = mappings.get(field.key.as_str()).ok_or(Error::Protocol)?;
-                values.insert(field.key, reading(field, project(&output, mapping)?, now)?);
+                values.insert(
+                    field.key,
+                    reading(field, project(&output, mapping, &field.value_type)?, now)?,
+                );
             }
         }
         w::TelemetryCollector::Native { plan, mappings, .. } => {
@@ -84,7 +71,24 @@ pub(super) fn readings(
                         serde_json::to_value(result.rows.first().ok_or(Error::Protocol)?)
                     }
                     .map_err(|_| Error::Protocol)?;
-                    let mut projected = project(&input, &mapping.mapping)?;
+                    let mut projection_type = field.value_type.clone();
+                    if mapping.counter_normalization.is_some() {
+                        let start = &field
+                            .time_series
+                            .as_ref()
+                            .ok_or(Error::Protocol)?
+                            .interval_start_path
+                            .as_ref()
+                            .ok_or(Error::Protocol)?[0];
+                        let w::ValueType::Array { items, .. } = &mut projection_type else {
+                            return Err(Error::Protocol);
+                        };
+                        let w::ValueType::Object { properties } = items.as_mut() else {
+                            return Err(Error::Protocol);
+                        };
+                        properties.remove(start);
+                    }
+                    let mut projected = project(&input, &mapping.mapping, &projection_type)?;
                     if mapping.counter_normalization.is_some() {
                         // The signed wire contract reserves this property for the Agent.
                         // Spool atomically replaces this candidate with the durable baseline start.
@@ -147,38 +151,6 @@ fn reading(f: &w::FieldDefinition, value: Json, _now: i64) -> Result<w::Telemetr
         value,
         interval_start: None,
     })
-}
-fn scalar(t: &w::ValueType, v: &Json, depth: usize) -> Result<w::Scalar, Error> {
-    if depth > 6 {
-        return Err(Error::Capacity);
-    }
-    use w::ValueType as T;
-    Ok(match t {
-        T::String{..}|T::Enum{..}=>w::Scalar::String(v.as_str().ok_or(Error::Protocol)?.into()),
-        T::Integer=>w::Scalar::Integer(v.as_i64().ok_or(Error::Protocol)?),
-        T::Number=>serde_json::from_value(json!({"kind":"number","value":v.as_f64().filter(|v|v.is_finite()).ok_or(Error::Protocol)?})).map_err(|_|Error::Protocol)?,
-        T::Time=>w::Scalar::Time(v.as_i64().ok_or(Error::Protocol)?),
-        T::Boolean=>w::Scalar::Boolean(v.as_bool().ok_or(Error::Protocol)?),
-        T::Array{items,max_items}=>{let a=v.as_array().filter(|a|a.len()<=*max_items as usize).ok_or(Error::Capacity)?;w::Scalar::Array(a.iter().map(|v|scalar(items,v,depth+1)).collect::<Result<_,_>>()?)},
-        T::Object{properties}=>{let a=v.as_object().filter(|a|a.len()==properties.len()).ok_or(Error::Protocol)?;w::Scalar::Object(properties.iter().map(|(k,t)|Ok((k.clone(),scalar(t,a.get(k).ok_or(Error::Protocol)?,depth+1)?))).collect::<Result<_,Error>>()?)},
-        T::Record{properties}=>{let a=v.as_object().ok_or(Error::Protocol)?;if a.keys().any(|k|!properties.contains_key(k)){return Err(Error::Protocol);}let mut result=BTreeMap::new();for(k,p)in properties{match a.get(k){Some(v)=>{result.insert(k.clone(),scalar(&p.value_type,v,depth+1)?);},None if p.required=>return Err(Error::Protocol),None=>()}}w::Scalar::Object(result)},
-    })
-}
-fn project(input: &Json, mapping: &w::ValueMapping) -> Result<Json, Error> {
-    mapping.validate()?;
-    let value = input.pointer(&mapping.pointer).ok_or(Error::Protocol)?;
-    if mapping.columns.is_empty() {
-        return mapping.project_selected(value).map_err(Into::into);
-    }
-    let rows = value
-        .as_array()
-        .filter(|v| v.len() <= 4096)
-        .ok_or(Error::Capacity)?;
-    Ok(Json::Array(
-        rows.iter()
-            .map(|row| mapping.project_selected(row).map_err(Into::into))
-            .collect::<Result<_, Error>>()?,
-    ))
 }
 fn path<'a>(value: &'a w::Scalar, path: &[String]) -> Option<&'a w::Scalar> {
     let mut v = value;
@@ -253,8 +225,36 @@ pub(super) fn validate_budget(
     Ok(())
 }
 
+pub(crate) fn validate_script_output(
+    schema: &Json,
+    output: &Json,
+    bytes: usize,
+    max_rows: u16,
+) -> Result<(), Error> {
+    if output
+        .as_array()
+        .is_some_and(|v| v.len() > max_rows as usize)
+    {
+        return Err(Error::Capacity);
+    }
+    admit_schema(schema)?;
+    if serde_json::to_vec(schema)
+        .map_err(|_| Error::Protocol)?
+        .len()
+        .saturating_mul(bytes)
+        > 16 * 1024 * 1024
+    {
+        return Err(Error::Capacity);
+    }
+    let validator = jsonschema::validator_for(schema).map_err(|_| Error::Protocol)?;
+    if !validator.is_valid(output) {
+        return Err(Error::Protocol);
+    }
+    Ok(())
+}
+
 /// Restrict remote validation to bounded, non-recursive structural schemas.
-pub(super) fn admit_schema(schema: &Json) -> Result<(), Error> {
+pub(crate) fn admit_schema(schema: &Json) -> Result<(), Error> {
     fn walk(v: &Json, depth: usize, nodes: &mut usize, literal: bool) -> Result<(), Error> {
         *nodes += 1;
         if depth > 12 || *nodes > 256 {
@@ -314,6 +314,7 @@ mod tests {
         assert!(project(
             &json!({"n":"18446744073709551615"}),
             &mapping(w::Conversion::Integer),
+            &w::ValueType::Integer,
         )
         .is_err());
         assert!(project(
@@ -322,6 +323,7 @@ mod tests {
                 numerator: 1,
                 denominator: 2
             }),
+            &w::ValueType::Integer,
         )
         .is_err());
         assert!(project(
@@ -329,6 +331,13 @@ mod tests {
             &mapping(w::Conversion::Bitmask {
                 flags: [("1".into(), "one".into())].into()
             }),
+            &w::ValueType::Array {
+                items: Box::new(w::ValueType::String {
+                    max_length: 64,
+                    allow_empty: false
+                }),
+                max_items: 64
+            },
         )
         .is_err());
         assert_eq!(
@@ -338,6 +347,7 @@ mod tests {
                     numerator: 1,
                     denominator: 1024
                 }),
+                &w::ValueType::Integer,
             )
             .unwrap(),
             json!(1024)
@@ -356,19 +366,22 @@ mod tests {
         assert_eq!(
             project(
                 &json!({"n":"19700101010000.000000+060"}),
-                &mapping(w::Conversion::CimTime)
+                &mapping(w::Conversion::CimTime),
+                &w::ValueType::Time
             )
             .unwrap(),
             json!(0)
         );
         assert!(project(
             &json!({"n":"20260230010000.000000+000"}),
-            &mapping(w::Conversion::CimTime)
+            &mapping(w::Conversion::CimTime),
+            &w::ValueType::Time
         )
         .is_err());
         assert!(project(
             &json!({"n":"2026**********.******+***"}),
-            &mapping(w::Conversion::CimTime)
+            &mapping(w::Conversion::CimTime),
+            &w::ValueType::Time
         )
         .is_err());
     }

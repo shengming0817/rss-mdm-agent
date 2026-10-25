@@ -10,6 +10,39 @@ fn text<'a>(row: &'a Value, key: &str) -> Option<&'a str> {
         .and_then(Value::as_str)
         .filter(|v| !v.is_empty())
 }
+// Collection snapshots retain source/projection wrappers. Software selectors consume
+// only the bounded physical installation record; the snapshot cursor keeps its raw offset.
+fn installation_row(row: &Value) -> Result<Option<&Value>, Error> {
+    if row.get("field").is_some() {
+        return Ok(None);
+    }
+    if let Some(domain) = row.get("domain") {
+        if !matches!(
+            domain.as_str(),
+            Some("software.installations" | "software.receipts" | "software.packages")
+        ) {
+            return Ok(None);
+        }
+        return row
+            .get("values")
+            .filter(|v| v.is_object())
+            .map(Some)
+            .ok_or(Error::Untrusted);
+    }
+    Ok(Some(row))
+}
+fn row_coverage<'a>(
+    coverage: &'a std::collections::BTreeMap<String, Digest>,
+    row: &Value,
+) -> Result<&'a Digest, Error> {
+    match text(row, "source") {
+        Some(source) => coverage.get(source),
+        // An unwrapped physical record is unambiguous only for a single inventory.
+        None if coverage.len() == 1 => coverage.values().next(),
+        None => None,
+    }
+    .ok_or(Error::Untrusted)
+}
 impl Core {
     fn select_local_software(
         &self,
@@ -68,12 +101,17 @@ impl Core {
         let policy = self.software_policy().ok();
         let usable =
             !data.stale && data.quality == DataQuality::Complete && data.enumeration_complete;
+        let coverage = self.data.software_coverage(&data.query, &command.subject)?;
         let mut items = Vec::new();
-        for (index, row) in data.rows.iter().enumerate() {
+        for (index, raw) in data.rows.iter().enumerate() {
+            let Some(row) = installation_row(raw)? else {
+                continue;
+            };
             if let Some(mut item) = software_item(
                 row,
                 &data.query,
                 &snapshot,
+                row_coverage(&coverage, raw)?,
                 offset + index as u32,
                 &command.subject,
             )? {
@@ -84,6 +122,7 @@ impl Core {
         }
         Ok(Reply::SoftwarePage {
             value: SoftwarePage {
+                coverage: coverage.into_values().collect(),
                 query: data.query,
                 collected_at: data.collected_at,
                 quality: data.quality,
@@ -100,6 +139,7 @@ pub(super) fn software_item(
     row: &Value,
     query: &QueryRef,
     snapshot: &Digest,
+    coverage: &Digest,
     offset: u32,
     subject: &str,
 ) -> Result<Option<InstalledSoftware>, Error> {
@@ -130,6 +170,7 @@ pub(super) fn software_item(
         installation: plan::id(text(row, "id").ok_or(Error::Untrusted)?)?,
     };
     Ok(Some(InstalledSoftware {
+        coverage: coverage.clone(),
         reference,
         kind,
         name: text(row, "name")
@@ -216,7 +257,11 @@ impl Core {
             command.binding.as_ref().ok_or(Error::Denied)?,
             self.host.clock.millis()? / 1000,
         )?;
-        Ok((item, data.rows.into_iter().next().ok_or(Error::NotFound)?))
+        let row = data.rows.first().ok_or(Error::NotFound)?;
+        Ok((
+            item,
+            installation_row(row)?.ok_or(Error::Unsupported)?.clone(),
+        ))
     }
     fn local_software_input(
         &self,
@@ -683,12 +728,35 @@ mod tests {
         }
     }
     #[test]
+    fn physical_row_source_selects_its_coverage_without_confusing_overlapping_queries() {
+        let apps = Digest::new("1".repeat(64)).unwrap();
+        let receipts = Digest::new("2".repeat(64)).unwrap();
+        let coverage = [
+            ("apps".into(), apps.clone()),
+            ("receipts".into(), receipts.clone()),
+        ]
+        .into();
+        assert_eq!(
+            row_coverage(&coverage, &json!({"source":"apps"})).unwrap(),
+            &apps
+        );
+        assert_eq!(
+            row_coverage(&coverage, &json!({"source":"receipts"})).unwrap(),
+            &receipts
+        );
+        assert!(row_coverage(&coverage, &json!({})).is_err());
+        assert!(row_coverage(&coverage, &json!({"source":"unknown"})).is_err());
+        let single = [("read".into(), apps.clone())].into();
+        assert_eq!(row_coverage(&single, &json!({})).unwrap(), &apps);
+    }
+    #[test]
     fn device_inventory_does_not_expose_other_users_installations() {
         let row = json!({"id":"installation","native_id":"package","name":"App","version":"1","scope":"user","owner":"other-user","origin":"msix.registered"});
         assert!(software_item(
             &row,
             &query(),
             &Digest::new("22".repeat(32)).unwrap(),
+            &Digest::new("33".repeat(32)).unwrap(),
             0,
             "current-user"
         )
@@ -699,7 +767,7 @@ mod tests {
     fn application_reference_freezes_the_snapshot_position_without_accepting_paths_as_input() {
         let row = json!({"id":"installation","native_id":"com.example.app","name":"App","version":"1","scope":"device","owner":"","origin":"application","location":"/Applications/App.app"});
         let snapshot = Digest::new("22".repeat(32)).unwrap();
-        let item = software_item(&row, &query(), &snapshot, 129, "current-user")
+        let item = software_item(&row, &query(), &snapshot, &snapshot, 129, "current-user")
             .unwrap()
             .unwrap();
         assert_eq!(item.reference.cursor.snapshot, snapshot);
@@ -718,6 +786,7 @@ mod tests {
             &row,
             &query(),
             &Digest::new("22".repeat(32)).unwrap(),
+            &Digest::new("33".repeat(32)).unwrap(),
             0,
             "user",
         )

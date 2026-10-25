@@ -97,6 +97,7 @@ it("distinguishes missing data, a complete empty software observation and partia
   const ports = fixtureLocalPorts();
   const read = vi.fn(async () => ({
     query: { id: "software.installations", revision: "1".repeat(64) },
+    coverage: ["4".repeat(64)],
     collectedAt: Math.floor(Date.now() / 1000),
     quality: "complete" as const,
     enumerationComplete: true,

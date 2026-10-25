@@ -27,6 +27,7 @@ mod values;
 #[cfg(windows)]
 mod windows;
 
+pub(crate) const INPUT_BYTES: u64 = 1024 * 1024;
 pub(crate) const PROFILE: &str = "native-collection-worker";
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -49,14 +50,105 @@ pub(crate) struct ReadPlan {
     pub execution: w::NativeExecutionBinding,
     pub platform: w::TaskPlatform,
     pub deadline: i64,
+    pub source: ReadSource,
 }
-impl From<w::CollectionTaskSpec> for ReadPlan {
-    fn from(task: w::CollectionTaskSpec) -> Self {
-        Self {
-            plan: task.plan,
-            execution: task.execution,
+/// Frozen interpretation and authority provenance, retained in the protected worker artifact.
+/// The physical read is derived from this material; equality is checked before execution/recovery.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) enum ReadSource {
+    Local {
+        projection: Box<crate::collected_data::LocalProjection>,
+    },
+    Task {
+        task: Box<w::CollectionTaskSpec>,
+        projection: Box<crate::collected_data::LocalProjection>,
+    },
+    Periodic {
+        configuration: Box<w::TelemetryConfiguration>,
+        projection: Box<crate::collected_data::LocalProjection>,
+    },
+}
+impl TryFrom<w::CollectionTaskSpec> for ReadPlan {
+    type Error = Error;
+    fn try_from(task: w::CollectionTaskSpec) -> Result<Self, Error> {
+        Ok(Self {
+            plan: task.plan.clone(),
+            execution: task.execution.clone(),
             platform: task.platform,
             deadline: task.deadline,
+            source: ReadSource::Task {
+                projection: Box::new(crate::collected_data::LocalProjection::freeze(&task.plan)?),
+                task: Box::new(task),
+            },
+        })
+    }
+}
+impl ReadSource {
+    pub(crate) fn local(plan: &w::NativeCollectionPlan) -> Result<Self, Error> {
+        Ok(Self::Local {
+            projection: Box::new(crate::collected_data::LocalProjection::freeze(plan)?),
+        })
+    }
+}
+impl ReadPlan {
+    pub(crate) fn periodic(c: &w::TelemetryConfiguration, deadline: i64) -> Result<Self, Error> {
+        let w::TelemetryCollector::Native { plan, .. } = &c.collector else {
+            return Err(Error::Protocol);
+        };
+        Ok(Self {
+            plan: plan.clone(),
+            platform: plan.platform(),
+            deadline,
+            execution: w::NativeExecutionBinding {
+                identity: w::ExecutionIdentity::System,
+                context_revision: 1,
+                target: w::SoftwareExecutionTarget::Device,
+                generated_uid: None,
+            },
+            source: ReadSource::Periodic {
+                configuration: Box::new(c.clone()),
+                projection: Box::new(crate::collected_data::LocalProjection::freeze(plan)?),
+            },
+        })
+    }
+    pub(crate) fn local_projection(&self) -> &crate::collected_data::LocalProjection {
+        match &self.source {
+            ReadSource::Local { projection }
+            | ReadSource::Task { projection, .. }
+            | ReadSource::Periodic { projection, .. } => projection,
+        }
+    }
+    pub(crate) fn validate(&self) -> Result<(), Error> {
+        self.local_projection().validate(&self.plan)?;
+        self.execution.validate(&self.plan)?;
+        if self.platform != self.plan.platform() {
+            return Err(Error::Untrusted);
+        }
+        match &self.source {
+            ReadSource::Local { projection } => projection.validate(&self.plan),
+            ReadSource::Task { task, .. } => {
+                task.validate()?;
+                if task.plan != self.plan
+                    || task.execution != self.execution
+                    || task.deadline != self.deadline
+                    || task.platform != self.platform
+                {
+                    return Err(Error::Untrusted);
+                }
+                Ok(())
+            }
+            ReadSource::Periodic { configuration, .. } => {
+                configuration.signing_bytes("retained-read")?;
+                let expected = Self::periodic(configuration, self.deadline)?;
+                if self.deadline > configuration.expires_at
+                    || self.plan != expected.plan
+                    || self.execution != expected.execution
+                {
+                    return Err(Error::Untrusted);
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -204,10 +296,10 @@ pub fn run(path: &Path, query: Option<&str>) -> Result<i32, Error> {
     if query.is_some() {
         macos_supervisor::confine_query()?;
     }
-    let bytes = execution_runner::staging::read_worker_input(path, 256 * 1024)
+    let bytes = execution_runner::staging::read_worker_input(path, INPUT_BYTES)
         .map_err(crate::error::app_error)?;
     let input: Input = serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)?;
-    input.read.execution.validate(&input.read.plan)?;
+    input.read.validate()?;
     preflight(&input.read.plan)?;
     if !input.read.plan.supported_by(&engines()) {
         return Err(Error::Unsupported);
@@ -290,7 +382,7 @@ fn verify_identity(input: &Input) -> Result<(), Error> {
         .map_err(crate::error::app_error)
 }
 fn verify_identity_binding(input: &Input) -> Result<(), Error> {
-    input.read.execution.validate(&input.read.plan)?;
+    input.read.validate()?;
     let valid = match (&input.read.execution.target, &input.run_as, &input.session) {
         (
             w::SoftwareExecutionTarget::Device,

@@ -32,6 +32,7 @@ pub struct SoftwareManager {
     pub executor: SoftwareManagerKind,
     pub image: installation_security::Artifact,
 }
+pub(crate) const SCRIPT_PROJECTION: &str = "rss-script-collection";
 pub(crate) fn id(value: impl Into<String>) -> Result<Id, Error> {
     Id::new(value).map_err(|_| Error::Protocol)
 }
@@ -58,23 +59,38 @@ pub(crate) fn context(
     tenant: uuid::Uuid,
     r: &wire::BindingProfile,
 ) -> Result<(execution_app::ServiceBinding, ActorId), Error> {
-    use sha2::{Digest as _, Sha256};
-    let bytes = serde_json::to_vec(&(service_id, r.registration_id, r.generation))
-        .map_err(|_| Error::Protocol)?;
     Ok((
-        execution_app::ServiceBinding {
-            authority: Authority::Enterprise {
-                id: id(format!("agent-{:x}", Sha256::digest(bytes)))?,
-                tenant: id(tenant.to_string())?,
-            },
-            device: DeviceId::new(&r.device_id).map_err(|_| Error::Protocol)?,
-        },
+        enterprise_binding(
+            service_id,
+            tenant,
+            r.registration_id,
+            r.generation,
+            &r.device_id,
+        )?,
         ActorId::new(format!(
             "registration:{}:{}",
             r.registration_id, r.generation
         ))
         .map_err(|_| Error::Protocol)?,
     ))
+}
+pub(crate) fn enterprise_binding(
+    service_id: uuid::Uuid,
+    tenant: uuid::Uuid,
+    registration: uuid::Uuid,
+    generation: u64,
+    device: &str,
+) -> Result<execution_app::ServiceBinding, Error> {
+    use sha2::{Digest as _, Sha256};
+    let bytes =
+        serde_json::to_vec(&(service_id, registration, generation)).map_err(|_| Error::Protocol)?;
+    Ok(execution_app::ServiceBinding {
+        authority: Authority::Enterprise {
+            id: id(format!("agent-{:x}", Sha256::digest(bytes)))?,
+            tenant: id(tenant.to_string())?,
+        },
+        device: DeviceId::new(device).map_err(|_| Error::Protocol)?,
+    })
 }
 pub(crate) fn script_profile(profile: wire::ExecutorProfile) -> Result<ScriptProfile, Error> {
     match profile {
@@ -122,6 +138,26 @@ fn execution_interaction_limits() -> execution_interaction::Limits {
     execution_interaction::Limits {
         max_snapshot_bytes: 65536,
         max_lifetime_ms: 60000,
+    }
+}
+
+pub(crate) fn verify_script_projection(
+    plan: &FrozenExecution,
+    task: &wire::TaskSpec,
+) -> Result<(), Error> {
+    let retained = plan.spec().request.parameters.get(SCRIPT_PROJECTION);
+    match (&task.projection, retained) {
+        (wire::ScriptProjection::None, None) => Ok(()),
+        (wire::ScriptProjection::Collection { .. }, Some(InputValue::Literal { value })) => {
+            let frozen: wire::TaskSpec =
+                serde_json::from_value(value.clone()).map_err(|_| Error::Protocol)?;
+            if &frozen != task {
+                return Err(Error::Untrusted);
+            }
+            frozen.validate()?;
+            Ok(())
+        }
+        _ => Err(Error::Untrusted),
     }
 }
 
@@ -192,7 +228,7 @@ pub(crate) fn script(
         resource: reference("backend-content", hex(&payload.content.sha256))?,
         sha256: Digest::new(hex(&payload.content.sha256)).map_err(|_| Error::Protocol)?,
     };
-    let parameters: BTreeMap<_, _> = payload
+    let mut parameters: BTreeMap<_, _> = payload
         .sql_parameters
         .clone()
         .unwrap_or_default()
@@ -217,6 +253,24 @@ pub(crate) fn script(
     } else {
         None
     };
+    if matches!(
+        payload.projection,
+        wire::ScriptProjection::Collection { .. }
+    ) {
+        // Frozen execution input is protected by the existing journal and content digest.
+        // Add metadata after SQL argument compilation; it is never an executable argument.
+        if parameters
+            .insert(
+                SCRIPT_PROJECTION.into(),
+                InputValue::Literal {
+                    value: serde_json::to_value(payload).map_err(|_| Error::Protocol)?,
+                },
+            )
+            .is_some()
+        {
+            return Err(Error::Protocol);
+        }
+    }
     let env = environment(&payload.environment)?;
     let output = OutputSpec {
         format: OutputFormat::Json {

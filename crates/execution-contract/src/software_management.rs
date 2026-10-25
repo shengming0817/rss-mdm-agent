@@ -78,6 +78,8 @@ pub struct SoftwareActionView {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct InstalledSoftware {
+    /// Physical inventory containing this row, matching one of its page coverage identities.
+    pub coverage: Digest,
     /// Snapshot-bound reference, never a filesystem path selector.
     pub reference: SoftwareRef,
     /// Native installation family.
@@ -108,6 +110,8 @@ pub struct SoftwareRead {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SoftwarePage {
+    /// Physical inventories and account boundaries covered by this query, independent of delivery identity.
+    pub coverage: Vec<Digest>,
     /// Service-owned source definition.
     pub query: QueryRef,
     /// Actual collection time, absent when unobserved.

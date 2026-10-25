@@ -109,7 +109,7 @@ pub(super) fn input(q: w::NativeQuery) -> Input {
         plan,
     };
     Input {
-        read: task.into(),
+        read: task.try_into().unwrap(),
         finish_by_unix_ms: (time as u64 + 20) * 1000,
         image_sha256: Digest::new("00".repeat(32)).unwrap(),
         run_as: RunAs::System {
@@ -281,6 +281,9 @@ fn signed_generated_uid_is_checked_against_the_local_directory() {
         session: Id::new("identity-boundary-test").unwrap(),
     };
     input.read.execution.generated_uid = Some(observed);
+    if let crate::collection_worker::ReadSource::Task { task, .. } = &mut input.read.source {
+        task.execution = input.read.execution.clone();
+    }
     super::super::verify_identity_binding(&input).unwrap();
     input.read.execution.generated_uid = Some(uuid::Uuid::new_v4().to_string());
     assert_eq!(

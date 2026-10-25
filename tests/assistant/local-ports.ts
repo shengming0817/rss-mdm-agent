@@ -20,6 +20,7 @@ export function fixtureLocalPorts(): LocalPorts {
     domains: [domain],
     inputSchema: {},
     kind: "native",
+    origin: "local",
     policy: null,
     reason: null,
     scope: { kind: "device" },
@@ -31,6 +32,7 @@ export function fixtureLocalPorts(): LocalPorts {
     ["browser", "Browser", "8.0"],
     ["sync", "Work Sync", "3.0"],
   ].map(([id, name, version]) => ({
+    coverage: "4".repeat(64),
     reference: {
       query: descriptors[0].reference,
       cursor: { snapshot, offset: 0 },
@@ -70,7 +72,6 @@ export function fixtureLocalPorts(): LocalPorts {
           scope: { kind: "device" },
           collectedAt: Math.floor(Date.now() / 1000),
           enumerationComplete: true,
-          mappingVersion: 1,
           next: null,
           quality: "complete",
           request: null,
@@ -102,6 +103,7 @@ export function fixtureLocalPorts(): LocalPorts {
     software: {
       read: async () => ({
         query: descriptors[0].reference,
+        coverage: ["4".repeat(64)],
         collectedAt: Math.floor(Date.now() / 1000),
         quality: "complete",
         enumerationComplete: true,

@@ -268,6 +268,10 @@
               "items": { "$ref": "#/$defs/SoftwareActionView" },
               "type": "array"
             },
+            "coverage": {
+              "$ref": "#/$defs/Digest",
+              "description": "Physical inventory containing this row, matching one of its page coverage identities."
+            },
             "kind": {
               "$ref": "#/$defs/InstalledSoftwareKind",
               "description": "Native installation family."
@@ -302,6 +306,7 @@
             }
           },
           "required": [
+            "coverage",
             "reference",
             "kind",
             "name",
@@ -530,6 +535,11 @@
               "minimum": 0,
               "type": ["integer", "null"]
             },
+            "coverage": {
+              "description": "Physical inventories and account boundaries covered by this query, independent of delivery identity.",
+              "items": { "$ref": "#/$defs/Digest" },
+              "type": "array"
+            },
             "enumerationComplete": {
               "description": "Whether the original enumeration completed.",
               "type": "boolean"
@@ -557,6 +567,7 @@
             }
           },
           "required": [
+            "coverage",
             "query",
             "quality",
             "enumerationComplete",
@@ -2455,12 +2466,6 @@
               "description": "Allowlisted local field projection.",
               "type": "object"
             },
-            "mappingVersion": {
-              "description": "Version of the local domain mapping; absent when unavailable.",
-              "format": "uint32",
-              "minimum": 0,
-              "type": ["integer", "null"]
-            },
             "next": {
               "anyOf": [{ "$ref": "#/$defs/DataCursor" }, { "type": "null" }],
               "description": "Continuation for this exact snapshot."
@@ -2722,6 +2727,10 @@
               "$ref": "#/$defs/QueryKind",
               "description": "Source family."
             },
+            "origin": {
+              "$ref": "#/$defs/QueryOrigin",
+              "description": "Frozen provenance, independent of the physical source and caller permissions."
+            },
             "policy": {
               "anyOf": [
                 { "$ref": "#/$defs/PublishedQuery" },
@@ -2750,6 +2759,7 @@
             "reference",
             "title",
             "kind",
+            "origin",
             "scope",
             "domains",
             "inputSchema",
@@ -2773,6 +2783,21 @@
             {
               "const": "telemetry",
               "description": "Signed periodic observation.",
+              "type": "string"
+            }
+          ]
+        },
+        "QueryOrigin": {
+          "description": "Provenance classification only; it never grants execution or local read permission.",
+          "oneOf": [
+            {
+              "const": "local",
+              "description": "An explicitly selected, packaged local capability including its frozen shared baseline.",
+              "type": "string"
+            },
+            {
+              "const": "enterprise",
+              "description": "A verified enterprise task or configuration, subject to local read authorization.",
               "type": "string"
             }
           ]
@@ -3152,12 +3177,6 @@
               "description": "Allowlisted local field projection.",
               "type": "object"
             },
-            "mappingVersion": {
-              "description": "Version of the local domain mapping; absent when unavailable.",
-              "format": "uint32",
-              "minimum": 0,
-              "type": ["integer", "null"]
-            },
             "next": {
               "anyOf": [{ "$ref": "#/$defs/DataCursor" }, { "type": "null" }],
               "description": "Continuation for this exact snapshot."
@@ -3419,6 +3438,10 @@
               "$ref": "#/$defs/QueryKind",
               "description": "Source family."
             },
+            "origin": {
+              "$ref": "#/$defs/QueryOrigin",
+              "description": "Frozen provenance, independent of the physical source and caller permissions."
+            },
             "policy": {
               "anyOf": [
                 { "$ref": "#/$defs/PublishedQuery" },
@@ -3447,6 +3470,7 @@
             "reference",
             "title",
             "kind",
+            "origin",
             "scope",
             "domains",
             "inputSchema",
@@ -3470,6 +3494,21 @@
             {
               "const": "telemetry",
               "description": "Signed periodic observation.",
+              "type": "string"
+            }
+          ]
+        },
+        "QueryOrigin": {
+          "description": "Provenance classification only; it never grants execution or local read permission.",
+          "oneOf": [
+            {
+              "const": "local",
+              "description": "An explicitly selected, packaged local capability including its frozen shared baseline.",
+              "type": "string"
+            },
+            {
+              "const": "enterprise",
+              "description": "A verified enterprise task or configuration, subject to local read authorization.",
               "type": "string"
             }
           ]
@@ -3792,12 +3831,6 @@
               "description": "Allowlisted local field projection.",
               "type": "object"
             },
-            "mappingVersion": {
-              "description": "Version of the local domain mapping; absent when unavailable.",
-              "format": "uint32",
-              "minimum": 0,
-              "type": ["integer", "null"]
-            },
             "next": {
               "anyOf": [{ "$ref": "#/$defs/DataCursor" }, { "type": "null" }],
               "description": "Continuation for this exact snapshot."
@@ -4059,6 +4092,10 @@
               "$ref": "#/$defs/QueryKind",
               "description": "Source family."
             },
+            "origin": {
+              "$ref": "#/$defs/QueryOrigin",
+              "description": "Frozen provenance, independent of the physical source and caller permissions."
+            },
             "policy": {
               "anyOf": [
                 { "$ref": "#/$defs/PublishedQuery" },
@@ -4087,6 +4124,7 @@
             "reference",
             "title",
             "kind",
+            "origin",
             "scope",
             "domains",
             "inputSchema",
@@ -4110,6 +4148,21 @@
             {
               "const": "telemetry",
               "description": "Signed periodic observation.",
+              "type": "string"
+            }
+          ]
+        },
+        "QueryOrigin": {
+          "description": "Provenance classification only; it never grants execution or local read permission.",
+          "oneOf": [
+            {
+              "const": "local",
+              "description": "An explicitly selected, packaged local capability including its frozen shared baseline.",
+              "type": "string"
+            },
+            {
+              "const": "enterprise",
+              "description": "A verified enterprise task or configuration, subject to local read authorization.",
               "type": "string"
             }
           ]
@@ -4393,12 +4446,6 @@
               "description": "Allowlisted local field projection.",
               "type": "object"
             },
-            "mappingVersion": {
-              "description": "Version of the local domain mapping; absent when unavailable.",
-              "format": "uint32",
-              "minimum": 0,
-              "type": ["integer", "null"]
-            },
             "next": {
               "anyOf": [{ "$ref": "#/$defs/DataCursor" }, { "type": "null" }],
               "description": "Continuation for this exact snapshot."
@@ -4660,6 +4707,10 @@
               "$ref": "#/$defs/QueryKind",
               "description": "Source family."
             },
+            "origin": {
+              "$ref": "#/$defs/QueryOrigin",
+              "description": "Frozen provenance, independent of the physical source and caller permissions."
+            },
             "policy": {
               "anyOf": [
                 { "$ref": "#/$defs/PublishedQuery" },
@@ -4688,6 +4739,7 @@
             "reference",
             "title",
             "kind",
+            "origin",
             "scope",
             "domains",
             "inputSchema",
@@ -4711,6 +4763,21 @@
             {
               "const": "telemetry",
               "description": "Signed periodic observation.",
+              "type": "string"
+            }
+          ]
+        },
+        "QueryOrigin": {
+          "description": "Provenance classification only; it never grants execution or local read permission.",
+          "oneOf": [
+            {
+              "const": "local",
+              "description": "An explicitly selected, packaged local capability including its frozen shared baseline.",
+              "type": "string"
+            },
+            {
+              "const": "enterprise",
+              "description": "A verified enterprise task or configuration, subject to local read authorization.",
               "type": "string"
             }
           ]
@@ -4994,12 +5061,6 @@
               "description": "Allowlisted local field projection.",
               "type": "object"
             },
-            "mappingVersion": {
-              "description": "Version of the local domain mapping; absent when unavailable.",
-              "format": "uint32",
-              "minimum": 0,
-              "type": ["integer", "null"]
-            },
             "next": {
               "anyOf": [{ "$ref": "#/$defs/DataCursor" }, { "type": "null" }],
               "description": "Continuation for this exact snapshot."
@@ -5261,6 +5322,10 @@
               "$ref": "#/$defs/QueryKind",
               "description": "Source family."
             },
+            "origin": {
+              "$ref": "#/$defs/QueryOrigin",
+              "description": "Frozen provenance, independent of the physical source and caller permissions."
+            },
             "policy": {
               "anyOf": [
                 { "$ref": "#/$defs/PublishedQuery" },
@@ -5289,6 +5354,7 @@
             "reference",
             "title",
             "kind",
+            "origin",
             "scope",
             "domains",
             "inputSchema",
@@ -5312,6 +5378,21 @@
             {
               "const": "telemetry",
               "description": "Signed periodic observation.",
+              "type": "string"
+            }
+          ]
+        },
+        "QueryOrigin": {
+          "description": "Provenance classification only; it never grants execution or local read permission.",
+          "oneOf": [
+            {
+              "const": "local",
+              "description": "An explicitly selected, packaged local capability including its frozen shared baseline.",
+              "type": "string"
+            },
+            {
+              "const": "enterprise",
+              "description": "A verified enterprise task or configuration, subject to local read authorization.",
               "type": "string"
             }
           ]

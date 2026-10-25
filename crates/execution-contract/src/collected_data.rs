@@ -25,6 +25,15 @@ pub enum QueryKind {
     /// Signed periodic observation.
     Telemetry,
 }
+/// Provenance classification only; it never grants execution or local read permission.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum QueryOrigin {
+    /// An explicitly selected, packaged local capability including its frozen shared baseline.
+    Local,
+    /// A verified enterprise task or configuration, subject to local read authorization.
+    Enterprise,
+}
 /// Visibility of a local result, independent of the service's execution identity.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
@@ -47,6 +56,8 @@ pub struct QueryDescriptor {
     pub title: String,
     /// Source family.
     pub kind: QueryKind,
+    /// Frozen provenance, independent of the physical source and caller permissions.
+    pub origin: QueryOrigin,
     /// Required local read boundary.
     pub scope: DataScope,
     /// Stable service-owned projection domains, independent of display title or producer labels.
@@ -175,8 +186,6 @@ pub struct CollectedData {
     pub quality: DataQuality,
     /// Whether the original enumeration was complete.
     pub enumeration_complete: bool,
-    /// Version of the local domain mapping; absent when unavailable.
-    pub mapping_version: Option<u32>,
     /// Allowlisted local field projection.
     pub fields: BTreeMap<String, Value>,
     /// Structured rows; no raw process streams.

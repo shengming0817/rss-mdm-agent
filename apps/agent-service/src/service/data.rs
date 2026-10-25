@@ -114,7 +114,8 @@ impl Core {
         let policies = self
             .telemetry
             .as_ref()
-            .map(|t| t.data_sources())
+            .map(|t| t.data_sources(&self.data))
+            .transpose()?
             .unwrap_or_default();
         self.data
             .maintain(&self.data_contexts(), &active, &policies)
@@ -151,7 +152,10 @@ impl Core {
             &input.spec().run_as,
             &input.spec().launch.artifact.sha256,
         );
-        let bytes = match execution_runner::staging::read_worker_input(&path, 1024 * 1024) {
+        let bytes = match execution_runner::staging::read_worker_input(
+            &path,
+            crate::collection_worker::INPUT_BYTES,
+        ) {
             Ok(v) => v,
             Err(_) => return Ok(()), // Historical GC is an unavailable definition, never a guessed plan.
         };
@@ -161,18 +165,74 @@ impl Core {
         }
         let worker: crate::collection_worker::Input =
             serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)?;
+        worker.read.validate()?;
+        let remote = match &worker.read.source {
+            crate::collection_worker::ReadSource::Task { task, .. } => {
+                Some(plan::enterprise_binding(
+                    self.data.service_id,
+                    task.tenant_id,
+                    task.registration_id,
+                    task.generation,
+                    &task.device_id,
+                )?)
+            }
+            crate::collection_worker::ReadSource::Periodic {
+                configuration: c, ..
+            } => Some(plan::enterprise_binding(
+                self.data.service_id,
+                c.tenant_id,
+                c.registration_id,
+                c.generation,
+                &c.device_id,
+            )?),
+            crate::collection_worker::ReadSource::Local { .. } => None,
+        };
+        if remote.as_ref().is_some_and(|b| {
+            b.authority != input.spec().request.authority
+                || b.device != input.spec().request.target.device
+        }) {
+            return Err(Error::Untrusted);
+        }
         self.data
             .remember(&input.spec().request.request_id, worker.read)?;
         Ok(())
     }
     pub(crate) fn capture_data(&mut self, request: &RequestId) -> Result<(), Error> {
         if self.data.captured(request)? {
-            return Ok(());
+            // Snapshot durability and delivery confirmation are independent commits.
+            // Finish confirmations after a crash without projecting or collecting again.
+            return Self::capture_delivery(&mut self.app, &mut self.data, request, |_, _, _| {
+                Err(Error::Conflict)
+            });
         }
         let input = self
             .app
             .service_frozen_input(request)
             .map_err(map_app_error)?;
+        if let Some(InputValue::Literal { value }) =
+            input.spec().request.parameters.get(plan::SCRIPT_PROJECTION)
+        {
+            let task: wire::TaskSpec =
+                serde_json::from_value(value.clone()).map_err(|_| Error::Protocol)?;
+            let b = plan::enterprise_binding(
+                self.data.service_id,
+                task.tenant_id,
+                task.registration_id,
+                task.generation,
+                &task.device_id,
+            )?;
+            if b.authority != input.spec().request.authority
+                || b.device != input.spec().request.target.device
+            {
+                return Err(Error::Untrusted);
+            }
+            return Self::capture_delivery(
+                &mut self.app,
+                &mut self.data,
+                request,
+                |data, process, at| data.capture_script(&task, request, process, at),
+            );
+        }
         if input.spec().launch.interpreter.profile.id.as_str() != crate::collection_worker::PROFILE
         {
             return Ok(());
@@ -181,9 +241,49 @@ impl Core {
         let Some(read) = self.data.remembered(request)? else {
             return Ok(());
         };
+        Self::capture_native_delivery(&mut self.app, &mut self.data, &input, &read)
+    }
+    pub(crate) fn capture_native_delivery<
+        H: execution_app::AppHost,
+        R: execution_app::RunnerPort,
+        J: execution_app::JournalPort,
+    >(
+        app: &mut ExecutionApp<H, R, J>,
+        data: &mut crate::collected_data::Data,
+        input: &FrozenExecution,
+        read: &crate::collection_worker::ReadPlan,
+    ) -> Result<(), Error> {
+        let request = &input.spec().request.request_id;
+        Self::capture_delivery(app, data, request, |data, process, at| {
+            if process.exit_code == Some(0)
+                && process.quality == OutputQuality::Complete
+                && process.total_output_bytes <= u64::from(read.plan.spec().budget.output_bytes)
+            {
+                let proof: CollectionCompletion =
+                    serde_json::from_slice(&process.stderr).map_err(|_| Error::Protocol)?;
+                if proof.input_sha256 != input.spec().launch.artifact.sha256.as_str() {
+                    return Err(Error::Untrusted);
+                }
+            }
+            data.native(read.clone(), Some(request.clone()), process, at)
+        })
+    }
+    fn capture_delivery<
+        H: execution_app::AppHost,
+        R: execution_app::RunnerPort,
+        J: execution_app::JournalPort,
+    >(
+        app: &mut ExecutionApp<H, R, J>,
+        data: &mut crate::collected_data::Data,
+        request: &RequestId,
+        mut capture: impl FnMut(
+            &mut crate::collected_data::Data,
+            &ProcessEvidence,
+            u64,
+        ) -> Result<(), Error>,
+    ) -> Result<(), Error> {
         let consumer = plan::id("local-collected-data")?;
-        for evidence in self
-            .app
+        for evidence in app
             .service_delivery(request, &consumer, 1)
             .map_err(map_app_error)?
         {
@@ -191,15 +291,11 @@ impl Core {
                 if !process.finished || !process.quiescent {
                     continue;
                 }
-                self.data.native(
-                    read.clone(),
-                    Some(request.clone()),
-                    process,
-                    evidence.observed_at_unix_ms,
-                )?;
+                if !data.captured(request)? {
+                    capture(data, process, evidence.observed_at_unix_ms)?;
+                }
             }
-            self.app
-                .service_confirm(request, &consumer, &evidence.receipt.event_id)
+            app.service_confirm(request, &consumer, &evidence.receipt.event_id)
                 .map_err(map_app_error)?;
         }
         Ok(())
@@ -575,6 +671,17 @@ impl<S: IdentityProvider> DeviceService<S> {
                     };
                     let reply = self.policy_operation(command, &request, commands).await?;
                     if let Reply::PolicyStatus { value } = &reply {
+                        if self
+                            .core
+                            .app
+                            .has_service_execution(
+                                &query.request,
+                                &self.core.request_device(&query.request)?,
+                            )
+                            .map_err(map_app_error)?
+                        {
+                            self.core.capture_data(&query.request)?;
+                        }
                         self.core.data.policy_result(&a, value)?;
                     }
                     let mut status = policy_status(reply, &a, &query.request)?;

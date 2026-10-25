@@ -4,6 +4,7 @@ mod account_identity;
 mod backend;
 mod collected_data;
 mod collection_environment;
+mod collection_projection;
 pub mod collection_worker;
 pub mod deployment;
 mod device_overview;

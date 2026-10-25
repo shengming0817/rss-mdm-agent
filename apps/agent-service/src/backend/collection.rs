@@ -30,7 +30,7 @@ pub(crate) fn compile(
     materials.validate_offer(offer)?;
     payload.validate()?;
     compile_read(
-        &payload.clone().into(),
+        &payload.clone().try_into()?,
         super::request_id(offer)?,
         Initiator::Backend {
             task: id(payload.task_id.to_string())?,
@@ -67,6 +67,7 @@ pub(crate) fn compile_read(
     (config, root): (&crate::ExecutionConfig, &mut MaterialRoot),
     delegate: Option<std::sync::Arc<execution_ipc::helper::Connection>>,
 ) -> Result<(FrozenExecution, Artifacts), Error> {
+    read.validate()?;
     if read.platform
         != match plan::platform()? {
             Platform::Windows => w::TaskPlatform::Windows,
@@ -149,6 +150,9 @@ pub(crate) fn compile_read(
         observed: Default::default(),
     };
     let bytes = serde_json::to_vec(&input).map_err(|_| Error::Protocol)?;
+    if bytes.len() as u64 > crate::collection_worker::INPUT_BYTES {
+        return Err(Error::Capacity);
+    }
     let hash = hex(&Sha256::digest(&bytes));
     let artifact = ExactArtifactRef {
         resource: reference("native-collection-input", &hash)?,
@@ -179,12 +183,20 @@ pub(crate) fn compile_read(
                     scope: TargetScope::Device {},
                 },
                 operation,
-                parameters: [(
-                    "collection-tools".into(),
-                    InputValue::Literal {
-                        value: serde_json::to_value(&tools).map_err(|_| Error::Protocol)?,
-                    },
-                )]
+                parameters: [
+                    (
+                        "collection-tools".into(),
+                        InputValue::Literal {
+                            value: serde_json::to_value(&tools).map_err(|_| Error::Protocol)?,
+                        },
+                    ),
+                    (
+                        "collection-read".into(),
+                        InputValue::Literal {
+                            value: serde_json::to_value(read).map_err(|_| Error::Protocol)?,
+                        },
+                    ),
+                ]
                 .into(),
             },
             launch: LaunchSpec {
@@ -250,8 +262,20 @@ pub(crate) fn verify_input(
     plan: &FrozenExecution,
     task: &w::CollectionTaskSpec,
 ) -> Result<(), Error> {
+    let read: crate::collection_worker::ReadPlan =
+        match plan.spec().request.parameters.get("collection-read") {
+            Some(InputValue::Literal { value }) => {
+                serde_json::from_value(value.clone()).map_err(|_| Error::Protocol)?
+            }
+            _ => return Err(Error::Untrusted),
+        };
+    read.validate()?;
+    if !matches!(&read.source, crate::collection_worker::ReadSource::Task { task: original, .. } if original.as_ref() == task)
+    {
+        return Err(Error::Untrusted);
+    }
     let input = crate::collection_worker::Input {
-        read: task.clone().into(),
+        read,
         finish_by_unix_ms: plan
             .spec()
             .validity
@@ -270,6 +294,9 @@ pub(crate) fn verify_input(
         },
     };
     let bytes = serde_json::to_vec(&input).map_err(|_| Error::Protocol)?;
+    if bytes.len() as u64 > crate::collection_worker::INPUT_BYTES {
+        return Err(Error::Capacity);
+    }
     if hex(&Sha256::digest(&bytes)) != plan.spec().launch.artifact.sha256.as_str() {
         return Err(Error::Untrusted);
     }

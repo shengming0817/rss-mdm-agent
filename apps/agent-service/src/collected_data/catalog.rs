@@ -42,6 +42,7 @@ impl Data {
                 budget,
             })?;
             let d = self.register(ReadPlan {
+                source: crate::collection_worker::ReadSource::local(&plan)?,
                 platform: plan.platform(),
                 plan,
                 deadline: 0,
@@ -293,6 +294,7 @@ impl Data {
                 budget,
             })?;
             let read = ReadPlan {
+                source: crate::collection_worker::ReadSource::local(&plan)?,
                 platform: plan.platform(),
                 plan,
                 deadline: 0,
