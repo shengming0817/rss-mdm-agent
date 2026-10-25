@@ -938,7 +938,7 @@ impl Data {
         &self,
         query: &QueryRef,
         caller: &str,
-    ) -> Result<Vec<Digest>, Error> {
+    ) -> Result<BTreeMap<String, Digest>, Error> {
         let definition = self.definition(query, caller)?;
         let read = &definition.read;
         read.plan
@@ -952,7 +952,7 @@ impl Data {
                 )
             })
             .map(|(source, q)| {
-                digest(&(
+                let coverage = digest(&(
                     q.version,
                     &q.definition,
                     q.cardinality,
@@ -961,7 +961,8 @@ impl Data {
                     subject(read),
                     &read.execution.generated_uid,
                     &read.local_projection().single(source)?,
-                ))
+                ))?;
+                Ok((source.clone(), coverage))
             })
             .collect()
     }

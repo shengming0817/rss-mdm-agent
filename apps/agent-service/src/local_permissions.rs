@@ -151,6 +151,7 @@ mod tests {
     use super::*;
     fn item(id: &str) -> InstalledSoftware {
         InstalledSoftware {
+            coverage: Digest::new("4".repeat(64)).unwrap(),
             reference: SoftwareRef {
                 query: QueryRef {
                     id: Id::new("query").unwrap(),

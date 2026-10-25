@@ -1473,7 +1473,11 @@ async fn software_coverage_joins_delivery_identities_but_separates_physical_and_
     local.plan = w::NativeCollectionPlan::new(spec).unwrap();
     local.source = crate::collection_worker::ReadSource::local(&local.plan).unwrap();
     let local_ref = data.register(local.clone()).unwrap().descriptor.reference;
-    let expected = data.software_coverage(&local_ref, "0").unwrap();
+    let expected = data
+        .software_coverage(&local_ref, "0")
+        .unwrap()
+        .into_values()
+        .collect::<Vec<_>>();
     assert_eq!(expected.len(), 1);
     let task = enterprise_task(&client, &local);
     let task_ref = data
@@ -1482,7 +1486,13 @@ async fn software_coverage_joins_delivery_identities_but_separates_physical_and_
         .descriptor
         .reference;
     assert_ne!(local_ref, task_ref);
-    assert_eq!(expected, data.software_coverage(&task_ref, "0").unwrap());
+    assert_eq!(
+        expected,
+        data.software_coverage(&task_ref, "0")
+            .unwrap()
+            .into_values()
+            .collect::<Vec<_>>()
+    );
     let mut periodic =
         crate::protocol_test_support::telemetry::native_performance_configuration(&server, &r)
             .configuration;
@@ -1501,7 +1511,10 @@ async fn software_coverage_joins_delivery_identities_but_separates_physical_and_
     assert_ne!(periodic_ref, local_ref);
     assert_eq!(
         expected,
-        data.software_coverage(&periodic_ref, "0").unwrap()
+        data.software_coverage(&periodic_ref, "0")
+            .unwrap()
+            .into_values()
+            .collect::<Vec<_>>()
     );
     let mut changed = local.clone();
     let mut spec: w::NativePlanSpec = changed.plan.clone().into();
@@ -1510,7 +1523,13 @@ async fn software_coverage_joins_delivery_identities_but_separates_physical_and_
     changed.plan = w::NativeCollectionPlan::new(spec).unwrap();
     changed.source = crate::collection_worker::ReadSource::local(&changed.plan).unwrap();
     let changed_ref = data.register(changed).unwrap().descriptor.reference;
-    assert_ne!(expected, data.software_coverage(&changed_ref, "0").unwrap());
+    assert_ne!(
+        expected,
+        data.software_coverage(&changed_ref, "0")
+            .unwrap()
+            .into_values()
+            .collect::<Vec<_>>()
+    );
     let caller = execution_ipc::host::current_subject().unwrap();
     let mut spec: w::NativePlanSpec = local.plan.clone().into();
     spec.scope = rss_mdm_agent_wire::CollectionScope::User {
@@ -1535,7 +1554,10 @@ async fn software_coverage_joins_delivery_identities_but_separates_physical_and_
     let user_ref = data.register(local).unwrap().descriptor.reference;
     assert_ne!(
         expected,
-        data.software_coverage(&user_ref, &caller).unwrap()
+        data.software_coverage(&user_ref, &caller)
+            .unwrap()
+            .into_values()
+            .collect::<Vec<_>>()
     );
     if caller != "0" {
         assert!(data.software_coverage(&user_ref, "0").is_err());

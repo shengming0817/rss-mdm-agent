@@ -3984,6 +3984,10 @@ export interface InstalledSoftware {
    */
   actions: SoftwareActionView[];
   /**
+   * Physical inventory containing this row, matching one of its page coverage identities.
+   */
+  coverage: Digest;
+  /**
    * Native installation family.
    */
   kind: InstalledSoftwareKind;

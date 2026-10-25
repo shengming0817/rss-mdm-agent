@@ -22,6 +22,7 @@ const descriptor: QueryDescriptor = {
   title: "Installed software",
 };
 const item: InstalledSoftware = {
+  coverage: "4".repeat(64),
   reference: {
     query,
     cursor: { snapshot: "2".repeat(64), offset: 0 },
@@ -351,5 +352,104 @@ it("requires independent coverage for other accounts and physical inventories", 
     enumerationComplete: true,
   });
   expect(c.summary.value.complete).toBe(true);
+  c.dispose();
+});
+
+it.each([{ current: [] as string[] }, { current: ["B"] }])(
+  "replaces stale rows with the complete alternative snapshot %j",
+  async ({ current }) => {
+    const { data, port } = ports();
+    const enterprise = {
+      ...descriptor,
+      reference: { ...query, id: "native:enterprise" },
+      origin: "enterprise" as const,
+    };
+    vi.mocked(data.query_directory).mockResolvedValue({
+      items: [descriptor, enterprise],
+      next: null,
+      policyNext: null,
+    });
+    vi.mocked(port.read).mockImplementation(async (input) => {
+      const selected =
+        input.read.selection.kind === "query"
+          ? input.read.selection.query
+          : query;
+      const stale = selected.id === query.id;
+      return {
+        ...page,
+        query: selected,
+        stale,
+        collectedAt: Math.floor(Date.now() / 1000) - (stale ? 600 : 0),
+        items: (stale ? ["A", "B"] : current).map((id) => ({
+          ...item,
+          reference: { ...item.reference, query: selected, installation: id },
+        })),
+      };
+    });
+    const c = createSoftware(data, port);
+    await c.discover();
+    expect(c.summary.value.complete).toBe(true);
+    expect(c.installed.value.map((row) => row.reference.installation)).toEqual(
+      current,
+    );
+    expect(c.summary.value.collectedAt).toBe(Math.floor(Date.now() / 1000));
+    c.dispose();
+  },
+);
+
+it("replaces only the covered part of a multi-inventory query and preserves independent inventories", async () => {
+  const { data, port } = ports();
+  const otherCoverage = "5".repeat(64);
+  const enterprise = {
+    ...descriptor,
+    reference: { ...query, id: "native:enterprise" },
+  };
+  vi.mocked(data.query_directory).mockResolvedValue({
+    items: [descriptor, enterprise],
+    next: null,
+    policyNext: null,
+  });
+  vi.mocked(port.read).mockImplementation(async (input) => {
+    const selected =
+      input.read.selection.kind === "query"
+        ? input.read.selection.query
+        : query;
+    const stale = selected.id === query.id;
+    return {
+      ...page,
+      query: selected,
+      stale,
+      collectedAt: Math.floor(Date.now() / 1000) - (stale ? 600 : 0),
+      coverage: stale ? [...page.coverage, otherCoverage] : page.coverage,
+      items: stale
+        ? [
+            item,
+            {
+              ...item,
+              coverage: otherCoverage,
+              reference: {
+                ...item.reference,
+                installation: "other-user-or-inventory",
+              },
+            },
+          ]
+        : [],
+    };
+  });
+  const c = createSoftware(data, port);
+  await c.discover();
+  expect(c.summary.value.complete).toBe(false);
+  expect(c.installed.value.map((row) => row.reference.installation)).toEqual([
+    "other-user-or-inventory",
+  ]);
+  // Covering this independent scope with another complete empty list removes only its own rows.
+  c.state.sources.push({
+    ...c.state.sources[1],
+    descriptor: { ...enterprise, reference: { ...query, id: "native:other" } },
+    page: { ...page, coverage: [otherCoverage], items: [] },
+    items: [],
+  });
+  expect(c.summary.value.complete).toBe(true);
+  expect(c.installed.value).toEqual([]);
   c.dispose();
 });

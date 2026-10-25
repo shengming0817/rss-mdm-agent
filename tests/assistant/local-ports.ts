@@ -32,6 +32,7 @@ export function fixtureLocalPorts(): LocalPorts {
     ["browser", "Browser", "8.0"],
     ["sync", "Work Sync", "3.0"],
   ].map(([id, name, version]) => ({
+    coverage: "4".repeat(64),
     reference: {
       query: descriptors[0].reference,
       cursor: { snapshot, offset: 0 },
