@@ -1,9 +1,9 @@
 # Target Windows 11 amd64/arm64. Reuse the installation owner; never run from a macOS developer host.
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('InstallSystem','VerifyUser','RefreshSystem','RemoveSystem','DeviceAccessHealth')][string]$Phase,
+    [Parameter(Mandatory)][ValidateSet('InstallSystem','VerifyUser','RefreshSystem','RemoveSystem','DeviceAccessHealth','PasskeyHealth')][string]$Phase,
     [Parameter(Mandatory)][string]$Candidate,
-    [Parameter(Mandatory)][string]$Config,
+    [string]$Config,
     [Parameter(Mandatory)][string]$Output,
     [string]$CurrentBinary,
     [string]$CurrentConfig
@@ -13,14 +13,14 @@ Set-StrictMode -Version Latest
 if (![OperatingSystem]::IsWindows() -or [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -notin @('X64','Arm64')) { throw 'Windows 11 amd64/arm64 target required' }
 $Identity=[Security.Principal.WindowsIdentity]::GetCurrent()
 $Elevated=([Security.Principal.WindowsPrincipal]$Identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (($Phase -eq 'VerifyUser') -eq $Elevated) { throw 'VerifyUser requires the actual non-elevated login; system phases require an administrator' }
+if (($Phase -in @('VerifyUser','PasskeyHealth')) -eq $Elevated) { throw 'VerifyUser requires the actual non-elevated login; system phases require an administrator' }
 $Root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $Owner=Join-Path $PSScriptRoot 'execution-windows.ps1'
 $Candidate=[IO.Path]::GetFullPath($Candidate)
-$Config=[IO.Path]::GetFullPath($Config)
+if ($Phase -ne 'PasskeyHealth') { if (!$Config) { throw 'Service configuration required' }; $Config=[IO.Path]::GetFullPath($Config) }
 $Frozen=(& node (Join-Path $Root 'scripts/native-candidate.mjs') verify $Candidate | ConvertFrom-Json)
 if ($LASTEXITCODE -ne 0) { throw 'Fixed candidate verification failed' }
-$Binary=$Frozen.binaries.service.path
+$Binary=if ($Phase -eq 'PasskeyHealth') { $Frozen.binaries.windowsPasskey.path } else { $Frozen.binaries.service.path }
 $NodeVersion=(& node --version)
 if ($LASTEXITCODE -ne 0) { throw 'Acceptance Node version unavailable' }
 if ([IO.File]::Exists($Output) -or [IO.Directory]::Exists($Output)) { throw 'Receipt directory must be new' }
@@ -34,6 +34,16 @@ Set-Acl -LiteralPath $Output -AclObject $Acl
 $Receipt=[ordered]@{status='running';phase=$Phase;utc=[DateTime]::UtcNow.ToString('o');osVersion=[Environment]::OSVersion.Version.ToString();architecture=[Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant();subject=$Identity.User.Value;session=(Get-Process -Id $PID).SessionId;candidate=$Frozen;acceptanceEnvironment=@{node=$NodeVersion;powershell=$PSVersionTable.PSVersion.ToString()};signature=(Get-AuthenticodeSignature -LiteralPath $Binary).Status.ToString();scenarios=@{};unexecuted=@('remote/same-name pipe','wrong SID/session','fake server','weak ACL/reparse','LocalSystem/user DPAPI separation','malformed/replay/expiry requests','old-connection revocation','real desktop/Codex','Host/worker Job Object recovery')}
 try {
     switch ($Phase) {
+        PasskeyHealth {
+            if (!$CurrentBinary) { throw 'Installed Provider path required; a build directory is not an installation' }
+            $Installed=[IO.Path]::GetFullPath($CurrentBinary)
+            if ((Get-FileHash -LiteralPath $Installed -Algorithm SHA256).Hash -ine $Frozen.binaries.windowsPasskey.sha256) { throw 'Installed Provider differs from candidate' }
+            $Receipt.signature=(Get-AuthenticodeSignature -LiteralPath $Installed).Status.ToString()
+            $Receipt.scenarios.provider=(& $Installed | ConvertFrom-Json)
+            if ($LASTEXITCODE -ne 0 -or !$Receipt.scenarios.provider.registered) { throw 'Provider registration/identity unavailable' }
+            $Receipt.scenarios.systemAccepted=$false
+            $Receipt.unexecuted=@('real browser create/assert and RP acceptance','Hello cancellation and lock','cross-user requests','upgrade interruption and repair','uninstall/reinstall and deleted-credential rollback','Google/GitHub acceptance')
+        }
         DeviceAccessHealth {
             if ($Identity.User.Value -ne 'S-1-5-18' -or [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'X64') { throw 'DeviceAccessHealth requires LocalSystem on x64' }
             if (!$Frozen.binaries.PSObject.Properties['windowsLogin']) { throw 'Frozen Windows login DLL required' }

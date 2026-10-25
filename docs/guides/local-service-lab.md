@@ -443,3 +443,47 @@ Keychain/DPAPI 材料保持原样。损坏、文件丢失及重置仅在测试�
 组件受控 RP 测试负责注册/断言签名与多账号匹配；它不证明浏览器 Provider 已接通。
 原生管理 UI、真实系统认证、Windows/macOS Provider 和真实网站结果分别留证。开发机不得
 补装 Windows 环境或交叉编译代替 Windows 验证；未运行项保持未验证。
+
+## Windows Passkey Provider（#2929）
+
+独立 Provider 以当前 Windows 用户运行，和桌面共享个人 Vault；不依赖企业 Agent 在线，也不承接
+Windows 登录。支持 Windows 11 24H2 的正式插件更新（26100.7171；25H2 对应 26200.7171）及
+具备所需 API 的后续版本。源码入口固定 Windows SDK 10.0.26100.7175；当前产物为 x64。
+
+在目标 Windows 执行 `node scripts/build-passkey-provider.mjs`，生成独立 NSIS EXE 和内置
+外部位置身份包。默认开发身份使用 Windows 的 unsigned package OID 与 `AllowUnsigned`；
+系统策略或安装权限不允许时如实报错，不关闭签名/安全策略。正式交付使用 `--release`，设置
+`RSS_WINDOWS_PUBLISHER` 与现有证书的 `RSS_WINDOWS_SIGNING_THUMBPRINT`。正式签名检查分别
+覆盖 Provider、身份包与 EXE；开发身份与正式身份不同，不能作为同一包直接升级。
+
+安装后在 Windows 设置 → 账户 → 通行密钥 → 高级选项启用 RSS Personal Passkeys，并完成 Hello。
+安装、注册、启用、实际回调分别确认。Provider 每次操作都要求交易绑定的 Hello；桌面口令解锁
+不等于 Provider 获得签名权限。一次只接收一个交互，取消不自动重试；缺少 Hello 时明确失败。
+个人凭据仍在现有桌面的个人 Passkey 页面管理。删除使系统缓存失效；缓存更新失败保留待同步
+标记，下次 Provider 激活继续清理，缓存永远不授予签名权限。
+
+安装目录下 `rss-passkey-provider.exe` 输出注册/启用/锁定状态；`stop` 请求有界安全停机，
+`repair` 修复本组件注册，`enable` 打开 Windows 设置。运行中的 COM host 会持有用户级实例锁。
+安装中断后保留 `.incoming`/`.previous` 中的程序文件，绝不从这些目录恢复 Vault。
+发布目录已存在但注册未完成时，执行其中 `identity.ps1 -Action install` 完成修复；完成修复后再
+进行下一次升级。卸载先停机并注销组件，任何清理失败保留安装文件供修复；个人目录与 DPAPI
+材料不删除。更低程序版本的安装拒绝，不能用回退或重装恢复已删除的凭据。
+
+固定候选复用 `native-candidate.mjs freeze --windows-passkey <Provider可执行文件> --installer
+<EXE> --output <候选JSON>`。`verify-execution-windows.ps1 -Phase PasskeyHealth -Candidate
+<候选JSON> -CurrentBinary <实际安装可执行文件> -Output <新目录>` 核对当前用户、包身份和
+安装摘要，仅输出健康证明，不代表浏览器或网站验收通过。真实验收另记录受控 HTTPS RP 的创建、
+认证、多账号、取消、并发删除、跨用户和保存失败，以及签名安装、升级中断、修复和卸载重装；
+记录实际 Windows/浏览器版本及候选。Google/GitHub 使用测试账号，Provider 返回与网站接受分别
+记录；网站结果不可观察时为未知。所有未执行项明确为未验证，不用开发机 CI 代替。
+
+可嵌入入口由 `windows-passkey-provider` 持有：运行生命周期、注册生命周期和 `HostUi`。
+宿主只提供展示/账号选择，不提供 UV 布尔值、私钥或任意签名入口。未来 DA/MDM 可以携带同一
+独立组件，或在具有同一包身份和 COM 安全初始化责任的当前用户进程装配模块；SYSTEM 服务不
+装配个人 Vault。当前不支持多个宿主覆盖同一注册 owner，遇到冲突拒绝，不隐式转移所有权。
+
+受控浏览器 RP 使用 `node tests/passkey-provider/rp.mjs https://passkey.example.test:8443 <证书PEM> <私钥PEM>`。
+仅在受控测试机把该域名解析到 127.0.0.1，并使用测试浏览器信任、SAN 匹配的 HTTPS 证书；不提交
+证书私钥或改变正式设备信任。页面提供创建/认证与 `rpAccepted` 结果，服务端独立验证 origin、
+challenge、RP hash、userHandle、UP/UV 和签名；数据只驻留内存，重启后失效。该夹具只适用于
+一次受控本机验收，不是产品认证服务。服务器不记录凭据、挑战或用户标识。

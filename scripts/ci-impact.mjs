@@ -93,6 +93,11 @@ export const sourceEdges = [
   [npm("ai-client"), npm("ai-host-app")],
 ];
 export const testOwners = [
+  ["tests/passkey-provider", "windows-passkey-provider"],
+  ["scripts/build-passkey-provider.mjs", "rss-passkey-provider"],
+  ["scripts/passkey-package.mjs", "rss-passkey-provider"],
+  ["scripts/installers/passkey.nsi", "rss-passkey-provider"],
+  ["scripts/installers/passkey-identity.ps1", "rss-passkey-provider"],
   ["scripts/build-platform-sso.mjs", "platform-sso-extension"],
   ["scripts/check-agent-dependencies.mjs", "agent-client"],
   ["scripts/build-installers.mjs", "agent-service"],
