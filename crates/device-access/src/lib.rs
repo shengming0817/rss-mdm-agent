@@ -3,7 +3,7 @@
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use ring::{digest, hmac};
 use rss_mdm_agent_wire::runtime::{
-    AccessAccount, AccessRecoveryUse, AccessWindowsFacts, CredentialSubject,
+    AccessAccount, AccessRecoveryUse, AccessRssFacts, CredentialSubject,
 };
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
+pub mod hello;
 mod registration;
 mod storage;
 pub use registration::Registration;
@@ -138,7 +139,7 @@ impl Authority {
         }
         Ok(())
     }
-    fn accepts(&self, facts: &AccessWindowsFacts) -> bool {
+    fn accepts(&self, facts: &AccessRssFacts) -> bool {
         facts.factor_generation == self.factor_generation
             && facts.recovery.validate().is_ok()
             && facts.recovery.subject
@@ -202,7 +203,7 @@ struct Record {
     secret: Vec<u8>, // DPAPI ciphertext, never a clear TOTP key.
     recovery_hash: Vec<u8>,
     recovery_secret: Vec<u8>,
-    facts: AccessWindowsFacts,
+    facts: AccessRssFacts,
     consumed_step: i64,
     failures: u32,
     lock_seconds: u64,
@@ -338,6 +339,7 @@ impl Store {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let mut record = load(&tx, sid)?.ok_or(Error::Changed)?;
         registration::admit(&tx, &record.authority)?;
+        hello::require_rss(&tx, &record.authority.sid)?;
         if record.revoked {
             return Err(Error::Changed);
         }
@@ -514,7 +516,7 @@ impl Store {
         revision: i64,
         enabled: bool,
         operation: Uuid,
-        facts: AccessWindowsFacts,
+        facts: AccessRssFacts,
         clock: Clock,
         protector: &impl Protector,
     ) -> Result<(), Error> {
@@ -604,7 +606,7 @@ impl Store {
         authority: &Authority,
         revision: i64,
         enabled: bool,
-        facts: &AccessWindowsFacts,
+        facts: &AccessRssFacts,
     ) -> Result<(), Error> {
         self.check_files()?;
         let tx = self
@@ -654,7 +656,7 @@ impl Store {
     pub fn enabled(&self, sid: &str) -> Result<bool, Error> {
         Ok(self.authority(sid)?.is_some())
     }
-    pub fn facts(&self, authority: &Authority) -> Result<AccessWindowsFacts, Error> {
+    pub fn facts(&self, authority: &Authority) -> Result<AccessRssFacts, Error> {
         self.check_files()?;
         let record = load(&self.conn, &authority.sid)?.ok_or(Error::Changed)?;
         if record.revoked || record.authority != *authority {

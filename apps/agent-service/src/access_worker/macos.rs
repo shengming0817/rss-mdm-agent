@@ -251,9 +251,9 @@ pub(super) fn execute(input: &Input) -> Result<w::AccessResult, Error> {
     let result = apply(input).unwrap_or(Effect::Unknown);
     let result = report(task, result);
     if match &task.action {
-        Action::Apply { configuration, .. } | Action::Create { configuration, .. } => {
-            result.effect.complete(configuration)
-        }
+        Action::Apply { configuration, .. } | Action::Create { configuration, .. } => result
+            .effect
+            .complete(configuration, w::TaskPlatform::Macos),
         Action::Unbind { disposition, .. } => {
             matches!(result.effect, Effect::Unbound { disposition: actual } if actual == *disposition)
         }

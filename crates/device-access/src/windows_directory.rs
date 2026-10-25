@@ -371,3 +371,27 @@ pub(super) fn configured_cloud_role(sid: &str) -> Result<Role, F> {
     let (_, _, groups) = cloud_session(sid)?;
     cloud_role(sid, &groups)
 }
+
+pub(super) fn has_deny_interactive(sid: &str) -> Result<bool, F> {
+    let policy = Policy::open(POLICY_LOOKUP_NAMES as u32)?;
+    let sid = Sid::parse(sid)?;
+    let mut rights = std::ptr::null_mut();
+    let mut count = 0;
+    let status = unsafe { LsaEnumerateAccountRights(policy.0, sid.0, &mut rights, &mut count) };
+    if status.0 as u32 == 0xc0000034 {
+        return Ok(false);
+    }
+    if status.0 < 0 || count > 1024 || (count > 0 && rights.is_null()) {
+        return Err(F::NativeFailure);
+    }
+    if rights.is_null() {
+        return Ok(false);
+    }
+    let _memory = Memory(rights.cast());
+    for value in unsafe { std::slice::from_raw_parts(rights, count as usize) } {
+        if unsafe { counted(value)? } == "SeDenyInteractiveLogonRight" {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}

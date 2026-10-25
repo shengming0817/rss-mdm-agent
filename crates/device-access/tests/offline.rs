@@ -1,6 +1,6 @@
 //! Actual SQLite boundaries. Test protector is deliberately not an OS protection claim.
 use device_access::*;
-use rss_mdm_agent_wire::runtime::{AccessWindowsFacts, CredentialReceipt, CredentialSubject};
+use rss_mdm_agent_wire::runtime::{AccessRssFacts, CredentialReceipt, CredentialSubject};
 use std::path::PathBuf;
 use uuid::Uuid;
 use zeroize::Zeroizing;
@@ -49,7 +49,7 @@ impl Fixture {
             },
         }
     }
-    fn setup(&self) -> (Store, String, Vec<u8>, Uuid, AccessWindowsFacts) {
+    fn setup(&self) -> (Store, String, Vec<u8>, Uuid, AccessRssFacts) {
         let mut store = Store::create(&self.root, self.id).unwrap();
         store
             .bind_registration(self.authority.registration())
@@ -63,7 +63,7 @@ impl Fixture {
         let operation = Uuid::new_v4();
         store.stage(operation, &candidate, &TestProtector).unwrap();
         assert!(store.stage(operation, &candidate, &TestProtector).is_err());
-        let facts = AccessWindowsFacts {
+        let facts = AccessRssFacts {
             factor_generation: 1,
             recovery: CredentialReceipt {
                 subject: CredentialSubject::RssLogin {
@@ -587,7 +587,7 @@ fn changed_join_retires_cloud_factors_durably_but_preserves_local_binding() {
         .unwrap());
     let operation = Uuid::new_v4();
     store.stage(operation, &candidate, &TestProtector).unwrap();
-    let facts = AccessWindowsFacts {
+    let facts = AccessRssFacts {
         factor_generation: 1,
         recovery: CredentialReceipt {
             subject: CredentialSubject::RssLogin {

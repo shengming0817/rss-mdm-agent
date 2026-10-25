@@ -260,6 +260,19 @@ fn execute(task: uuid::Uuid, package_entry: bool) -> Result<(), Error> {
     if r.phase == Phase::Prepared {
         #[cfg(target_os = "macos")]
         crate::service::platform_sso::uninstall_preflight(d)?;
+        #[cfg(windows)]
+        {
+            let root = crate::access_worker::root(&d.execution);
+            // Preserve the service and durable fences while user/directory cleanup is pending.
+            if root.exists()
+                && !device_access::Store::open(&root, d.service_id)
+                    .map_err(|_| Error::Identity)?
+                    .hello_cleanup_complete()
+                    .map_err(|_| Error::Identity)?
+            {
+                return Err(Error::Conflict);
+            }
+        }
         outcome::phase("retirement-quiescence")?;
         // A blocked desktop is a retryable precondition, not a completed worker.
         platform::quiescent(d, &config)?;

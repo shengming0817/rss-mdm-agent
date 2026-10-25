@@ -5,6 +5,7 @@ CREATE TABLE join_epoch(id INTEGER PRIMARY KEY CHECK(id=1),fingerprint TEXT NOT 
 CREATE TABLE revoked(binding TEXT PRIMARY KEY,generation INTEGER NOT NULL,revision INTEGER NOT NULL);
 CREATE TABLE candidates(id TEXT PRIMARY KEY,body BLOB NOT NULL);
 CREATE TABLE bindings(sid TEXT PRIMARY KEY,body BLOB NOT NULL);
+CREATE TABLE hello_bindings(sid TEXT PRIMARY KEY,body BLOB NOT NULL);
 CREATE TABLE recovery_uses(id TEXT PRIMARY KEY,body BLOB NOT NULL);
 PRAGMA application_id=1380204865; PRAGMA user_version=2;";
 pub(super) fn open(root: &Path, installation: Uuid, create: bool) -> Result<Store, Error> {

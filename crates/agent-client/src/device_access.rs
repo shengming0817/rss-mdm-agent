@@ -112,3 +112,141 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         Ok(())
     }
 }
+
+/// Completion uses the actual platform and mechanism frozen into the signed task.
+pub fn device_access_complete(task: &wire::AccessTaskSpec, effect: &wire::AccessEffect) -> bool {
+    match &task.action {
+        wire::AccessAction::Apply { configuration, .. }
+        | wire::AccessAction::Create { configuration, .. } => {
+            effect.complete(configuration, task.platform)
+        }
+        wire::AccessAction::Unbind { disposition, .. } => {
+            let configuration = wire::AccessConfiguration {
+                mac: None,
+                windows: if matches!(task.windows, Some(wire::AccessWindowsPlan::Whfb { .. })) {
+                    wire::AccessWindowsConfiguration::Whfb
+                } else {
+                    wire::AccessWindowsConfiguration::Disabled
+                },
+                self_enrollment: false,
+                enabled: false,
+                role: None,
+            };
+            matches!(effect,wire::AccessEffect::Unbound{disposition:actual}|wire::AccessEffect::WhfbRetired{disposition:actual,..} if actual==disposition)
+                && effect.complete(&configuration, task.platform)
+        }
+    }
+}
+
+pub(crate) fn validate_report(
+    task: &wire::AccessTaskSpec,
+    report: &wire::AccessResult,
+) -> Result<(), Error> {
+    report.validate_for(task.platform)?;
+    if report.binding_id != task.binding_id
+        || report.binding_generation != task.binding_generation
+        || report.revision != task.revision
+        || report.definition_digest != task.definition_digest
+    {
+        return Err(Error::Untrusted);
+    }
+    let account = match &report.effect {
+        wire::AccessEffect::Applied { account, .. }
+        | wire::AccessEffect::WhfbRetired { account, .. } => Some(account),
+        _ => None,
+    };
+    if let Some(account) = account {
+        match &task.action {
+            wire::AccessAction::Apply {
+                account: expected, ..
+            }
+            | wire::AccessAction::Unbind {
+                account: expected, ..
+            } if account != expected => return Err(Error::Untrusted),
+            _ => (),
+        }
+    }
+    Ok(())
+}
+fn observation_digest(event: &wire::TaskEvent) -> Result<String, Error> {
+    let mut event = event.clone();
+    if let wire::TaskEvent::DeviceAccessResult(report) = &mut event {
+        match &mut report.effect {
+            wire::AccessEffect::Applied {
+                windows: Some(wire::AccessWindowsFacts::Whfb(f)),
+                ..
+            }
+            | wire::AccessEffect::WhfbRetired { facts: f, .. } => f.observed_at = 0,
+            _ => (),
+        }
+    }
+    Ok(crate::store::hash(&encode(&event)?))
+}
+impl<S: IdentityProvider, C: Clock> Client<S, C> {
+    /// Send changed, nonterminal native observations through the existing frozen request journal.
+    /// Only one unacknowledged observation is retained; it is replayed before any newer fact.
+    pub async fn access_observation(
+        &mut self,
+        id: Uuid,
+        report: wire::AccessResult,
+    ) -> Result<(), Error> {
+        use rusqlite::{params, OptionalExtension};
+        self.check_delivery()?;
+        let retained = self.retained_offer(id)?;
+        let wire::TaskPayload::DeviceAccess(task) = retained.payload() else {
+            return Err(Error::Protocol);
+        };
+        if !matches!(task.windows, Some(wire::AccessWindowsPlan::Whfb { .. }))
+            || self
+                .association(id)?
+                .is_none_or(|v| v.local_attempt().is_none())
+        {
+            return Err(Error::Untrusted);
+        }
+        validate_report(task, &report)?;
+        let terminal = device_access_complete(task, &report.effect)
+            || matches!(report.effect, wire::AccessEffect::Failed { .. });
+        let attempt = task.attempt_id;
+        let key = format!("access-observation/{id}");
+        let last = format!("access-observation-last/{id}");
+        let pending: Option<Vec<u8>> = self
+            .store
+            .conn
+            .query_row(
+                "SELECT body FROM requests WHERE key=?1 AND task=?2",
+                params![key, id.to_string()],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let event = wire::TaskEvent::DeviceAccessResult(report);
+        let request = if let Some(bytes) = pending {
+            crate::store::decode::<wire::TaskEventRequest>(&bytes)?
+        } else {
+            if terminal
+                || self.store.get::<String>(&last)?.as_ref() == Some(&observation_digest(&event)?)
+            {
+                return Ok(());
+            }
+            self.event_request(&key, id, attempt, event, None)?
+        };
+        if request.attempt_id() != attempt {
+            return Err(Error::Untrusted);
+        }
+        let wire::TaskEvent::DeviceAccessResult(value) = request.event() else {
+            return Err(Error::Protocol);
+        };
+        validate_report(task, value)?;
+        let ack = self.send_event(id, &request).await?;
+        if ack.permit().is_some() || !ack.credentials().is_empty() {
+            return Err(Error::Protocol);
+        }
+        let tx = self.store.conn.unchecked_transaction()?;
+        tx.execute(
+            "INSERT INTO state VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET body=excluded.body",
+            params![last, encode(&observation_digest(request.event())?)?],
+        )?;
+        tx.execute("DELETE FROM requests WHERE key=?1", [key])?;
+        tx.commit()?;
+        Ok(())
+    }
+}

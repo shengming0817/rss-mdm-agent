@@ -213,6 +213,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 wire::TaskEvent::UnmanageResult { .. }
                     | wire::TaskEvent::EnrollmentResult { .. }
                     | wire::TaskEvent::CredentialResult(_)
+                    | wire::TaskEvent::DeviceAccessResult(_)
                     | wire::TaskEvent::CollectionResult(_)
                     | wire::TaskEvent::Result(_)
                     | wire::TaskEvent::SoftwareResult(_)
@@ -220,6 +221,18 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             )
         {
             return Err(Error::Protocol);
+        }
+        if let wire::TaskEvent::DeviceAccessResult(report) = &event {
+            let retained = self.retained_offer(association.task())?;
+            let wire::TaskPayload::DeviceAccess(task) = retained.payload() else {
+                return Err(Error::Protocol);
+            };
+            super::device_access::validate_report(task, report)?;
+            if !crate::device_access_complete(task, &report.effect)
+                && !matches!(report.effect, wire::AccessEffect::Failed { .. })
+            {
+                return Err(Error::Protocol);
+            }
         }
         if self.acknowledged_result(association)?.is_some()
             || self.pending_result(association)?.is_some()

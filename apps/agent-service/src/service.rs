@@ -615,6 +615,25 @@ impl<S: IdentityProvider> DeviceService<S> {
                 }
                 if let wire::TaskPayload::DeviceAccess(spec) = retained.payload() {
                     let root = crate::access_worker::root(&self.core.config);
+                    #[cfg(windows)]
+                    if matches!(spec.windows, Some(wire::AccessWindowsPlan::Whfb { .. })) {
+                        // The read-only refresh is bounded and cannot launch policy mutations.
+                        let _ = crate::access_worker::hello::refresh(
+                            &root,
+                            self.core.access.installation,
+                            spec,
+                        );
+                    }
+                    if matches!(spec.windows, Some(wire::AccessWindowsPlan::Whfb { .. })) {
+                        if let Some(result) = crate::access_worker::stored_result(&root, spec)? {
+                            network(
+                                self.client.access_observation(task, result),
+                                &mut self.core,
+                                commands,
+                            )
+                            .await?;
+                        }
+                    }
                     if let Some(prepared) = crate::access_worker::prepared(&root, spec)? {
                         network(
                             self.client.access_prepared(task, prepared),

@@ -677,11 +677,15 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
             } else {
                 None
             };
-            return Ok(Some(wire::TaskEvent::DeviceAccessResult(
-                result.unwrap_or_else(|| {
-                    crate::access_worker::report(spec, wire::AccessEffect::Unknown)
-                }),
-            )));
+            let Some(result) = result else {
+                return Ok(None);
+            };
+            if !crate::access_worker::complete(spec, &result.effect)
+                && !matches!(result.effect, wire::AccessEffect::Failed { .. })
+            {
+                return Ok(None);
+            }
+            return Ok(Some(wire::TaskEvent::DeviceAccessResult(result)));
         }
         if let Some(terminal) = evidence.terminal {
             if let wire::TaskPayload::Credential(spec) = payload {

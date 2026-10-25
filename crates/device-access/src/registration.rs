@@ -104,6 +104,18 @@ impl Store {
         task: &rss_mdm_agent_wire::runtime::AccessTaskSpec,
     ) -> Result<(), Error> {
         task.validate().map_err(|_| Error::Invalid)?;
+        if !matches!(
+            task.windows,
+            Some(rss_mdm_agent_wire::runtime::AccessWindowsPlan::Whfb { .. })
+        ) {
+            if let rss_mdm_agent_wire::runtime::AccessAction::Apply {
+                account: AccessAccount::Windows { sid, .. },
+                ..
+            } = &task.action
+            {
+                super::hello::require_rss(&self.conn, sid)?;
+            }
+        }
         self.check_files()?;
         let value = current(&self.conn)?.ok_or(Error::Changed)?;
         if value.retired
@@ -191,6 +203,7 @@ impl Store {
         else {
             return Err(Error::Invalid);
         };
+        super::hello::require_rss(&self.conn, sid)?;
         if task.permit != TaskPermit::Start {
             return Err(Error::Invalid);
         }
@@ -249,7 +262,7 @@ impl Store {
     pub fn stored_authority(&self, sid: &str) -> Result<Option<Authority>, Error> {
         self.check_files()?;
         let Some(record) = load(&self.conn, sid)? else {
-            return Ok(None);
+            return self.hello(sid).map(|r| r.map(|r| r.authority));
         };
         let value = current(&self.conn)?.ok_or(Error::Changed)?;
         if value.retired || value.registration != record.authority.registration() {
@@ -315,6 +328,7 @@ impl Store {
     }
 }
 fn retire_records(conn: &Connection, cloud_only: bool) -> Result<(), Error> {
+    super::hello::retire_all(conn)?;
     let sids = conn
         .prepare("SELECT sid FROM bindings")?
         .query_map([], |r| r.get::<_, String>(0))?

@@ -8,6 +8,16 @@ use w::{
 use zeroize::Zeroizing;
 
 pub(super) trait Native: Protector {
+    fn hello(
+        &mut self,
+        record: &device_access::hello::HelloRecord,
+        mutate: bool,
+    ) -> Result<(w::AccessWhfbFacts, bool), w::AccessFailure>;
+    fn disposition(
+        &self,
+        account: &w::AccessAccount,
+        disposition: w::AccessAccountDisposition,
+    ) -> Result<bool, w::AccessFailure>;
     fn identity(&self, sid: &str) -> Result<(w::AccessWindowsAuthority, String, String), Failure>;
     fn dispose(
         &mut self,
@@ -38,7 +48,9 @@ pub(super) fn execute(input: &Input, native: &mut impl Native) -> Result<w::Acce
         return Err(Error::Expired);
     }
     if let Some(result) = stored_result(&input.root, task)? {
-        return Ok(result);
+        if complete(task, &result.effect) || matches!(result.effect, Effect::Failed { .. }) {
+            return Ok(result);
+        }
     }
     let outcome = apply(input, native);
     let result = match outcome {
@@ -54,6 +66,9 @@ pub(super) fn execute(input: &Input, native: &mut impl Native) -> Result<w::Acce
 fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
     let task = &input.task;
     let mut store = Store::open(&input.root, input.installation).map_err(storage)?;
+    if matches!(task.windows, Some(Plan::Whfb { .. })) {
+        return super::hello::apply(input, native, &mut store);
+    }
     let enabled = match &task.action {
         Action::Apply { configuration, .. } | Action::Create { configuration, .. } => {
             configuration.enabled
@@ -169,6 +184,7 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
         },
     )?;
     let facts = match task.windows.as_ref().ok_or(Error::Protocol)? {
+        Plan::Whfb { .. } => return Err(Error::Protocol),
         Plan::Preserve { facts } => {
             if native.clock()?.utc >= task.deadline {
                 return Err(Error::Expired);
@@ -240,7 +256,7 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
                 }
                 std::thread::sleep(std::time::Duration::from_millis(200));
             };
-            let facts = w::AccessWindowsFacts {
+            let facts = w::AccessRssFacts {
                 factor_generation: task.factor_generation,
                 recovery: receipt,
             };
@@ -289,6 +305,6 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
         account,
         role,
         mac: None,
-        windows: Some(facts),
+        windows: Some(w::AccessWindowsFacts::RssFactor(facts)),
     })
 }

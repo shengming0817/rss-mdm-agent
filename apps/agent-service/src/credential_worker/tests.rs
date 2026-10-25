@@ -674,7 +674,7 @@ fn rss_rotation_changes_only_recovery_after_ack_and_verification_reuses_material
             1,
             true,
             setup,
-            w::AccessWindowsFacts {
+            w::AccessRssFacts {
                 factor_generation: 1,
                 recovery: receipt.clone(),
             },

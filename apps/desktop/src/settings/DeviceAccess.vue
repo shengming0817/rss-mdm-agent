@@ -41,6 +41,15 @@ function componentText(
 const directory = ref<Directory>(),
   tasks = ref<Task[]>([]),
   selected = ref<Task>();
+const hello = computed(() => windowsStatus.value?.hello);
+const helloPolicy = computed(() => hello.value?.desiredEnabled != null || directory.value?.bindings.some((b) => b.configuration.windows.kind === "whfb") || directory.value?.policies.some((p) => p.configuration.windows.kind === "whfb"));
+const rssPolicy = computed(() => !helloPolicy.value || directory.value?.bindings.some((b) => b.configuration.windows.kind === "rss_factor") || directory.value?.policies.some((p) => p.configuration.windows.kind === "rss_factor"));
+function nativeFact(value?: string) {
+  return value === "present" ? "已确认存在" : value === "absent" ? "已确认不存在" : value === "needs_administrator" ? "需要管理员" : "待核验";
+}
+function helloAvailability(value?: string) {
+  return value === "eligible" ? "具备本机配置前提" : value === "unsupported" ? "此账号或平台不在配置范围" : value === "conflict" ? "存在其他管理策略，请联系管理员" : "尚无法取得本机状态";
+}
 const secret = ref(""),
   code = ref(""),
   password = ref("");
@@ -146,7 +155,17 @@ async function enroll(policy: string) {
     clearSecret();
     message.value = mac.value
       ? "关联已确认。请在系统设置的用户与群组中完成 Platform SSO 注册；登录、解锁及磁盘恢复按组织策略执行。"
-      : "关联请求已确认。请刷新并完成本地验证器设置。";
+      : result.configuration.windows.kind === "whfb"
+        ? "关联请求已确认。等待 Agent 配置后，请在 Windows 登录选项完成原生注册；RSS 不接收 PIN。"
+        : "关联请求已确认。请刷新并完成本地验证器设置。";
+  });
+}
+async function openHello() {
+  await action(async (port, valid) => {
+    const result = await port({ kind: "openWindowsHello" });
+    if (!valid()) return;
+    if (result.kind !== "windowsHelloSettingsRequested") throw new Error("response");
+    message.value = "已请求打开 Windows 登录选项。请在系统中完成注册或 PIN 恢复，再刷新状态；打开设置不代表注册成功。";
   });
 }
 async function prepare(task: Task) {
@@ -274,7 +293,7 @@ onUnmounted(() => {
     class="device-access"
     :aria-label="mac ? 'Mac Platform SSO' : 'Windows RSS 登录'"
   >
-    <h3>{{ mac ? "Mac Platform SSO" : "Windows RSS 登录" }}</h3>
+    <h3>{{ mac ? "Mac Platform SSO" : "Windows 登录设置" }}</h3>
     <p v-if="mac">
       使用当前本地账号关联 RSS，由系统按组织配置使用 Secure Enclave 或 Password
       注册与认证。登录窗口、锁屏和 FileVault
@@ -282,8 +301,7 @@ onUnmounted(() => {
       Token、FileVault 和 SSO 是独立状态。
     </p>
     <p v-else>
-      在 RSS 登录选项中，使用 Windows
-      密码和验证器验证码登录；恢复密钥可代替验证码。系统原有登录选项继续保留。
+      按组织配置使用 RSS 附加因子或 Windows Hello 企业登录。RSS 恢复密钥只替代 RSS 验证码；Windows Hello 的 PIN 和恢复由系统处理。系统原有登录选项继续保留。
     </p>
     <p v-if="!mac">
       首次启用或设备重新加入 Entra 后，请注销 Windows
@@ -292,7 +310,7 @@ onUnmounted(() => {
     <p v-if="!available">请登录 RSS 账户并保持当前本地会话解锁。</p>
     <template v-else>
       <button :disabled="busy" @click="refresh">刷新状态</button>
-      <p v-if="!mac" role="status">
+      <p v-if="!mac && rssPolicy" role="status">
         本机当前状态：{{
           windowsStatus
             ? componentText(windowsStatus.component)
@@ -310,6 +328,16 @@ onUnmounted(() => {
         >
         管理员组配置修改后，已有会话的权限需注销并重新登录才会刷新。
       </p>
+      <section v-if="!mac && helloPolicy" aria-label="Windows Hello 企业登录">
+        <h4>Windows Hello 企业登录</h4>
+        <p role="status">{{ helloAvailability(hello?.availability) }}。期望配置：{{ hello?.desiredEnabled == null ? "待接收" : hello.desiredEnabled ? "启用" : "停用" }}。</p>
+        <p>原生策略：{{ nativeFact(hello?.facts?.policy) }}；用户注册：{{ nativeFact(hello?.facts?.registration) }}；用户密钥硬件保护：{{ nativeFact(hello?.facts?.hardwareKey) }}。</p>
+        <p v-if="hello?.facts?.hardwareKey !== 'present'">当前无法确证用户登录密钥的硬件保护，完整生效状态保持待核验。设备 TPM 存在或策略已配置不等于该证明。</p>
+        <p v-if="hello?.replacementRequired">原密钥不能满足新的凭据代际，请通过 Windows 原生恢复或重新注册后刷新。</p>
+        <p v-if="hello?.retired">RSS 绑定已退役；停止注册不等于已有凭据已删除。请按管理员指引完成原生清理。</p>
+        <button :disabled="busy || hello?.availability === 'unsupported'" @click="openHello">打开 Windows 登录选项</button>
+        <p>PIN 不会进入 RSS。忘记 PIN 请使用系统恢复；清空 Hello 容器可能同时删除其他本机 Passkey，须由管理员明确确认影响后处理。</p>
+      </section>
       <p v-if="macStatus" role="status">
         模式：{{
           macStatus.configuration?.authentication === "password"
@@ -370,7 +398,7 @@ onUnmounted(() => {
       <div v-for="policy in directory?.policies" :key="policy.policy">
         <p>策略 {{ policy.policy }} · 版本 {{ policy.version }}</p>
         <p>
-          RSS 登录：{{ policy.configuration.enabled ? "启用" : "停用" }}；
+          {{ !mac && policy.configuration.windows.kind === "whfb" ? "Windows Hello 企业登录" : "RSS 登录" }}：{{ policy.configuration.enabled ? "启用" : "停用" }}；
           账户角色：{{
             policy.configuration.role === "administrator"
               ? "管理员"
