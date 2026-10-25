@@ -45,7 +45,7 @@ pub struct ActionRef {
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PolicyDirectoryQuery {
-    pub after: Option<execution_contract::Id>,
+    pub after: Option<String>,
 }
 #[derive(Clone, Serialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "camelCase")]

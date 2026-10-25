@@ -5,14 +5,13 @@ use execution_app::*;
 use support::*;
 fn main() {
     let mut fixtures = serde_json::Map::new();
-    for (name, scenario, approval, reconcile, cancel) in [
-        ("software", TestScenario::Wait, false, false, false),
-        ("running", TestScenario::Wait, false, false, false),
-        ("approvalRequired", TestScenario::Wait, true, false, false),
-        ("outcomeUnknown", TestScenario::Unknown, false, true, false),
-        ("verified", TestScenario::Complete, false, true, false),
-        ("cancelled", TestScenario::Wait, false, true, true),
-        ("cancelling", TestScenario::Wait, false, false, true),
+    for (name, scenario, reconcile, cancel) in [
+        ("software", TestScenario::Wait, false, false),
+        ("running", TestScenario::Wait, false, false),
+        ("outcomeUnknown", TestScenario::Unknown, true, false),
+        ("verified", TestScenario::Complete, true, false),
+        ("cancelled", TestScenario::Wait, true, true),
+        ("cancelling", TestScenario::Wait, false, true),
     ] {
         let db = Database::new();
         let mut host = TestHost::new();
@@ -30,7 +29,6 @@ fn main() {
             plan()
         };
         host.template = p.clone();
-        host.state.lock().unwrap().approval = approval;
         let runner = DeterministicTestRunner::new(id("test-runner"), scenario, 16).unwrap();
         let mut app = create_app(&db.path, host, runner, AppConfig::test_defaults(1)).unwrap();
         let request = &p.spec().request.request_id;

@@ -1022,8 +1022,6 @@ export function checkTree(treeRoot = root, executable) {
         "rusqlite.workspace = true",
         'execution-sqlite = { path = "../../../crates/execution-sqlite", features = ["test-support"] }',
         'execution-mcp = { path = "../../../crates/execution-mcp" }',
-        'execution-admission = { path = "../../../crates/execution-admission" }',
-        'execution-approval = { path = "../../../crates/execution-approval" }',
         'execution-capability = { path = "../../../crates/execution-capability" }',
         'execution-lifecycle = { path = "../../../crates/execution-lifecycle" }',
         'tokio = { workspace = true, features = ["process", "net", "rt-multi-thread"] }',

@@ -70,6 +70,7 @@ commands! {
     query_status(execution_contract::QueryRequest) -> execution_contract::QueryStatus = query_status,
     query_cancel(execution_contract::QueryRequest) -> execution_contract::QueryStatus = query_cancel,
     self_service_observe_software(execution_contract::SoftwareReadChoice) -> execution_contract::BackendRequest = observe_software,
+    self_service_policy_resolve(rss_mdm_agent_wire::runtime::CapabilitySelector) -> rss_mdm_agent_wire::runtime::SelfServiceDirectoryItem = policy_resolve,
     self_service_policy_directory(PolicyDirectoryQuery) -> rss_mdm_agent_wire::runtime::SelfServiceDirectoryResponse = policy_directory,
     self_service_policy_invoke(execution_contract::PolicyInvocation) -> execution_contract::BackendRequest = invoke_policy,
     ai_operation_submit(execution_contract::PolicySubmission) -> execution_contract::BackendRequest = submit_policy,

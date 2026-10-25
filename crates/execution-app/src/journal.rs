@@ -1,5 +1,4 @@
 use crate::*;
-use execution_approval::ProfileApproval;
 use execution_contract::*;
 use execution_interaction::{Interaction, Reference, Spec};
 use execution_lifecycle::{CommandEvent, ObservationEvent, ObservationVerifier};
@@ -7,7 +6,7 @@ use execution_lifecycle::{CommandEvent, ObservationEvent, ObservationVerifier};
 /// Trusted, synchronous atomic journal operations required by the execution application.
 /// Implementations own their connection and transaction. Write methods return success only
 /// after a durable commit; admission callbacks run inside that same write transaction after
-/// replay has been ruled out. Approval consumption, intent, claim, snapshot, audit and receipt
+/// replay has been ruled out. Intent, claim, snapshot, audit and receipt
 /// cannot be split into separately visible writes. Callbacks are bounded and non-reentrant.
 /// An adapter is trusted product code: the type boundary does not prove external persistence.
 pub trait JournalPort {
@@ -196,7 +195,6 @@ pub trait JournalPort {
         op: &OperationRequestId,
         scope: &Scope,
         event: &CommandEvent,
-        bindings: &[ProfileApproval],
         host: &impl JournalHost,
     ) -> Result<CommitOutcome, JournalError>;
     /// Verify and record an observation under RunnerFact authorization.
@@ -230,7 +228,7 @@ pub trait JournalPort {
         limit: usize,
         host: &impl JournalHost,
     ) -> Result<Vec<execution_contract::RequestId>, JournalError>;
-    /// Bounded newest-per-request owner scan over existing business receipts, excluding trust refreshes.
+    /// Bounded newest-per-request owner scan over existing business receipts, from the execution journal.
     fn recent_requests(
         &self,
         before: Option<u64>,
@@ -272,20 +270,10 @@ pub trait JournalPort {
     ) -> Result<Interaction, JournalError>;
     /// Read the protected CAS revision for a subsequent trust refresh. Requires trust-management
     /// access, independently of result/audit access; absence means the first refresh uses None.
-    fn trust_revision(
-        &self,
-        scope: &Scope,
-        host: &impl JournalHost,
-    ) -> Result<Option<u64>, JournalError>;
+
     /// Atomically install a complete freshly verified snapshot using expected local head revision.
     /// Definitions are immutable; refresh cannot import, reset or refund local consumption counters.
-    fn refresh_trust(
-        &mut self,
-        op: &OperationRequestId,
-        scope: &Scope,
-        expected: Option<u64>,
-        host: &impl JournalHost,
-    ) -> Result<CommitOutcome, JournalError>;
+
     /// Save process facts and raw byte BLOBs atomically in the existing attempt namespace.
     fn record_process(
         &mut self,

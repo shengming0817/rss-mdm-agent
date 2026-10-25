@@ -8,12 +8,15 @@ import { createHostSettings } from "../settings/controller";
 import { fixtureLocalPorts } from "../../../../tests/assistant/local-ports";
 import {
   policyFixturePort,
+  directoryItem,
+  policyRecord,
   snapshot,
 } from "../../../../tests/self-service/support";
 import type { SelfServiceDirectoryItem } from "../self-service/types";
 
 it("searches subsequent authorized pages through the same directory and opens the exact policy without executing", async () => {
   const item: SelfServiceDirectoryItem = {
+    capability: directoryItem(policyRecord().action).capability,
     policyId: "policy-17",
     policyRevision: 1,
     policyVersion: "version-1",

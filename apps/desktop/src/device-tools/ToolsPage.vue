@@ -205,11 +205,7 @@ const navigation = reactive({
           typeof item.selfService.presentation.displayName === "string"
             ? item.selfService.presentation.displayName
             : item.policyId,
-        revision: JSON.stringify([
-          item.policyId,
-          item.policyRevision,
-          item.policyVersion,
-        ]),
+        revision: item.policyId,
       })) ?? []),
   ]),
   async openRequest(request: string) {
@@ -229,11 +225,7 @@ const navigation = reactive({
       (item) =>
         item.task.kind === "script" &&
         `policy:${item.policyId}` === id &&
-        JSON.stringify([
-          item.policyId,
-          item.policyRevision,
-          item.policyVersion,
-        ]) === revision,
+        item.policyId === revision,
     );
     if (!item) return false;
     selected.value = "";

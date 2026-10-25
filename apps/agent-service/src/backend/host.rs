@@ -1,8 +1,5 @@
 use crate::SystemClock;
-use execution_admission::{
-    AuthorityFacts, AuthorityVerifier, Rule, RuleEffect, SubjectFacts, VerificationError,
-};
-use execution_app::{AccessRequest, TrustSnapshot};
+use execution_app::{ai_execution_gate, AccessRequest, AdmissionGate, ExecutionGate, JournalError};
 use execution_app::{
     AppHost, CapabilitySnapshot, ConfigChange, Error, RequestContext, ServiceBinding,
 };
@@ -64,111 +61,6 @@ impl EnterpriseHost {
             return Err(Error::Denied);
         }
         Ok(permit)
-    }
-}
-impl AuthorityVerifier for EnterpriseHost {
-    fn verify(
-        &self,
-        plan: &FrozenExecution,
-        _: &AttemptId,
-    ) -> Result<AuthorityFacts, VerificationError> {
-        let p = plan.spec();
-        if p.request.authority == self.root.authority
-            && matches!(p.request.authority, Authority::Local { .. })
-        {
-            if self
-                .local_stopped
-                .load(std::sync::atomic::Ordering::Acquire)
-                || p.request.actor != self.local_actor
-                || p.request.target.device != self.root.device
-            {
-                return Err(VerificationError::Subject);
-            }
-            let now = self.clock.millis().map_err(|_| VerificationError::Clock)?;
-            let software = self
-                .local_software
-                .lock()
-                .map_err(|_| VerificationError::Subject)?;
-            let read = self
-                .local_read
-                .lock()
-                .map_err(|_| VerificationError::Subject)?;
-            let settings = self
-                .local_settings
-                .lock()
-                .map_err(|_| VerificationError::Subject)?;
-            let network = self
-                .local_network
-                .lock()
-                .map_err(|_| VerificationError::Subject)?;
-            let risk = if let Some(permit) = network.as_ref() {
-                permit
-                    .verify(plan, now)
-                    .map_err(|_| VerificationError::Subject)?;
-                RiskLevel::One
-            } else if let Some(permit) = settings.as_ref() {
-                permit
-                    .verify(plan, now)
-                    .map_err(|_| VerificationError::Subject)?
-            } else if let Some(permit) = software.as_ref().filter(|v| v.matches(plan)) {
-                permit
-                    .verify(plan, now)
-                    .map_err(|_| VerificationError::Subject)?;
-                RiskLevel::Two
-            } else if let Some(permit) = read.as_ref() {
-                permit
-                    .verify(plan, now)
-                    .map_err(|_| VerificationError::Subject)?;
-                RiskLevel::One
-            } else {
-                return Err(VerificationError::Subject);
-            };
-            return Ok(AuthorityFacts {
-                verified_origin: p.request.initiator.clone(),
-                risk: Some(risk),
-                subject: SubjectFacts {
-                    authority: self.root.authority.clone(),
-                    actor: self.local_actor.clone(),
-                    validity: p.validity,
-                    budget: p.budget,
-                },
-                delegation: None,
-                policy: p.policy.clone(),
-                rules: vec![Rule {
-                    id: p.policy.id.clone(),
-                    template: plan.clone(),
-                    effect: RuleEffect::Allow,
-                }],
-                now_unix_ms: now,
-                verification_revision: p.policy.clone(),
-                fresh_until_unix_ms: p.validity.expires_at_unix_ms,
-            });
-        }
-        let grant = self.permit(plan).map_err(|_| VerificationError::Subject)?;
-        let p = grant.plan.spec();
-        let now = self.clock.millis().map_err(|_| VerificationError::Clock)?;
-        // This template was deterministically adapted from the verified backend Start.
-        // No submitted IPC/AI plan supplies an allow rule and there is no second approver.
-        Ok(AuthorityFacts {
-            verified_origin: p.request.initiator.clone(),
-            risk: grant.gate.risk(),
-            subject: SubjectFacts {
-                authority: self.binding.authority.clone(),
-                actor: self.actor.clone(),
-                validity: p.validity,
-                budget: p.budget,
-            },
-            delegation: None,
-            policy: p.policy.clone(),
-            rules: vec![Rule {
-                id: p.policy.id.clone(),
-                template: grant.plan.clone(),
-                effect: RuleEffect::Allow,
-            }],
-            now_unix_ms: now,
-            verification_revision: p.policy.clone(),
-            fresh_until_unix_ms: grant.gate.until(),
-        })
     }
 }
 fn inventory<T>(items: Vec<T>) -> Inventory<T> {
@@ -281,37 +173,63 @@ impl AppHost for EnterpriseHost {
             },
         })
     }
-    fn trusted_snapshot(
+    fn admit(
         &self,
         plan: &FrozenExecution,
-    ) -> Result<TrustSnapshot, execution_app::JournalError> {
-        self.service_binding()
-            .map_err(|_| execution_app::JournalError::Trust)?;
-        let input = plan.spec();
-        let binding = self
-            .binding_for_actor(&input.request.actor)
-            .map_err(|_| execution_app::JournalError::Trust)?;
-        if input.request.authority != binding.authority
-            || input.request.target.device != binding.device
+        _: &AttemptId,
+        now: u64,
+    ) -> Result<AdmissionGate, JournalError> {
+        let p = plan.spec();
+        let denied = || JournalError::Denied;
+        if p.request.authority == self.root.authority
+            && matches!(p.request.authority, Authority::Local { .. })
         {
-            return Err(execution_app::JournalError::Trust);
+            if self
+                .local_stopped
+                .load(std::sync::atomic::Ordering::Acquire)
+                || p.request.actor != self.local_actor
+                || p.request.target.device != self.root.device
+            {
+                return Err(denied());
+            }
+            let software = self.local_software.lock().map_err(|_| denied())?;
+            let read = self.local_read.lock().map_err(|_| denied())?;
+            let settings = self.local_settings.lock().map_err(|_| denied())?;
+            let network = self.local_network.lock().map_err(|_| denied())?;
+            let risk = if let Some(permit) = network.as_ref() {
+                permit.verify(plan, now).map_err(|_| denied())?;
+                RiskLevel::One
+            } else if let Some(permit) = settings.as_ref() {
+                permit.verify(plan, now).map_err(|_| denied())?
+            } else if let Some(permit) = software.as_ref().filter(|v| v.matches(plan)) {
+                permit.verify(plan, now).map_err(|_| denied())?;
+                RiskLevel::Two
+            } else if let Some(permit) = read.as_ref() {
+                permit.verify(plan, now).map_err(|_| denied())?;
+                RiskLevel::One
+            } else {
+                return Err(denied());
+            };
+            return Ok(AdmissionGate {
+                execution_gate: if matches!(p.request.initiator, Initiator::Ai { .. }) {
+                    ai_execution_gate(Some(risk))
+                } else {
+                    ExecutionGate::Direct
+                },
+                valid_until_unix_ms: p.validity.expires_at_unix_ms,
+            });
         }
-        // Registration scope remains bound to this frozen journal after restart or a later
-        // dispatch. The snapshot grants no attempt: AuthorityVerifier independently requires
-        // the exact signed Start and its shorter deadline. Avoid a local one-second window
-        // that expires while retained software materials are checked; never renew plan validity.
-        Ok(TrustSnapshot {
-            authorization_revision: input.policy.clone(),
-            approval_revision: input.policy.clone(),
-            fresh_until_unix_ms: input.validity.expires_at_unix_ms,
-            approvals: vec![],
+        let permit = self.permit(plan).map_err(|_| denied())?;
+        Ok(AdmissionGate {
+            execution_gate: ExecutionGate::Direct,
+            valid_until_unix_ms: permit.gate.until().min(
+                self.identity_until
+                    .expires_at()
+                    .and_then(|v| u64::try_from(v).ok())
+                    .and_then(|v| v.checked_mul(1000))
+                    .ok_or(JournalError::Denied)?,
+            ),
         })
-    }
-    fn approval_bindings(
-        &self,
-        _: &FrozenExecution,
-    ) -> Result<Vec<execution_approval::ProfileApproval>, Error> {
-        Ok(vec![])
     }
     fn configuration_change(&self, _: &ConfigChange) -> Result<(), Error> {
         Err(Error::Denied)

@@ -30,7 +30,12 @@ pub(crate) fn compile(
     materials.validate_offer(offer)?;
     payload.validate()?;
     compile_read(
-        &payload.clone().try_into()?,
+        &{
+            let mut input = payload.clone();
+            input.permit = w::TaskPermit::Offer;
+            input.expires_at = 0;
+            input.try_into()?
+        },
         super::request_id(offer)?,
         Initiator::Backend {
             task: id(payload.task_id.to_string())?,
@@ -45,7 +50,6 @@ pub(crate) fn compile(
             format!("backend:{}", payload.task_id),
             payload.attempt_id.to_string(),
         )?,
-        payload.expires_at,
         binding,
         actor,
         (config, root),
@@ -61,7 +65,6 @@ pub(crate) fn compile_read(
     initiator: Initiator,
     operation: Operation,
     policy: VersionedRef,
-    start_until: i64,
     binding: &execution_app::ServiceBinding,
     actor: &ActorId,
     (config, root): (&crate::ExecutionConfig, &mut MaterialRoot),
@@ -123,21 +126,24 @@ pub(crate) fn compile_read(
     };
     let tools = crate::collection_worker::tools(config, &read.plan)?;
 
-    // The runner derives Start expiry as validity end minus execution budget.
-    let seconds = u64::from(read.plan.spec().budget.timeout_seconds)
-        .min(u64::try_from(read.deadline - start_until).map_err(|_| Error::Clock)?);
-    if seconds == 0 {
-        return Err(Error::Expired);
-    }
-    let compiled_at_ms = u64::try_from(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|_| Error::Clock)?
-            .as_millis(),
-    )
-    .map_err(|_| Error::Clock)?;
-    let finish_by_unix_ms = compiled_at_ms
-        .checked_add(seconds * 1000)
+    let seconds = u64::from(read.plan.spec().budget.timeout_seconds);
+    let compiled_at_ms = if matches!(
+        read.source,
+        crate::collection_worker::ReadSource::Task { .. }
+    ) {
+        0
+    } else {
+        u64::try_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|_| Error::Clock)?
+                .as_millis(),
+        )
+        .map_err(|_| Error::Clock)?
+    };
+    let finish_by_unix_ms = u64::try_from(read.deadline)
+        .map_err(|_| Error::Clock)?
+        .checked_mul(1000)
         .ok_or(Error::Clock)?;
     let image = plan::worker_image(config)?;
     let input = crate::collection_worker::Input {
@@ -231,10 +237,9 @@ pub(crate) fn compile_read(
             },
             validity: ValidityWindow {
                 not_before_unix_ms: compiled_at_ms,
-                expires_at_unix_ms: u64::try_from(start_until)
+                expires_at_unix_ms: u64::try_from(read.deadline)
                     .map_err(|_| Error::Clock)?
-                    .checked_add(seconds)
-                    .and_then(|s| s.checked_mul(1000))
+                    .checked_mul(1000)
                     .ok_or(Error::Clock)?,
             },
             policy,
@@ -270,18 +275,21 @@ pub(crate) fn verify_input(
             _ => return Err(Error::Untrusted),
         };
     read.validate()?;
+    let mut normalized = task.clone();
+    normalized.permit = w::TaskPermit::Offer;
+    normalized.expires_at = 0;
+    let task = &normalized;
     if !matches!(&read.source, crate::collection_worker::ReadSource::Task { task: original, .. } if original.as_ref() == task)
     {
         return Err(Error::Untrusted);
     }
+    let finish_by_unix_ms = u64::try_from(read.deadline)
+        .map_err(|_| Error::Clock)?
+        .checked_mul(1000)
+        .ok_or(Error::Clock)?;
     let input = crate::collection_worker::Input {
         read,
-        finish_by_unix_ms: plan
-            .spec()
-            .validity
-            .not_before_unix_ms
-            .checked_add(plan.spec().budget.total_timeout_ms)
-            .ok_or(Error::Clock)?,
+        finish_by_unix_ms,
         image_sha256: plan.spec().launch.interpreter.artifact.sha256.clone(),
         run_as: plan.spec().run_as.clone(),
         session: plan.spec().session_requirement.clone(),

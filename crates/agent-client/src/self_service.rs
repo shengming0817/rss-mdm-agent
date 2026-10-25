@@ -63,29 +63,64 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             wire::SelfServiceCaller::Human => "human",
             wire::SelfServiceCaller::Ai => "ai",
         };
-        let mut path = format!("self-service?source={source}");
-        if let Some(after) = &query.after {
-            path.push_str(&format!("&after={after}"));
+        let mut url = url::Url::parse("https://query.invalid/self-service")
+            .map_err(|_| Error::Configuration)?;
+        {
+            let mut pairs = url.query_pairs_mut();
+            pairs.append_pair("source", source);
+            for (key, value) in [
+                ("filter", &query.filter),
+                ("sort", &query.sort),
+                ("fields", &query.fields),
+                ("cursor", &query.cursor),
+            ] {
+                if let Some(value) = value {
+                    pairs.append_pair(key, value);
+                }
+            }
+            if let Some(limit) = query.limit {
+                pairs.append_pair("limit", &limit.to_string());
+            }
         }
+        let path = format!("self-service?{}", url.query().ok_or(Error::Protocol)?);
         let response: wire::SelfServiceDirectoryResponse = self
             .self_service_json(secret, Method::GET, &path, None)
             .await?;
-        if response.items.len() > 64
+        if response.items.len() > usize::from(query.limit.unwrap_or(64))
             || response.as_of < 0
             || response
                 .next_cursor
-                .is_some_and(|next| Some(next) == query.after || next.is_nil())
-            || response
-                .items
-                .iter()
-                .map(|item| item.policy_id)
-                .collect::<std::collections::BTreeSet<_>>()
-                .len()
-                != response.items.len()
+                .as_ref()
+                .is_some_and(|next| Some(next) == query.cursor.as_ref() || next.is_empty())
         {
             return Err(Error::Protocol);
         }
         Ok(response)
+    }
+    /// Resolve one exact capability; discovery pages are never lookup authority.
+    pub async fn resolve_self_service(
+        &self,
+        secret: Option<&str>,
+        request: &wire::SelfServiceResolve,
+    ) -> Result<wire::SelfServiceDirectoryItem, Error> {
+        let item: wire::SelfServiceDirectoryItem = self
+            .self_service_json(
+                secret,
+                Method::POST,
+                "self-service/resolve",
+                Some(encode(request)?),
+            )
+            .await?;
+        if item.capability.id != item.policy_id
+            || request
+                .selector
+                .policy_id()?
+                .is_some_and(|id| id != item.policy_id)
+            || matches!(&request.selector, wire::CapabilitySelector::Alias { alias } if item.capability.alias.as_ref() != Some(alias))
+        {
+            return Err(Error::Untrusted);
+        }
+        Ok(item)
     }
     /// Send the original journal-frozen invocation. A lost response is recovered by request ID.
     pub async fn invoke_self_service(
@@ -103,8 +138,6 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             .await?;
         if response.request_id != request.operation_id
             || response.policy_id != request.policy_id
-            || response.policy_revision != request.policy_revision
-            || response.policy_version != request.policy_version
             || response.run_id.is_nil()
         {
             return Err(Error::Untrusted);

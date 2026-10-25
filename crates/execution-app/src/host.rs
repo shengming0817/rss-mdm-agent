@@ -102,48 +102,18 @@ impl<H: AppHost> JournalHost for Host<'_, H> {
     fn reliable_now(&self) -> Result<u64, JournalError> {
         self.inner.reliable_now()
     }
-    fn trusted_snapshot(&self, scope: &Scope) -> Result<TrustSnapshot, JournalError> {
-        let plan = self.plan.ok_or(JournalError::Trust)?;
-        if &Scope::from_input(plan) != scope {
-            return Err(JournalError::Trust);
-        }
-        self.inner.trusted_snapshot(plan)
-    }
     fn admit(
         &self,
         plan: &FrozenExecution,
         attempt: &AttemptId,
-        bindings: &[execution_approval::ProfileApproval],
-        approvals: &dyn execution_approval::ApprovalVerifier,
-        _now: u64,
+        now: u64,
     ) -> Result<AdmissionGate, JournalError> {
         let config = self.config.ok_or(JournalError::Trust)?;
         capabilities(self.inner, plan, config).map_err(|error| {
             eprintln!("execution_admit_capabilities: {error:?}");
             JournalError::Trust
         })?;
-        let admission = execution_admission::decide(
-            plan,
-            attempt,
-            self.inner,
-            execution_admission::AdmissionLimits {
-                max_rules: config.max_rules,
-            },
-        );
-        let approval = execution_approval::evaluate(
-            plan,
-            &admission,
-            bindings,
-            approvals,
-            execution_approval::ApprovalLimits {
-                max_profiles: config.max_profiles,
-                max_records: config.max_profiles,
-            },
-        );
-        Ok(AdmissionGate {
-            admission,
-            approval,
-        })
+        self.inner.admit(plan, attempt, now)
     }
 }
 

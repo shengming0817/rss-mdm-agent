@@ -85,7 +85,7 @@ async function refresh() {
           .filter(
             (r) =>
               r.action.kind === "policy" &&
-              r.action.directory.task.kind === "enrollment" &&
+              r.action.task.kind === "enrollment" &&
               !["failed", "cancelled"].includes(r.state),
           )
           .map(async (r) => {

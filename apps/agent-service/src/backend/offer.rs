@@ -73,7 +73,7 @@ pub(crate) fn offered(offer: &Offer) -> Result<execution_contract::BackendTask, 
         revision: execution_contract::Digest::new(format!("{:x}", Sha256::digest(bytes)))
             .map_err(|_| Error::Protocol)?,
         expires_at: offer.payload().expires_at(),
-        user_initiated: matches!(offer.payload(),wire::TaskPayload::Software(p) if p.start_mode==wire::SoftwareStartMode::UserInitiated)
+        user_initiated: matches!(offer.payload(),wire::TaskPayload::Software(p) if matches!(p.authorization, wire::TaskAuthorization::SelfService { .. }))
             || matches!(offer.payload(),wire::TaskPayload::Script(p) if matches!(p.authorization,wire::TaskAuthorization::SelfService { .. }))
             || matches!(offer.payload(),wire::TaskPayload::Enrollment(p) if matches!(p.authorization,wire::TaskAuthorization::SelfService { .. })),
     })

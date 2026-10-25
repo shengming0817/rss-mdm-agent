@@ -45,26 +45,47 @@ pub(crate) async fn submit<S: IdentityProvider>(
             .iter()
             .any(|step| matches!(step.target, wire::SoftwareExecutionTarget::User { .. })),
     };
-    let login = if needs_user || selection.is_some() {
+    let login = if needs_user {
         Some(service.core.helpers.connect(selection.as_ref())?)
     } else {
         None
     };
     let delegate = if needs_user { login.clone() } else { None };
-    let (preview, artifacts) = compile(
-        &mut service.core,
-        &offer,
-        &materials,
-        offer.payload(),
-        delegate.clone(),
-        super::enrollment::NativeMaterials::default(),
-    )?;
-    if let Err(error) = service.core.remember_data(&preview) {
-        eprintln!("agent_collected_data: {error}");
-    }
-    artifacts
-        .inspect(&preview)
-        .map_err(crate::error::app_error)?;
+    let request = super::request_id(&offer)?;
+    let retained = if service.client.association(offer.task_id())?.is_some()
+        && service
+            .core
+            .app
+            .has_service_execution(&request, &service.core.host.binding.device)
+            .map_err(crate::error::app_error)?
+    {
+        let input = service
+            .core
+            .app
+            .frozen_input(&service.core.caller(), &request)
+            .map_err(crate::error::app_error)?;
+        let artifacts =
+            crate::recovery::materials(&input, &service.core.config, &service.core.helpers)?;
+        Some((input, artifacts))
+    } else {
+        None
+    };
+    let compiled = if retained.is_some() {
+        retained
+    } else if matches!(offer.payload(), wire::TaskPayload::Enrollment(_)) {
+        None
+    } else {
+        let value = compile(
+            &mut service.core,
+            &offer,
+            &materials,
+            offer.payload(),
+            delegate.clone(),
+            super::enrollment::NativeMaterials::default(),
+        )?;
+        value.1.inspect(&value.0).map_err(crate::error::app_error)?;
+        Some(value)
+    };
     if let Some(selection) = &selection {
         let record = service
             .core
@@ -149,6 +170,7 @@ pub(crate) async fn submit<S: IdentityProvider>(
             material,
             profile_bytes: profile,
         },
+        compiled,
     )
 }
 
@@ -171,6 +193,7 @@ pub(crate) fn dispatch_started<S: IdentityProvider>(
         start,
         delegate,
         super::enrollment::NativeMaterials::default(),
+        None,
     )
 }
 fn dispatch_with_material<S: IdentityProvider>(
@@ -181,6 +204,10 @@ fn dispatch_with_material<S: IdentityProvider>(
     start: agent_client::Start,
     delegate: Option<Arc<execution_ipc::helper::Connection>>,
     native: super::enrollment::NativeMaterials,
+    compiled: Option<(
+        execution_contract::FrozenExecution,
+        execution_runner::Artifacts,
+    )>,
 ) -> Result<ExecutionStatus, Error> {
     if service
         .core
@@ -208,14 +235,28 @@ fn dispatch_with_material<S: IdentityProvider>(
     } else {
         None
     };
-    let (mut plan, artifacts) = compile(
-        &mut service.core,
-        &offer,
-        &materials,
-        start.payload(),
-        delegate,
-        native,
-    )?;
+    let (plan, artifacts) = match compiled {
+        Some(value) => value,
+        None => compile(
+            &mut service.core,
+            &offer,
+            &materials,
+            start.payload(),
+            delegate,
+            native,
+        )?,
+    };
+    let mut input = plan.spec().clone();
+    input.validity.expires_at_unix_ms = u64::try_from(start.payload().expires_at())
+        .map_err(|_| Error::Clock)?
+        .checked_mul(1000)
+        .ok_or(Error::Clock)?;
+    let mut plan =
+        execution_contract::FrozenExecution::freeze(input, &plan::storage_limits().input)
+            .map_err(|_| Error::Untrusted)?;
+    if let Err(error) = service.core.remember_data(&plan) {
+        eprintln!("agent_collected_data: {error}");
+    }
     if let Some(selection) = selection {
         let mut input = plan.spec().clone();
         let execution_contract::Initiator::Backend { trigger, .. } = &mut input.request.initiator

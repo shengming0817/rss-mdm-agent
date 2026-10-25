@@ -125,7 +125,7 @@ pub fn storage_limits() -> execution_sqlite::Limits {
             max_snapshot_bytes: 65536,
         },
         interaction: execution_interaction_limits(),
-        max_approvals: 1,
+
         max_record_bytes: 8 * 1024 * 1024,
         max_receipts: 100_000,
         max_database_pages: 262144,
@@ -151,7 +151,10 @@ pub(crate) fn verify_script_projection(
         (wire::ScriptProjection::Collection { .. }, Some(InputValue::Literal { value })) => {
             let frozen: wire::TaskSpec =
                 serde_json::from_value(value.clone()).map_err(|_| Error::Protocol)?;
-            if &frozen != task {
+            let mut normalized = task.clone();
+            normalized.permit = wire::TaskPermit::Offer;
+            normalized.expires_at = 0;
+            if frozen != normalized {
                 return Err(Error::Untrusted);
             }
             frozen.validate()?;
@@ -263,7 +266,13 @@ pub(crate) fn script(
             .insert(
                 SCRIPT_PROJECTION.into(),
                 InputValue::Literal {
-                    value: serde_json::to_value(payload).map_err(|_| Error::Protocol)?,
+                    value: serde_json::to_value({
+                        let mut value = payload.clone();
+                        value.permit = wire::TaskPermit::Offer;
+                        value.expires_at = 0;
+                        value
+                    })
+                    .map_err(|_| Error::Protocol)?,
                 },
             )
             .is_some()
@@ -373,10 +382,9 @@ pub(crate) fn script(
             },
             validity: ValidityWindow {
                 not_before_unix_ms: 0,
-                expires_at_unix_ms: u64::try_from(payload.expires_at)
+                expires_at_unix_ms: u64::try_from(payload.deadline)
                     .map_err(|_| Error::Clock)?
                     .checked_mul(1000)
-                    .and_then(|v| v.checked_add(u64::from(payload.timeout_seconds) * 1000))
                     .ok_or(Error::Clock)?,
             },
             policy,

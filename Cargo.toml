@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/macos-passkey-provider", "apps/macos-passkey-extension", "crates/windows-passkey-provider", "apps/windows-passkey-provider", "crates/passkey-vault", "crates/platform-sso", "apps/platform-sso-extension", "apps/windows-credential-provider", "apps/agent-service", "crates/agent-client", "crates/execution-runner", "crates/execution-ipc", "crates/native-process", "crates/platform-private-storage", "crates/platform-credentials", "crates/installation-security", "crates/device-access", "apps/desktop/src-tauri", "crates/execution-contract", "crates/ai-session-contract", "crates/execution-interaction", "crates/execution-capability", "crates/execution-admission", "crates/execution-approval", "crates/execution-lifecycle", "crates/script-plan", "crates/execution-mcp", "crates/execution-sqlite", "crates/execution-app"]
+members = ["crates/macos-passkey-provider", "apps/macos-passkey-extension", "crates/windows-passkey-provider", "apps/windows-passkey-provider", "crates/passkey-vault", "crates/platform-sso", "apps/platform-sso-extension", "apps/windows-credential-provider", "apps/agent-service", "crates/agent-client", "crates/execution-runner", "crates/execution-ipc", "crates/native-process", "crates/platform-private-storage", "crates/platform-credentials", "crates/installation-security", "crates/device-access", "apps/desktop/src-tauri", "crates/execution-contract", "crates/ai-session-contract", "crates/execution-interaction", "crates/execution-capability", "crates/execution-lifecycle", "crates/script-plan", "crates/execution-mcp", "crates/execution-sqlite", "crates/execution-app"]
 exclude = ["vendor/passkey-authenticator", "vendor/tauri-plugin-wdio-webdriver"]
 resolver = "2"
 
@@ -10,7 +10,7 @@ rust-version = "1.96"
 license = "MIT"
 
 [workspace.dependencies]
-rss-mdm-agent-wire = { git = "https://dev.azure.com/shengming0923/rss/_git/rss-mdm", rev = "bdf6313f37ecd9ad9a7e13a2280b26e166e90ee4" }
+rss-mdm-agent-wire = { git = "https://dev.azure.com/shengming0923/rss/_git/rss-mdm", rev = "ee464c4d1a450612c9c258a151f7139fae2bb110" }
 zeroize = { version = "=1.8.2", features = ["serde"] }
 rustls = { version = "=0.23.45", default-features = false, features = ["std", "ring", "tls12"] }
 x509-cert = "=0.2.5"

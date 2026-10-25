@@ -194,8 +194,7 @@ async fn capture_recovery(case: u8) {
     input.request.operation.resource =
         super::plan::reference("backend-resource", super::plan::hex(&task.resource_digest))
             .unwrap();
-    input.validity.expires_at_unix_ms =
-        task.expires_at as u64 * 1000 + input.budget.total_timeout_ms;
+    input.validity.expires_at_unix_ms = task.expires_at as u64 * 1000;
     input.request.parameters.insert(
         "collection-tools".into(),
         InputValue::Literal {

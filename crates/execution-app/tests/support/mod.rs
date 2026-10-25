@@ -1,8 +1,5 @@
 #![allow(dead_code)]
-use execution_admission::Rule;
-use execution_admission::*;
 use execution_app::*;
-use execution_approval::ProfileApproval;
 use execution_capability::*;
 use execution_contract::*;
 
@@ -84,15 +81,12 @@ pub struct State {
     pub allow: bool,
     pub read: bool,
     pub audit: bool,
-    pub approval: bool,
+
     pub capability: bool,
     pub capabilities: usize,
     pub block_capability_on: usize,
     pub admissions: usize,
     pub config_audits: Vec<ConfigChange>,
-    pub grants: Vec<TrustedApproval>,
-    pub policy_epoch: VersionedRef,
-    pub approval_epoch: VersionedRef,
 }
 #[derive(Clone)]
 pub struct TestHost {
@@ -118,82 +112,18 @@ impl TestHost {
                 allow: true,
                 read: true,
                 audit: true,
-                approval: false,
+
                 capability: true,
                 capabilities: 0,
                 block_capability_on: usize::MAX,
                 admissions: 0,
                 config_audits: vec![],
-                grants: vec![],
-                policy_epoch: reference("authority-epoch"),
-                approval_epoch: reference("approval-epoch"),
             })),
             template,
         }
     }
-    pub fn grant(&self, uses: u32) {
-        let mut s = self.state.lock().unwrap();
-        s.grants = vec![TrustedApproval {
-            state: ApprovalState::Active,
-            definition: ApprovalDefinition {
-                reference: reference("approval"),
-                approver: ActorId::new("approver").unwrap(),
-                request_id: self.template.spec().request.request_id.clone(),
-                content_digest: self.template.digest().clone(),
-                profiles: vec![reference("profile")],
-                validity: self.template.spec().validity,
-                max_uses: uses,
-            },
-        }];
-        s.approval_epoch = reference("approval-granted");
-    }
 }
-impl AuthorityVerifier for TestHost {
-    fn verify(
-        &self,
-        _: &FrozenExecution,
-        _: &AttemptId,
-    ) -> Result<AuthorityFacts, VerificationError> {
-        let mut s = self.state.lock().unwrap();
-        s.admissions += 1;
-        let p = self.template.spec();
-        Ok(AuthorityFacts {
-            verified_origin: p.request.initiator.clone(),
-            risk: s.risk,
-            subject: SubjectFacts {
-                authority: p.request.authority.clone(),
-                actor: s.actor.clone(),
-                validity: p.validity,
-                budget: p.budget,
-            },
-            delegation: p
-                .request
-                .delegation
-                .clone()
-                .map(|reference| DelegationFacts {
-                    reference,
-                    scope: self.template.clone(),
-                }),
-            policy: p.policy.clone(),
-            rules: vec![Rule {
-                id: id("fixture-rule"),
-                template: self.template.clone(),
-                effect: if !s.allow {
-                    RuleEffect::Deny
-                } else if s.approval {
-                    RuleEffect::ApprovalRequired {
-                        profile: reference("profile"),
-                    }
-                } else {
-                    RuleEffect::Allow
-                },
-            }],
-            now_unix_ms: s.now,
-            verification_revision: s.policy_epoch.clone(),
-            fresh_until_unix_ms: 2000,
-        })
-    }
-}
+
 impl AppHost for TestHost {
     fn service_binding(&self) -> Result<ServiceBinding, execution_app::Error> {
         let s = self.state.lock().unwrap();
@@ -347,30 +277,26 @@ impl AppHost for TestHost {
         }
         Ok(snapshot)
     }
-    fn trusted_snapshot(
+    fn admit(
         &self,
-        _: &FrozenExecution,
-    ) -> Result<TrustSnapshot, execution_app::JournalError> {
-        let s = self.state.lock().unwrap();
-        Ok(TrustSnapshot {
-            authorization_revision: s.policy_epoch.clone(),
-            approval_revision: s.approval_epoch.clone(),
-            fresh_until_unix_ms: 2000,
-            approvals: s.grants.clone(),
-        })
-    }
-    fn approval_bindings(
-        &self,
-        _: &FrozenExecution,
-    ) -> Result<Vec<ProfileApproval>, execution_app::Error> {
-        let s = self.state.lock().unwrap();
-        Ok(if s.approval && !s.grants.is_empty() {
-            vec![ProfileApproval {
-                profile: reference("profile"),
-                record: reference("approval"),
-            }]
-        } else {
-            vec![]
+        plan: &FrozenExecution,
+        _: &AttemptId,
+        _now: u64,
+    ) -> Result<execution_app::AdmissionGate, execution_app::JournalError> {
+        let mut s = self.state.lock().unwrap();
+        s.admissions += 1;
+        Ok(execution_app::AdmissionGate {
+            execution_gate: if !s.allow
+                || s.actor != plan.spec().request.actor
+                || plan.digest() != self.template.digest()
+            {
+                ExecutionGate::Blocked
+            } else if matches!(plan.spec().request.initiator, Initiator::Ai { .. }) {
+                ai_execution_gate(s.risk)
+            } else {
+                ExecutionGate::Direct
+            },
+            valid_until_unix_ms: 2000.min(plan.spec().validity.expires_at_unix_ms),
         })
     }
     fn configuration_change(&self, change: &ConfigChange) -> Result<(), execution_app::Error> {

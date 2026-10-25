@@ -40,8 +40,6 @@ plist = "=1.10.1"
 windows-sys = { version = "=0.61.2", features = ["Wdk_System_SystemInformation", "Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_ApplicationInstallationAndServicing", "Win32_System_SystemInformation", "Win32_System_JobObjects", "Win32_System_SystemServices", "Win32_System_Services", "Win32_System_RemoteDesktop", "Win32_System_Environment", "Win32_System_Console", "Win32_System_EventLog", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
-execution-admission = { path = "../execution-admission" }
-execution-approval = { path = "../execution-approval" }
 execution-capability = { path = "../execution-capability" }
 execution-sqlite = { path = "../execution-sqlite", features = ["test-support"] }
 rusqlite.workspace = true

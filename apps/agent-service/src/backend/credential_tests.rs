@@ -132,7 +132,7 @@ async fn settlement(case: u8) {
         super::plan::hex(&task.definition_digest),
     )
     .unwrap();
-    spec.validity.expires_at_unix_ms = task.expires_at as u64 * 1000 + spec.budget.total_timeout_ms;
+    spec.validity.expires_at_unix_ms = task.expires_at as u64 * 1000;
     spec.request.parameters.insert(
         "credential-root".into(),
         InputValue::Literal {

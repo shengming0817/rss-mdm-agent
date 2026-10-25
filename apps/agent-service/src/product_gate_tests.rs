@@ -76,6 +76,7 @@ impl Case {
                 panic!("software")
             };
             spec.expires_at = clock.now().unwrap() + seconds;
+            data.task_deadline = data.task_deadline.max(spec.expires_at);
             data.offer = Some(data.signed(wire::TaskPayload::Software(spec)));
             data.explicit_offers = true;
         }
@@ -676,7 +677,6 @@ async fn material_gc_history(materials_per_request: usize) {
     // Keep Offer/Start expiry out of GC verification, including the manual scale case.
     let fixture_started = std::time::Instant::now();
     let mut c = Case::with_offer_mode(None, 600, false).await;
-    c._server.data.lock().unwrap().start_validity_seconds = 600;
     let bytes = b"original journal material";
     let digest = execution_contract::Digest::new(format!("{:x}", Sha256::digest(bytes))).unwrap();
     let source = c
@@ -1488,22 +1488,19 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
     use execution_ipc::host::Request;
     let mut c = Case::new(Some(RiskLevel::Two)).await;
     let directory = protocol::policy_directory_fixture(c.service.client.configuration().tenant);
-    c._server.data.lock().unwrap().self_service_directory =
-        Some(wire::SelfServiceDirectoryResponse {
-            items: vec![directory.clone()],
-            next_cursor: None,
-            as_of: c._server.time.now().unwrap(),
-        });
+    c._server.data.lock().unwrap().self_service_directory = Some(protocol::Directory {
+        items: vec![directory.clone()],
+        next_cursor: None,
+        as_of: c._server.time.now().unwrap(),
+    });
     c.employee("generation-one").await;
     let mut choice = PolicyChoice {
         request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
         policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
-        policy_revision: directory.policy_revision,
-        policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
+
         parameters: std::collections::BTreeMap::from([("name".into(), serde_json::json!("Acme"))]),
     };
     let invoke = Request::InvokePolicy {
-        locator: execution_contract::PolicyLocator { after: None },
         context: c.context(),
         choice: choice.clone(),
         origin: c.selection.origin.clone(),
@@ -1526,7 +1523,6 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
         .insert("path".into(), serde_json::json!("/Library"));
     assert!(matches!(
         c.policy_call(Request::InvokePolicy {
-            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice: changed,
             origin: c.selection.origin.clone()
@@ -1565,7 +1561,6 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
     choice.request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
     assert!(matches!(
         c.policy_call(Request::InvokePolicy {
-            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice: choice.clone(),
             origin: c.selection.origin.clone()
@@ -1623,18 +1618,16 @@ async fn policy_low_risk_and_human_only_settings_have_separate_native_sources() 
             protocol::policy_directory_fixture(c.service.client.configuration().tenant);
         directory.self_service.risk_level = 1;
         directory.self_service.allow_ai = !human;
-        c._server.data.lock().unwrap().self_service_directory =
-            Some(wire::SelfServiceDirectoryResponse {
-                items: vec![directory.clone()],
-                next_cursor: None,
-                as_of: c._server.time.now().unwrap(),
-            });
+        c._server.data.lock().unwrap().self_service_directory = Some(protocol::Directory {
+            items: vec![directory.clone()],
+            next_cursor: None,
+            as_of: c._server.time.now().unwrap(),
+        });
         c.employee("generation-one").await;
         let choice = PolicyChoice {
             request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
             policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
-            policy_revision: directory.policy_revision,
-            policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
+
             parameters: std::collections::BTreeMap::from([(
                 "name".into(),
                 serde_json::json!("Acme"),
@@ -1647,7 +1640,6 @@ async fn policy_low_risk_and_human_only_settings_have_separate_native_sources() 
         };
         let Reply::PolicyRequest { value } = c
             .policy_call(Request::InvokePolicy {
-                locator: execution_contract::PolicyLocator { after: None },
                 context: c.context(),
                 choice: choice.clone(),
                 origin,
@@ -1667,10 +1659,9 @@ async fn policy_low_risk_and_human_only_settings_have_separate_native_sources() 
         }
         let mut stale = choice.clone();
         stale.request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
-        stale.policy_revision += 1;
+
         assert!(matches!(
             c.policy_call(Request::InvokePolicy {
-                locator: execution_contract::PolicyLocator { after: None },
                 context: c.context(),
                 choice: stale,
                 origin: c.selection.origin.clone()
@@ -1696,18 +1687,16 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
                 if device {
                     directory.subject = wire::SelfServiceSubject::Device {};
                 }
-                c._server.data.lock().unwrap().self_service_directory =
-                    Some(wire::SelfServiceDirectoryResponse {
-                        items: vec![directory.clone()],
-                        next_cursor: None,
-                        as_of: c._server.time.now().unwrap(),
-                    });
+                c._server.data.lock().unwrap().self_service_directory = Some(protocol::Directory {
+                    items: vec![directory.clone()],
+                    next_cursor: None,
+                    as_of: c._server.time.now().unwrap(),
+                });
                 c.employee("generation-one").await;
                 let choice = PolicyChoice {
                     request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
                     policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
-                    policy_revision: directory.policy_revision,
-                    policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
+
                     parameters: std::collections::BTreeMap::from([(
                         "name".into(),
                         serde_json::json!("Acme"),
@@ -1715,7 +1704,6 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
                 };
                 assert!(matches!(
                     c.policy_call(Request::InvokePolicy {
-                        locator: execution_contract::PolicyLocator { after: None },
                         context: c.context(),
                         choice: choice.clone(),
                         origin: c.selection.origin.clone()
@@ -1776,6 +1764,7 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
                         policy_id: directory.policy_id,
                         policy_revision: directory.policy_revision,
                         policy_version: directory.policy_version,
+
                         allow_ai: true,
                         risk_level: level,
                         confirmed: level == 2,
@@ -2148,25 +2137,22 @@ async fn durable_ready_policy_resumes_original_uuid_from_each_native_entrypoint(
         let mut directory =
             protocol::policy_directory_fixture(c.service.client.configuration().tenant);
         directory.self_service.risk_level = if entry == 2 { 2 } else { 1 };
-        c._server.data.lock().unwrap().self_service_directory =
-            Some(wire::SelfServiceDirectoryResponse {
-                items: vec![directory.clone()],
-                next_cursor: None,
-                as_of: c._server.time.now().unwrap(),
-            });
+        c._server.data.lock().unwrap().self_service_directory = Some(protocol::Directory {
+            items: vec![directory.clone()],
+            next_cursor: None,
+            as_of: c._server.time.now().unwrap(),
+        });
         c.employee("generation-one").await;
         let choice = PolicyChoice {
             request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
             policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
-            policy_revision: directory.policy_revision,
-            policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
+
             parameters: std::collections::BTreeMap::from([(
                 "name".into(),
                 serde_json::json!("Acme"),
             )]),
         };
         let invoke = Request::InvokePolicy {
-            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice: choice.clone(),
             origin: c.selection.origin.clone(),
@@ -2203,7 +2189,6 @@ async fn durable_ready_policy_resumes_original_uuid_from_each_native_entrypoint(
             .unwrap();
         let request = match entry {
             0 => Request::InvokePolicy {
-                locator: execution_contract::PolicyLocator { after: None },
                 context: c.context(),
                 choice: match &restored.action {
                     PreparedAction::Policy { choice, .. } => choice.clone(),
@@ -2233,83 +2218,6 @@ async fn durable_ready_policy_resumes_original_uuid_from_each_native_entrypoint(
             .invocations
             .contains_key(&uuid::Uuid::parse_str(original.as_str()).unwrap()));
     }
-}
-#[tokio::test]
-async fn unaccepted_policy_expiry_is_durable_and_status_remains_read_only() {
-    let _budget = crate::scenario_budget::enter();
-    use execution_ipc::host::Request;
-    let mut c = Case::new(Some(RiskLevel::Two)).await;
-    let mut directory = protocol::policy_directory_fixture(c.service.client.configuration().tenant);
-    directory.self_service.risk_level = 1;
-    c._server.data.lock().unwrap().self_service_directory =
-        Some(wire::SelfServiceDirectoryResponse {
-            items: vec![directory.clone()],
-            next_cursor: None,
-            as_of: c._server.time.now().unwrap(),
-        });
-    c.employee("generation-one").await;
-    c._server.data.lock().unwrap().invocation_unaccepted = true;
-    let original = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
-    let choice = PolicyChoice {
-        request: original.clone(),
-        policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
-        policy_revision: directory.policy_revision,
-        policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
-        parameters: std::collections::BTreeMap::from([("name".into(), serde_json::json!("Acme"))]),
-    };
-    let Reply::PolicyRequest { value } = c
-        .policy_call(Request::InvokePolicy {
-            locator: execution_contract::PolicyLocator { after: None },
-            context: c.context(),
-            choice,
-            origin: c.selection.origin.clone(),
-        })
-        .await
-    else {
-        panic!("unaccepted invocation")
-    };
-    assert_eq!(value.state, BackendRequestState::Submitting);
-    // Restore an already-expired durable record at the interrupted submission boundary.
-    // SystemClock intentionally rejects artificial forward movement, so the expiry is fixed
-    // before the initial journal insert, preserving the immutable preparation contract.
-    let mut expired = *value;
-    let original = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
-    if let PreparedAction::Policy {
-        choice,
-        expires_at_unix_ms,
-        ..
-    } = &mut expired.action
-    {
-        choice.request = original.clone();
-        *expires_at_unix_ms = c.service.core.host.clock.millis().unwrap() - 1;
-    }
-    expired.risk.as_mut().unwrap().expires_at_unix_ms = expired.action.expires_at_unix_ms();
-    expired.state = BackendRequestState::Ready;
-    expired.revision = 1;
-    c.service
-        .core
-        .app
-        .record_backend_request(&c.service.core.caller(), None, &expired)
-        .unwrap();
-    c.service
-        .core
-        .transition(&original, BackendRequestState::Submitting, None)
-        .unwrap();
-    c._server.data.lock().unwrap().invocation_unaccepted = false;
-    for _ in 0..2 {
-        let Reply::PolicyRequest { value } = c
-            .policy_call(Request::PolicyStatus {
-                context: c.context(),
-                request: original.clone(),
-            })
-            .await
-        else {
-            panic!("expiry status")
-        };
-        assert_eq!(value.state, BackendRequestState::Failed);
-        assert_eq!(value.failure, Some(BackendRequestFailure::Expired));
-    }
-    assert!(c._server.data.lock().unwrap().invocations.is_empty());
 }
 
 fn select_pki_refresh(root: &std::path::Path) {
@@ -2649,7 +2557,7 @@ async fn software_self_service_binds_signed_policy_and_native_context() {
     };
     {
         let mut data = c._server.data.lock().unwrap();
-        data.self_service_directory = Some(wire::SelfServiceDirectoryResponse {
+        data.self_service_directory = Some(protocol::Directory {
             items: vec![directory.clone()],
             next_cursor: None,
             as_of: c._server.time.now().unwrap(),
@@ -2664,13 +2572,11 @@ async fn software_self_service_binds_signed_policy_and_native_context() {
     let choice = PolicyChoice {
         request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
         policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
-        policy_revision: directory.policy_revision,
-        policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
+
         parameters: Default::default(),
     };
     let Reply::PolicyRequest { value: pending } = c
         .policy_call(Request::InvokePolicy {
-            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice: choice.clone(),
             origin: c.selection.origin.clone(),
@@ -2753,8 +2659,7 @@ impl Case {
         PolicyChoice {
             request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
             policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
-            policy_revision: directory.policy_revision,
-            policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
+
             parameters: std::collections::BTreeMap::from([(
                 "name".into(),
                 serde_json::json!("Acme"),
@@ -2784,12 +2689,11 @@ async fn device_directory_and_invocation_are_credential_free_with_or_without_emp
                 principal_id: uuid::Uuid::from_u128(3),
             },
         };
-        c._server.data.lock().unwrap().self_service_directory =
-            Some(wire::SelfServiceDirectoryResponse {
-                items: vec![item.clone(), user_item],
-                next_cursor: None,
-                as_of: 1,
-            });
+        c._server.data.lock().unwrap().self_service_directory = Some(protocol::Directory {
+            items: vec![item.clone(), user_item],
+            next_cursor: None,
+            as_of: 1,
+        });
         let Reply::PolicyDirectory { value } = c
             .policy_call(Request::PolicyDirectory {
                 context: c.context(),
@@ -2804,7 +2708,6 @@ async fn device_directory_and_invocation_are_credential_free_with_or_without_emp
         let choice = c.policy_choice(&item);
         let Reply::PolicyRequest { value } = c
             .policy_call(Request::InvokePolicy {
-                locator: execution_contract::PolicyLocator { after: None },
                 context: c.context(),
                 choice: choice.clone(),
                 origin: c.selection.origin.clone(),
@@ -2843,18 +2746,16 @@ async fn retired_ai_ingress_cannot_read_or_invoke_but_original_device_consent_co
     let mut item = protocol::policy_directory_fixture(c.service.client.configuration().tenant);
     item.subject = wire::SelfServiceSubject::Device {};
     item.self_service.risk_level = 2;
-    c._server.data.lock().unwrap().self_service_directory =
-        Some(wire::SelfServiceDirectoryResponse {
-            items: vec![item.clone()],
-            next_cursor: None,
-            as_of: 1,
-        });
+    c._server.data.lock().unwrap().self_service_directory = Some(protocol::Directory {
+        items: vec![item.clone()],
+        next_cursor: None,
+        as_of: 1,
+    });
     let choice = c.policy_choice(&item);
     let old = c.context();
     let origin = c.selection.origin.clone();
     let Reply::PolicyRequest { value: pending } = c
         .policy_call(Request::InvokePolicy {
-            locator: execution_contract::PolicyLocator { after: None },
             context: old.clone(),
             choice: choice.clone(),
             origin: origin.clone(),
@@ -2876,7 +2777,6 @@ async fn retired_ai_ingress_cannot_read_or_invoke_but_original_device_consent_co
             origin: origin.clone(),
         },
         Request::InvokePolicy {
-            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice: choice.clone(),
             origin: origin.clone(),
@@ -2935,7 +2835,7 @@ async fn unknown_device_submission_queries_original_before_any_repeat_post_after
         item.self_service.risk_level = 1;
         {
             let mut data = c._server.data.lock().unwrap();
-            data.self_service_directory = Some(wire::SelfServiceDirectoryResponse {
+            data.self_service_directory = Some(protocol::Directory {
                 items: vec![item.clone()],
                 next_cursor: None,
                 as_of: 1,
@@ -2946,7 +2846,6 @@ async fn unknown_device_submission_queries_original_before_any_repeat_post_after
         let choice = c.policy_choice(&item);
         let Reply::PolicyRequest { value: unknown } = c
             .policy_call(Request::InvokePolicy {
-                locator: execution_contract::PolicyLocator { after: None },
                 context: c.context(),
                 choice: choice.clone(),
                 origin: c.selection.origin.clone(),
@@ -3006,16 +2905,14 @@ async fn fences_isolate_os_sessions_and_user_requests_never_downgrade() {
     let mut c = Case::new(None).await;
     let mut item = protocol::policy_directory_fixture(c.service.client.configuration().tenant);
     item.self_service.risk_level = 1;
-    c._server.data.lock().unwrap().self_service_directory =
-        Some(wire::SelfServiceDirectoryResponse {
-            items: vec![item.clone()],
-            next_cursor: None,
-            as_of: 1,
-        });
+    c._server.data.lock().unwrap().self_service_directory = Some(protocol::Directory {
+        items: vec![item.clone()],
+        next_cursor: None,
+        as_of: 1,
+    });
     let choice = c.policy_choice(&item);
     let Reply::PolicyRequest { value } = c
         .policy_call(Request::InvokePolicy {
-            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice: choice.clone(),
             origin: c.selection.origin.clone(),
@@ -3067,16 +2964,14 @@ impl Case {
         if device {
             item.subject = wire::SelfServiceSubject::Device {};
         }
-        self._server.data.lock().unwrap().self_service_directory =
-            Some(wire::SelfServiceDirectoryResponse {
-                items: vec![item.clone()],
-                next_cursor: None,
-                as_of: 1,
-            });
+        self._server.data.lock().unwrap().self_service_directory = Some(protocol::Directory {
+            items: vec![item.clone()],
+            next_cursor: None,
+            as_of: 1,
+        });
         let choice = self.policy_choice(&item);
         let reply = self
             .policy_call(Request::InvokePolicy {
-                locator: execution_contract::PolicyLocator { after: None },
                 context: self.context(),
                 choice: choice.clone(),
                 origin: self.selection.origin.clone(),
@@ -3402,16 +3297,14 @@ async fn expired_device_confirmation_checks_original_os_owner_before_read_or_wri
     c.device("original-device").await;
     let mut item = protocol::policy_directory_fixture(c.service.client.configuration().tenant);
     item.subject = wire::SelfServiceSubject::Device {};
-    c._server.data.lock().unwrap().self_service_directory =
-        Some(wire::SelfServiceDirectoryResponse {
-            items: vec![item.clone()],
-            next_cursor: None,
-            as_of: 1,
-        });
+    c._server.data.lock().unwrap().self_service_directory = Some(protocol::Directory {
+        items: vec![item.clone()],
+        next_cursor: None,
+        as_of: 1,
+    });
     let choice = c.policy_choice(&item);
     assert!(matches!(
         c.policy_call(Request::InvokePolicy {
-            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice: choice.clone(),
             origin: c.selection.origin.clone(),
@@ -3617,78 +3510,6 @@ async fn transient_start_replays_original_attempt_without_retiring_policy_or_con
 }
 
 #[tokio::test]
-async fn restarted_policy_expiry_preserves_original_run_queries_without_start() {
-    let _budget = crate::scenario_budget::enter();
-    use execution_ipc::host::Request;
-    for offer_expired in [false, true] {
-        let mut c = Case::new(None).await;
-        let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
-        c.service.release_waiting();
-        c.service
-            .abandon(c.offer.task_id(), &mut commands)
-            .await
-            .unwrap();
-        let (original, _) = c
-            .accepted_policy_offer_lifetime(true, offer_expired.then_some(2))
-            .await;
-        let request = original.action.request().clone();
-        let before = if offer_expired {
-            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-            original.clone()
-        } else {
-            c.elapsed_policy(&request)
-        };
-        let mut c = c.reopen();
-        c.service.drive(&mut commands).await.unwrap();
-        let expired = c.policy_record(&request);
-        assert_eq!(expired.failure, Some(BackendRequestFailure::Expired));
-        assert_eq!(expired.state, BackendRequestState::Failed);
-        assert_eq!(expired.confirmation, before.confirmation);
-        assert_eq!(expired.trigger, before.trigger);
-        assert!(c.service.waiting.is_none());
-        assert!(c
-            .service
-            .client
-            .pending_tasks(c.service.client.configuration().limits.pending_tasks)
-            .unwrap()
-            .is_empty());
-        c.device("new-device-context").await;
-        let offset = c._server.data.lock().unwrap().employee_calls.len();
-        let Reply::PolicyStatus { value } = c
-            .policy_call(Request::PolicyStatus {
-                context: c.context(),
-                request: request.clone(),
-            })
-            .await
-        else {
-            panic!("original Run query")
-        };
-        assert_eq!(value.request_id.to_string(), request.as_str());
-        let PreparedAction::Policy {
-            run_id: Some(run_id),
-            ..
-        } = &before.action
-        else {
-            panic!("Run")
-        };
-        assert_eq!(value.run_id.to_string(), run_id.as_str());
-        let data = c._server.data.lock().unwrap();
-        assert_eq!(data.employee_calls.len(), offset + 1);
-        assert!(data.employee_calls[offset].0.ends_with(request.as_str()));
-        assert!(!data.employee_credentials[offset]);
-        assert!(data.start_ops.is_empty());
-        assert!(c
-            .service
-            .core
-            .app
-            .service_tasks(None, 64)
-            .unwrap()
-            .items
-            .is_empty());
-    }
-}
-
-#[tokio::test]
 async fn operation_draft_freezes_current_parameters_once_and_queries_do_not_execute() {
     let _budget = crate::scenario_budget::enter();
     use execution_ipc::host::Request;
@@ -3697,23 +3518,20 @@ async fn operation_draft_freezes_current_parameters_once_and_queries_do_not_exec
         let mut directory =
             protocol::policy_directory_fixture(c.service.client.configuration().tenant);
         directory.self_service.risk_level = level;
-        c._server.data.lock().unwrap().self_service_directory =
-            Some(wire::SelfServiceDirectoryResponse {
-                items: vec![directory.clone()],
-                next_cursor: None,
-                as_of: c._server.time.now().unwrap(),
-            });
+        c._server.data.lock().unwrap().self_service_directory = Some(protocol::Directory {
+            items: vec![directory.clone()],
+            next_cursor: None,
+            as_of: c._server.time.now().unwrap(),
+        });
         c.employee("generation-one").await;
         let choice = PolicyChoice {
             request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
             policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
-            policy_revision: directory.policy_revision,
-            policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
+
             parameters: Default::default(), // An incomplete draft is not an executable choice.
         };
         let Reply::PolicyRequest { value: draft } = c
             .policy_call(Request::PreparePolicy {
-                locator: execution_contract::PolicyLocator { after: None },
                 context: c.context(),
                 choice: choice.clone(),
                 origin: c.selection.origin.clone(),
@@ -3837,84 +3655,6 @@ async fn operation_draft_freezes_current_parameters_once_and_queries_do_not_exec
 }
 
 #[tokio::test]
-async fn operation_draft_rejects_changed_policy_and_retired_native_context() {
-    let _budget = crate::scenario_budget::enter();
-    use execution_ipc::host::Request;
-    for mode in 0..3 {
-        let mut c = Case::new(None).await;
-        let directory = protocol::policy_directory_fixture(c.service.client.configuration().tenant);
-        c._server.data.lock().unwrap().self_service_directory =
-            Some(wire::SelfServiceDirectoryResponse {
-                items: vec![directory.clone()],
-                next_cursor: None,
-                as_of: c._server.time.now().unwrap(),
-            });
-        c.employee("generation-one").await;
-        let choice = PolicyChoice {
-            request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
-            policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
-            policy_revision: directory.policy_revision,
-            policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
-            parameters: Default::default(),
-        };
-        let Reply::PolicyRequest { value } = c
-            .policy_call(Request::PreparePolicy {
-                locator: execution_contract::PolicyLocator { after: None },
-                context: c.context(),
-                choice: choice.clone(),
-                origin: c.selection.origin.clone(),
-            })
-            .await
-        else {
-            panic!("draft")
-        };
-        if mode == 2 {
-            c = c.reopen();
-            assert_eq!(c.policy_record(&choice.request), *value);
-            assert!(c._server.data.lock().unwrap().invocations.is_empty());
-            c.employee("generation-restart").await;
-        } else if mode == 1 {
-            c.employee("generation-two").await;
-        } else {
-            c._server
-                .data
-                .lock()
-                .unwrap()
-                .self_service_directory
-                .as_mut()
-                .unwrap()
-                .items[0]
-                .policy_revision += 1;
-        }
-        assert!(matches!(
-            c.policy_call(Request::SubmitPolicy {
-                context: c.context(),
-                input: PolicySubmission {
-                    request: choice.request.clone(),
-                    revision: value.revision,
-                    parameters: std::collections::BTreeMap::from([(
-                        "name".into(),
-                        serde_json::json!("User edit")
-                    )]),
-                }
-            })
-            .await,
-            Reply::OperationRejected { .. }
-        ));
-        assert!(c._server.data.lock().unwrap().invocations.is_empty());
-        let retained = c
-            .service
-            .core
-            .app
-            .backend_request(&c.service.core.caller(), &choice.request)
-            .unwrap()
-            .unwrap();
-        assert_eq!(retained.state, BackendRequestState::Draft);
-        assert!(retained.confirmation.is_none());
-    }
-}
-
-#[tokio::test]
 async fn operation_draft_rejects_secret_and_unresolved_schemas_before_persistence() {
     let _budget = crate::scenario_budget::enter();
     use execution_ipc::host::Request;
@@ -3932,17 +3672,15 @@ async fn operation_draft_rejects_secret_and_unresolved_schemas_before_persistenc
         {
             *parameter_schema = schema;
         }
-        c._server.data.lock().unwrap().self_service_directory =
-            Some(wire::SelfServiceDirectoryResponse {
-                items: vec![directory.clone()],
-                next_cursor: None,
-                as_of: c._server.time.now().unwrap(),
-            });
+        c._server.data.lock().unwrap().self_service_directory = Some(protocol::Directory {
+            items: vec![directory.clone()],
+            next_cursor: None,
+            as_of: c._server.time.now().unwrap(),
+        });
         let choice = PolicyChoice {
             request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
             policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
-            policy_revision: directory.policy_revision,
-            policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
+
             parameters: std::collections::BTreeMap::from([(
                 "name".into(),
                 serde_json::json!("secret-must-not-be-returned"),
@@ -3950,7 +3688,6 @@ async fn operation_draft_rejects_secret_and_unresolved_schemas_before_persistenc
         };
         let reply = c
             .policy_call(Request::PreparePolicy {
-                locator: execution_contract::PolicyLocator { after: None },
                 context: c.context(),
                 choice: choice.clone(),
                 origin: c.selection.origin.clone(),
@@ -4472,7 +4209,8 @@ async fn local_data_queries_keep_os_prerequisites_exact_authority_and_offline_re
             input: DataOperation::Directory(QueryDirectory {
                 after: None,
                 limit: 128,
-                policy_page: None,
+                refresh_policies: false,
+                policy_cursor: None,
             }),
         })
         .await;
@@ -4611,16 +4349,20 @@ async fn local_data_queries_keep_os_prerequisites_exact_authority_and_offline_re
     *c.service.core.host.local_read.lock().unwrap() =
         Some(crate::local_execution::ReadPermit::new(frozen.clone()).unwrap());
     let attempt = AttemptId::new("proof-only-no-dispatch").unwrap();
-    let facts =
-        execution_admission::AuthorityVerifier::verify(&c.service.core.host, &frozen, &attempt)
-            .unwrap();
-    assert!(matches!(facts.verified_origin, Initiator::Human { .. }));
-    assert_eq!(facts.risk, Some(RiskLevel::One));
-    *c.service.core.host.local_read.lock().unwrap() = None;
-    assert!(execution_admission::AuthorityVerifier::verify(
+    let facts = execution_app::AppHost::admit(
         &c.service.core.host,
         &frozen,
-        &attempt
+        &attempt,
+        crate::wall().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(facts.execution_gate, execution_app::ExecutionGate::Direct);
+    *c.service.core.host.local_read.lock().unwrap() = None;
+    assert!(execution_app::AppHost::admit(
+        &c.service.core.host,
+        &frozen,
+        &attempt,
+        crate::wall().unwrap()
     )
     .is_err());
     let old_epoch = c.service.core.fences.current(&c.scope()).unwrap();
@@ -4643,7 +4385,8 @@ async fn local_data_queries_keep_os_prerequisites_exact_authority_and_offline_re
             input: DataOperation::Directory(QueryDirectory {
                 after: None,
                 limit: 16,
-                policy_page: None
+                refresh_policies: false,
+                policy_cursor: None
             })
         })
         .await,
@@ -4711,104 +4454,6 @@ async fn local_data_queries_keep_os_prerequisites_exact_authority_and_offline_re
     assert_eq!(c.service.core.policy_commands.len(), queued);
 }
 
-#[tokio::test]
-async fn late_policy_page_is_revalidated_for_invoke_draft_and_confirmation_without_scanning() {
-    let _budget = crate::scenario_budget::enter();
-    use execution_ipc::host::Request;
-    for draft in [false, true] {
-        let mut c = Case::new(None).await;
-        let directory = protocol::policy_directory_fixture(c.service.client.configuration().tenant);
-        let cursor = uuid::Uuid::from_u128(18);
-        {
-            let mut data = c._server.data.lock().unwrap();
-            for page in 0..18 {
-                data.self_service_pages.insert(
-                    if page == 0 {
-                        None
-                    } else {
-                        Some(uuid::Uuid::from_u128(page))
-                    },
-                    wire::SelfServiceDirectoryResponse {
-                        items: vec![],
-                        next_cursor: Some(uuid::Uuid::from_u128(page + 1)),
-                        as_of: c._server.time.now().unwrap(),
-                    },
-                );
-            }
-            data.self_service_pages.insert(
-                Some(cursor),
-                wire::SelfServiceDirectoryResponse {
-                    items: vec![directory.clone()],
-                    next_cursor: None,
-                    as_of: c._server.time.now().unwrap(),
-                },
-            );
-        }
-        c.employee("late-page").await;
-        let choice = c.policy_choice(&directory);
-        let locator = execution_contract::PolicyLocator {
-            after: Some(plan::id(cursor.to_string()).unwrap()),
-        };
-        let request = if draft {
-            Request::PreparePolicy {
-                context: c.context(),
-                choice: choice.clone(),
-                locator: locator.clone(),
-                origin: c.selection.origin.clone(),
-            }
-        } else {
-            Request::InvokePolicy {
-                context: c.context(),
-                choice: choice.clone(),
-                locator: locator.clone(),
-                origin: c.selection.origin.clone(),
-            }
-        };
-        let offset = c._server.data.lock().unwrap().employee_calls.len();
-        let Reply::PolicyRequest { value } = c.policy_call(request).await else {
-            panic!("late-page choice")
-        };
-        assert_eq!(
-            value.state,
-            if draft {
-                BackendRequestState::Draft
-            } else {
-                BackendRequestState::AwaitingConfirmation
-            }
-        );
-        assert!(c._server.data.lock().unwrap().invocations.is_empty());
-        let calls = c._server.data.lock().unwrap().employee_calls[offset..].to_vec();
-        assert_eq!(calls.len(), 2);
-        assert!(calls
-            .iter()
-            .all(|(url, _)| url.contains(&format!("after={cursor}"))));
-        if draft {
-            c.policy_call(Request::SubmitPolicy {
-                context: c.context(),
-                input: execution_contract::PolicySubmission {
-                    request: choice.request.clone(),
-                    revision: value.revision,
-                    parameters: choice.parameters.clone(),
-                },
-            })
-            .await;
-        } else {
-            c.policy_call(Request::ConfirmPolicy {
-                context: c.context(),
-                request: choice.request.clone(),
-            })
-            .await;
-        }
-        assert!(c
-            ._server
-            .data
-            .lock()
-            .unwrap()
-            .invocations
-            .contains_key(&uuid::Uuid::parse_str(choice.request.as_str()).unwrap()));
-    }
-}
-
 /// Explicit policy authority fixture with real service/SQLite; native detector is read-only.
 /// This never establishes System privilege, a real install/uninstall or Windows acceptance.
 #[cfg(target_os = "macos")]
@@ -4826,7 +4471,8 @@ async fn local_software_case() -> (Case, LocalSoftwareChoice) {
             input: DataOperation::Directory(QueryDirectory {
                 after: None,
                 limit: 128,
-                policy_page: None,
+                refresh_policies: false,
+                policy_cursor: None,
             }),
         })
         .await
@@ -5261,7 +4907,6 @@ async fn local_software_api_rechecks_rules_and_snapshot_before_any_attempt() {
 #[tokio::test]
 #[ignore = "requires root for production material/OS identity admission; explicitly run the built test binary"]
 async fn installation_owner_exists_before_registration_and_preserves_both_scopes_after_reopen() {
-    use execution_admission::AuthorityVerifier;
     use execution_app::AppHost;
     let _budget = crate::scenario_budget::enter();
     let server = protocol::Server::new().await;
@@ -5352,7 +4997,6 @@ async fn installation_owner_exists_before_registration_and_preserves_both_scopes
             resource: plan::reference("native-read", "1").unwrap(),
         },
         plan::reference("local-native-query", "1").unwrap(),
-        (now / 1000 + 30) as i64,
         &root_binding,
         &service.core.host.local_actor,
         (&service.core.config, &mut service.core.material_root),
@@ -5374,11 +5018,20 @@ async fn installation_owner_exists_before_registration_and_preserves_both_scopes
         Some(crate::local_execution::ReadPermit::new(local.clone()).unwrap());
     let attempt = AttemptId::new("scope-proof-attempt").unwrap();
     assert_eq!(
-        service.core.host.verify(&local, &attempt).unwrap().risk,
-        Some(RiskLevel::One)
+        service
+            .core
+            .host
+            .admit(&local, &attempt, crate::wall().unwrap())
+            .unwrap()
+            .execution_gate,
+        execution_app::ExecutionGate::Direct
     );
     *service.core.host.local_read.lock().unwrap() = None;
-    assert!(service.core.host.verify(&local, &attempt).is_err());
+    assert!(service
+        .core
+        .host
+        .admit(&local, &attempt, crate::wall().unwrap())
+        .is_err());
     let capabilities = vec![
         wire::Capability::InventoryCollectionV1,
         wire::Capability::TaskExecuteV1,
@@ -5428,7 +5081,11 @@ async fn installation_owner_exists_before_registration_and_preserves_both_scopes
         .stage_execution(&service.core.caller(), &remote)
         .unwrap();
     assert!(
-        service.core.host.verify(&remote, &attempt).is_err(),
+        service
+            .core
+            .host
+            .admit(&remote, &attempt, crate::wall().unwrap())
+            .is_err(),
         "a namespace alone cannot replace a signed enterprise Start"
     );
     assert!(service

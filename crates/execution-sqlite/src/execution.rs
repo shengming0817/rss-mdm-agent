@@ -1,6 +1,5 @@
 use crate::database::bounded_blob;
-use crate::{journal::*, trust::*, *};
-use execution_approval::ProfileApproval;
+use crate::{journal::*, *};
 use execution_contract::{AuditEvent, Decision, EventId, EvidenceRefs, FrozenExecution, Id, V1};
 use execution_lifecycle::{
     self as lifecycle, Command, CommandEvent, EventRecord, Execution, ObservationEvent,
@@ -271,10 +270,9 @@ impl Store {
         op: &OperationRequestId,
         scope: &Scope,
         event: &CommandEvent,
-        bindings: &[ProfileApproval],
         host: &impl JournalHost,
     ) -> Result<CommitOutcome, Error> {
-        self.apply_input(op, scope, Input::Command(event, bindings), host)
+        self.apply_input(op, scope, Input::Command(event), host)
     }
     /// Verify and record an observation under RunnerFact authorization.
     /// Replay, revision and attempt checks precede verification; no approval inputs apply.
@@ -295,22 +293,10 @@ impl Store {
         input: Input<'_>,
         host: &impl JournalHost,
     ) -> Result<CommitOutcome, Error> {
-        let (event, bindings) = match &input {
-            Input::Command(e, bindings) => (EventRecord::Command((*e).clone()), *bindings),
-            Input::Observation(e, _) => (EventRecord::Observation((*e).clone()), &[][..]),
+        let event = match &input {
+            Input::Command(e) => EventRecord::Command((*e).clone()),
+            Input::Observation(e, _) => EventRecord::Observation((*e).clone()),
         };
-        if bindings.len() > self.limits.max_approvals {
-            return Err(Error::Capacity);
-        }
-        let mut refs: Vec<_> = bindings.iter().map(|b| (&b.profile, &b.record)).collect();
-        refs.sort_by(|a, b| {
-            (&a.0.id, &a.0.revision, &a.1.id, &a.1.revision).cmp(&(
-                &b.0.id,
-                &b.0.revision,
-                &b.1.id,
-                &b.1.revision,
-            ))
-        });
         let access = match &event {
             EventRecord::Observation(_) => Access::RunnerFact,
             EventRecord::Command(e) => match e.command {
@@ -325,14 +311,7 @@ impl Store {
                 | Command::Cancel => Access::Execute,
             },
         };
-        let mut w = match self.start(
-            op,
-            scope,
-            OperationKind::Execution,
-            &(&event, refs),
-            access,
-            host,
-        )? {
+        let mut w = match self.start(op, scope, OperationKind::Execution, &event, access, host)? {
             Start::Replay(r) => return Ok(CommitOutcome::AlreadyCommitted(r)),
             Start::New(w) => w,
         };
@@ -382,53 +361,33 @@ impl Store {
             ..
         }) = &event
         {
-            audit.submitted_approvals = bindings.iter().map(ApprovalBindingAudit::from).collect();
-            let Some(h) = head(&w.tx, scope, w.limits)? else {
-                audit.reason = AuditReason::TrustUnavailable;
-                audit.event.as_mut().expect("plan audit").decision = Decision::Denied {};
-                return w.finish(Outcome::Rejected, current.snapshot().revision, audit);
-            };
-            let approvals = StoredApprovals {
-                conn: &w.tx,
-                scope,
-                limits: w.limits,
-                now: w.now,
-                clock: &|| host.reliable_now().map_err(Into::into),
-                head: &h,
-            };
-            audit.trust = Some(TrustAudit {
-                authorization_revision: h.authorization.clone(),
-                approval_revision: h.approval.clone(),
-                fresh_until_unix_ms: h.until,
-            });
-            audit.protected_approvals = approvals.audit_records(bindings)?;
-            let gate = host.admit(&plan, attempt_id, bindings, &approvals, w.now)?;
+            let gate = host.admit(&plan, attempt_id, w.now)?;
             w.refresh_time(host)?;
             audit.occurred_at(w.now);
             audit.reason = AuditReason::AdmissionEvaluated;
-            audit.admission = Some(admission_audit(&gate.admission));
-            audit.approval = Some(approval_audit(&gate.approval));
-            let confirmation_ok = match gate.admission.execution_gate() {
-                execution_admission::ExecutionGate::Direct => true,
-                execution_admission::ExecutionGate::Blocked => false,
-                execution_admission::ExecutionGate::Confirmation => {
+            let confirmation_ok = match gate.execution_gate {
+                ExecutionGate::Direct => true,
+                ExecutionGate::Blocked => false,
+                ExecutionGate::Confirmation => {
                     crate::interaction::confirmed(&w.tx, &plan, w.limits, w.now)?
                 }
             };
-            if !confirmation_ok || !check_gate(&w, &plan, attempt_id, bindings, &gate, &h) {
+            let allowed = confirmation_ok
+                && w.now < gate.valid_until_unix_ms
+                && w.now >= plan.spec().validity.not_before_unix_ms
+                && w.now < plan.spec().validity.expires_at_unix_ms;
+            audit.admission = Some(allowed);
+            if !allowed {
                 audit.reason = AuditReason::CommitGateRejected;
                 audit.event.as_mut().expect("plan audit").decision = Decision::Denied {};
                 return w.finish(Outcome::Rejected, current.snapshot().revision, audit);
             }
-            Some((gate, h))
+            Some(gate)
         } else {
-            if !bindings.is_empty() {
-                return Err(Error::Conflict);
-            }
             None
         };
         let result = match input {
-            Input::Command(event, _) => current.evaluate(event.clone(), w.now),
+            Input::Command(event) => current.evaluate(event.clone(), w.now),
             Input::Observation(event, verifier) => {
                 current.evaluate_observation(event.clone(), w.now, verifier)
             }
@@ -451,7 +410,7 @@ impl Store {
         };
         let next = transition.next().snapshot();
         let attempt = next.attempt.as_ref().map(|a| a.id.clone());
-        if let Some((gate, h)) = gate {
+        if gate.is_some() {
             let attempt_id = attempt.as_ref().ok_or(Error::Corrupt)?;
             w.tx.execute(
                 "INSERT INTO attempts VALUES(?1,?2,?3)",
@@ -462,7 +421,6 @@ impl Store {
                 ],
             )?;
             crate::resources::claim(&w.tx, &plan, attempt_id)?;
-            audit.consumptions = consume(&w, &plan, attempt_id, &gate, &h)?;
             audit.event.as_mut().expect("plan audit").decision = Decision::Admitted {};
         }
         if let EventRecord::Observation(ObservationEvent {
@@ -509,7 +467,7 @@ impl Store {
     }
 }
 enum Input<'a> {
-    Command(&'a CommandEvent, &'a [ProfileApproval]),
+    Command(&'a CommandEvent),
     Observation(&'a ObservationEvent, &'a dyn ObservationVerifier),
 }
 pub(crate) fn load_execution(
@@ -616,56 +574,15 @@ pub(crate) fn plan_audit(
         content_digest: plan.digest().clone(),
         actor: p.request.actor.clone(),
         initiator: p.request.initiator.clone(),
-        approver: None,
         operation: p.request.operation.clone(),
         target: p.request.target.clone(),
         decision,
         reason: Id::new("execution-journal").expect("static ID"),
         delegation: p.request.delegation.clone(),
         policy: p.policy.clone(),
-        approval: None,
         occurred_at_unix_ms: w.now,
     });
     audit
-}
-fn admission_audit(a: &execution_admission::AdmissionDecision) -> AdmissionAudit {
-    AdmissionAudit {
-        risk_level: a.risk().map(|r| r as u8),
-        request_id: a.request_id().clone(),
-        content_digest: a.content_digest().clone(),
-        attempt_id: a.attempt_id().clone(),
-        policy: a.policy().clone(),
-        delegation: a.delegation().cloned(),
-        outcome: a.outcome().clone(),
-        reason: a.reason(),
-        rule_ids: a.rule_ids().to_vec(),
-        validity: a.validity().map(DecisionValidity::from),
-    }
-}
-fn approval_audit(p: &execution_approval::ApprovalDecision) -> ApprovalAudit {
-    ApprovalAudit {
-        request_id: p.request_id().clone(),
-        content_digest: p.content_digest().clone(),
-        attempt_id: p.attempt_id().clone(),
-        outcome: p.outcome().clone(),
-        bindings: p
-            .bindings()
-            .iter()
-            .map(ApprovalBindingAudit::from)
-            .collect(),
-        pending_consumptions: p
-            .consumptions()
-            .iter()
-            .map(|c| PendingConsumptionAudit {
-                approval: c.approval().clone(),
-                expected_uses: c.expected_uses(),
-                expected_consumption_revision: c.expected_consumption_revision(),
-                verification_revision: c.verification_revision().clone(),
-                valid_until_unix_ms: c.valid_until_unix_ms(),
-            })
-            .collect(),
-        admission_validity: p.admission_validity().map(DecisionValidity::from),
-    }
 }
 
 impl Store {
@@ -728,9 +645,9 @@ impl Store {
         let before = before.map(integer).transpose()?.unwrap_or(i64::MAX);
         let tx = self.conn.unchecked_transaction()?;
         crate::database::ensure_current(&tx, &self.authority, self.limits)?;
-        // Scan a fixed receipt window before filtering or de-duplicating: hot tasks and trust
+        // Scan a fixed receipt window before filtering or de-duplicating: hot tasks and historical
         // refreshes cannot turn a page read into an unbounded history walk.
-        let sql = format!("SELECT r.sequence,{},e.request_id,e.scope,r.kind FROM receipts r LEFT JOIN executions e ON e.scope=r.scope WHERE r.sequence<?1 ORDER BY r.sequence DESC LIMIT ?2", bounded_blob("r.body", self.limits.max_record_bytes));
+        let sql = format!("SELECT r.sequence,{},e.request_id,e.scope FROM receipts r LEFT JOIN executions e ON e.scope=r.scope WHERE r.sequence<?1 ORDER BY r.sequence DESC LIMIT ?2", bounded_blob("r.body", self.limits.max_record_bytes));
         let mut statement = tx.prepare(&sql)?;
         let rows = statement.query_map(params![before, limit as i64], |row| {
             Ok((
@@ -738,7 +655,6 @@ impl Store {
                 row.get::<_, Vec<u8>>(1)?,
                 row.get::<_, Option<String>>(2)?,
                 row.get::<_, Option<String>>(3)?,
-                row.get::<_, String>(4)?,
             ))
         })?;
         let mut items = Vec::new();
@@ -746,13 +662,13 @@ impl Store {
         let mut scanned = 0;
         let mut last = None;
         for row in rows {
-            let (sequence, bytes, request, key, kind) = row?;
+            let (sequence, bytes, request, key) = row?;
             scanned += 1;
             last = Some(u64::try_from(sequence).map_err(|_| Error::Corrupt)?);
             let (Some(request), Some(key)) = (request, key) else {
                 continue;
             };
-            if kind == "trust" || !seen.insert(request.clone()) {
+            if !seen.insert(request.clone()) {
                 continue;
             }
             let receipt: Receipt = decode(&bytes, self.limits.max_record_bytes)?;

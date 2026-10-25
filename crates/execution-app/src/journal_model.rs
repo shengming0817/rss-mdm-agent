@@ -1,5 +1,3 @@
-use execution_admission::AdmissionDecision;
-use execution_approval::{ApprovalDecision, ApprovalVerifier, ProfileApproval};
 use execution_contract::*;
 use execution_lifecycle::DispatchAction;
 use serde::{Deserialize, Serialize};
@@ -111,8 +109,6 @@ pub enum Access {
     ReadResult,
     /// Read full admission/audit details.
     ReadAudit,
-    /// Refresh independently verified authority/approval definitions.
-    ManageTrust,
     /// Pull/ack events for this exact consumer identity.
     Deliver,
 }
@@ -172,8 +168,6 @@ pub enum AdmissionStatus {
     Admitted,
     /// Current admission/commit conditions denied an attempt.
     Denied,
-    /// Policy requires independently verified approval which is not satisfied.
-    ApprovalRequired,
 }
 /// A coherent protected task and its latest durable admission result, read in one transaction.
 pub struct ExecutionRecord {
@@ -200,64 +194,30 @@ pub struct AccessRequest<'a> {
         &'a execution_interaction::Command,
     )>,
 }
-/// Immutable authenticated approval definition; local usage is intentionally absent.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ApprovalDefinition {
-    /// Exact record version.
-    pub reference: VersionedRef,
-    /// Authenticated approving actor.
-    pub approver: ActorId,
-    /// Exact approved plan.
-    pub request_id: RequestId,
-    /// Complete canonical plan digest.
-    pub content_digest: Digest,
-    /// All profiles authorized by this record.
-    pub profiles: Vec<VersionedRef>,
-    /// Exclusive validity interval.
-    pub validity: ValidityWindow,
-    /// Maximum committed attempts, never a refundable counter.
-    pub max_uses: u32,
+/// Product execution requirement, independent of enterprise approval.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionGate {
+    /// Authorized without an additional interaction.
+    Direct,
+    /// Exact product confirmation is required.
+    Confirmation,
+    /// No execution is permitted.
+    Blocked,
 }
-/// Current trusted disposition of an immutable approval.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum ApprovalState {
-    /// Currently usable, subject to all other checks.
-    Active,
-    /// Explicitly revoked.
-    Revoked,
-    /// Current status cannot be established.
-    Unknown,
+/// Map the existing closed AI risk classification to product interaction.
+pub fn ai_execution_gate(risk: Option<RiskLevel>) -> ExecutionGate {
+    match risk {
+        Some(RiskLevel::Zero | RiskLevel::One) => ExecutionGate::Direct,
+        Some(RiskLevel::Two) => ExecutionGate::Confirmation,
+        Some(RiskLevel::Three) | None => ExecutionGate::Blocked,
+    }
 }
-/// Complete currently verified approval entry, not a user answer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct TrustedApproval {
-    /// Immutable authenticated definition.
-    pub definition: ApprovalDefinition,
-    /// Current status.
-    pub state: ApprovalState,
-}
-/// Complete product-verified trust snapshot. Only JournalHost can supply it to storage.
-/// This DTO itself is not a permission and does not contain local usage counters.
-#[derive(Debug, Clone)]
-pub struct TrustSnapshot {
-    /// Subject/delegation/policy/revocation identity used by C07.
-    pub authorization_revision: VersionedRef,
-    /// Approval trust/revocation identity used by C08.
-    pub approval_revision: VersionedRef,
-    /// Exclusive freshness bound; reliable time is supplied independently.
-    pub fresh_until_unix_ms: u64,
-    /// Complete current record set; omitted records become unavailable.
-    pub approvals: Vec<TrustedApproval>,
-}
-/// Both pure decisions are retained so audit never reconstructs or loses C07 rule evidence.
+/// Trusted product result for this synchronous admission call; never a wire value.
 pub struct AdmissionGate {
-    /// Full current C07 decision for the exact plan/attempt.
-    pub admission: AdmissionDecision,
-    /// Full C08 decision, including the NotRequired path.
-    pub approval: ApprovalDecision,
+    /// Product interaction requirement.
+    pub execution_gate: ExecutionGate,
+    /// Exclusive deadline, rechecked after the host callback in the write transaction.
+    pub valid_until_unix_ms: u64,
 }
 /// Product trust boundary. No production signer, identity adapter or runner is supplied.
 /// Implementations are trusted code, not DTO decoders. The store cannot protect against a
@@ -269,10 +229,6 @@ pub trait JournalHost {
     fn authorize(&self, request: AccessRequest<'_>) -> Result<(), JournalError>;
     /// Reliable UTC Unix milliseconds; uncertainty and rollback must return Clock.
     fn reliable_now(&self) -> Result<u64, JournalError>;
-    /// Verify issuer rights, source authenticity, policy/revocation and return one coherent snapshot.
-    fn trusted_snapshot(&self, _scope: &Scope) -> Result<TrustSnapshot, JournalError> {
-        Err(JournalError::Trust)
-    }
     /// Obtain fresh full decisions for a NEW attempt. The verifier exposes protected definitions
     /// and current local consumption counters in the same SQLite transaction.
     /// Replay never calls this method and never needs a fresh execution approval.
@@ -280,8 +236,6 @@ pub trait JournalHost {
         &self,
         _plan: &FrozenExecution,
         _attempt: &AttemptId,
-        _bindings: &[ProfileApproval],
-        _approvals: &dyn ApprovalVerifier,
         _now: u64,
     ) -> Result<AdmissionGate, JournalError> {
         Err(JournalError::Trust)
@@ -291,8 +245,6 @@ pub trait JournalHost {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum OperationKind {
-    /// Trust snapshot update.
-    Trust,
     /// Frozen execution registration.
     OpenExecution,
     /// Execution event.
@@ -406,37 +358,14 @@ impl CommitOutcome {
         }
     }
 }
-/// One exact approval consumption in an admission audit.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ConsumptionAudit {
-    /// Exact record version.
-    pub approval: VersionedRef,
-    /// Verified approving actor.
-    pub approver: ActorId,
-    /// Previous consumed uses.
-    pub used_before: u32,
-    /// Post-commit uses.
-    pub used_after: u32,
-    /// Previous consumption CAS.
-    pub revision_before: u64,
-    /// Committed consumption CAS.
-    pub revision_after: u64,
-    /// Trusted approval verification/revocation revision.
-    pub verification_revision: VersionedRef,
-}
 /// Stable storage reasons; core classifications use explicit serde adapters, never Debug text.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub enum AuditReason {
-    /// Current protected trust was refreshed.
-    TrustRefreshed,
     /// A frozen execution was registered.
     ExecutionOpened,
     /// Execution event processing began.
     ExecutionEvent,
-    /// No protected trust head was available.
-    TrustUnavailable,
     /// Both decisions were evaluated; inspect their structured projections.
     AdmissionEvaluated,
     /// Current transaction checks rejected the evaluated gate.
@@ -455,135 +384,13 @@ pub enum AuditReason {
     Interaction(#[serde(with = "InteractionOutcomeWire")] execution_interaction::Outcome),
 }
 /// Serializable evidence of verification time, not a reconstructible authorization.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct DecisionValidity {
-    /// Source authorization identity.
-    pub revision: VersionedRef,
-    /// Verification time.
-    pub verified_at_unix_ms: u64,
-    /// Exclusive commit deadline.
-    pub valid_until_unix_ms: u64,
-}
-impl From<&execution_admission::AdmissionValidity> for DecisionValidity {
-    fn from(v: &execution_admission::AdmissionValidity) -> Self {
-        Self {
-            revision: v.revision().clone(),
-            verified_at_unix_ms: v.verified_at_unix_ms(),
-            valid_until_unix_ms: v.valid_until_unix_ms(),
-        }
-    }
-}
-/// Complete C07 decision projection, including claimed identity on denial.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct AdmissionAudit {
-    /// Protected numeric classification of the exact action; None means unknown.
-    pub risk_level: Option<u8>,
-    /// Evaluated plan identity.
-    pub request_id: RequestId,
-    /// Evaluated canonical plan digest.
-    pub content_digest: Digest,
-    /// Evaluated attempt.
-    pub attempt_id: AttemptId,
-    /// Claimed policy; denial does not authenticate it.
-    pub policy: VersionedRef,
-    /// Claimed delegation; denial does not authenticate it.
-    pub delegation: Option<VersionedRef>,
-    /// Closed C07 outcome.
-    #[serde(with = "AdmissionOutcomeWire")]
-    pub outcome: execution_admission::DecisionOutcome,
-    /// Closed C07 reason.
-    #[serde(with = "AdmissionReasonWire")]
-    pub reason: execution_admission::Reason,
-    /// Exact matching rules.
-    pub rule_ids: Vec<Id>,
-    /// Verified authorization freshness, absent on denial.
-    pub validity: Option<DecisionValidity>,
-}
-/// Profile mapping; the containing audit field distinguishes submitted and verified mappings.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ApprovalBindingAudit {
-    /// Required or claimed profile.
-    pub profile: VersionedRef,
-    /// Exact referenced approval.
-    pub record: VersionedRef,
-}
-impl From<&ProfileApproval> for ApprovalBindingAudit {
-    fn from(b: &ProfileApproval) -> Self {
-        Self {
-            profile: b.profile.clone(),
-            record: b.record.clone(),
-        }
-    }
-}
-/// C08 candidate consumption evidence, not committed usage or permission.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct PendingConsumptionAudit {
-    /// Exact record.
-    pub approval: VersionedRef,
-    /// Counter required by the decision.
-    pub expected_uses: u32,
-    /// CAS required by the decision.
-    pub expected_consumption_revision: u64,
-    /// Source trust identity.
-    pub verification_revision: VersionedRef,
-    /// Exclusive decision deadline.
-    pub valid_until_unix_ms: u64,
-}
-/// Complete C08 decision projection. It cannot be converted to ApprovalDecision.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ApprovalAudit {
-    /// Evaluated plan.
-    pub request_id: RequestId,
-    /// Evaluated digest.
-    pub content_digest: Digest,
-    /// Evaluated attempt.
-    pub attempt_id: AttemptId,
-    /// Closed C08 result and rejection reason.
-    #[serde(with = "ApprovalOutcomeWire")]
-    pub outcome: execution_approval::ApprovalOutcome,
-    /// Verified mappings, empty unless C08 was satisfied.
-    pub bindings: Vec<ApprovalBindingAudit>,
-    /// Candidate consumptions; only AuditRecord.consumptions proves local application.
-    pub pending_consumptions: Vec<PendingConsumptionAudit>,
-    /// Inherited C07 freshness.
-    pub admission_validity: Option<DecisionValidity>,
-}
-/// Protected head used for evaluation, independent of submitted claims.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct TrustAudit {
-    /// Current C07 revision.
-    pub authorization_revision: VersionedRef,
-    /// Current C08 revision.
-    pub approval_revision: VersionedRef,
-    /// Exclusive protected snapshot freshness.
-    pub fresh_until_unix_ms: u64,
-}
-/// Record read from protected storage before consumption. Not proof of current applicability.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ProtectedApprovalAudit {
-    /// Authenticated immutable definition, including approver.
-    pub definition: ApprovalDefinition,
-    /// Protected disposition, possibly unknown or revoked.
-    pub state: ApprovalState,
-    /// Committed uses before this evaluation.
-    pub used: u32,
-    /// Consumption CAS before this evaluation.
-    pub consumption_revision: u64,
-}
 /// Privileged audit projection, generated only from protected state and pure decisions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AuditRecord {
     /// Stop acknowledgement/failure only; independent of termination and effect evidence.
     pub stop_outcome: Option<execution_lifecycle::StopOutcome>,
-    /// Existing C01 event, absent for trust-only operations before a plan exists.
+    /// Existing C01 execution event, absent before a plan exists.
     pub event: Option<AuditEvent>,
     /// Exact submitted attempt, including rejected admission.
     pub attempt_id: Option<AttemptId>,
@@ -592,108 +399,11 @@ pub struct AuditRecord {
     pub dispatch_cause: Option<execution_lifecycle::DispatchCause>,
     /// Stable closed storage/core classification.
     pub reason: AuditReason,
-    /// Protected trust head at evaluation, absent if unavailable.
-    pub trust: Option<TrustAudit>,
-    /// Full C07 decision if evaluated.
-    pub admission: Option<AdmissionAudit>,
-    /// Full C08 decision if evaluated.
-    pub approval: Option<ApprovalAudit>,
-    /// Untrusted submitted references, retained even when verification rejects them.
-    pub submitted_approvals: Vec<ApprovalBindingAudit>,
-    /// Distinct records resolved from protected storage, never synthesized from submitted values.
-    pub protected_approvals: Vec<ProtectedApprovalAudit>,
-    /// All applied consumptions, one per distinct record.
-    pub consumptions: Vec<ConsumptionAudit>,
+    /// Whether this product admission passed.
+    pub admission: Option<bool>,
 }
 
-// Remote serde derives keep the existing core enums authoritative and exhaustively checked.
-// They serialize audit evidence only; no permission-bearing core object gains Deserialize.
-#[derive(Serialize, Deserialize)]
-#[serde(
-    remote = "execution_admission::DecisionOutcome",
-    tag = "kind",
-    rename_all = "camelCase"
-)]
-enum AdmissionOutcomeWire {
-    Allowed,
-    Denied,
-    ApprovalRequired { profiles: Vec<VersionedRef> },
-}
-#[derive(Serialize, Deserialize)]
-#[serde(
-    remote = "execution_admission::VerificationError",
-    rename_all = "camelCase"
-)]
-enum AdmissionVerificationWire {
-    Subject,
-    Policy,
-    Delegation,
-    Clock,
-    Revocation,
-}
-#[derive(Serialize, Deserialize)]
-#[serde(remote = "execution_admission::Reason", rename_all = "camelCase")]
-enum AdmissionReasonWire {
-    StaleVerification,
-    Limit,
-    Verification(
-        #[serde(with = "AdmissionVerificationWire")] execution_admission::VerificationError,
-    ),
-    SubjectMismatch,
-    InvalidPolicy,
-    Validity,
-    Budget,
-    Delegation,
-    NoMatchingRule,
-    ExplicitDeny,
-    RuleAllowed,
-    NeedsApproval,
-    RiskBlocked,
-    ConditionalPermission,
-}
-#[derive(Serialize, Deserialize)]
-#[serde(
-    remote = "execution_approval::VerificationError",
-    rename_all = "camelCase"
-)]
-enum ApprovalVerificationWire {
-    Signature,
-    Issuer,
-    Unavailable,
-    Clock,
-    Revocation,
-    Policy,
-}
-#[derive(Serialize, Deserialize)]
-#[serde(remote = "execution_approval::Reason", rename_all = "camelCase")]
-enum ApprovalReasonWire {
-    Limit,
-    PlanMismatch,
-    AdmissionDenied,
-    Bindings,
-    Verification(#[serde(with = "ApprovalVerificationWire")] execution_approval::VerificationError),
-    Context,
-    PlanNotYetValid,
-    PlanExpired,
-    StaleVerification,
-    StaleAdmission,
-    ApprovalNotYetValid,
-    ApprovalExpired,
-    Record,
-    Revoked,
-    StatusUnknown,
-    Exhausted,
-}
-#[derive(Serialize, Deserialize)]
-#[serde(
-    remote = "execution_approval::ApprovalOutcome",
-    rename_all = "camelCase"
-)]
-enum ApprovalOutcomeWire {
-    NotRequired,
-    Satisfied,
-    Rejected(#[serde(with = "ApprovalReasonWire")] execution_approval::Reason),
-}
+// Core enum serialization remains exhaustive.
 #[derive(Serialize, Deserialize)]
 #[serde(
     remote = "execution_lifecycle::ObservationError",

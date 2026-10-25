@@ -2,7 +2,6 @@
 //! ref: rustls 0.23.45 rustls/src/verify.rs (2976d90): private verification markers.
 use super::{offered, request_id};
 use agent_client::{Error, Offer, Start};
-use execution_admission::{ai_execution_gate, ExecutionGate};
 use execution_contract::*;
 use rss_mdm_agent_wire::runtime as wire;
 
@@ -16,11 +15,13 @@ impl TrustedStart {
     pub(crate) fn from_offer(offer: &Offer) -> Option<Self> {
         match offer.payload() {
             wire::TaskPayload::Software(spec)
-                if spec.start_mode == wire::SoftwareStartMode::UserInitiated
-                    && matches!(
-                        spec.intent,
-                        wire::SoftwareTaskIntent::Install | wire::SoftwareTaskIntent::Uninstall
-                    ) =>
+                if matches!(
+                    spec.authorization,
+                    wire::TaskAuthorization::SelfService { .. }
+                ) && matches!(
+                    spec.intent,
+                    wire::SoftwareTaskIntent::Install | wire::SoftwareTaskIntent::Uninstall
+                ) =>
             {
                 Some(Self {
                     revision: offered(offer).ok()?.revision,
@@ -94,42 +95,29 @@ impl TrustedRisk {
                 ),
                 _ => return None,
             },
-            wire::TaskPayload::Software(spec) => {
-                let level = match spec.intent {
-                    wire::SoftwareTaskIntent::Install | wire::SoftwareTaskIntent::Uninstall => {
-                        RiskLevel::Two
-                    }
-                    wire::SoftwareTaskIntent::Detect => return None,
-                };
-                (
-                    level,
-                    if let wire::TaskAuthorization::SelfService {
-                        policy_id,
-                        policy_revision,
-                        allow_ai: true,
-                        source: wire::SelfServiceCaller::Ai,
-                        ..
-                    } = &spec.authorization
-                    {
-                        RiskSource::Policy {
-                            policy: VersionedRef {
-                                id: Id::new(policy_id.to_string()).ok()?,
-                                revision: Id::new(policy_revision.to_string()).ok()?,
-                            },
-                        }
-                    } else {
-                        RiskSource::Software {
-                            definition: Digest::new(
-                                spec.definition_digest
-                                    .iter()
-                                    .map(|b| format!("{b:02x}"))
-                                    .collect::<String>(),
-                            )
-                            .ok()?,
-                        }
+            wire::TaskPayload::Software(spec) => match &spec.authorization {
+                wire::TaskAuthorization::SelfService {
+                    policy_id,
+                    policy_revision,
+                    allow_ai: true,
+                    risk_level,
+                    source: wire::SelfServiceCaller::Ai,
+                    ..
+                } => (
+                    match risk_level {
+                        1 => RiskLevel::One,
+                        2 => RiskLevel::Two,
+                        _ => return None,
                     },
-                )
-            }
+                    RiskSource::Policy {
+                        policy: VersionedRef {
+                            id: Id::new(policy_id.to_string()).ok()?,
+                            revision: Id::new(policy_revision.to_string()).ok()?,
+                        },
+                    },
+                ),
+                _ => return None,
+            },
             _ => return None,
         };
         Some(Self {
@@ -158,7 +146,6 @@ impl TrustedRisk {
 pub(crate) struct ProductGateProof {
     digest: Digest,
     trigger: BackendTrigger,
-    risk: Option<ExecutionRisk>,
     until: u64,
 }
 impl ProductGateProof {
@@ -184,7 +171,7 @@ impl ProductGateProof {
             return Err(Error::Expired);
         }
         let view = offered(offer)?;
-        let (trigger, classification, until) = if view.user_initiated {
+        let (trigger, _classification, until) = if view.user_initiated {
             let record = record.ok_or(Error::Denied)?;
             if record.action.offer() != Some(&view)
                 || record.state != BackendRequestState::Submitting
@@ -194,36 +181,31 @@ impl ProductGateProof {
             }
             match &record.trigger {
                 BackendTrigger::Human { .. } => (record.trigger.clone(), None, until),
-                BackendTrigger::Ai { os_session, .. } => {
-                    let decision = risk
-                        .and_then(|r| r.decision(&view.revision))
-                        .ok_or(Error::Denied)?;
-                    if record.risk.as_ref().is_none_or(|stored| {
-                        stored.level != decision.level
-                            || stored.source != decision.source
-                            || now >= stored.expires_at_unix_ms
-                    }) || now >= decision.expires_at_unix_ms
-                    {
-                        return Err(Error::Denied);
-                    }
-                    let until = until
-                        .min(decision.expires_at_unix_ms)
-                        .min(record.action.expires_at_unix_ms());
-                    let until = match ai_execution_gate(Some(decision.level)) {
-                        ExecutionGate::Direct if record.confirmation.is_none() => until,
-                        ExecutionGate::Confirmation => {
-                            let answer = record.confirmation.as_ref().ok_or(Error::Denied)?;
-                            if answer.os_session != *os_session
-                                || now < answer.confirmed_at_unix_ms
-                                || now >= answer.expires_at_unix_ms
-                            {
-                                return Err(Error::Denied);
-                            }
-                            until.min(answer.expires_at_unix_ms)
-                        }
+                BackendTrigger::Ai { .. } => {
+                    let authorization = match start.payload() {
+                        wire::TaskPayload::Script(p) => &p.authorization,
+                        wire::TaskPayload::Software(p) => &p.authorization,
+                        wire::TaskPayload::Enrollment(p) => &p.authorization,
                         _ => return Err(Error::Denied),
                     };
-                    (record.trigger.clone(), Some(decision.clone()), until)
+                    let wire::TaskAuthorization::SelfService {
+                        source: wire::SelfServiceCaller::Ai,
+                        allow_ai: true,
+                        risk_level,
+                        confirmed,
+                        ..
+                    } = authorization
+                    else {
+                        return Err(Error::Denied);
+                    };
+                    if !matches!(risk_level, 1 | 2) || (*risk_level == 2 && !confirmed) {
+                        return Err(Error::Denied);
+                    }
+                    (
+                        record.trigger.clone(),
+                        risk.and_then(|r| r.decision(&view.revision)).cloned(),
+                        until,
+                    )
                 }
                 _ => return Err(Error::Denied),
             }
@@ -241,7 +223,6 @@ impl ProductGateProof {
         Ok(Self {
             digest: plan.digest().clone(),
             trigger,
-            risk: classification,
             until,
         })
     }
@@ -253,9 +234,6 @@ impl ProductGateProof {
             return Err(Error::Denied);
         }
         Ok(())
-    }
-    pub(crate) fn risk(&self) -> Option<RiskLevel> {
-        self.risk.as_ref().map(|r| r.level)
     }
     pub(crate) fn until(&self) -> u64 {
         self.until

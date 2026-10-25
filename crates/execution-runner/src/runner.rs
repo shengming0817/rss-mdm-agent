@@ -173,26 +173,11 @@ impl NativeRunner {
         attempt: &AttemptId,
         allowance: DispatchAllowance,
     ) -> Result<DispatchOutcome, Error> {
-        let start_before = if matches!(plan.spec().request.initiator, Initiator::Backend { .. })
-            || plan.spec().request.operation.action.as_str() == "local-query"
-        {
-            let expiry = plan
-                .spec()
-                .validity
-                .expires_at_unix_ms
-                .checked_sub(plan.spec().budget.total_timeout_ms)
-                .ok_or(Error::InvalidInput)?;
-            let remaining = allowance
-                .remaining_timeout_ms
-                .saturating_sub(allowance.deadline_unix_ms.saturating_sub(expiry));
-            Some(
-                execution_ipc::host::monotonic_millis()?
-                    .checked_add(remaining)
-                    .ok_or(Error::Clock)?,
-            )
-        } else {
-            None
-        };
+        let start_before = Some(
+            execution_ipc::host::monotonic_millis()?
+                .checked_add(allowance.remaining_timeout_ms)
+                .ok_or(Error::Clock)?,
+        );
         self.launch_bounded(plan, attempt, allowance, start_before)
     }
     pub(crate) fn launch_bounded(

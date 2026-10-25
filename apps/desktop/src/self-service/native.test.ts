@@ -55,7 +55,12 @@ it.each(["snapshot", "execute", "cancel"] as const)(
 
 it("keeps local reads and explicit queries on the same authenticated data adapter", async () => {
   const port = nativeDataPort()!;
-  const input = { after: null, limit: 16, policyPage: null };
+  const input = {
+    after: null,
+    limit: 16,
+    refreshPolicies: false,
+    policyCursor: null,
+  };
   vi.mocked(invoke).mockResolvedValueOnce({ items: [], next: null });
   await port.query_directory(input);
   expect(invoke).toHaveBeenLastCalledWith("query_directory", {

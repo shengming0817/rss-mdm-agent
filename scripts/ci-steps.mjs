@@ -40,7 +40,6 @@ export const steps = [
       "tests/assistant/fixture.test.mjs",
       "scripts/desktop-organization.test.mjs",
       "scripts/runtime-integrity.test.mjs",
-      "scripts/execution-evolution.test.mjs",
       "scripts/connection-source-results.test.mjs",
       "scripts/ai-contract-evolution.test.mjs",
     ],
@@ -152,7 +151,7 @@ export const steps = [
   ["docs and diff", "node", ["scripts/check-docs.mjs"]],
   ["rust fmt", "cargo", ["fmt", "--all", "--", "--check"]],
   ["rust build", "cargo", ["build", "--workspace", "--locked"]],
-  ["rust test", "cargo", ["test", "--workspace", "--locked"]],
+  ["rust test", "cargo", ["test", "--workspace", "--locked", "--no-fail-fast"]],
   ...(process.platform === "darwin" && process.arch === "arm64"
     ? [
         [

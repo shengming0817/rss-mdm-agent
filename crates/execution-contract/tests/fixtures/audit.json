@@ -19,7 +19,6 @@
       "session": "login-1"
     }
   },
-  "approver": null,
   "operation": {
     "action": "diagnose",
     "resource": {
@@ -61,6 +60,5 @@
     "id": "policy-1",
     "revision": "1"
   },
-  "approval": null,
   "occurredAtUnixMs": 1500
 }

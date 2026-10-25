@@ -103,7 +103,7 @@ it("preserves bounded escaped unknown question content without enabling actions"
 it("labels validity as a local clock estimate and does not imply an expired approval remains actionable", async () => {
   const wrapper = mount(ExecutionDetails, {
     props: {
-      details: fixtures.approvalRequired as ExecutionTaskDetails,
+      details: fixtures.running as ExecutionTaskDetails,
       now: 500,
     },
   });
@@ -112,15 +112,12 @@ it("labels validity as a local clock estimate and does not imply an expired appr
   expect(wrapper.text()).toContain("动作在有效期内");
   await wrapper.setProps({ now: 2000 });
   expect(wrapper.text()).toContain("动作已过期");
-  expect(wrapper.text()).toContain("执行服务记录：需要管理员批准");
   expect(wrapper.text()).not.toContain("等待管理员批准");
   expect(wrapper.text()).toContain("按本机时间判断");
   wrapper.unmount();
 });
 it("keeps valid contract timestamps beyond Date's range readable", () => {
-  const details = structuredClone(
-    fixtures.approvalRequired,
-  ) as ExecutionTaskDetails;
+  const details = structuredClone(fixtures.running) as ExecutionTaskDetails;
   details.action.validity.expiresAtUnixMs = Number.MAX_SAFE_INTEGER;
   const wrapper = mount(ExecutionDetails, { props: { details, now: 2000 } });
   expect(wrapper.text()).toContain("9007199254740991 Unix ms");

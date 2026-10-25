@@ -14,8 +14,6 @@ test-support = []
 [dependencies]
 execution-contract = { path = "../execution-contract" }
 execution-capability = { path = "../execution-capability" }
-execution-admission = { path = "../execution-admission" }
-execution-approval = { path = "../execution-approval" }
 execution-lifecycle = { path = "../execution-lifecycle" }
 execution-interaction = { path = "../execution-interaction" }
 schemars.workspace = true

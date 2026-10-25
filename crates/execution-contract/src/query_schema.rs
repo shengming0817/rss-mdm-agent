@@ -9,39 +9,7 @@ pub struct QuerySchemaError;
 pub fn query_input_schema(
     item: &rss_mdm_agent_wire::runtime::SelfServiceDirectoryItem,
 ) -> Result<Value, QuerySchemaError> {
-    use rss_mdm_agent_wire::runtime::ScriptParameterSource;
-    let (mut schema, parameter_sources) = match &item.task {
-        rss_mdm_agent_wire::runtime::SelfServiceTask::Script {
-            parameter_schema,
-            parameter_sources,
-            ..
-        } => (parameter_schema.clone(), parameter_sources.clone()),
-        rss_mdm_agent_wire::runtime::SelfServiceTask::Software { .. }
-        | rss_mdm_agent_wire::runtime::SelfServiceTask::Enrollment { .. } => (
-            serde_json::json!({"type":"object","properties":{},"required":[],"additionalProperties":false}),
-            std::collections::BTreeMap::new(),
-        ),
-    };
-    let object = schema.as_object_mut().ok_or(QuerySchemaError)?;
-    let input = |key: &str| {
-        matches!(
-            parameter_sources.get(key),
-            Some(ScriptParameterSource::Input {})
-        )
-    };
-    if let Some(properties) = object
-        .get_mut("properties")
-        .and_then(serde_json::Value::as_object_mut)
-    {
-        properties.retain(|key, _| input(key));
-    }
-    if let Some(required) = object
-        .get_mut("required")
-        .and_then(serde_json::Value::as_array_mut)
-    {
-        required.retain(|value| value.as_str().is_some_and(input));
-    }
-    object.insert("additionalProperties".into(), false.into());
+    let mut schema = item.capability.input_schema.clone();
     project_parameter_schema(&mut schema)?;
     Ok(schema)
 }
@@ -49,6 +17,9 @@ pub fn query_input_schema(
 // the service still validates resolved parameters against the untouched Resource schema.
 fn project_parameter_schema(schema: &mut serde_json::Value) -> Result<(), QuerySchemaError> {
     const SAFE: i64 = 9_007_199_254_740_991;
+    if schema.is_boolean() {
+        return Ok(());
+    }
     let object = schema.as_object_mut().ok_or(QuerySchemaError)?;
     if object.get("type").and_then(serde_json::Value::as_str) == Some("integer") {
         for (keyword, edge, lower) in [("minimum", -SAFE, true), ("maximum", SAFE, false)] {
@@ -73,16 +44,39 @@ fn project_parameter_schema(schema: &mut serde_json::Value) -> Result<(), QueryS
             }
         }
     }
-    if let Some(properties) = object
-        .get_mut("properties")
-        .and_then(serde_json::Value::as_object_mut)
-    {
-        for child in properties.values_mut() {
+    for key in [
+        "properties",
+        "$defs",
+        "definitions",
+        "patternProperties",
+        "dependentSchemas",
+    ] {
+        if let Some(children) = object.get_mut(key).and_then(Value::as_object_mut) {
+            for child in children.values_mut() {
+                project_parameter_schema(child)?;
+            }
+        }
+    }
+    for key in [
+        "items",
+        "additionalProperties",
+        "contains",
+        "not",
+        "if",
+        "then",
+        "else",
+        "propertyNames",
+    ] {
+        if let Some(child) = object.get_mut(key) {
             project_parameter_schema(child)?;
         }
     }
-    if let Some(items) = object.get_mut("items") {
-        project_parameter_schema(items)?;
+    for key in ["allOf", "anyOf", "oneOf", "prefixItems"] {
+        if let Some(children) = object.get_mut(key).and_then(Value::as_array_mut) {
+            for child in children {
+                project_parameter_schema(child)?;
+            }
+        }
     }
     fn transport_safe(value: &serde_json::Value) -> bool {
         match value {

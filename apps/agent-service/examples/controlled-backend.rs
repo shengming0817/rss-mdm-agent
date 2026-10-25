@@ -13,9 +13,6 @@ async fn main() {
     {
         let mut data = server.data.lock().unwrap();
         data.explicit_offers = true;
-        // Real signed-binary hashing and image staging must fit inside the issued Start grant.
-        // Keep the short protocol-test default; this native participant explicitly issues 120s.
-        data.start_validity_seconds = 120;
         println!(
             "{}",
             serde_json::json!({"origin": server.url.as_str(), "tenant":data.tenant,"serviceId":protocol::SERVICE_ID,"connections":data.connection_configuration,"key":base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data.signer.public_key().as_ref()), "caPem":String::from_utf8(protocol::pki::ca()).unwrap()})

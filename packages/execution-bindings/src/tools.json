@@ -2407,17 +2407,6 @@
           "minLength": 1,
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
-        },
-        "PolicyLocator": {
-          "additionalProperties": false,
-          "description": "The actual page on which a Policy was discovered. This is a position, never permission.",
-          "properties": {
-            "after": {
-              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
-              "description": "Cursor sent when discovering the selected page; null identifies the first page."
-            }
-          },
-          "type": "object"
         }
       },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -2435,12 +2424,16 @@
           "minimum": 0,
           "type": "integer"
         },
-        "policyPage": {
-          "anyOf": [{ "$ref": "#/$defs/PolicyLocator" }, { "type": "null" }],
-          "description": "Explicitly refresh one authorized Policy page; null reads only local definitions."
+        "policyCursor": {
+          "description": "Opaque Policy discovery cursor; null starts the first page.",
+          "type": ["string", "null"]
+        },
+        "refreshPolicies": {
+          "description": "Explicitly discover a page of currently authorized Policies.",
+          "type": "boolean"
         }
       },
-      "required": ["limit"],
+      "required": ["refreshPolicies", "limit"],
       "title": "QueryDirectory",
       "type": "object"
     },
@@ -2665,17 +2658,6 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
         },
-        "PolicyLocator": {
-          "additionalProperties": false,
-          "description": "The actual page on which a Policy was discovered. This is a position, never permission.",
-          "properties": {
-            "after": {
-              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
-              "description": "Cursor sent when discovering the selected page; null identifies the first page."
-            }
-          },
-          "type": "object"
-        },
         "PublishedQuery": {
           "additionalProperties": false,
           "description": "Original Policy coordinates for presentation and existing confirmation integration.",
@@ -2816,11 +2798,8 @@
               "description": "Exclusive continuation."
             },
             "policyNext": {
-              "anyOf": [
-                { "$ref": "#/$defs/PolicyLocator" },
-                { "type": "null" }
-              ],
-              "description": "Next Policy discovery page; separate from local definition pagination."
+              "description": "Next Policy discovery page; separate from local definition pagination.",
+              "type": ["string", "null"]
             }
           },
           "required": ["items"],
@@ -3376,17 +3355,6 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
         },
-        "PolicyLocator": {
-          "additionalProperties": false,
-          "description": "The actual page on which a Policy was discovered. This is a position, never permission.",
-          "properties": {
-            "after": {
-              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
-              "description": "Cursor sent when discovering the selected page; null identifies the first page."
-            }
-          },
-          "type": "object"
-        },
         "PublishedQuery": {
           "additionalProperties": false,
           "description": "Original Policy coordinates for presentation and existing confirmation integration.",
@@ -3527,11 +3495,8 @@
               "description": "Exclusive continuation."
             },
             "policyNext": {
-              "anyOf": [
-                { "$ref": "#/$defs/PolicyLocator" },
-                { "type": "null" }
-              ],
-              "description": "Next Policy discovery page; separate from local definition pagination."
+              "description": "Next Policy discovery page; separate from local definition pagination.",
+              "type": ["string", "null"]
             }
           },
           "required": ["items"],
@@ -4030,17 +3995,6 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
         },
-        "PolicyLocator": {
-          "additionalProperties": false,
-          "description": "The actual page on which a Policy was discovered. This is a position, never permission.",
-          "properties": {
-            "after": {
-              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
-              "description": "Cursor sent when discovering the selected page; null identifies the first page."
-            }
-          },
-          "type": "object"
-        },
         "PublishedQuery": {
           "additionalProperties": false,
           "description": "Original Policy coordinates for presentation and existing confirmation integration.",
@@ -4181,11 +4135,8 @@
               "description": "Exclusive continuation."
             },
             "policyNext": {
-              "anyOf": [
-                { "$ref": "#/$defs/PolicyLocator" },
-                { "type": "null" }
-              ],
-              "description": "Next Policy discovery page; separate from local definition pagination."
+              "description": "Next Policy discovery page; separate from local definition pagination.",
+              "type": ["string", "null"]
             }
           },
           "required": ["items"],
@@ -4645,17 +4596,6 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
         },
-        "PolicyLocator": {
-          "additionalProperties": false,
-          "description": "The actual page on which a Policy was discovered. This is a position, never permission.",
-          "properties": {
-            "after": {
-              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
-              "description": "Cursor sent when discovering the selected page; null identifies the first page."
-            }
-          },
-          "type": "object"
-        },
         "PublishedQuery": {
           "additionalProperties": false,
           "description": "Original Policy coordinates for presentation and existing confirmation integration.",
@@ -4796,11 +4736,8 @@
               "description": "Exclusive continuation."
             },
             "policyNext": {
-              "anyOf": [
-                { "$ref": "#/$defs/PolicyLocator" },
-                { "type": "null" }
-              ],
-              "description": "Next Policy discovery page; separate from local definition pagination."
+              "description": "Next Policy discovery page; separate from local definition pagination.",
+              "type": ["string", "null"]
             }
           },
           "required": ["items"],
@@ -5260,17 +5197,6 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
         },
-        "PolicyLocator": {
-          "additionalProperties": false,
-          "description": "The actual page on which a Policy was discovered. This is a position, never permission.",
-          "properties": {
-            "after": {
-              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
-              "description": "Cursor sent when discovering the selected page; null identifies the first page."
-            }
-          },
-          "type": "object"
-        },
         "PublishedQuery": {
           "additionalProperties": false,
           "description": "Original Policy coordinates for presentation and existing confirmation integration.",
@@ -5411,11 +5337,8 @@
               "description": "Exclusive continuation."
             },
             "policyNext": {
-              "anyOf": [
-                { "$ref": "#/$defs/PolicyLocator" },
-                { "type": "null" }
-              ],
-              "description": "Next Policy discovery page; separate from local definition pagination."
+              "description": "Next Policy discovery page; separate from local definition pagination.",
+              "type": ["string", "null"]
             }
           },
           "required": ["items"],
@@ -5955,22 +5878,13 @@
     "annotations": { "openWorldHint": false, "readOnlyHint": true },
     "description": "Currently authorized self-service software, scripts and enrollment entries. Publication, allowAi and risk are verified for this AI origin.",
     "inputSchema": {
-      "$defs": {
-        "Id": {
-          "description": "Opaque local reference identifier; syntax validity is not authenticity.",
-          "maxLength": 128,
-          "minLength": 1,
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
-          "type": "string"
-        }
-      },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
       "description": "Explicit pagination of authorized Policy tools.",
       "properties": {
         "after": {
-          "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
-          "description": "Previous page's exclusive cursor; null starts discovery."
+          "description": "Previous page's exclusive cursor; null starts discovery.",
+          "type": ["string", "null"]
         }
       },
       "title": "PolicyToolsQuery",
@@ -5985,22 +5899,15 @@
           "required": ["code"],
           "type": "object"
         },
-        "Id": {
-          "description": "Opaque local reference identifier; syntax validity is not authenticity.",
-          "maxLength": 128,
-          "minLength": 1,
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
-          "type": "string"
-        },
         "PolicyToolPage": {
           "description": "A bounded tool page. An empty page can still have a continuation.",
           "properties": {
             "next": {
-              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
-              "description": "Next page, absent only after complete discovery."
+              "description": "Next page, absent only after complete discovery.",
+              "type": ["string", "null"]
             },
             "tools": {
-              "description": "Authorized tools, each carrying its actual discovery locator in the input schema.",
+              "description": "Authorized tool descriptions for discovery.",
               "items": true,
               "type": "array"
             }
@@ -6105,47 +6012,74 @@
   },
   {
     "annotations": { "openWorldHint": false, "readOnlyHint": false },
-    "description": "Invoke one exact tool discovered through execution_policy_tools, including later pages. Supply the original locator and Resource inputs. Current publication and permissions are revalidated.",
+    "description": "Invoke one exact tool discovered through execution_policy_tools, by ID, tool name or alias. Supply Resource inputs. Current publication and permissions are revalidated.",
     "inputSchema": {
       "$defs": {
-        "Id": {
-          "description": "Opaque local reference identifier; syntax validity is not authenticity.",
-          "maxLength": 128,
-          "minLength": 1,
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
-          "type": "string"
-        },
-        "PolicyLocator": {
-          "additionalProperties": false,
-          "description": "The actual page on which a Policy was discovered. This is a position, never permission.",
-          "properties": {
-            "after": {
-              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
-              "description": "Cursor sent when discovering the selected page; null identifies the first page."
+        "CapabilitySelector": {
+          "description": "Explicit exact address in the authenticated tenant's Policy namespace.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Canonical Policy identity.",
+              "properties": {
+                "id": {
+                  "description": "Object ID.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "kind": { "const": "id", "type": "string" }
+              },
+              "required": ["kind", "id"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Server-generated tool name.",
+              "properties": {
+                "kind": { "const": "tool_name", "type": "string" },
+                "name": {
+                  "description": "Complete canonical name.",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Administrator-controlled unique alias.",
+              "properties": {
+                "alias": {
+                  "$ref": "#/$defs/PolicyAlias",
+                  "description": "Canonical tenant-local alias."
+                },
+                "kind": { "const": "alias", "type": "string" }
+              },
+              "required": ["kind", "alias"],
+              "type": "object"
             }
-          },
-          "type": "object"
+          ]
+        },
+        "PolicyAlias": {
+          "description": "Tenant-local canonical Policy alias.",
+          "type": "string"
         }
       },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
-      "description": "Invoke an exact tool discovered on a later Policy page without hiding pages in an automatic scan.",
+      "description": "Invoke one Policy by its formal ID, tool name or alias.",
       "properties": {
-        "locator": {
-          "$ref": "#/$defs/PolicyLocator",
-          "description": "Actual discovery page, independently revalidated."
-        },
         "parameters": {
           "additionalProperties": true,
           "description": "Only the original Resource-owned input fields.",
           "type": "object"
         },
-        "tool": {
-          "description": "Exact discovered tool name.",
-          "type": "string"
+        "selector": {
+          "$ref": "#/$defs/CapabilitySelector",
+          "description": "Formal ID, tool name or alias."
         }
       },
-      "required": ["tool", "locator", "parameters"],
+      "required": ["selector", "parameters"],
       "title": "PolicyToolCall",
       "type": "object"
     },
@@ -6277,12 +6211,50 @@
     "description": "Show an editable operation card for a current policy tool. Use for requests to display or edit settings. Suggestions do not execute: the user saves the final parameters in the desktop. Only registered scenes are accepted.",
     "inputSchema": {
       "$defs": {
-        "Id": {
-          "description": "Opaque local reference identifier; syntax validity is not authenticity.",
-          "maxLength": 128,
-          "minLength": 1,
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
-          "type": "string"
+        "CapabilitySelector": {
+          "description": "Explicit exact address in the authenticated tenant's Policy namespace.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Canonical Policy identity.",
+              "properties": {
+                "id": {
+                  "description": "Object ID.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "kind": { "const": "id", "type": "string" }
+              },
+              "required": ["kind", "id"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Server-generated tool name.",
+              "properties": {
+                "kind": { "const": "tool_name", "type": "string" },
+                "name": {
+                  "description": "Complete canonical name.",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Administrator-controlled unique alias.",
+              "properties": {
+                "alias": {
+                  "$ref": "#/$defs/PolicyAlias",
+                  "description": "Canonical tenant-local alias."
+                },
+                "kind": { "const": "alias", "type": "string" }
+              },
+              "required": ["kind", "alias"],
+              "type": "object"
+            }
+          ]
         },
         "OperationScene": {
           "description": "Product scenes supported by this preparation boundary.",
@@ -6294,26 +6266,15 @@
             }
           ]
         },
-        "PolicyLocator": {
-          "additionalProperties": false,
-          "description": "The actual page on which a Policy was discovered. This is a position, never permission.",
-          "properties": {
-            "after": {
-              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
-              "description": "Cursor sent when discovering the selected page; null identifies the first page."
-            }
-          },
-          "type": "object"
+        "PolicyAlias": {
+          "description": "Tenant-local canonical Policy alias.",
+          "type": "string"
         }
       },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
       "description": "Registered form suggestion. This prepares a card and never executes a tool.",
       "properties": {
-        "locator": {
-          "$ref": "#/$defs/PolicyLocator",
-          "description": "Actual discovery page; the service re-fetches it and checks the exact tool identity."
-        },
         "parameters": {
           "additionalProperties": true,
           "description": "Suggested input fields. The user may change them before submission.",
@@ -6323,12 +6284,12 @@
           "$ref": "#/$defs/OperationScene",
           "description": "Closed registered scene; no arbitrary UI tree."
         },
-        "tool": {
-          "description": "Exact tool name from the authenticated policy directory.",
-          "type": "string"
+        "selector": {
+          "$ref": "#/$defs/CapabilitySelector",
+          "description": "Formal ID, tool name or alias resolved by the product owner."
         }
       },
-      "required": ["scene", "tool", "locator", "parameters"],
+      "required": ["scene", "selector", "parameters"],
       "title": "OperationProposal",
       "type": "object"
     },
@@ -6971,39 +6932,12 @@
               "$ref": "#/$defs/Id",
               "description": "Policy from the current authorized directory."
             },
-            "policyRevision": {
-              "description": "Exact current configuration revision.",
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
-            },
-            "policyVersion": {
-              "$ref": "#/$defs/Id",
-              "description": "Immutable execution version."
-            },
             "request": {
               "$ref": "#/$defs/RequestId",
               "description": "Stable request allocated before submission, reused after response loss."
             }
           },
-          "required": [
-            "request",
-            "policyId",
-            "policyRevision",
-            "policyVersion",
-            "parameters"
-          ],
-          "type": "object"
-        },
-        "PolicyLocator": {
-          "additionalProperties": false,
-          "description": "The actual page on which a Policy was discovered. This is a position, never permission.",
-          "properties": {
-            "after": {
-              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
-              "description": "Cursor sent when discovering the selected page; null identifies the first page."
-            }
-          },
+          "required": ["request", "policyId", "parameters"],
           "type": "object"
         },
         "PreparedAction": {
@@ -7064,10 +6998,6 @@
                   "$ref": "#/$defs/PolicyChoice",
                   "description": "Immutable employee choice."
                 },
-                "directory": {
-                  "$ref": "#/$defs/SelfServiceDirectoryItem",
-                  "description": "Formal backend directory DTO, including the Resource-owned schema."
-                },
                 "expiresAtUnixMs": {
                   "description": "Bounded validity of the original preparation.",
                   "format": "uint64",
@@ -7075,10 +7005,6 @@
                   "type": "integer"
                 },
                 "kind": { "const": "policy", "type": "string" },
-                "locator": {
-                  "$ref": "#/$defs/PolicyLocator",
-                  "description": "Frozen discovery position, used only to re-fetch current authorization."
-                },
                 "offer": {
                   "anyOf": [
                     { "$ref": "#/$defs/BackendTask" },
@@ -7086,16 +7012,25 @@
                   ],
                   "description": "Eventual signed Offer; no task/attempt is invented before this exists."
                 },
+                "presentation": {
+                  "additionalProperties": true,
+                  "description": "Administrator-provided presentation, never executable content.",
+                  "type": "object"
+                },
                 "runId": {
                   "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
                   "description": "Backend Run returned for the original request, absent until acceptance is known."
+                },
+                "task": {
+                  "$ref": "#/$defs/SelfServiceTask",
+                  "description": "Prepared operation interface for display and input editing, never authorization."
                 }
               },
               "required": [
                 "kind",
                 "choice",
-                "locator",
-                "directory",
+                "task",
+                "presentation",
                 "access",
                 "expiresAtUnixMs"
               ],
@@ -7199,100 +7134,6 @@
             }
           ]
         },
-        "SelfServiceDirectoryItem": {
-          "additionalProperties": false,
-          "description": "One currently authorized script and its Resource-owned parameter schema.",
-          "properties": {
-            "policyId": {
-              "description": "Logical Policy identity.",
-              "format": "uuid",
-              "type": "string"
-            },
-            "policyRevision": {
-              "description": "Current configuration CAS revision.",
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
-            },
-            "policyVersion": {
-              "description": "Immutable execution version.",
-              "format": "uuid",
-              "type": "string"
-            },
-            "selfService": {
-              "$ref": "#/$defs/SelfServiceMetadata",
-              "description": "Normalized presentation and invocation settings."
-            },
-            "subject": {
-              "$ref": "#/$defs/SelfServiceSubject",
-              "description": "Current qualified subject, rechecked when invoking and before execution."
-            },
-            "task": {
-              "$ref": "#/$defs/SelfServiceTask",
-              "description": "Closed task kind and the exact invocation interface."
-            }
-          },
-          "required": [
-            "policyId",
-            "policyRevision",
-            "policyVersion",
-            "subject",
-            "selfService",
-            "task"
-          ],
-          "type": "object"
-        },
-        "SelfServiceMetadata": {
-          "additionalProperties": false,
-          "description": "Published presentation and invocation settings; values are normalized by Policy CAS.",
-          "properties": {
-            "allowAi": {
-              "description": "Effective administrator AI switch.",
-              "type": "boolean"
-            },
-            "presentation": {
-              "additionalProperties": true,
-              "description": "Open directory presentation; never used as authorization or executable input.",
-              "type": "object"
-            },
-            "published": {
-              "description": "Whether this script is published for self service.",
-              "type": "boolean"
-            },
-            "riskLevel": {
-              "description": "Effective risk level, one or two.",
-              "enum": [1, 2],
-              "type": "integer"
-            }
-          },
-          "required": ["published", "presentation", "allowAi", "riskLevel"],
-          "type": "object"
-        },
-        "SelfServiceSubject": {
-          "description": "Subject selected by the server's explicit Policy access basis.",
-          "oneOf": [
-            {
-              "additionalProperties": false,
-              "description": "Device credential plus effective device scope; no enterprise session.",
-              "properties": { "kind": { "const": "device", "type": "string" } },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "description": "A live enterprise session matched by product authorization.",
-              "properties": {
-                "kind": { "const": "user", "type": "string" },
-                "user": {
-                  "$ref": "#/$defs/SelfServiceUser",
-                  "description": "Authenticated enterprise coordinates, without a credential."
-                }
-              },
-              "required": ["kind", "user"],
-              "type": "object"
-            }
-          ]
-        },
         "SelfServiceTask": {
           "description": "One directory interface; software does not inherit script parameter semantics.",
           "oneOf": [
@@ -7369,29 +7210,6 @@
               "type": "object"
             }
           ]
-        },
-        "SelfServiceUser": {
-          "additionalProperties": false,
-          "description": "Authenticated product user; contains no session credential.",
-          "properties": {
-            "instanceId": {
-              "description": "Identity instance.",
-              "format": "uuid",
-              "type": "string"
-            },
-            "principalId": {
-              "description": "Authenticated principal.",
-              "format": "uuid",
-              "type": "string"
-            },
-            "tenantId": {
-              "description": "Product tenant.",
-              "format": "uuid",
-              "type": "string"
-            }
-          },
-          "required": ["tenantId", "instanceId", "principalId"],
-          "type": "object"
         },
         "ServiceError": {
           "description": "Static safe errors. An implementation must never attach raw backend diagnostics.",
@@ -8546,39 +8364,12 @@
               "$ref": "#/$defs/Id",
               "description": "Policy from the current authorized directory."
             },
-            "policyRevision": {
-              "description": "Exact current configuration revision.",
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
-            },
-            "policyVersion": {
-              "$ref": "#/$defs/Id",
-              "description": "Immutable execution version."
-            },
             "request": {
               "$ref": "#/$defs/RequestId",
               "description": "Stable request allocated before submission, reused after response loss."
             }
           },
-          "required": [
-            "request",
-            "policyId",
-            "policyRevision",
-            "policyVersion",
-            "parameters"
-          ],
-          "type": "object"
-        },
-        "PolicyLocator": {
-          "additionalProperties": false,
-          "description": "The actual page on which a Policy was discovered. This is a position, never permission.",
-          "properties": {
-            "after": {
-              "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
-              "description": "Cursor sent when discovering the selected page; null identifies the first page."
-            }
-          },
+          "required": ["request", "policyId", "parameters"],
           "type": "object"
         },
         "PreparedAction": {
@@ -8639,10 +8430,6 @@
                   "$ref": "#/$defs/PolicyChoice",
                   "description": "Immutable employee choice."
                 },
-                "directory": {
-                  "$ref": "#/$defs/SelfServiceDirectoryItem",
-                  "description": "Formal backend directory DTO, including the Resource-owned schema."
-                },
                 "expiresAtUnixMs": {
                   "description": "Bounded validity of the original preparation.",
                   "format": "uint64",
@@ -8650,10 +8437,6 @@
                   "type": "integer"
                 },
                 "kind": { "const": "policy", "type": "string" },
-                "locator": {
-                  "$ref": "#/$defs/PolicyLocator",
-                  "description": "Frozen discovery position, used only to re-fetch current authorization."
-                },
                 "offer": {
                   "anyOf": [
                     { "$ref": "#/$defs/BackendTask" },
@@ -8661,16 +8444,25 @@
                   ],
                   "description": "Eventual signed Offer; no task/attempt is invented before this exists."
                 },
+                "presentation": {
+                  "additionalProperties": true,
+                  "description": "Administrator-provided presentation, never executable content.",
+                  "type": "object"
+                },
                 "runId": {
                   "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
                   "description": "Backend Run returned for the original request, absent until acceptance is known."
+                },
+                "task": {
+                  "$ref": "#/$defs/SelfServiceTask",
+                  "description": "Prepared operation interface for display and input editing, never authorization."
                 }
               },
               "required": [
                 "kind",
                 "choice",
-                "locator",
-                "directory",
+                "task",
+                "presentation",
                 "access",
                 "expiresAtUnixMs"
               ],
@@ -8774,100 +8566,6 @@
             }
           ]
         },
-        "SelfServiceDirectoryItem": {
-          "additionalProperties": false,
-          "description": "One currently authorized script and its Resource-owned parameter schema.",
-          "properties": {
-            "policyId": {
-              "description": "Logical Policy identity.",
-              "format": "uuid",
-              "type": "string"
-            },
-            "policyRevision": {
-              "description": "Current configuration CAS revision.",
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
-            },
-            "policyVersion": {
-              "description": "Immutable execution version.",
-              "format": "uuid",
-              "type": "string"
-            },
-            "selfService": {
-              "$ref": "#/$defs/SelfServiceMetadata",
-              "description": "Normalized presentation and invocation settings."
-            },
-            "subject": {
-              "$ref": "#/$defs/SelfServiceSubject",
-              "description": "Current qualified subject, rechecked when invoking and before execution."
-            },
-            "task": {
-              "$ref": "#/$defs/SelfServiceTask",
-              "description": "Closed task kind and the exact invocation interface."
-            }
-          },
-          "required": [
-            "policyId",
-            "policyRevision",
-            "policyVersion",
-            "subject",
-            "selfService",
-            "task"
-          ],
-          "type": "object"
-        },
-        "SelfServiceMetadata": {
-          "additionalProperties": false,
-          "description": "Published presentation and invocation settings; values are normalized by Policy CAS.",
-          "properties": {
-            "allowAi": {
-              "description": "Effective administrator AI switch.",
-              "type": "boolean"
-            },
-            "presentation": {
-              "additionalProperties": true,
-              "description": "Open directory presentation; never used as authorization or executable input.",
-              "type": "object"
-            },
-            "published": {
-              "description": "Whether this script is published for self service.",
-              "type": "boolean"
-            },
-            "riskLevel": {
-              "description": "Effective risk level, one or two.",
-              "enum": [1, 2],
-              "type": "integer"
-            }
-          },
-          "required": ["published", "presentation", "allowAi", "riskLevel"],
-          "type": "object"
-        },
-        "SelfServiceSubject": {
-          "description": "Subject selected by the server's explicit Policy access basis.",
-          "oneOf": [
-            {
-              "additionalProperties": false,
-              "description": "Device credential plus effective device scope; no enterprise session.",
-              "properties": { "kind": { "const": "device", "type": "string" } },
-              "required": ["kind"],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "description": "A live enterprise session matched by product authorization.",
-              "properties": {
-                "kind": { "const": "user", "type": "string" },
-                "user": {
-                  "$ref": "#/$defs/SelfServiceUser",
-                  "description": "Authenticated enterprise coordinates, without a credential."
-                }
-              },
-              "required": ["kind", "user"],
-              "type": "object"
-            }
-          ]
-        },
         "SelfServiceTask": {
           "description": "One directory interface; software does not inherit script parameter semantics.",
           "oneOf": [
@@ -8944,29 +8642,6 @@
               "type": "object"
             }
           ]
-        },
-        "SelfServiceUser": {
-          "additionalProperties": false,
-          "description": "Authenticated product user; contains no session credential.",
-          "properties": {
-            "instanceId": {
-              "description": "Identity instance.",
-              "format": "uuid",
-              "type": "string"
-            },
-            "principalId": {
-              "description": "Authenticated principal.",
-              "format": "uuid",
-              "type": "string"
-            },
-            "tenantId": {
-              "description": "Product tenant.",
-              "format": "uuid",
-              "type": "string"
-            }
-          },
-          "required": ["tenantId", "instanceId", "principalId"],
-          "type": "object"
         },
         "ServiceError": {
           "description": "Static safe errors. An implementation must never attach raw backend diagnostics.",

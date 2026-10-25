@@ -118,7 +118,6 @@ export type Digest = string;
 export type TaskPhase =
   | "waiting"
   | "admissionDenied"
-  | "approvalRequired"
   | "confirmationRequired"
   | "accepted"
   | "running"
@@ -205,7 +204,7 @@ export type AttemptId = string;
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "AdmissionStatus".
  */
-export type AdmissionStatus = "admitted" | "denied" | "approvalRequired";
+export type AdmissionStatus = "admitted" | "denied";
 /**
  * Closed first-delivery diagnostics. These are not observations of termination or effects.
  *
@@ -1331,13 +1330,15 @@ export type PreparedAction =
        */
       choice: PolicyChoice;
       /**
-       * Frozen discovery position, used only to re-fetch current authorization.
+       * Prepared operation interface for display and input editing, never authorization.
        */
-      locator: PolicyLocator;
+      task: SelfServiceTask;
       /**
-       * Formal backend directory DTO, including the Resource-owned schema.
+       * Administrator-provided presentation, never executable content.
        */
-      directory: SelfServiceDirectoryItem;
+      presentation: {
+        [k: string]: unknown;
+      };
       /**
        * Backend Run returned for the original request, absent until acceptance is known.
        */
@@ -1400,23 +1401,6 @@ export type BackendTaskSummary =
  * via the `definition` "SoftwareOperation".
  */
 export type SoftwareOperation = "install" | "detect" | "uninstall";
-/**
- * Subject selected by the server's explicit Policy access basis.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "SelfServiceSubject".
- */
-export type SelfServiceSubject =
-  | {
-      kind: "device";
-    }
-  | {
-      /**
-       * Authenticated enterprise coordinates, without a credential.
-       */
-      user: SelfServiceUser;
-      kind: "user";
-    };
 /**
  * One directory interface; software does not inherit script parameter semantics.
  *
@@ -1610,6 +1594,72 @@ export type BackendRequestFailure =
   | "interrupted"
   | "expired"
   | "revoked";
+/**
+ * Explicit exact address in the authenticated tenant's Policy namespace.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "CapabilitySelector".
+ */
+export type CapabilitySelector =
+  | {
+      /**
+       * Object ID.
+       */
+      id: string;
+      kind: "id";
+    }
+  | {
+      /**
+       * Complete canonical name.
+       */
+      name: string;
+      kind: "tool_name";
+    }
+  | {
+      /**
+       * Canonical tenant-local alias.
+       */
+      alias: PolicyAlias;
+      kind: "alias";
+    };
+/**
+ * Tenant-local canonical Policy alias.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "PolicyAlias".
+ */
+export type PolicyAlias = string;
+/**
+ * Enterprise objects currently exposed through this contract.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "CapabilityObject".
+ */
+export type CapabilityObject = "policy";
+/**
+ * Operations available through the authenticated interface.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "CapabilityOperation".
+ */
+export type CapabilityOperation = "read" | "invoke";
+/**
+ * Subject selected by the server's explicit Policy access basis.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SelfServiceSubject".
+ */
+export type SelfServiceSubject =
+  | {
+      kind: "device";
+    }
+  | {
+      /**
+       * Authenticated enterprise coordinates, without a credential.
+       */
+      user: SelfServiceUser;
+      kind: "user";
+    };
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "PolicyStatus".
@@ -1974,21 +2024,22 @@ export interface SelfServiceCommands {
   query_status: Command13;
   query_cancel: Command13;
   self_service_observe_software: Command14;
-  self_service_policy_directory: Command15;
-  self_service_policy_invoke: Command16;
-  ai_operation_submit: Command17;
-  self_service_policy_confirm: Command18;
-  self_service_policy_status: Command19;
-  self_service_recent_tasks: Command20;
-  self_service_snapshot: Command21;
-  self_service_execute: Command22;
-  self_service_confirm: Command22;
-  self_service_cancel: Command23;
-  diagnostics_prepare: Command24;
-  diagnostics_export: Command25;
-  diagnostics_discard: Command26;
-  appearance_snapshot: Command27;
-  device_overview: Command28;
+  self_service_policy_resolve: Command15;
+  self_service_policy_directory: Command16;
+  self_service_policy_invoke: Command17;
+  ai_operation_submit: Command18;
+  self_service_policy_confirm: Command19;
+  self_service_policy_status: Command20;
+  self_service_recent_tasks: Command21;
+  self_service_snapshot: Command22;
+  self_service_execute: Command23;
+  self_service_confirm: Command23;
+  self_service_cancel: Command24;
+  diagnostics_prepare: Command25;
+  diagnostics_export: Command26;
+  diagnostics_discard: Command27;
+  appearance_snapshot: Command28;
+  device_overview: Command29;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -3183,9 +3234,13 @@ export interface Command10 {
  */
 export interface QueryDirectory {
   /**
-   * Explicitly refresh one authorized Policy page; null reads only local definitions.
+   * Explicitly discover a page of currently authorized Policies.
    */
-  policyPage: PolicyLocator | null;
+  refreshPolicies: boolean;
+  /**
+   * Opaque Policy discovery cursor; null starts the first page.
+   */
+  policyCursor: string | null;
   /**
    * Exclusive stable query cursor.
    */
@@ -3194,18 +3249,6 @@ export interface QueryDirectory {
    * Requested page size, from one through 128.
    */
   limit: number;
-}
-/**
- * The actual page on which a Policy was discovered. This is a position, never permission.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "PolicyLocator".
- */
-export interface PolicyLocator {
-  /**
-   * Cursor sent when discovering the selected page; null identifies the first page.
-   */
-  after: Id | null;
 }
 /**
  * Directory page, scoped by the authenticated service.
@@ -3217,7 +3260,7 @@ export interface QueryPage {
   /**
    * Next Policy discovery page; separate from local definition pagination.
    */
-  policyNext: PolicyLocator | null;
+  policyNext: string | null;
   /**
    * Visible queries.
    */
@@ -3656,97 +3699,11 @@ export interface PolicyChoice {
    */
   policyId: Id;
   /**
-   * Exact current configuration revision.
-   */
-  policyRevision: number;
-  /**
-   * Immutable execution version.
-   */
-  policyVersion: Id;
-  /**
    * Only Resource fields whose Policy source is Input.
    */
   parameters: {
     [k: string]: unknown;
   };
-}
-/**
- * One currently authorized script and its Resource-owned parameter schema.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "SelfServiceDirectoryItem".
- */
-export interface SelfServiceDirectoryItem {
-  /**
-   * Logical Policy identity.
-   */
-  policyId: string;
-  /**
-   * Current configuration CAS revision.
-   */
-  policyRevision: number;
-  /**
-   * Immutable execution version.
-   */
-  policyVersion: string;
-  /**
-   * Current qualified subject, rechecked when invoking and before execution.
-   */
-  subject: SelfServiceSubject;
-  /**
-   * Normalized presentation and invocation settings.
-   */
-  selfService: SelfServiceMetadata;
-  /**
-   * Closed task kind and the exact invocation interface.
-   */
-  task: SelfServiceTask;
-}
-/**
- * Authenticated product user; contains no session credential.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "SelfServiceUser".
- */
-export interface SelfServiceUser {
-  /**
-   * Product tenant.
-   */
-  tenantId: string;
-  /**
-   * Identity instance.
-   */
-  instanceId: string;
-  /**
-   * Authenticated principal.
-   */
-  principalId: string;
-}
-/**
- * Published presentation and invocation settings; values are normalized by Policy CAS.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "SelfServiceMetadata".
- */
-export interface SelfServiceMetadata {
-  /**
-   * Whether this script is published for self service.
-   */
-  published: boolean;
-  /**
-   * Open directory presentation; never used as authorization or executable input.
-   */
-  presentation: {
-    [k: string]: unknown;
-  };
-  /**
-   * Effective administrator AI switch.
-   */
-  allowAi: boolean;
-  /**
-   * Effective risk level, one or two.
-   */
-  riskLevel: 1 | 2;
 }
 /**
  * Exact Resource identity accompanying its signed digest.
@@ -3813,6 +3770,152 @@ export interface BackendConfirmation {
  * via the `definition` "Command15".
  */
 export interface Command15 {
+  input: CapabilitySelector;
+  output: SelfServiceDirectoryItem;
+}
+/**
+ * One currently authorized script and its Resource-owned parameter schema.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SelfServiceDirectoryItem".
+ */
+export interface SelfServiceDirectoryItem {
+  /**
+   * Server-owned identity and current callable interface.
+   */
+  capability: CapabilityDescriptor;
+  /**
+   * Logical Policy identity.
+   */
+  policyId: string;
+  /**
+   * Current configuration CAS revision.
+   */
+  policyRevision: number;
+  /**
+   * Immutable execution version.
+   */
+  policyVersion: string;
+  /**
+   * Current qualified subject, rechecked when invoking and before execution.
+   */
+  subject: SelfServiceSubject;
+  /**
+   * Normalized presentation and invocation settings.
+   */
+  selfService: SelfServiceMetadata;
+  /**
+   * Closed task kind and the exact invocation interface.
+   */
+  task: SelfServiceTask;
+}
+/**
+ * Cross-endpoint capability identity and interface, never an execution permit.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "CapabilityDescriptor".
+ */
+export interface CapabilityDescriptor {
+  /**
+   * Stable Policy capability ID.
+   */
+  id: string;
+  /**
+   * Object namespace.
+   */
+  objectType: CapabilityObject;
+  /**
+   * Server-owned stable invocation name.
+   */
+  toolName: string;
+  /**
+   * Optional administrator address.
+   */
+  alias: PolicyAlias | null;
+  /**
+   * Actual scope owner; membership is rechecked by execution.
+   */
+  scope: string;
+  /**
+   * Product service instance.
+   */
+  instance: string;
+  /**
+   * Tenant owning this capability.
+   */
+  tenant: string;
+  /**
+   * Current configuration revision, for information only.
+   */
+  revision: number;
+  /**
+   * Material version observed while resolving, not a call precondition.
+   */
+  version: string;
+  /**
+   * Operations supported in this interface.
+   */
+  operations: CapabilityOperation[];
+  /**
+   * Schema for caller-provided parameters.
+   */
+  inputSchema: unknown;
+  /**
+   * Schema of the operation result.
+   */
+  outputSchema: unknown;
+}
+/**
+ * Authenticated product user; contains no session credential.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SelfServiceUser".
+ */
+export interface SelfServiceUser {
+  /**
+   * Product tenant.
+   */
+  tenantId: string;
+  /**
+   * Identity instance.
+   */
+  instanceId: string;
+  /**
+   * Authenticated principal.
+   */
+  principalId: string;
+}
+/**
+ * Published presentation and invocation settings; values are normalized by Policy CAS.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SelfServiceMetadata".
+ */
+export interface SelfServiceMetadata {
+  /**
+   * Whether this script is published for self service.
+   */
+  published: boolean;
+  /**
+   * Open directory presentation; never used as authorization or executable input.
+   */
+  presentation: {
+    [k: string]: unknown;
+  };
+  /**
+   * Effective administrator AI switch.
+   */
+  allowAi: boolean;
+  /**
+   * Effective risk level, one or two.
+   */
+  riskLevel: 1 | 2;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Command16".
+ */
+export interface Command16 {
   input: PolicyDirectoryQuery;
   output: SelfServiceDirectoryResponse;
 }
@@ -3821,7 +3924,7 @@ export interface Command15 {
  * via the `definition` "PolicyDirectoryQuery".
  */
 export interface PolicyDirectoryQuery {
-  after: Id | null;
+  after: string | null;
 }
 /**
  * Directory response consumed by the Agent service and employee UI.
@@ -3833,9 +3936,9 @@ export interface SelfServiceDirectoryResponse {
   /**
    * Authorized directory entries.
    */
-  items: SelfServiceDirectoryItem[];
+  items: SelfServiceDirectoryProjection[];
   /**
-   * Last examined Policy when another page may exist.
+   * Opaque continuation after the last examined candidate.
    */
   nextCursor: string | null;
   /**
@@ -3844,10 +3947,46 @@ export interface SelfServiceDirectoryResponse {
   asOf: number;
 }
 /**
+ * Selected directory fields; resolve returns the complete required descriptor instead.
+ *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command16".
+ * via the `definition` "SelfServiceDirectoryProjection".
  */
-export interface Command16 {
+export interface SelfServiceDirectoryProjection {
+  /**
+   * Selected capability interface.
+   */
+  capability?: CapabilityDescriptor | null;
+  /**
+   * Selected Policy identity.
+   */
+  policyId?: string | null;
+  /**
+   * Selected informational configuration revision.
+   */
+  policyRevision?: number | null;
+  /**
+   * Selected informational material version.
+   */
+  policyVersion?: string | null;
+  /**
+   * Selected qualified subject.
+   */
+  subject?: SelfServiceSubject | null;
+  /**
+   * Selected presentation and invocation settings.
+   */
+  selfService?: SelfServiceMetadata | null;
+  /**
+   * Selected operation-specific interface.
+   */
+  task?: SelfServiceTask | null;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Command17".
+ */
+export interface Command17 {
   input: PolicyInvocation;
   output: BackendRequest;
 }
@@ -3862,16 +4001,12 @@ export interface PolicyInvocation {
    * Original request identity and exact user input.
    */
   choice: PolicyChoice;
-  /**
-   * Non-authoritative position, revalidated against the authenticated backend.
-   */
-  locator: PolicyLocator;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command17".
+ * via the `definition` "Command18".
  */
-export interface Command17 {
+export interface Command18 {
   input: PolicySubmission;
   output: BackendRequest;
 }
@@ -3899,9 +4034,9 @@ export interface PolicySubmission {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command18".
+ * via the `definition` "Command19".
  */
-export interface Command18 {
+export interface Command19 {
   input: ActionRef;
   output: BackendRequest;
 }
@@ -3914,9 +4049,9 @@ export interface ActionRef {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command19".
+ * via the `definition` "Command20".
  */
-export interface Command19 {
+export interface Command20 {
   input: ActionRef;
   output: PolicyStatus;
 }
@@ -4063,9 +4198,9 @@ export interface TaskDiagnostics {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command20".
+ * via the `definition` "Command21".
  */
-export interface Command20 {
+export interface Command21 {
   input: RecentTasksQuery;
   output: RecentTaskPage;
 }
@@ -4335,9 +4470,9 @@ export interface ExecutionBudget {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command21".
+ * via the `definition` "Command22".
  */
-export interface Command21 {
+export interface Command22 {
   input: SnapshotQuery;
   output: Snapshot;
 }
@@ -4362,9 +4497,9 @@ export interface Snapshot {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command22".
+ * via the `definition` "Command23".
  */
-export interface Command22 {
+export interface Command23 {
   input: BackendSelection;
   output: TaskSubmission;
 }
@@ -4386,17 +4521,17 @@ export interface TaskSubmission {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command23".
+ * via the `definition` "Command24".
  */
-export interface Command23 {
+export interface Command24 {
   input: ActionRef;
   output: BackendTaskView;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command24".
+ * via the `definition` "Command25".
  */
-export interface Command24 {
+export interface Command25 {
   input: Scopes;
   output: Preview;
 }
@@ -4421,9 +4556,9 @@ export interface Preview {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command25".
+ * via the `definition` "Command26".
  */
-export interface Command25 {
+export interface Command26 {
   input: Selection;
   output: boolean;
 }
@@ -4436,17 +4571,17 @@ export interface Selection {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command26".
+ * via the `definition` "Command27".
  */
-export interface Command26 {
+export interface Command27 {
   input: Selection;
   output: null;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command27".
+ * via the `definition` "Command28".
  */
-export interface Command27 {
+export interface Command28 {
   input: null;
   output: AppearanceSnapshot;
 }
@@ -4461,9 +4596,9 @@ export interface AppearanceSnapshot {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command28".
+ * via the `definition` "Command29".
  */
-export interface Command28 {
+export interface Command29 {
   input: null;
   output: DeviceOverview;
 }

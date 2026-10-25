@@ -16,7 +16,6 @@ mod process;
 mod resources;
 mod software;
 mod software_progress;
-mod trust;
 #[cfg(any(test, feature = "test-support"))]
 pub use config::test_store_limits;
 pub use database::{OpenOutcome, Store};

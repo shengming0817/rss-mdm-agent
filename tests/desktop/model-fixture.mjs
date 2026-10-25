@@ -170,15 +170,12 @@ export async function startModelFixture() {
           return call("tools", "execution_policy_tools", { after: null });
         const tools = resultFrom(output("tools").output)?.tools;
         const tool = tools?.find(
-          (item) =>
-            item.inputSchema?.properties?.locator?.properties?.after?.type ===
-            "null",
+          (item) => item.inputSchema?.properties?.parameters !== undefined,
         );
-        assert.ok(tool, "authorized first-page policy tool unavailable");
+        assert.ok(tool, "authorized policy tool unavailable");
         if (!output("invoke"))
           return call("invoke", "execution_policy_invoke", {
-            tool: tool.name,
-            locator: { after: null },
+            selector: { kind: "tool_name", name: tool.name },
             parameters: {},
           });
         const operation = resultFrom(output("invoke").output);

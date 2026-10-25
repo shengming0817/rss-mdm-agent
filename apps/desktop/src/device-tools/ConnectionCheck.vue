@@ -33,7 +33,6 @@ const finished = computed(
 const phases: Record<string, string> = {
   waiting: "等待执行",
   admissionDenied: "不允许执行",
-  approvalRequired: "等待批准",
   confirmationRequired: "等待确认",
   accepted: "已提交",
   running: "检查中",

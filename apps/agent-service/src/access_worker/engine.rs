@@ -48,7 +48,7 @@ pub(super) fn execute(input: &Input, native: &mut impl Native) -> Result<w::Acce
     let _lock = state::lock(&input.root)?;
     let task = &input.task;
     task.validate()?;
-    if task.permit != w::TaskPermit::Start || native.clock()?.utc >= task.deadline {
+    if native.clock()?.utc >= task.deadline {
         return Err(Error::Expired);
     }
     if let Some(result) = stored_result(&input.root, task)? {

@@ -581,64 +581,6 @@ async fn drain_delivery<R: execution_app::RunnerPort>(
 }
 
 #[tokio::test]
-async fn expired_offers_retire_received_requests_with_one_task_budget_after_restart() {
-    let _budget = crate::scenario_budget::enter();
-    let server = Server::new().await;
-    let root = Root::new();
-    let mut config = server.config();
-    config.limits.pending_tasks = 1;
-    let mut client = Client::open(
-        &root.path,
-        config.clone(),
-        OpenMode::Create,
-        server.secrets.clone(),
-        server.time.clone(),
-    )
-    .unwrap();
-    server.register(&mut client).await;
-    let db = local::Database::new();
-    let host = local::TestHost::new();
-    let runner = execution_app::DeterministicTestRunner::new(
-        local::id("test-runner"),
-        execution_app::TestScenario::Wait,
-        16,
-    )
-    .unwrap();
-    let app = create_app(
-        &db.path,
-        host,
-        runner,
-        execution_app::AppConfig::test_defaults(1),
-    )
-    .unwrap();
-    let bridge = ExecutionBridge::new(local::id("agent-consumer"), FixtureOutput);
-    for i in 0..8 {
-        let offer = client.claim().await.unwrap().offer.unwrap();
-        let materials = client.prepare(&offer).await.unwrap();
-        client.received(&offer).await.unwrap();
-        drop(materials);
-        drop(client);
-        client = Client::open(
-            &root.path,
-            config.clone(),
-            OpenMode::Existing,
-            server.secrets.clone(),
-            server.time.clone(),
-        )
-        .unwrap();
-        if i == 7 {
-            bridge
-                .abandon(&mut client, offer.task_id(), &app)
-                .await
-                .unwrap();
-        } else {
-            server.time.set(offer.payload().expires_at());
-        }
-    }
-    assert_eq!(client.cleanup(128).unwrap(), 1);
-}
-
-#[tokio::test]
 async fn frozen_output_encodings_and_character_truncation_are_delivered() {
     let _budget = crate::scenario_budget::enter();
     use execution_contract::{OutputQuality, ProcessEnd, TextEncoding};
@@ -803,8 +745,7 @@ async fn start_window_does_not_replace_the_signed_runtime_budget() {
     client.received(&offer).await.unwrap();
     let start = client.request_start(&offer, &materials).await.unwrap();
     let mut input = adapted_plan(false, "device-1", &offer).spec().clone();
-    input.validity.expires_at_unix_ms =
-        start.payload().expires_at() as u64 * 1000 + input.budget.total_timeout_ms;
+    input.validity.expires_at_unix_ms = start.payload().expires_at() as u64 * 1000;
     let plan =
         execution_contract::FrozenExecution::freeze(input, &test_execution_limits()).unwrap();
     let mut host = local::TestHost::new();

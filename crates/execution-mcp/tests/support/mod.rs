@@ -255,7 +255,7 @@ impl ExecutionServicePort for TestService {
     }
     async fn invoke_policy(
         &self,
-        _: &str,
+        _: rss_mdm_agent_wire::runtime::CapabilitySelector,
         _: PolicyToolInput,
         _: CancellationToken,
     ) -> Result<execution_contract::BackendRequest, ServiceError> {

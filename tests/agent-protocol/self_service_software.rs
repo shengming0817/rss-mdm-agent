@@ -61,7 +61,7 @@ pub fn publish(
         target: spec.steps[0].target.clone(),
     };
     data.self_service_software = Some(Template { spec: *spec });
-    data.self_service_directory = Some(SelfServiceDirectoryResponse {
+    data.self_service_directory = Some(Directory {
         items: vec![item.clone()],
         next_cursor: None,
         as_of: data.time.now().unwrap(),
@@ -88,8 +88,6 @@ pub fn offer(
         })
         .ok_or(StatusCode::FORBIDDEN)?;
     if input.operation_id.is_nil()
-        || input.policy_revision != item.policy_revision
-        || input.policy_version != item.policy_version
         || !item.self_service.published
         || !input.parameters.is_empty()
         || item.self_service.risk_level != 2
@@ -124,7 +122,6 @@ pub fn offer(
     let mut spec = template.spec.clone();
     spec.task_id = accepted.run_id;
     spec.attempt_id = Uuid::new_v4();
-    spec.start_mode = SoftwareStartMode::UserInitiated;
     spec.authorization = TaskAuthorization::SelfService {
         request_id: input.operation_id,
         subject: item.subject.clone(),
@@ -228,22 +225,18 @@ mod tests {
         let input = SelfServiceInvoke {
             operation_id: Uuid::new_v4(),
             policy_id: item.policy_id,
-            policy_revision: item.policy_revision,
-            policy_version: item.policy_version,
             source: SelfServiceCaller::Human,
             confirmed: false,
             parameters: BTreeMap::new(),
         };
         let uri = Uri::from_static("/self-service/invocations");
         let headers = HeaderMap::new();
-        for field in 0..6 {
+        for field in 0..4 {
             let mut invalid = input.clone();
             match field {
                 0 => invalid.operation_id = Uuid::nil(),
                 1 => invalid.policy_id = Uuid::new_v4(),
-                2 => invalid.policy_revision += 1,
-                3 => invalid.policy_version = Uuid::new_v4(),
-                4 => {
+                2 => {
                     invalid
                         .parameters
                         .insert("command".into(), json!("unpublished"));
@@ -325,6 +318,7 @@ mod tests {
             intent: spec.intent,
             definition_digest: spec.definition_digest,
             steps: vec![SoftwareStepResult {
+                step_id: spec.steps[0].step_id,
                 index: 0,
                 step_digest: step.digest().unwrap(),
                 target: step.target.clone(),

@@ -161,13 +161,13 @@ impl Spool {
                 CREATE TABLE batches(id TEXT PRIMARY KEY,registration TEXT NOT NULL,generation INTEGER NOT NULL,body BLOB NOT NULL,digest TEXT NOT NULL,count INTEGER NOT NULL,first INTEGER NOT NULL,last INTEGER NOT NULL,expires INTEGER NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,due INTEGER NOT NULL DEFAULT 0);
                 CREATE TABLE gaps(reason TEXT PRIMARY KEY,count INTEGER NOT NULL,first INTEGER NOT NULL,last INTEGER NOT NULL);
                 CREATE TABLE receipt(singleton INTEGER PRIMARY KEY CHECK(singleton=1),body BLOB NOT NULL);
-                PRAGMA application_id=1381192781; PRAGMA user_version=2;")?;
+                PRAGMA application_id=1381192781; PRAGMA user_version=3;")?;
             tx.execute("INSERT INTO identity VALUES(?1)", [&binding])?;
             tx.commit()?;
         }
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
         let application: i64 = conn.pragma_query_value(None, "application_id", |r| r.get(0))?;
-        if version != 2 || application != 1381192781 {
+        if version != 3 || application != 1381192781 {
             return Err(Error::Schema);
         }
         let original: Vec<u8> = conn.query_row("SELECT binding FROM identity", [], |r| r.get(0))?;
@@ -336,9 +336,7 @@ impl Spool {
         };
         let upload = w::TelemetryUpload {
             batch_id: Uuid::new_v4(),
-            policy: c.policy,
-            policy_version: c.policy_version,
-            binding: c.binding.clone(),
+            configuration: configuration.signed().clone(),
             observations: vec![observation.clone()],
         };
         upload.validate()?;
@@ -425,9 +423,7 @@ impl Spool {
         };
         let mut batch = w::TelemetryUpload {
             batch_id: Uuid::new_v4(),
-            policy: c.policy,
-            policy_version: c.policy_version,
-            binding: c.binding.clone(),
+            configuration: configuration.signed().clone(),
             observations: vec![],
         };
         let mut expires = i64::MAX;

@@ -111,8 +111,6 @@ pub enum TaskPhase {
     Waiting,
     /// Durable admission denial; replay does not turn it into a pending task.
     AdmissionDenied,
-    /// An independently verified approval is required; an interaction answer is not approval.
-    ApprovalRequired,
     /// Exact-action user confirmation is pending; no attempt has started.
     ConfirmationRequired,
     /// Intent committed, dispatch not confirmed.

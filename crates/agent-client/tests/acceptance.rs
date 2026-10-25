@@ -110,9 +110,10 @@ async fn lost_start_reply_replays_same_request_after_offer_expiry_without_renewi
     let mut client = server.client(&root, OpenMode::Create);
     server.register(&mut client).await;
     let offer = client.claim().await.unwrap().offer.unwrap();
-    let materials = client.prepare(&offer).await.unwrap();
     server.time.set(59);
     client.received(&offer).await.unwrap();
+    server.time.set(62);
+    let materials = client.prepare(&offer).await.unwrap();
     server.data.lock().unwrap().start_failure = true;
     assert!(matches!(
         client.request_start(&offer, &materials).await,
@@ -122,14 +123,16 @@ async fn lost_start_reply_replays_same_request_after_offer_expiry_without_renewi
     drop(materials);
     drop(offer);
     drop(client);
-    server.time.set(62);
+    server.time.set(200);
     let mut client = server.client(&root, OpenMode::Existing);
     let recovered = client.recover_start(task).await.unwrap();
     let start = recovered.start;
     let ops = server.data.lock().unwrap().start_ops.clone();
     assert_eq!(ops.len(), 2);
     assert_eq!(ops[0], ops[1]);
-    server.time.set(75);
+    assert_eq!(start.payload().expires_at(), 300);
+    assert_eq!(client.validate_start(&start), Ok(()));
+    server.time.set(300);
     assert_eq!(client.validate_start(&start), Err(Error::Expired));
 }
 
@@ -358,7 +361,7 @@ async fn offer_materials_start_and_input_tampering() {
     ));
     server.data.lock().unwrap().forged_start = false;
     let start = client.request_start(&offer, &materials).await.unwrap();
-    server.time.set(17);
+    server.time.set(start.payload().expires_at());
     assert_eq!(client.validate_start(&start), Err(Error::Expired));
 }
 
@@ -1306,7 +1309,11 @@ async fn device_self_service_uses_the_registered_channel_without_a_user_header()
             None,
             &SelfServiceDirectory {
                 source: SelfServiceCaller::Ai,
-                after: None,
+                filter: None,
+                sort: None,
+                fields: None,
+                limit: None,
+                cursor: None,
             },
         )
         .await
@@ -1319,7 +1326,11 @@ async fn device_self_service_uses_the_registered_channel_without_a_user_header()
             Some(&"d".repeat(64)),
             &SelfServiceDirectory {
                 source: SelfServiceCaller::Ai,
-                after: None,
+                filter: None,
+                sort: None,
+                fields: None,
+                limit: None,
+                cursor: None,
             }
         )
         .await
@@ -1334,7 +1345,7 @@ async fn employee_self_service_uses_device_mtls_and_recovers_the_original_uuid()
     let mut client = server.client(&root, OpenMode::Create);
     server.register(&mut client).await;
     let directory = policy_directory_fixture(server.data.lock().unwrap().tenant);
-    server.data.lock().unwrap().self_service_directory = Some(SelfServiceDirectoryResponse {
+    server.data.lock().unwrap().self_service_directory = Some(support::Directory {
         items: vec![directory.clone()],
         next_cursor: None,
         as_of: 1,
@@ -1342,7 +1353,11 @@ async fn employee_self_service_uses_device_mtls_and_recovers_the_original_uuid()
     let secret = "c".repeat(64);
     let query = SelfServiceDirectory {
         source: SelfServiceCaller::Ai,
-        after: None,
+        filter: None,
+        sort: None,
+        fields: None,
+        limit: None,
+        cursor: None,
     };
     assert!(matches!(
         client
@@ -1361,13 +1376,12 @@ async fn employee_self_service_uses_device_mtls_and_recovers_the_original_uuid()
             .unwrap()
             .items[0]
             .policy_revision,
-        2
+        Some(2)
     );
     let input = SelfServiceInvoke {
         operation_id: Uuid::new_v4(),
         policy_id: directory.policy_id,
-        policy_revision: directory.policy_revision,
-        policy_version: directory.policy_version,
+
         source: SelfServiceCaller::Ai,
         confirmed: true,
         parameters: std::collections::BTreeMap::from([("name".into(), serde_json::json!("Acme"))]),
@@ -1397,7 +1411,7 @@ async fn employee_self_service_uses_device_mtls_and_recovers_the_original_uuid()
     ));
     server.data.lock().unwrap().response_override = Some((
         "invocations".into(),
-        serde_json::json!({"requestId":Uuid::new_v4(),"runId":retry.run_id,"policyId":input.policy_id,"policyRevision":input.policy_revision,"policyVersion":input.policy_version}),
+        serde_json::json!({"requestId":Uuid::new_v4(),"runId":retry.run_id,"policyId":input.policy_id}),
     ));
     assert!(matches!(
         client.invoke_self_service(Some(&secret), &input).await,

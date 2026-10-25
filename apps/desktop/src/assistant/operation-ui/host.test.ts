@@ -1,3 +1,4 @@
+import { directoryItem } from "../../../../../tests/self-service/support";
 import { describe, it, expect, vi } from "vitest";
 import { shallowRef } from "vue";
 import {
@@ -23,49 +24,37 @@ function fixture() {
     failure: null,
     action: {
       kind: "policy",
-      locator: { after: null },
+
       choice: {
         request: "operation-1",
         policyId: "policy-1",
-        policyRevision: 1,
-        policyVersion: "version-1",
+
         parameters: { name: "AI suggestion" },
       },
-      directory: {
-        policyId: "policy-1",
-        policyRevision: 1,
-        policyVersion: "version-1",
-        subject: { kind: "device" },
-        selfService: {
-          published: true,
-          allowAi: true,
-          riskLevel: 2,
-          presentation: {
-            displayName: "Repair",
-            description: "Trusted repair",
-            category: "support",
-            keywords: [],
-            prerequisites: "device",
-            sideEffects: "Changes configuration",
-          },
+      task: {
+        kind: "script",
+        runAs: "system",
+        resource: { id: "resource", version: "v1", variant: "default" },
+        parameterSources: {
+          name: { kind: "input" },
+          path: { kind: "fixed", value: "/Applications" },
         },
-        task: {
-          kind: "script",
-          runAs: "system",
-          resource: { id: "resource", version: "v1", variant: "default" },
-          parameterSources: {
-            name: { kind: "input" },
-            path: { kind: "fixed", value: "/Applications" },
+        parameterSchema: {
+          type: "object",
+          properties: {
+            name: { type: "string", maxLength: 32 },
+            path: { type: "string" },
           },
-          parameterSchema: {
-            type: "object",
-            properties: {
-              name: { type: "string", maxLength: 32 },
-              path: { type: "string" },
-            },
-            required: ["name", "path"],
-          },
+          required: ["name", "path"],
         },
+      },
+      presentation: {
+        displayName: "Repair",
+        description: "Trusted repair",
+        category: "support",
+        keywords: [],
+        prerequisites: "device",
+        sideEffects: "Changes configuration",
       },
       access: { kind: "device" },
       runId: null,
@@ -127,7 +116,7 @@ describe("production operation adapter", () => {
     async (displayName) => {
       const f = fixture();
       if (f.record.action.kind !== "policy") throw Error("fixture");
-      f.record.action.directory.selfService.presentation =
+      f.record.action.presentation =
         displayName === undefined ? {} : { displayName };
       const stop = new AbortController();
       const bridge = await connectOperation(
@@ -285,7 +274,7 @@ describe("production operation adapter", () => {
     for (const userTarget of [true, false]) {
       const f = fixture();
       if (f.record.action.kind !== "policy") throw Error("fixture");
-      f.record.action.directory.subject = userTarget
+      directoryItem(f.record.action).subject = userTarget
         ? { kind: "device" }
         : {
             kind: "user",
@@ -295,11 +284,10 @@ describe("production operation adapter", () => {
               principalId: "enterprise-user",
             },
           };
-      if (f.record.action.directory.task.kind !== "script")
-        throw Error("script fixture");
-      f.record.action.directory.task = {
+      if (f.record.action.task.kind !== "script") throw Error("script fixture");
+      f.record.action.task = {
         kind: "software",
-        resource: f.record.action.directory.task.resource,
+        resource: f.record.action.task.resource,
         runAs: "system",
         target: userTarget
           ? {
@@ -496,10 +484,10 @@ describe("production operation adapter", () => {
     const f = fixture();
     if (
       f.record.action.kind !== "policy" ||
-      f.record.action.directory.task.kind !== "script"
+      f.record.action.task.kind !== "script"
     )
       throw Error("fixture");
-    f.record.action.directory.task.parameterSchema = {
+    f.record.action.task.parameterSchema = {
       type: "object",
       properties: {
         name: { type: "array", items: { type: "string" } },
@@ -533,10 +521,10 @@ describe("production operation adapter", () => {
     const f = fixture();
     if (
       f.record.action.kind !== "policy" ||
-      f.record.action.directory.task.kind !== "script"
+      f.record.action.task.kind !== "script"
     )
       throw Error("fixture");
-    const task = f.record.action.directory.task;
+    const task = f.record.action.task;
     task.parameterSchema = {
       type: "object",
       properties: { name: { type: "object" }, path: { type: "string" } },

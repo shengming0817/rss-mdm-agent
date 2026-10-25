@@ -1,3 +1,4 @@
+import { directoryItem } from "../../../../tests/self-service/support";
 import { mount, flushPromises } from "@vue/test-utils";
 import { expect, it, vi } from "vitest";
 import ToolsPage from "./ToolsPage.vue";
@@ -145,7 +146,7 @@ it("retains the original network request across navigation, pauses hidden pollin
 it("keeps the original manual tool request across hidden-page navigation after a lost receipt", async () => {
   const record = policyRecord();
   if (record.action.kind !== "policy") throw Error("policy");
-  const item = record.action.directory;
+  const item = directoryItem(record.action);
   const invoke = vi.fn(async (_input: { choice: { request: string } }) => {
     throw Error("reply lost");
   });

@@ -4,7 +4,7 @@ import type { SelfServiceDirectoryItem, SelfServicePort } from "./types";
 
 /** One current-subject directory; cursors are discovery positions, never permissions. */
 export function createDirectory(
-  port: Pick<SelfServicePort, "policy_directory"> | null,
+  port: Pick<SelfServicePort, "policy_directory" | "policy_resolve"> | null,
 ) {
   const state = reactive({
     items: [] as SelfServiceDirectoryItem[],
@@ -16,8 +16,7 @@ export function createDirectory(
     asOf: 0,
     readAt: 0,
   });
-  const locators = new Map<string, string | null>(),
-    visited = new Set<string>();
+  const visited = new Set<string>();
   let active = true,
     epoch = 0;
   async function load(append = false) {
@@ -35,7 +34,6 @@ export function createDirectory(
       )
         throw Error("cursor");
       if (!append) {
-        locators.clear();
         visited.clear();
         state.windowed = false;
       }
@@ -43,14 +41,20 @@ export function createDirectory(
         (append ? state.items : []).map((item) => [item.policyId, item]),
       );
       for (const item of page.items) {
-        merged.set(item.policyId, item);
-        locators.set(item.policyId, after);
+        if (
+          !item.capability ||
+          !item.policyId ||
+          !item.policyRevision ||
+          !item.policyVersion ||
+          !item.subject ||
+          !item.selfService ||
+          !item.task
+        )
+          throw Error("incomplete directory interface");
+        merged.set(item.policyId, item as SelfServiceDirectoryItem);
       }
       if (merged.size > 1024) state.windowed = true;
       state.items = [...merged.values()].slice(-1024);
-      const retained = new Set(state.items.map((item) => item.policyId));
-      for (const id of locators.keys())
-        if (!retained.has(id)) locators.delete(id);
       if (after) visited.add(after);
       state.next = page.nextCursor;
       state.complete = !page.nextCursor && !state.windowed;
@@ -73,10 +77,13 @@ export function createDirectory(
     state.loading = false;
     state.error = "";
     state.asOf = 0;
-    locators.clear();
     visited.clear();
   }
-  return { port, state, locators, load, dispose };
+  async function resolve(id: string) {
+    if (!port || !active) return;
+    return port.policy_resolve({ kind: "id", id });
+  }
+  return { port, state, load, resolve, dispose };
 }
 export type DirectoryController = ReturnType<typeof createDirectory>;
 export const directoryKey: InjectionKey<DirectoryController> =
@@ -95,19 +102,10 @@ export function policyResource(
     version: item.policyVersion,
     status: `${item.task.kind} · 风险 ${item.selfService.riskLevel} · 当前目录可见，执行仍需服务核验`,
     source: "授权 Policy 目录",
-    revision: JSON.stringify([
-      item.policyId,
-      item.policyRevision,
-      item.policyVersion,
-    ]),
+    revision: item.policyId,
     validUntil: catalog.state.readAt + 30_000,
     verified:
       !catalog.state.error &&
-      catalog.state.items.some(
-        (current) =>
-          current.policyId === item.policyId &&
-          current.policyRevision === item.policyRevision &&
-          current.policyVersion === item.policyVersion,
-      ),
+      catalog.state.items.some((current) => current.policyId === item.policyId),
   };
 }

@@ -163,10 +163,8 @@ pub(crate) enum ToolOutput<T> {
 pub struct OperationProposal {
     /// Closed registered scene; no arbitrary UI tree.
     pub scene: OperationScene,
-    /// Exact tool name from the authenticated policy directory.
-    pub tool: String,
-    /// Actual discovery page; the service re-fetches it and checks the exact tool identity.
-    pub locator: execution_contract::PolicyLocator,
+    /// Formal ID, tool name or alias resolved by the product owner.
+    pub selector: rss_mdm_agent_wire::runtime::CapabilitySelector,
     /// Suggested input fields. The user may change them before submission.
     pub parameters: serde_json::Map<String, serde_json::Value>,
 }
@@ -175,23 +173,23 @@ pub struct OperationProposal {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PolicyToolsQuery {
     /// Previous page's exclusive cursor; null starts discovery.
-    pub after: Option<Id>,
+    pub after: Option<String>,
 }
 /// A bounded tool page. An empty page can still have a continuation.
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct PolicyToolPage {
-    /// Authorized tools, each carrying its actual discovery locator in the input schema.
+    /// Authorized tool descriptions for discovery.
     pub tools: Vec<serde_json::Value>,
     /// Next page, absent only after complete discovery.
-    pub next: Option<Id>,
+    pub next: Option<String>,
 }
 /// Input for one dynamically discovered Policy tool.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PolicyToolInput {
     /// Actual discovery position, never authorization.
-    pub locator: execution_contract::PolicyLocator,
+
     /// Only Resource-declared Input fields.
     pub parameters: serde_json::Map<String, serde_json::Value>,
 }
@@ -224,14 +222,12 @@ pub struct LocalSoftwareResult {
     pub operation: OperationStatus,
 }
 
-/// Invoke an exact tool discovered on a later Policy page without hiding pages in an automatic scan.
+/// Invoke one Policy by its formal ID, tool name or alias.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PolicyToolCall {
-    /// Exact discovered tool name.
-    pub tool: String,
-    /// Actual discovery page, independently revalidated.
-    pub locator: execution_contract::PolicyLocator,
+    /// Formal ID, tool name or alias.
+    pub selector: rss_mdm_agent_wire::runtime::CapabilitySelector,
     /// Only the original Resource-owned input fields.
     pub parameters: serde_json::Map<String, serde_json::Value>,
 }

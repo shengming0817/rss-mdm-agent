@@ -110,7 +110,8 @@ export function createSystemSettings(
       const page = await data.query_directory({
         after,
         limit: 128,
-        policyPage: null,
+        refreshPolicies: false,
+        policyCursor: null,
       });
       for (const source of page.items)
         if (source.kind === "native" && !seen.has(source.reference.id)) {

@@ -560,7 +560,7 @@ async fn every_tool_advertises_and_times_out_according_to_its_effects() {
     let cases = [
         (
             "execution_policy_invoke",
-            json!({"tool":"policy_fixture","locator":{"after":null},"parameters":{}}),
+            json!({"selector":{"kind":"alias","alias":"repair.app"},"parameters":{}}),
             false,
             "outcomeUnknown",
         ),
@@ -620,7 +620,7 @@ async fn every_tool_advertises_and_times_out_according_to_its_effects() {
         ),
         (
             "execution_operation_prepare",
-            json!({"scene":"policy.parameters.v1", "tool":"policy_fixture", "locator":{"after":null}, "parameters":{}}),
+            json!({"scene":"policy.parameters.v1", "selector":{"kind":"alias","alias":"repair.app"},  "parameters":{}}),
             false,
             "outcomeUnknown",
         ),
@@ -775,6 +775,7 @@ async fn sdk_tracing_never_receives_raw_tool_arguments_metadata_or_cancel_reason
 fn policy_mcp_descriptor_preserves_resource_input_constraints_and_versions() {
     use rss_mdm_agent_wire::runtime::SelfServiceDirectoryItem;
     let mut item: SelfServiceDirectoryItem = serde_json::from_value(json!({
+        "capability":{"id":"00000000-0000-4000-a000-000000000001","objectType":"policy","toolName":"policy_0000000000004000a000000000000001","alias":null,"scope":"00000000-0000-4000-a000-000000000003","instance":"fixture","tenant":"00000000-0000-4000-a000-000000000004","revision":3,"version":"00000000-0000-4000-a000-000000000002","operations":["invoke"],"inputSchema":{"type":"object","properties":{"name":{"type":"string","maxLength":32}},"required":["name"],"additionalProperties":false},"outputSchema":{}},
         "policyId":"00000000-0000-4000-a000-000000000001","policyRevision":3,"policyVersion":"00000000-0000-4000-a000-000000000002",
             "subject":{"kind":"device"},
         "selfService":{"published": true, "allowAi": true, "riskLevel": 2, "presentation": {"displayName": "Repair", "description": "Repair app", "prerequisites": "Employee", "sideEffects": "Restart", "category": "Support", "keywords": []}},
@@ -782,46 +783,20 @@ fn policy_mcp_descriptor_preserves_resource_input_constraints_and_versions() {
         "parameterSources":{"name":{"kind":"input"},"path":{"kind":"fixed","value":"/Applications"}},
         "parameterSchema":{"type":"object","properties":{"name":{"type":"string","maxLength":32},"path":{"type":"string"}},"required":["name","path"],"additionalProperties":false}}
     })).unwrap();
-    let descriptor =
-        policy_tool(&item, &execution_contract::PolicyLocator { after: None }).unwrap();
+    let descriptor = policy_tool(&item).unwrap();
     let validator = jsonschema::validator_for(&descriptor["inputSchema"]).unwrap();
-    assert!(validator.is_valid(&json!({"locator":{"after":null},"parameters":{"name":"Acme"}})));
-    assert!(!validator.is_valid(
-        &json!({"locator":{"after":null},"parameters":{"name":"Acme","path":"/Library"}})
-    ));
-    assert!(!validator
-        .is_valid(&json!({"locator":{"after":null},"parameters":{"name":"x".repeat(33)}})));
+    assert!(validator.is_valid(&json!({"parameters":{"name":"Acme"}})));
+    assert!(!validator.is_valid(&json!({"parameters":{"name":"Acme","path":"/Library"}})));
+    assert!(!validator.is_valid(&json!({"parameters":{"name":"x".repeat(33)}})));
     assert!(!validator.is_valid(&json!({})));
-    assert!(!validator.is_valid(&json!({"locator":{"after":"later"},"parameters":{"name":"Acme"}})));
-    let later = policy_tool(
-        &item,
-        &execution_contract::PolicyLocator {
-            after: Some(execution_contract::Id::new("later").unwrap()),
-        },
-    )
-    .unwrap();
-    let later_validator = jsonschema::validator_for(&later["inputSchema"]).unwrap();
-    assert!(later_validator
-        .is_valid(&json!({"locator":{"after":"later"},"parameters":{"name":"Acme"}})));
-    for after in [serde_json::Value::Null, json!("other")] {
-        assert!(!later_validator
-            .is_valid(&json!({"locator":{"after":after},"parameters":{"name":"Acme"}})));
-    }
     assert_eq!(descriptor["annotations"]["readOnlyHint"], false);
     fn parameter_schema(item: &mut SelfServiceDirectoryItem) -> &mut serde_json::Value {
-        let rss_mdm_agent_wire::runtime::SelfServiceTask::Script {
-            parameter_schema, ..
-        } = &mut item.task
-        else {
-            panic!("script")
-        };
-        parameter_schema
+        &mut item.capability.input_schema
     }
     let saved = parameter_schema(&mut item).clone();
     parameter_schema(&mut item)["properties"]["name"] =
         json!({"type":"array","items":{"type":"integer","minimum":i64::MIN,"maximum":i64::MAX}});
-    let descriptor =
-        policy_tool(&item, &execution_contract::PolicyLocator { after: None }).unwrap();
+    let descriptor = policy_tool(&item).unwrap();
     assert_eq!(
         descriptor["inputSchema"]["properties"]["parameters"]["properties"]["name"]["items"]
             ["maximum"],
@@ -843,30 +818,21 @@ fn policy_mcp_descriptor_preserves_resource_input_constraints_and_versions() {
     ] {
         parameter_schema(&mut item)["properties"]["name"] = unsupported;
         assert!(matches!(
-            policy_tool(&item, &execution_contract::PolicyLocator { after: None }),
+            policy_tool(&item),
             Err(ServiceError::InvalidInput)
         ));
     }
     *parameter_schema(&mut item) = saved;
     let original = policy_tool_name(&item);
     item.policy_revision += 1;
-    assert_ne!(policy_tool_name(&item), original);
+    assert_eq!(policy_tool_name(&item), original);
     item.self_service.allow_ai = false;
-    assert!(matches!(
-        policy_tool(&item, &execution_contract::PolicyLocator { after: None }),
-        Err(ServiceError::Denied)
-    ));
+    assert!(matches!(policy_tool(&item), Err(ServiceError::Denied)));
     item.self_service.allow_ai = true;
     item.self_service.risk_level = 0;
-    assert!(matches!(
-        policy_tool(&item, &execution_contract::PolicyLocator { after: None }),
-        Err(ServiceError::Denied)
-    ));
+    assert!(matches!(policy_tool(&item), Err(ServiceError::Denied)));
     item.self_service.risk_level = 3;
-    assert!(matches!(
-        policy_tool(&item, &execution_contract::PolicyLocator { after: None }),
-        Err(ServiceError::Denied)
-    ));
+    assert!(matches!(policy_tool(&item), Err(ServiceError::Denied)));
 }
 
 #[tokio::test]

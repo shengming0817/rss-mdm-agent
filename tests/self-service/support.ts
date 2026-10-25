@@ -55,6 +55,7 @@ export function resourceOffer(): BackendTask {
 export const policyFixturePort: Pick<
   SelfServicePort,
   | "recent_tasks"
+  | "policy_resolve"
   | "policy_directory"
   | "policy_invoke"
   | "policy_confirm"
@@ -62,6 +63,9 @@ export const policyFixturePort: Pick<
   | "observe_software"
 > = {
   recent_tasks: async () => ({ items: [], next: null }),
+  policy_resolve: async () => {
+    throw new Error("fixture policy not configured");
+  },
   policy_directory: async () => ({ items: [], nextCursor: null, asOf: 1000 }),
   policy_invoke: async () => {
     throw new Error("fixture policy not configured");
@@ -87,32 +91,19 @@ export function policyRecord(
       choice: {
         request,
         policyId: "policy",
-        policyRevision: 1,
-        policyVersion: "version",
         parameters: {},
       },
-      locator: { after: null },
-      directory: {
-        policyId: "policy",
-        policyRevision: 1,
-        policyVersion: "version",
-        subject: { kind: "device" },
-        task: {
-          kind: "script",
-          runAs: "system",
-          resource: { id: "r", version: "1", variant: "macos" },
-          parameterSchema: { type: "object" },
-          parameterSources: {},
-        },
-        selfService: {
-          published: true,
-          allowAi: true,
-          riskLevel: 1,
-          presentation: {
-            displayName: "Published tool",
-            description: "Read state",
-          },
-        },
+
+      task: {
+        kind: "script",
+        runAs: "system",
+        resource: { id: "r", version: "1", variant: "macos" },
+        parameterSchema: { type: "object" },
+        parameterSources: {},
+      },
+      presentation: {
+        displayName: "Published tool",
+        description: "Read state",
       },
       access: { kind: "device" },
       expiresAtUnixMs: Date.now() + 60_000,
@@ -132,5 +123,39 @@ export function policyRecord(
     revision: 1,
     state: "awaitingConfirmation",
     failure: null,
+  };
+}
+
+export function directoryItem(
+  action: import("../../apps/desktop/src/self-service/types").PreparedAction,
+): import("../../apps/desktop/src/self-service/types").SelfServiceDirectoryItem {
+  if (action.kind !== "policy") throw Error("policy fixture");
+  const id = action.choice.policyId;
+  return {
+    policyId: id,
+    policyRevision: 1,
+    policyVersion: "version",
+    subject: { kind: "device" },
+    capability: {
+      id,
+      objectType: "policy",
+      toolName: `policy_${id.replaceAll("-", "")}`,
+      alias: null,
+      scope: "scope",
+      instance: "instance",
+      tenant: "tenant",
+      revision: 1,
+      version: "version",
+      operations: ["invoke"],
+      inputSchema: {},
+      outputSchema: {},
+    },
+    task: action.task,
+    selfService: {
+      published: true,
+      allowAi: true,
+      riskLevel: 1,
+      presentation: action.presentation,
+    },
   };
 }
