@@ -3,7 +3,6 @@ use execution_app::{AuthorizedDispatch, DispatchOutcome, Error, ObservationStage
 use execution_contract::*;
 use execution_lifecycle::{DispatchAllowance, ExecutionMode, Observation, ObservationFacts};
 use sha2::{Digest as _, Sha256};
-#[cfg(all(test, target_os = "macos"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     collections::BTreeMap,
@@ -159,9 +158,8 @@ impl NativeRunner {
             plan,
             attempt,
             DispatchAllowance {
-                deadline_unix_ms: plan.spec().validity.expires_at_unix_ms,
-                remaining_timeout_ms: remaining_timeout_ms
-                    .min(plan.spec().validity.expires_at_unix_ms - now),
+                deadline_unix_ms: now.saturating_add(remaining_timeout_ms),
+                remaining_timeout_ms,
                 remaining_output_bytes,
             },
             Some(start_before_ms),
@@ -173,11 +171,7 @@ impl NativeRunner {
         attempt: &AttemptId,
         allowance: DispatchAllowance,
     ) -> Result<DispatchOutcome, Error> {
-        let start_before = Some(
-            execution_ipc::host::monotonic_millis()?
-                .checked_add(allowance.remaining_timeout_ms)
-                .ok_or(Error::Clock)?,
-        );
+        let start_before = Some(first_start_deadline(plan, allowance.remaining_timeout_ms)?);
         self.launch_bounded(plan, attempt, allowance, start_before)
     }
     pub(crate) fn launch_bounded(
@@ -523,6 +517,14 @@ impl RunnerPort for NativeRunner {
             if !journal.valid_for(&plan) || journal.runner != self.id || !journal.resumable(&plan) {
                 return Err(Error::Denied);
             }
+            let first_start = if journal.checkpoints.iter().any(|checkpoint| {
+                matches!(checkpoint, SoftwareCheckpoint::End { process: Some(p), .. }
+                    if !matches!(p.scope, ProcessScope::NotStarted {}))
+            }) {
+                None
+            } else {
+                Some(first_start_deadline(&plan, allowance.remaining_timeout_ms)?)
+            };
             let Some(source) = self.artifacts.get(plan.digest().as_str())? else {
                 return Ok(());
             };
@@ -564,7 +566,7 @@ impl RunnerPort for NativeRunner {
                         runner,
                         deadline: Instant::now() + Duration::from_millis(timeout),
                         output_limit,
-                        first_start: None,
+                        first_start,
                         cancel,
                         capture: facts,
                         progress,
@@ -783,7 +785,18 @@ impl RunnerPort for NativeRunner {
 fn thread_only_worker(profile: &VersionedRef) -> bool {
     profile.id.as_str() == "native-network-check-worker" && profile.revision.as_str() == "1"
 }
-#[cfg(all(test, target_os = "macos"))]
+fn first_start_deadline(plan: &FrozenExecution, remaining: u64) -> Result<u64, Error> {
+    execution_ipc::host::monotonic_millis()?
+        .checked_add(
+            remaining.min(
+                plan.spec()
+                    .validity
+                    .expires_at_unix_ms
+                    .saturating_sub(now()?),
+            ),
+        )
+        .ok_or(Error::Clock)
+}
 fn now() -> Result<u64, Error> {
     u64::try_from(
         SystemTime::now()

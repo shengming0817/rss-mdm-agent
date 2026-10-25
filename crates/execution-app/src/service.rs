@@ -206,9 +206,11 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
             plan.spec().request.initiator,
             execution_contract::Initiator::Ai { .. }
         ) {
-            self.host
-                .admit(plan, &attempt, self.host.reliable_now()?)?
-                .execution_gate
+            match self.host.admit(plan, &attempt, self.host.reliable_now()?) {
+                Ok(gate) => gate.execution_gate,
+                Err(crate::JournalError::Denied) => crate::ExecutionGate::Blocked,
+                Err(error) => return Err(error.into()),
+            }
         } else {
             crate::ExecutionGate::Direct
         };

@@ -193,35 +193,23 @@ fn truncation_does_not_publish_first_n_as_a_complete_snapshot() {
 fn task_reuses_identical_queries_and_keeps_independent_failures() {
     let p = plan();
     let mut calls = 0;
-    let result = collect(
-        &p,
-        now().unwrap() + 30,
-        (now().unwrap() as u64 + 30) * 1000,
-        &std::sync::atomic::AtomicU64::new(0),
-        |_, q, _, _| {
-            calls += 1;
-            Ok(Rows::new(q, now().unwrap()).finish(Ok(())))
-        },
-    )
+    let result = collect(&p, &std::sync::atomic::AtomicU64::new(0), |_, q, _, _| {
+        calls += 1;
+        Ok(Rows::new(q, now().unwrap()).finish(Ok(())))
+    })
     .unwrap();
     assert_eq!(calls, 1);
     assert_eq!(result.queries.len(), 2);
     let mut spec = p.spec().clone();
     spec.queries.get_mut("b").unwrap().budget.max_rows = 1;
     let p = w::NativeCollectionPlan::new(spec).unwrap();
-    let result = collect(
-        &p,
-        now().unwrap() + 30,
-        (now().unwrap() as u64 + 30) * 1000,
-        &std::sync::atomic::AtomicU64::new(0),
-        |id, q, _, _| {
-            Ok(if id == "a" {
-                failure(q, Status::Denied, now().unwrap())
-            } else {
-                Rows::new(q, now().unwrap()).finish(Ok(()))
-            })
-        },
-    )
+    let result = collect(&p, &std::sync::atomic::AtomicU64::new(0), |id, q, _, _| {
+        Ok(if id == "a" {
+            failure(q, Status::Denied, now().unwrap())
+        } else {
+            Rows::new(q, now().unwrap()).finish(Ok(()))
+        })
+    })
     .unwrap();
     assert_eq!(result.queries["a"].status, Status::Denied);
     assert!(result.queries["b"].complete_for(&p.spec().queries["b"], now().unwrap()));
@@ -238,62 +226,26 @@ fn insufficient_envelope_budget_is_rejected_before_execution() {
 }
 
 #[test]
-fn common_cutoff_accounts_for_initialization_and_preserves_timeout_evidence() {
-    let p = plan();
-    let result = collect(
-        &p,
-        now().unwrap() + 30,
-        1,
-        &std::sync::atomic::AtomicU64::new(0),
-        |_, _, _, _| panic!("expired budget must not dispatch"),
-    )
-    .unwrap();
-    assert!(result.queries.values().all(|r| r.status == Status::Timeout));
-    let wall = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64;
-    collect(
-        &p,
-        now().unwrap() + 30,
-        wall + 2000,
-        &std::sync::atomic::AtomicU64::new(0),
-        |_, q, remaining, _| {
-            assert!(remaining <= std::time::Duration::from_millis(1750));
-            Ok(failure(q, Status::Timeout, now().unwrap()))
-        },
-    )
-    .unwrap();
-}
-#[test]
 fn malformed_quiescent_query_output_does_not_discard_other_queries() {
     let mut spec = plan().spec().clone();
     spec.queries.get_mut("b").unwrap().budget.max_rows = 1;
     let p = w::NativeCollectionPlan::new(spec).unwrap();
-    let result = collect(
-        &p,
-        now().unwrap() + 30,
-        (now().unwrap() as u64 + 30) * 1000,
-        &std::sync::atomic::AtomicU64::new(0),
-        |id, q, _, _| {
-            Ok(if id == "a" {
-                decode_query(q, b"not-json", now().unwrap())
-            } else {
-                Rows::new(q, now().unwrap()).finish(Ok(()))
-            })
-        },
-    )
+    let result = collect(&p, &std::sync::atomic::AtomicU64::new(0), |id, q, _, _| {
+        Ok(if id == "a" {
+            decode_query(q, b"not-json", now().unwrap())
+        } else {
+            Rows::new(q, now().unwrap()).finish(Ok(()))
+        })
+    })
     .unwrap();
     assert_eq!(result.queries["a"].status, Status::Invalid);
     assert!(result.queries["b"].complete_for(&p.spec().queries["b"], now().unwrap()));
-    assert!(collect(
-        &p,
-        now().unwrap() + 30,
-        (now().unwrap() as u64 + 30) * 1000,
-        &std::sync::atomic::AtomicU64::new(0),
-        |_, _, _, _| Err(Error::Unavailable)
-    )
-    .is_err());
+    assert!(
+        collect(&p, &std::sync::atomic::AtomicU64::new(0), |_, _, _, _| Err(
+            Error::Unavailable
+        ))
+        .is_err()
+    );
 }
 #[test]
 fn adapter_inventory_joins_addresses_without_rewriting_scoped_ipv6() {
@@ -339,30 +291,24 @@ fn cumulative_native_budget_keeps_prior_success_and_bounds_the_next_query() {
     let p = w::NativeCollectionPlan::new(spec).unwrap();
     let observed = AtomicU64::new(0);
     let mut allowances = Vec::new();
-    let result = collect(
-        &p,
-        now().unwrap() + 30,
-        (now().unwrap() as u64 + 30) * 1000,
-        &observed,
-        |id, q, _, allowance| {
-            allowances.push(allowance);
-            let read = allowance.min(1200);
-            observed.fetch_add(read as u64, Ordering::Relaxed);
-            if read < 1200 {
-                return Ok(failure(q, Status::Truncated, now().unwrap()));
-            }
-            let mut rows = Rows::new(q, now().unwrap());
-            rows.push(
-                [
-                    ("Id".into(), json!(format!("{id}{}", "x".repeat(999)))),
-                    ("Count".into(), json!("1")),
-                ]
-                .into(),
-            )
-            .unwrap();
-            Ok(rows.finish(Ok(())))
-        },
-    )
+    let result = collect(&p, &observed, |id, q, _, allowance| {
+        allowances.push(allowance);
+        let read = allowance.min(1200);
+        observed.fetch_add(read as u64, Ordering::Relaxed);
+        if read < 1200 {
+            return Ok(failure(q, Status::Truncated, now().unwrap()));
+        }
+        let mut rows = Rows::new(q, now().unwrap());
+        rows.push(
+            [
+                ("Id".into(), json!(format!("{id}{}", "x".repeat(999)))),
+                ("Count".into(), json!("1")),
+            ]
+            .into(),
+        )
+        .unwrap();
+        Ok(rows.finish(Ok(())))
+    })
     .unwrap();
     assert_eq!(allowances.len(), 2);
     assert!(allowances[0] >= 1200);
@@ -383,17 +329,11 @@ fn native_budget_boundary_retains_failure_evidence() {
     let p = w::NativeCollectionPlan::new(spec).unwrap();
     let observed = AtomicU64::new(0);
     let mut calls = 0;
-    let result = collect(
-        &p,
-        now().unwrap() + 30,
-        (now().unwrap() as u64 + 30) * 1000,
-        &observed,
-        |_, q, _, allowance| {
-            calls += 1;
-            observed.fetch_add(allowance as u64, Ordering::Relaxed);
-            Ok(failure(q, Status::Truncated, now().unwrap()))
-        },
-    )
+    let result = collect(&p, &observed, |_, q, _, allowance| {
+        calls += 1;
+        observed.fetch_add(allowance as u64, Ordering::Relaxed);
+        Ok(failure(q, Status::Truncated, now().unwrap()))
+    })
     .unwrap();
     assert_eq!(calls, 2);
     assert!(result
@@ -418,13 +358,9 @@ fn no_raw_allowance_emits_truncated_without_starting_a_provider() {
         - diagnostic_limit(&p)
         - serde_json::to_vec(&reserve).unwrap().len();
     let observed = std::sync::atomic::AtomicU64::new(raw as u64);
-    let result = collect(
-        &p,
-        time + 30,
-        (time as u64 + 30) * 1000,
-        &observed,
-        |_, _, _, _| panic!("zero raw allowance must not dispatch"),
-    )
+    let result = collect(&p, &observed, |_, _, _, _| {
+        panic!("zero raw allowance must not dispatch")
+    })
     .unwrap();
     assert_eq!(result.queries["a"].status, Status::Truncated);
 }

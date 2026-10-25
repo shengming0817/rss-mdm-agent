@@ -48,9 +48,6 @@ pub(super) fn execute(input: &Input, native: &mut impl Native) -> Result<w::Acce
     let _lock = state::lock(&input.root)?;
     let task = &input.task;
     task.validate()?;
-    if native.clock()?.utc >= task.deadline {
-        return Err(Error::Expired);
-    }
     if let Some(result) = stored_result(&input.root, task)? {
         if complete(task, &result.effect) || matches!(result.effect, Effect::Failed { .. }) {
             return Ok(result);
@@ -140,9 +137,6 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
                 }
                 None => {
                     let password = native.password()?;
-                    if native.clock()?.utc >= task.deadline {
-                        return Err(Error::Expired);
-                    }
                     state::write(
                         &input.root,
                         &marker,
@@ -190,9 +184,6 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
     let facts = match task.windows.as_ref().ok_or(Error::Protocol)? {
         Plan::Whfb { .. } => return Err(Error::Protocol),
         Plan::Preserve { facts } => {
-            if native.clock()?.utc >= task.deadline {
-                return Err(Error::Expired);
-            }
             store
                 .configure(
                     &authority(task, &sid, native)?,
@@ -255,18 +246,12 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
                     ack.receipts[0].validate()?;
                     break ack.receipts[0].clone();
                 }
-                if native.clock()?.utc >= task.deadline {
-                    return Err(Error::Expired);
-                }
                 std::thread::sleep(std::time::Duration::from_millis(200));
             };
             let facts = w::AccessRssFacts {
                 factor_generation: task.factor_generation,
                 recovery: receipt,
             };
-            if native.clock()?.utc >= task.deadline {
-                return Err(Error::Expired);
-            }
             store
                 .activate(
                     authority(task, &sid, native)?,
@@ -281,9 +266,6 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
             facts
         }
     };
-    if native.clock()?.utc >= task.deadline {
-        return Ok(Effect::Unknown);
-    }
     if let Some(role) = configuration.role.or(if created {
         Some(w::AccessRole::Standard)
     } else {

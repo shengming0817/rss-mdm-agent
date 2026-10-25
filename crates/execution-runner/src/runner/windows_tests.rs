@@ -378,12 +378,6 @@ fn windows_capture_is_durable_and_reopened_attempt_does_not_launch() {
         4096,
         15000,
     );
-    replan(&mut f, |s| {
-        s.validity = ValidityWindow {
-            not_before_unix_ms: 999,
-            expires_at_unix_ms: 60000,
-        }
-    });
     let native = std::mem::replace(
         &mut f.runner,
         NativeRunner::new(Id::new("test-runner").unwrap(), BTreeMap::new(), 8).unwrap(),

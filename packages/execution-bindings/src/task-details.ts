@@ -1184,7 +1184,7 @@ export interface OsAccountRef3 {
  */
 export interface ValidityWindow {
   /**
-   * Exclusive validity deadline as UTC Unix milliseconds, strictly after the start.
+   * Exclusive deadline for admitting and first dispatching an attempt.
    */
   expiresAtUnixMs: number;
   /**

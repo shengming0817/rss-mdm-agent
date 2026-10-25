@@ -187,10 +187,14 @@ fn validity_and_cancel_stop_causes_are_distinct_and_verifier_errors_survive() {
         s.directive(900).unwrap(),
         Directive::BudgetExhausted(LimitReason::NotYetValid)
     );
+    assert_eq!(
+        prepared().directive(10000).unwrap(),
+        Directive::BudgetExhausted(LimitReason::Expired)
+    );
     let s = started();
     assert_eq!(
         s.directive(10000).unwrap(),
-        Directive::StopRunner(StopReason::Limit(LimitReason::Expired))
+        Directive::StopRunner(StopReason::Limit(LimitReason::Timeout))
     );
     let s = apply(s, "cancel", Command::Cancel, 1200);
     assert_eq!(
@@ -1344,8 +1348,43 @@ fn observation_guards_and_roundtrip_preserve_verification_order() {
 }
 
 #[test]
-fn dispatch_allowance_never_replenishes_elapsed_time_or_output() {
-    let state = started();
+fn dispatch_allowance_crosses_admission_deadline_without_replenishing_budget() {
+    let mut spec = plan().spec().clone();
+    spec.validity.expires_at_unix_ms = 1150;
+    let plan = FrozenExecution::freeze(
+        spec,
+        &ExecutionLimits {
+            max_input_bytes: 65536,
+            max_depth: 32,
+            max_nodes: 4096,
+            max_string_bytes: 4096,
+            max_collection_items: 128,
+            max_timeout_ms: 60000,
+            max_output_bytes: 65536,
+            max_stdin_bytes: 65536,
+            max_attempts: 3,
+        },
+    )
+    .unwrap();
+    let state = Execution::open(
+        plan.clone(),
+        1000,
+        Limits {
+            max_snapshot_bytes: 16384,
+        },
+    )
+    .unwrap();
+    let state = apply(state, "prepare", Command::Prepare, 1000);
+    let state = apply(
+        state,
+        "begin",
+        Command::BeginAttempt {
+            attempt_id: aid("a1"),
+            runner: id("test-runner"),
+            mode: ExecutionMode::Test,
+        },
+        1100,
+    );
     let before = state.allowance(1100).unwrap();
     let event = CommandEvent {
         id: EventId::new("output-allowance").unwrap(),
@@ -1367,6 +1406,35 @@ fn dispatch_allowance_never_replenishes_elapsed_time_or_output() {
     assert_eq!(
         remaining.remaining_output_bytes,
         before.remaining_output_bytes - 123
+    );
+    assert_eq!(remaining.deadline_unix_ms, 2100);
+    assert_eq!(remaining.remaining_timeout_ms, 900);
+    let restored = Execution::decode(
+        plan,
+        &serde_json::to_vec(after.snapshot()).unwrap(),
+        Limits {
+            max_snapshot_bytes: 16384,
+        },
+    )
+    .unwrap();
+    let recovered = apply(restored, "recover", Command::Recover, 1300);
+    assert_eq!(recovered.directive(1300).unwrap(), Directive::Reconcile);
+    assert_eq!(recovered.allowance(1300).unwrap().remaining_timeout_ms, 800);
+    assert_eq!(
+        recovered.directive(2100).unwrap(),
+        Directive::StopRunner(StopReason::Limit(LimitReason::Timeout))
+    );
+    let ended = observe(
+        recovered,
+        "never-dispatched",
+        2200,
+        Observation::NeverDispatched {
+            total_output_bytes: 123,
+        },
+    );
+    assert_eq!(
+        ended.directive(2200).unwrap(),
+        Directive::BudgetExhausted(LimitReason::Expired)
     );
 }
 

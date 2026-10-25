@@ -285,9 +285,11 @@ impl AppHost for TestHost {
     ) -> Result<execution_app::AdmissionGate, execution_app::JournalError> {
         let mut s = self.state.lock().unwrap();
         s.admissions += 1;
+        if !s.allow {
+            return Err(execution_app::JournalError::Denied);
+        }
         Ok(execution_app::AdmissionGate {
-            execution_gate: if !s.allow
-                || s.actor != plan.spec().request.actor
+            execution_gate: if s.actor != plan.spec().request.actor
                 || plan.digest() != self.template.digest()
             {
                 ExecutionGate::Blocked

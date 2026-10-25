@@ -26,9 +26,6 @@ pub(super) fn apply(
     let record = store
         .begin_hello_policy(&record, before)
         .map_err(|_| Error::Storage)?;
-    if native.clock()?.utc >= task.deadline {
-        return Ok(Effect::Unknown);
-    }
     let (facts, owned) = match native.hello(&record, true) {
         Ok(facts) => facts,
         // The intent is durable: a failed call may already have changed native state.

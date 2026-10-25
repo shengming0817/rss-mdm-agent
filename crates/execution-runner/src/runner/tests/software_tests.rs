@@ -441,3 +441,151 @@ fn main() {
         );
     }
 }
+
+#[test]
+fn native_before_checkpoint_does_not_consume_first_dispatch_deadline() {
+    let f = fixture(
+        "printf forbidden",
+        vec![LaunchArg::ArtifactPath {}],
+        4096,
+        10000,
+    );
+    let mut input = f.plan.spec().clone();
+    let install = SoftwareInvocation {
+        launch: input.launch.clone(),
+        run_as: input.run_as.clone(),
+        session_requirement: input.session_requirement.clone(),
+        timeout_ms: 5000,
+        output_bytes: 4096,
+        exit_codes: SoftwareExitCodes {
+            success: [0].into(),
+            reboot: Default::default(),
+        },
+    };
+    input.request.parameters.clear();
+    input.request.initiator = Initiator::Policy {
+        policy: input.policy.clone(),
+    };
+    input.request.operation.action = Id::new("software.install").unwrap();
+    input.launch.interpreter.profile.id = Id::new("native-software-sequence").unwrap();
+    input.validity.expires_at_unix_ms = now().unwrap() + 3000;
+    input.execution = ExecutionSpec::SoftwareProgram {
+        program: Box::new(SoftwareProgram {
+            definition_digest: Digest::new("ab".repeat(32)).unwrap(),
+            intent: SoftwareOperation::Install,
+            steps: vec![SoftwareProgramStep {
+                format: SoftwareFormat::Pkg {},
+                package: PackageValue::new("fixture").unwrap(),
+                version: PackageValue::new("1").unwrap(),
+                architecture: PackageValue::new("aarch64").unwrap(),
+                payload: install.launch.artifact.clone(),
+                materials: vec![],
+                signatures: vec![],
+                upgrade: SoftwareUpgrade::Deny {},
+                install,
+                auxiliary: Default::default(),
+                uninstall: None,
+                detection: SoftwareDetector::PkgReceipt {
+                    receipt: "com.rss-mdm-agent.nonexistent-deadline-fixture".into(),
+                    version: PackageValue::new("1").unwrap(),
+                },
+                allow_downgrade: false,
+                allow_reboot: false,
+            }],
+        }),
+    };
+    let plan =
+        FrozenExecution::freeze(input, &execution_sqlite::test_store_limits().input).unwrap();
+    let source = || Artifacts {
+        program: vec![],
+        delegate: None,
+        interpreter: "/bin/sh".into(),
+        content: f.root.join("source"),
+        work_root: f.root.clone(),
+        controlled_input: None,
+        fixture_owned: true,
+    };
+    let mut materials = source();
+    materials.program.push(crate::SoftwareStepArtifacts {
+        mutations: [(SoftwarePhase::Mutation, Box::new(source()))].into(),
+        detection: None,
+        files: vec![],
+    });
+    let runner = NativeRunner::new(
+        Id::new("mechanism-runner").unwrap(),
+        [(plan.digest().as_str().into(), materials)].into(),
+        8,
+    )
+    .unwrap();
+    let mut host = app_support::TestHost::new();
+    host.template = plan.clone();
+    let carrier = TestCarrier(
+        Arc::new(runner),
+        Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+    );
+    let caller = execution_app::RequestContext {
+        actor: plan.spec().request.actor.clone(),
+    };
+    let request = &plan.spec().request.request_id;
+    let mut app = create_app(
+        &f.root.join("deadline.sqlite"),
+        host,
+        carrier.clone(),
+        execution_app::AppConfig::test_defaults(1),
+    )
+    .unwrap();
+    let attempt = app
+        .request_execution(&caller, &plan)
+        .unwrap()
+        .attempt_id
+        .unwrap();
+    let until = Instant::now() + Duration::from_secs(8);
+    loop {
+        let pending = carrier.0.software_progress(&plan, &attempt).unwrap();
+        if pending.as_ref().is_some_and(|p| {
+            matches!(
+                p.checkpoints.last(),
+                Some(SoftwareCheckpoint::End {
+                    phase: SoftwarePhase::Before,
+                    process: None,
+                    ..
+                })
+            )
+        }) {
+            break;
+        }
+        if pending.is_some() {
+            app.reconcile(request).unwrap();
+        }
+        assert!(now().unwrap() < plan.spec().validity.expires_at_unix_ms);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // Keep the real End checkpoint unacknowledged until the original first-start window closes.
+    while now().unwrap() < plan.spec().validity.expires_at_unix_ms {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    loop {
+        let status = app.reconcile(request).unwrap();
+        if let Some(facts) = status.process.filter(|p| p.finished) {
+            assert_eq!(facts.scope, ProcessScope::NotStarted {});
+            assert!(facts.stdout.is_empty());
+            break;
+        }
+        assert!(Instant::now() < until);
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let delivery = app
+        .service_delivery(request, &Id::new("deadline-delivery").unwrap(), 64)
+        .unwrap();
+    let progress = delivery
+        .iter()
+        .find_map(|e| e.software_progress.as_ref())
+        .unwrap();
+    assert!(progress.checkpoints.iter().all(|p| !matches!(
+        p,
+        SoftwareCheckpoint::End {
+            process: Some(_),
+            ..
+        }
+    )));
+}

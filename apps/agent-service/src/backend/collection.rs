@@ -141,14 +141,9 @@ pub(crate) fn compile_read(
         )
         .map_err(|_| Error::Clock)?
     };
-    let finish_by_unix_ms = u64::try_from(read.deadline)
-        .map_err(|_| Error::Clock)?
-        .checked_mul(1000)
-        .ok_or(Error::Clock)?;
     let image = plan::worker_image(config)?;
     let input = crate::collection_worker::Input {
         read: read.clone(),
-        finish_by_unix_ms,
         image_sha256: image.artifact.sha256.clone(),
         run_as: run_as.clone(),
         session: session.clone(),
@@ -283,13 +278,8 @@ pub(crate) fn verify_input(
     {
         return Err(Error::Untrusted);
     }
-    let finish_by_unix_ms = u64::try_from(read.deadline)
-        .map_err(|_| Error::Clock)?
-        .checked_mul(1000)
-        .ok_or(Error::Clock)?;
     let input = crate::collection_worker::Input {
         read,
-        finish_by_unix_ms,
         image_sha256: plan.spec().launch.interpreter.artifact.sha256.clone(),
         run_as: plan.spec().run_as.clone(),
         session: plan.spec().session_requirement.clone(),

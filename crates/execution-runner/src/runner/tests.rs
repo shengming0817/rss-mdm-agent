@@ -239,6 +239,28 @@ fn output_and_time_are_bounded_and_restart_never_synthesizes_history() {
     assert_eq!(finish(&f, &id).end, ProcessEnd::TimedOut);
 }
 #[test]
+fn expired_first_dispatch_window_never_starts_a_process() {
+    let mut f = fixture(
+        "printf forbidden",
+        vec![LaunchArg::ArtifactPath {}],
+        128,
+        1000,
+    );
+    replan(&mut f, |s| {
+        let time = now().unwrap();
+        s.validity = ValidityWindow {
+            not_before_unix_ms: time - 2000,
+            expires_at_unix_ms: time - 1000,
+        };
+    });
+    let id = start(&f, 128, 1000);
+    let facts = finish(&f, &id);
+    assert_eq!(facts.end, ProcessEnd::TimedOut);
+    assert_eq!(facts.scope, ProcessScope::NotStarted {});
+    assert!(facts.stdout.is_empty());
+}
+
+#[test]
 fn cancel_and_materialized_content_mismatch_fail_closed() {
     let f = fixture(
         "while :; do :; done\n",
@@ -542,12 +564,6 @@ fn macos_capture_is_durable_and_reopened_attempt_does_not_launch() {
         4096,
         15000,
     );
-    replan(&mut f, |s| {
-        s.validity = ValidityWindow {
-            not_before_unix_ms: 999,
-            expires_at_unix_ms: 60000,
-        }
-    });
     let native = std::mem::replace(
         &mut f.runner,
         NativeRunner::new(Id::new("mechanism-runner").unwrap(), BTreeMap::new(), 8).unwrap(),

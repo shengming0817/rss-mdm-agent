@@ -110,7 +110,6 @@ pub(super) fn input(q: w::NativeQuery) -> Input {
     };
     Input {
         read: task.try_into().unwrap(),
-        finish_by_unix_ms: (time as u64 + 20) * 1000,
         image_sha256: Digest::new("00".repeat(32)).unwrap(),
         run_as: RunAs::System {
             platform: execution_contract::Platform::Macos,
@@ -202,12 +201,10 @@ fn actual_host_memory_os_cpu_and_network_use_native_providers() {
     }
 }
 #[test]
-fn missing_tool_timeout_and_empty_inventory_are_not_interchangeable() {
+fn missing_tool_and_empty_inventory_are_not_interchangeable() {
     let q = query(w::NativeQueryDefinition::MacosPkgReceipts {});
-    let mut input = input(q.clone());
+    let input = input(q.clone());
     assert_eq!(execute(&input, &q).unwrap().status, Status::Unsupported);
-    input.finish_by_unix_ms = 1;
-    assert_eq!(execute(&input, &q).unwrap().status, Status::Timeout);
     let empty = Rows::new(&q, now().unwrap()).finish(Ok(()));
     assert!(empty.complete_for(&q, now().unwrap()));
 }

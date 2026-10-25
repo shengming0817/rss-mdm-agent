@@ -242,9 +242,6 @@ fn facts(account: &NativeAccount) -> w::AccessMacFacts {
 pub(super) fn execute(input: &Input) -> Result<w::AccessResult, Error> {
     let _lock = state::lock(&input.root)?;
     let task = &input.task;
-    if task.deadline <= (crate::wall()? / 1000) as i64 {
-        return Err(Error::Expired);
-    }
     if let Some(result) = stored_result(&input.root, task)? {
         return Ok(result);
     }

@@ -213,7 +213,6 @@ async fn capture_recovery(case: u8) {
     );
     let bytes = serde_json::to_vec(&crate::collection_worker::Input {
         read,
-        finish_by_unix_ms: task.deadline as u64 * 1000,
         image_sha256: input.launch.interpreter.artifact.sha256.clone(),
         run_as: input.run_as.clone(),
         session: input.session_requirement.clone(),

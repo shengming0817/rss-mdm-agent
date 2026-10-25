@@ -2016,6 +2016,55 @@ fn exact_action_confirmation_is_durable_and_does_not_change_origin() {
 }
 
 #[test]
+fn ai_product_denial_survives_reopen_without_reevaluation_or_dispatch() {
+    let db = Database::new();
+    let mut host = TestHost::new();
+    let mut spec = execution_contract::decode_execution(
+        include_bytes!("../../execution-contract/tests/fixtures/plan.json"),
+        &test_execution_limits(),
+    )
+    .unwrap();
+    let Initiator::Human { os_session } = spec.request.initiator else {
+        panic!("fixture")
+    };
+    spec.request.initiator = Initiator::Ai {
+        os_session,
+        provider: id("provider"),
+        config: reference("config"),
+        conversation: id("conversation"),
+        tool_call: id("call"),
+    };
+    let p = FrozenExecution::freeze(spec, &test_execution_limits()).unwrap();
+    host.template = p.clone();
+    host.state.lock().unwrap().allow = false;
+    let runner = DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
+    let mut app = open(&db, host.clone(), runner.clone(), false);
+    assert_eq!(
+        app.request_execution(&caller(), &p).unwrap().phase,
+        TaskPhase::AdmissionDenied
+    );
+    let admissions = host.state.lock().unwrap().admissions;
+    assert_eq!(admissions, 2);
+    drop(app);
+    host.state.lock().unwrap().allow = true;
+    let mut app = open(&db, host.clone(), runner.clone(), true);
+    assert_eq!(
+        app.request_execution(&caller(), &p).unwrap().phase,
+        TaskPhase::AdmissionDenied
+    );
+    assert_eq!(
+        app.resume_initial(&p.spec().request.request_id)
+            .unwrap()
+            .phase,
+        TaskPhase::AdmissionDenied
+    );
+    assert_eq!(host.state.lock().unwrap().admissions, admissions);
+    assert_eq!(runner.dispatch_count(), 0);
+    assert_eq!(db.count("attempts"), 0);
+    assert_eq!(db.count("interactions"), 0);
+}
+
+#[test]
 fn ai_risk_and_confirmation_failure_matrix_never_dispatches_without_a_current_gate() {
     for risk in [
         None,
