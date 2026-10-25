@@ -82,6 +82,8 @@ fn run(_data_root: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::error:
             #[cfg(not(all(feature = "native-e2e", target_os = "macos")))]
             let runtime =
                 tauri::async_runtime::block_on(DesktopRuntime::start(&root, &artifact, source));
+            let default = rss_mdm_desktop::composition::account::bundled_organization().ok().flatten();
+            if let Some(message) = startup::organization_message(default.as_ref())? { eprintln!("{message}"); }
             if let Ok(runtime) = runtime {
             eprintln!("RSS_AI_HOST_STATUS {}", serde_json::to_string(&runtime.status())?);
             app.manage(runtime);

@@ -1,5 +1,17 @@
 use std::error::Error;
 
+/// Public build metadata consumed by the installed-bundle acceptance runner.
+#[cfg(any(not(feature = "dev-fixture"), test))]
+pub(super) fn organization_message(
+    organization: Option<&ai_session_contract::AccountOrganization>,
+) -> Result<Option<String>, serde_json::Error> {
+    organization
+        .map(|value| {
+            serde_json::to_string(value).map(|json| format!("RSS_DEFAULT_ORGANIZATION {json}"))
+        })
+        .transpose()
+}
+
 pub(super) fn diagnostic(error: &(dyn Error + 'static)) -> String {
     let mut current = Some(error);
     while let Some(cause) = current {
@@ -67,6 +79,23 @@ mod tests {
         }
     }
 
+    #[test]
+    fn organization_startup_event_preserves_bundle_consumer_fields_but_is_optional() {
+        let organization = ai_session_contract::AccountOrganization {
+            id: "bundle".into(),
+            origin: "https://mdm.example.com".into(),
+            tenant_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa".into(),
+            label: "测试组织".into(),
+        };
+        let message = organization_message(Some(&organization)).unwrap().unwrap();
+        let payload: serde_json::Value =
+            serde_json::from_str(message.strip_prefix("RSS_DEFAULT_ORGANIZATION ").unwrap())
+                .unwrap();
+        assert_eq!(payload["origin"], organization.origin);
+        assert_eq!(payload["tenantId"], organization.tenant_id);
+        assert_eq!(payload["label"], organization.label);
+        assert!(organization_message(None).unwrap().is_none());
+    }
     #[test]
     fn diagnostic_never_exports_raw_error_or_cause() {
         let message = diagnostic(&StartupError(std::io::Error::other(

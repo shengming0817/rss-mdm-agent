@@ -4,10 +4,10 @@ use passkey_vault::{Error, Status, UnlockMethod, Vault};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Mutex,
     },
 };
 use tauri::{Manager, Runtime, WebviewWindow};
@@ -35,26 +35,41 @@ pub enum Operation {
         confirmation: String,
     },
 }
+pub(super) type SharedVault = Arc<Mutex<Option<Arc<Vault>>>>;
 pub struct PersonalVault {
-    pub vault: std::result::Result<Arc<Vault>, Error>,
+    root: PathBuf,
+    vault: SharedVault,
     busy: Arc<AtomicBool>,
     #[cfg(target_os = "macos")]
     observing: AtomicBool,
 }
 impl PersonalVault {
     pub fn new(root: &Path) -> Self {
-        let protection = Arc::new(passkey_vault::platform::OsProtection::new(native::verify));
-        Self {
-            vault: Vault::open(root, protection).map(Arc::new),
+        let state = Self {
+            root: root.into(),
+            vault: Arc::new(Mutex::new(None)),
             busy: Arc::new(AtomicBool::new(false)),
             #[cfg(target_os = "macos")]
             observing: AtomicBool::new(false),
+        };
+        let _ = state.open();
+        state
+    }
+    // ref: Tokio sync/once_cell.rs get_or_try_init@tokio-1.48.0: only cache success.
+    // Disk initialization is synchronous; a short mutex serializes attempts without
+    // introducing an async initialization owner or retaining a transient error.
+    fn open(&self) -> std::result::Result<Arc<Vault>, Error> {
+        let mut slot = self.vault.lock().map_err(|_| Error::Busy)?;
+        if let Some(vault) = &*slot {
+            return Ok(vault.clone());
         }
+        let protection = Arc::new(passkey_vault::platform::OsProtection::new(native::verify));
+        let vault = Arc::new(Vault::open(&self.root, protection)?);
+        *slot = Some(vault.clone());
+        Ok(vault)
     }
     pub fn lock(&self) {
-        if let Ok(vault) = &self.vault {
-            vault.lock();
-        }
+        lock_slot(&self.vault);
         native::cancel();
     }
     pub fn bind<R: Runtime>(&self, window: &WebviewWindow<R>) {
@@ -62,8 +77,14 @@ impl PersonalVault {
         if self.observing.swap(true, Ordering::AcqRel) {
             return;
         }
-        if let Ok(vault) = &self.vault {
-            native::observe(window, vault.clone());
+        // Bind the stable slot, even when the first disk-open attempt failed.
+        native::observe(window, self.vault.clone());
+    }
+}
+pub(super) fn lock_slot(slot: &Mutex<Option<Arc<Vault>>>) {
+    if let Ok(slot) = slot.lock() {
+        if let Some(vault) = &*slot {
+            vault.lock();
         }
     }
 }
@@ -87,7 +108,7 @@ pub async fn execute<R: Runtime>(
         return Err(Error::Owner);
     }
     let state = window.state::<PersonalVault>();
-    let vault = state.vault.as_ref().map_err(|e| *e)?.clone();
+    let vault = state.open()?;
     if matches!(input, Operation::Lock {}) {
         state.lock();
         return vault.status();
@@ -148,6 +169,36 @@ pub async fn execute<R: Runtime>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn transient_open_failure_retries_in_the_same_owner_and_keeps_the_event_slot() {
+        let root = std::env::temp_dir()
+            .canonicalize()
+            .unwrap()
+            .join(format!("rss-vault-open-{}", uuid::Uuid::new_v4()));
+        platform_private_storage::directory(&root).unwrap();
+        let held = platform_private_storage::create_new(&root.join("vault.lock")).unwrap();
+        held.try_lock().unwrap();
+        let state = PersonalVault::new(&root);
+        let observed_slot = state.vault.clone();
+        assert!(state.vault.lock().unwrap().is_none());
+        assert_eq!(state.open().err(), Some(Error::Busy));
+        drop(held);
+        let opened = state.open().unwrap();
+        assert!(Arc::ptr_eq(&opened, &state.open().unwrap()));
+        assert!(Arc::ptr_eq(
+            &opened,
+            observed_slot.lock().unwrap().as_ref().unwrap()
+        ));
+        // A pre-existing observer sees the later successful initialization.
+        let token = opened.begin_interaction();
+        lock_slot(&observed_slot);
+        assert_eq!(opened.create(&token), Err(Error::Cancelled));
+        assert!(!opened.status().unwrap().initialized);
+        drop(state);
+        drop(opened);
+        drop(observed_slot);
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn personal_commands_work_without_an_enterprise_runtime() {
         use tauri::test::mock_builder;

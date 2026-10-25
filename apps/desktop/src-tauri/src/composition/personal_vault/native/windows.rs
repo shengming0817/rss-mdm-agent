@@ -244,7 +244,7 @@ unsafe extern "system" fn session(
     {
         // SAFETY: retained Arc pointer belongs to this subclass until WM_NCDESTROY.
         unsafe {
-            (&*(data as *const Vault)).lock();
+            lock_slot(&*(data as *const std::sync::Mutex<Option<Arc<passkey_vault::Vault>>>));
         }
         cancel();
     }
@@ -252,12 +252,14 @@ unsafe extern "system" fn session(
         unsafe {
             WTSUnRegisterSessionNotification(hwnd);
             RemoveWindowSubclass(hwnd, Some(session), id);
-            drop(Arc::from_raw(data as *const Vault));
+            drop(Arc::from_raw(
+                data as *const std::sync::Mutex<Option<Arc<passkey_vault::Vault>>>,
+            ));
         }
     }
     unsafe { DefSubclassProc(hwnd, msg, w, l) }
 }
-pub fn observe<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>, vault: Arc<Vault>) {
+pub fn observe<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>, vault: SharedVault) {
     if let Ok(handle) = window.hwnd() {
         let hwnd = handle.0;
         MAIN.store(hwnd as isize, Ordering::Release);
