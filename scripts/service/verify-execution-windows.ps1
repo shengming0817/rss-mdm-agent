@@ -1,7 +1,7 @@
 # Target Windows 11 amd64/arm64. Reuse the installation owner; never run from a macOS developer host.
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('InstallSystem','VerifyUser','RefreshSystem','RemoveSystem','DeviceAccessHealth','PasskeyHealth')][string]$Phase,
+    [Parameter(Mandatory)][ValidateSet('InstallSystem','VerifyUser','RefreshSystem','RemoveSystem','DeviceAccessHealth','PasskeyHealth','PasskeyRepairCycle')][string]$Phase,
     [Parameter(Mandatory)][string]$Candidate,
     [string]$Config,
     [Parameter(Mandatory)][string]$Output,
@@ -13,14 +13,14 @@ Set-StrictMode -Version Latest
 if (![OperatingSystem]::IsWindows() -or [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -notin @('X64','Arm64')) { throw 'Windows 11 amd64/arm64 target required' }
 $Identity=[Security.Principal.WindowsIdentity]::GetCurrent()
 $Elevated=([Security.Principal.WindowsPrincipal]$Identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (($Phase -in @('VerifyUser','PasskeyHealth')) -eq $Elevated) { throw 'VerifyUser requires the actual non-elevated login; system phases require an administrator' }
+if (($Phase -in @('VerifyUser','PasskeyHealth','PasskeyRepairCycle')) -eq $Elevated) { throw 'VerifyUser requires the actual non-elevated login; system phases require an administrator' }
 $Root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $Owner=Join-Path $PSScriptRoot 'execution-windows.ps1'
 $Candidate=[IO.Path]::GetFullPath($Candidate)
-if ($Phase -ne 'PasskeyHealth') { if (!$Config) { throw 'Service configuration required' }; $Config=[IO.Path]::GetFullPath($Config) }
+if ($Phase -notin @('PasskeyHealth','PasskeyRepairCycle')) { if (!$Config) { throw 'Service configuration required' }; $Config=[IO.Path]::GetFullPath($Config) }
 $Frozen=(& node (Join-Path $Root 'scripts/native-candidate.mjs') verify $Candidate | ConvertFrom-Json)
 if ($LASTEXITCODE -ne 0) { throw 'Fixed candidate verification failed' }
-$Binary=if ($Phase -eq 'PasskeyHealth') { $Frozen.binaries.windowsPasskey.path } else { $Frozen.binaries.service.path }
+$Binary=if ($Phase -in @('PasskeyHealth','PasskeyRepairCycle')) { $Frozen.binaries.windowsPasskey.path } else { $Frozen.binaries.service.path }
 $NodeVersion=(& node --version)
 if ($LASTEXITCODE -ne 0) { throw 'Acceptance Node version unavailable' }
 if ([IO.File]::Exists($Output) -or [IO.Directory]::Exists($Output)) { throw 'Receipt directory must be new' }
@@ -43,6 +43,59 @@ try {
             if ($LASTEXITCODE -ne 0 -or !$Receipt.scenarios.provider.registered) { throw 'Provider registration/identity unavailable' }
             $Receipt.scenarios.systemAccepted=$false
             $Receipt.unexecuted=@('real browser create/assert and RP acceptance','Hello cancellation and lock','cross-user requests','upgrade interruption and repair','uninstall/reinstall and deleted-credential rollback','Google/GitHub acceptance')
+        }
+        PasskeyRepairCycle {
+            # Explicit destructive journey for a disposable test user/candidate; never a CI default.
+            if (!$CurrentBinary) { throw 'Installed Provider path required' }
+            $Installed=[IO.Path]::GetFullPath($CurrentBinary)
+            if ((Get-FileHash -LiteralPath $Installed -Algorithm SHA256).Hash -ine $Frozen.binaries.windowsPasskey.sha256) { throw 'Installed Provider differs from candidate' }
+            $InstallRoot=Split-Path -Parent $Installed
+            $Setup=Join-Path $InstallRoot 'identity.ps1'
+            $Uninstall='HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\RSS.PersonalPasskeys'
+            $VaultRoot=Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'com.rss.mdmagent\personal-passkeys'
+            $Vault=Join-Path $VaultRoot 'vault.json'
+            if (!(Test-Path -LiteralPath $Vault)) { throw 'Initialize a disposable personal Vault before the recovery journey' }
+            $Before=(Get-FileHash -LiteralPath $Vault -Algorithm SHA256).Hash
+            $Receipt.scenarios.vaultBefore=$Before
+            # Read actual system state independently of the provider executable being removed.
+            Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class RssPasskeyRecoveryProbe {
+    [DllImport("webauthn.dll", ExactSpelling=true)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    public static extern int WebAuthNPluginGetAuthenticatorState(ref Guid id, out int state);
+}
+'@
+            function Assert-Removed {
+                if (@(Get-AppxPackage -Name 'RSS.PersonalPasskeys').Count -ne 0) { throw 'Package remained after removal' }
+                $Class=[Guid]'f1fd3a7c-27c1-4f88-bf89-6ac6525c2929'
+                $State=0
+                $Result=[RssPasskeyRecoveryProbe]::WebAuthNPluginGetAuthenticatorState([ref]$Class,[ref]$State)
+                if ($Result -notin @(-2146893807,-2147023728,-2147024894)) { throw "Provider removal not confirmed: $Result" }
+                if ((Get-FileHash -LiteralPath $Vault -Algorithm SHA256).Hash -ne $Before) { throw 'Personal Vault changed during installer recovery' }
+            }
+            function Invoke-Identity([string]$Step) {
+                & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $Setup -Action $Step
+                if ($LASTEXITCODE -ne 0) { throw "Identity $Step failed" }
+            }
+            # Stop after OS removal, intentionally leaving the program/repair payload in place.
+            Invoke-Identity 'remove'
+            Assert-Removed
+            if ((Get-ItemPropertyValue -LiteralPath $Uninstall -Name PlatformRemoved) -ne 1) { throw 'Removal checkpoint missing' }
+            $Receipt.scenarios.interruptedRemoval='package/provider absent; repair payload and Vault retained'
+            Invoke-Identity 'install'
+            if ((Get-ItemPropertyValue -LiteralPath $Uninstall -Name PlatformRemoved) -ne 0) { throw 'Repair retained a completed-removal checkpoint' }
+            $State=(& $Installed inspect | ConvertFrom-Json)
+            if ($LASTEXITCODE -ne 0 -or !$State.registered) { throw 'Repair did not register Provider' }
+            $Receipt.scenarios.inPlaceRepair='Provider registered; checkpoint invalidated'
+            $Process=Start-Process -FilePath (Join-Path $InstallRoot 'uninstall.exe') -ArgumentList '/S' -PassThru -Wait
+            if ($Process.ExitCode -ne 0) { throw 'Second uninstall failed' }
+            Assert-Removed
+            if ((Test-Path -LiteralPath $Installed) -or (Test-Path -LiteralPath $Uninstall)) { throw 'Second uninstall left component files or uninstall registration' }
+            $Receipt.scenarios.secondUninstall='package/provider and component removed; personal Vault unchanged'
+            $Receipt.scenarios.systemAccepted=$false
+            $Receipt.unexecuted=@('real browser/RP acceptance','Hello/cross-user request behavior','concurrent installer processes')
         }
         DeviceAccessHealth {
             if ($Identity.User.Value -ne 'S-1-5-18' -or [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'X64') { throw 'DeviceAccessHealth requires LocalSystem on x64' }
