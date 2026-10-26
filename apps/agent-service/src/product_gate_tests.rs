@@ -1411,7 +1411,7 @@ impl Case {
             serde_json::to_string(&reply).unwrap()
         );
     }
-    async fn recent_call(&mut self, before: Option<String>) -> Reply {
+    pub(crate) async fn recent_call(&mut self, before: Option<String>) -> Reply {
         let (reply, receive) = tokio::sync::oneshot::channel();
         self.service.core.handle(Command {
             fence_epoch: self.service.core.fences.current(&self.scope()).unwrap(),

@@ -618,3 +618,74 @@ async fn active_native_definitions_survive_count_and_capacity_cleanup_until_with
         .iter()
         .any(|reference| data.definition(reference, "501").is_err()));
 }
+
+#[tokio::test]
+async fn native_material_preparation_leaves_the_owner_available_and_cancellation_wins() {
+    let _budget = crate::scenario_budget::enter();
+    fn pin(config: &crate::ExecutionConfig) -> Result<SoftwareMaterial, Error> {
+        std::fs::write(config.work_root.join("pin-entered"), b"")?;
+        let until = Instant::now() + Duration::from_secs(2);
+        while !config.work_root.join("pin-release").exists() {
+            if Instant::now() >= until {
+                return Err(Error::Unavailable);
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        Err(Error::Untrusted)
+    }
+    let mut case = crate::service::product_gate_tests::Case::new(None).await;
+    let signed = fixture::native_performance_configuration(
+        &case._server,
+        &case.service.client.registration().unwrap(),
+    );
+    let configuration = case.service.client.verify_telemetry(signed).unwrap();
+    case.service.core.config.worker_image_fixture = Some(pin);
+    let root = case.service.core.config.work_root.clone();
+    let mut collector = collector::Collector::new().unwrap();
+    let at = timestamp().unwrap();
+    let started = collector.start(configuration.clone(), None, &mut case.service.core, at);
+    // A synchronous hash cannot return until this owner has released the worker.
+    // The timeout is only a deadlock bound; success is established by the handshake.
+    let returned_before_release = started.is_ok();
+    if returned_before_release {
+        let until = Instant::now() + Duration::from_secs(1);
+        while !root.join("pin-entered").exists() {
+            assert!(Instant::now() < until, "preparation worker did not start");
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    }
+    let reply = case.recent_call(None).await;
+    std::fs::write(root.join("pin-release"), b"").unwrap();
+    assert!(
+        matches!(
+            reply,
+            execution_ipc::host::Reply::Task {
+                value: execution_app::tasks::TaskResponse::Page(_)
+            }
+        ),
+        "the original task port must answer during preparation"
+    );
+    assert!(
+        returned_before_release,
+        "material validation blocked the owner"
+    );
+    assert!(
+        collector.active(),
+        "preparation must occupy the sole collection slot"
+    );
+    assert_eq!(
+        collector.configuration().unwrap().payload().policy,
+        configuration.payload().policy
+    );
+    assert_eq!(
+        collector.start(configuration, None, &mut case.service.core, at),
+        Err(Error::Capacity)
+    );
+    collector.cancel().unwrap();
+    collector.shutdown().unwrap();
+    assert!(!collector.active());
+    assert!(
+        collector.take().unwrap().is_none(),
+        "cancelled preparation never launches a process"
+    );
+}

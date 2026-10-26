@@ -179,6 +179,28 @@ impl Telemetry {
         {
             self.collector.cancel()?;
         }
+        let preparing = self.collector.configuration().cloned();
+        if let Err(error) = self.collector.advance(core) {
+            if let Some(configuration) = preparing {
+                let p = configuration.payload();
+                self.spool.gap_for(
+                    p.registration_id,
+                    p.generation,
+                    if error == Error::Capacity {
+                        GapReason::Capacity
+                    } else if error == Error::Denied {
+                        GapReason::Configuration
+                    } else if error == Error::Expired {
+                        GapReason::Lease
+                    } else {
+                        GapReason::Collection
+                    },
+                    1,
+                    at,
+                    at,
+                )?;
+            }
+        }
         if let Some((active, evidence)) = self.collector.take()? {
             self.complete(
                 &active.configuration,
