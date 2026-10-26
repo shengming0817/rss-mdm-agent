@@ -142,6 +142,10 @@ impl FrozenExecutionSummary {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ExecutionTaskDetails {
+    /// First durable opening time from the original lifecycle snapshot.
+    pub recorded_at_unix_ms: u64,
+    /// Original journal snapshot revision.
+    pub revision: u64,
     /// Authoritative lifecycle projection.
     pub status: crate::ExecutionStatus,
     /// Redacted frozen plan bound to that lifecycle.

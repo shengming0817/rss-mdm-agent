@@ -208,6 +208,9 @@ it("keeps preparation actions and revocation visible in the modern task card", a
   const read = vi.spyOn(c, "executionDetails").mockResolvedValue({
     kind: "pending",
     value: {
+      recordedAtUnixMs: 1000,
+      cancellationControl: null,
+      retryOf: null,
       action: { kind: "offered", offer: request },
       revision: 1,
       state: "awaitingConfirmation",
@@ -246,6 +249,9 @@ it("keeps preparation actions and revocation visible in the modern task card", a
     read.mockResolvedValueOnce({
       kind: "pending",
       value: {
+        recordedAtUnixMs: 1000,
+        cancellationControl: null,
+        retryOf: null,
         action: { kind: "offered", offer: request },
         revision: 2,
         state: "failed",

@@ -51,6 +51,13 @@ pub trait JournalPort {
         action: impl FnOnce() -> Result<T, Error>,
     ) -> Result<T, Error>;
 
+    /// Resolve the exact immutable backend task/attempt from the original execution plan.
+    fn remote_request(
+        &self,
+        task: &Id,
+        attempt: &Id,
+        host: &impl JournalHost,
+    ) -> Result<Option<RequestId>, JournalError>;
     /// Find the exact execution holding one resource; validates its stored scope and RunnerFact access.
     /// This service-only lookup never scans execution history or grants execution permission.
     fn resource_owner(
@@ -63,6 +70,16 @@ pub trait JournalPort {
     fn authority(&self) -> &Authority;
     /// Immutable decoder/execution envelope selected when this journal was opened.
     fn input_limits(&self) -> ExecutionLimits;
+    /// Stable bounded preparation discovery without truncating retained history to one recovery batch.
+    fn backend_request_page(
+        &self,
+        authority: &Authority,
+        actor: &ActorId,
+        after: Option<&RequestId>,
+        watermark: u64,
+        limit: usize,
+        host: &impl JournalHost,
+    ) -> Result<Vec<BackendRequest>, JournalError>;
     /// List bounded preparation records without creating another task queue.
     fn backend_requests(
         &self,
@@ -228,15 +245,16 @@ pub trait JournalPort {
         limit: usize,
         host: &impl JournalHost,
     ) -> Result<Vec<execution_contract::RequestId>, JournalError>;
-    /// Bounded newest-per-request owner scan over existing business receipts, from the execution journal.
-    fn recent_requests(
+    /// Original preparation row and execution receipt watermarks, read in one owner transaction.
+    fn task_watermarks(&self) -> Result<(u64, u64), JournalError>;
+    /// Stable first-receipt keyset; later execution updates cannot move tasks across pages.
+    fn task_requests(
         &self,
         before: Option<u64>,
         limit: usize,
         host: &impl JournalHost,
-    ) -> Result<crate::RecentRequestPage, JournalError>;
-    /// Read the execution confirmation under the caller's existing operation access.
-    /// Missing is distinct from corrupt/unavailable storage; this does not grant result access.
+    ) -> Result<RecentRequestPage, JournalError>;
+    /// Current protected confirmation state of the original execution.
     fn execution_confirmation_state(
         &self,
         input: &execution_contract::FrozenExecution,

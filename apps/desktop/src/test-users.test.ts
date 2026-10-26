@@ -398,9 +398,9 @@ it("queries the production execution service without a fixture fallback and repo
   wrapper.getComponent(Workspace).vm.$emit("navigate", "software");
   await flushPromises();
   expect(wrapper.text()).toContain("无法读取执行服务；原任务保留");
-  expect(
-    vi.mocked(invoke).mock.calls.some(([c]) => c === "self_service_snapshot"),
-  ).toBe(true);
+  expect(vi.mocked(invoke).mock.calls.some(([c]) => c === "task_list")).toBe(
+    true,
+  );
   revoked = true;
   await refreshAccount();
   await flushPromises();

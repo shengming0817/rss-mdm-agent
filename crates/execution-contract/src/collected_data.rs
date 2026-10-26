@@ -275,8 +275,6 @@ pub enum DataOperation {
     Submit(QuerySubmit),
     /// Look up the original request.
     Status(QueryRequest),
-    /// Request business cancellation.
-    Cancel(QueryRequest),
 }
 /// Typed result of the shared data boundary.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]

@@ -83,6 +83,7 @@ pub struct Client<S, C> {
     profiles: Vec<wire::ExecutorProfile>,
     environment: rss_mdm_agent_wire::CollectionEnvironment,
     pub(crate) delivery_owner: Uuid,
+    pub(crate) transfers: crate::Transfers,
 }
 impl<S: IdentityProvider, C: Clock> Client<S, C> {
     /// Set current configured executors for future polls; a pending retry retains its exact input.
@@ -99,6 +100,10 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         environment.validate()?;
         self.environment = environment;
         Ok(())
+    }
+    /// Access the original content consumer owner while a network future is in flight.
+    pub fn transfers(&self) -> crate::Transfers {
+        self.transfers.clone()
     }
     /// Current persisted context, independent of frozen pending operations.
     pub fn execution_context(&self) -> Result<wire::SoftwareExecutionContext, Error> {
@@ -190,7 +195,13 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         // Software sources have server trust, never the device signer or its TLS sessions.
         let native_http = crate::tls::client(&store.cfg, None, &secrets)?;
         let http = bootstrap.clone();
+        let transfers = crate::Transfers::open(
+            &store.root,
+            store.cfg.limits.pending_tasks.saturating_mul(64).min(4096),
+            store._lock.clone(),
+        )?;
         let mut client = Self {
+            transfers,
             delivery_owner: Uuid::new_v4(),
             store,
             http,
@@ -861,6 +872,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             ],
         )?;
         tx.commit()?;
+        self.transfers.release(task)?;
         Ok(())
     }
 }

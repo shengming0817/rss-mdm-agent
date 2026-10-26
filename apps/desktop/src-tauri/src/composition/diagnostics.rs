@@ -102,13 +102,17 @@ async fn execution_projection(handle: &super::execution::ExecutionHandle) -> Res
     let mut truncated = false;
     for index in 0..4 {
         let page = handle
-            .snapshot(ui::SnapshotQuery {
-                after: after.clone(),
-                selected: None,
+            .task_list(execution_app::tasks::TaskQuery {
+                cursor: after.clone(),
+                limit: 32,
+                ..Default::default()
             })
             .await?;
-        let count = page.requests.len();
-        for task in page.requests {
+        let count = page.items.len();
+        for item in page.items {
+            let execution_app::tasks::TaskFacts::Execution(task) = item.facts else {
+                continue;
+            };
             if rows.len() == 20 {
                 truncated = true;
                 break;

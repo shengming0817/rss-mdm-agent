@@ -153,7 +153,13 @@ fn run() -> Result<(), Error> {
         return Ok(());
     }
     let request = match args.as_slice() {
-        [arg] if arg == "--query" => Some(Request::Tasks { after: None }),
+        [arg] if arg == "--query" => Some(Request::Task {
+            input: execution_app::tasks::TaskOperation::List(execution_app::tasks::TaskQuery {
+                limit: 32,
+                ..Default::default()
+            }),
+            origin: execution_ipc::host::ClientOrigin::Desktop {},
+        }),
         [arg] if arg == "--service-status" => Some(Request::ServiceStatus {}),
         [] => None,
         _ => return Err(Error::Configuration),

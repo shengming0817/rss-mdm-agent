@@ -80,6 +80,9 @@ fn main() {
         ),
     ] {
         let request = BackendRequest {
+            retry_of: None,
+            recorded_at_unix_ms: 1,
+            cancellation_control: None,
             action: PreparedAction::Offered {
                 offer: offer.clone(),
             },

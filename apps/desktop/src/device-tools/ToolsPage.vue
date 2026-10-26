@@ -14,7 +14,7 @@ import ConnectionCheck from "../device-tools/ConnectionCheck.vue";
 import type { NetworkCheckPort } from "../self-service/native";
 import { directoryKey } from "../self-service/directory";
 import PolicySelfService from "../self-service/PolicySelfService.vue";
-import type { Controller } from "../self-service/controller";
+import type { Controller } from "../task-center/controller";
 import { systemSettingsKey } from "../system-settings/controller";
 import { labels, display } from "../system-settings/presentation";
 import { homeFacts } from "../system-settings/facts";
@@ -424,7 +424,7 @@ emit("navigation", navigation);
           <PolicySelfService
             ref="enterprise"
             :port="execution?.port ?? null"
-            :records="execution?.state.snapshot?.preparations ?? []"
+            :records="execution?.preparations.value ?? []"
             kind="script"
             :filter="query"
             @changed="execution?.refresh()"

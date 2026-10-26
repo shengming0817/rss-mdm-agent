@@ -53,3 +53,9 @@ CREATE TABLE software_progress (
 );
 
 CREATE TABLE backend_requests (scope TEXT PRIMARY KEY, actor TEXT NOT NULL, request_id TEXT NOT NULL UNIQUE, body BLOB NOT NULL);
+
+-- Derived lookup over the sole immutable plan; no second task identity authority.
+CREATE INDEX executions_remote_identity ON executions (
+    json_extract(CAST(plan AS TEXT),'$.request.initiator.task'),
+    json_extract(CAST(plan AS TEXT),'$.request.initiator.attempt')
+);

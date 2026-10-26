@@ -48,6 +48,7 @@ export function createSystemSettings(
   port: SettingsPort | null,
   data: DataAccessPort | null,
   identity: () => string = () => crypto.randomUUID(),
+  tasks: import("../task-center/controller").Controller | null = null,
 ) {
   const state = reactive({
     observations: new Map<SettingsSection, SettingsResponse>(),
@@ -202,7 +203,7 @@ export function createSystemSettings(
     if (
       request &&
       !navigation &&
-      !["status", "cancel", "keepDisplay"].includes(operation.kind)
+      !["status", "keepDisplay"].includes(operation.kind)
     ) {
       const pending = state.pending.get(section);
       if (pending && pending.request !== request) {
@@ -287,9 +288,10 @@ export function createSystemSettings(
   }
   async function cancel(section: SettingsSection) {
     const pending = state.pending.get(section);
-    if (!port || !pending) return;
+    if (!port || !pending || !tasks) return;
     try {
-      const response = await port({ kind: "cancel", request: pending.request });
+      await tasks.cancel(pending.request);
+      const response = await port({ kind: "status", request: pending.request });
       if (active) accept(section, response);
     } catch (error) {
       if (active) state.errors.set(section, message(error));
@@ -318,8 +320,7 @@ export function createSystemSettings(
   }));
   function dispose() {
     if (!active) return;
-    // A disappeared interface cannot keep a preview. The worker owns the timeout and restore.
-    for (const section of state.pending.keys()) void cancel(section);
+    // The original worker owns its preview timeout and restoration after UI disposal.
     active = false;
     epoch++;
     clearInterval(timer);

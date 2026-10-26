@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { currentUser } from "../test-users";
-import { nativePort, nativeDataPort } from "./native";
+import { nativePort, nativeDataPort, nativeTaskPort } from "./native";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(), isTauri: vi.fn() }));
 beforeEach(() => {
@@ -31,10 +31,10 @@ it("does not expose IPC outside Tauri", () => {
   expect(nativePort()).toBeNull();
   expect(invoke).not.toHaveBeenCalled();
 });
-it.each(["snapshot", "execute", "cancel"] as const)(
+it.each(["list", "detail", "control", "controlStatus"] as const)(
   "%s preserves its command, exact envelope, response and rejection",
   async (method) => {
-    const port = nativePort()!;
+    const port = nativeTaskPort()!;
     const input = { instanceId: "adapter-canary" };
     const response = { response: method };
     const error = { code: "input", message: "rejected" };
@@ -42,7 +42,7 @@ it.each(["snapshot", "execute", "cancel"] as const)(
     vi.mocked(invoke).mockResolvedValueOnce(response);
     expect(await call()).toBe(response);
     expect(vi.mocked(invoke).mock.calls[0]).toEqual([
-      `self_service_${method}`,
+      `task_${method === "controlStatus" ? "control_status" : method}`,
       { input, generation: "generation-alice" },
     ]);
     vi.mocked(invoke).mockRejectedValueOnce(error);

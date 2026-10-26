@@ -231,6 +231,10 @@ pub struct Data {
     pub range_ignored: bool,
     pub denied: bool,
     pub content_failure: bool,
+    pub content_gate: Option<Arc<tokio::sync::Semaphore>>,
+    pub management_page: Option<rss_mdm_agent_wire::activities::ManagementActivityPage>,
+    pub management_detail: Option<rss_mdm_agent_wire::activities::ManagementActivityDetail>,
+    pub management_calls: Vec<String>,
     pub started: bool,
     pub received: bool,
     pub content_calls: Vec<Option<String>>,
@@ -736,6 +740,10 @@ impl Server {
             range_ignored: false,
             denied: false,
             content_failure: false,
+            content_gate: None,
+            management_page: None,
+            management_detail: None,
+            management_calls: Vec::new(),
             started: false,
             received: false,
             content_calls: vec![],
@@ -1068,6 +1076,9 @@ async fn handler(
     }
     let mut d = data.lock().unwrap();
     let path = uri.path();
+    if path.contains("/management-activities") {
+        d.management_calls.push(uri.to_string());
+    }
     let peer_leaf = peer.ok().and_then(|v| v.0 .0);
     let authenticated = peer_leaf.is_some();
     if path.starts_with("/native/") {
@@ -1226,6 +1237,24 @@ fn runtime_response(d: &mut Data, path: &str, headers: HeaderMap, value: Value) 
     }
     if path.contains("/runtime/telemetry/") {
         return telemetry::response(d, path, value);
+    }
+    if path.contains("/management-activities") {
+        if path.ends_with("/management-activities")
+            || path.ends_with("/management-activities/changes")
+        {
+            return d
+                .management_page
+                .clone()
+                .map(axum::Json)
+                .map(IntoResponse::into_response)
+                .unwrap_or_else(|| StatusCode::SERVICE_UNAVAILABLE.into_response());
+        }
+        return d
+            .management_detail
+            .clone()
+            .map(axum::Json)
+            .map(IntoResponse::into_response)
+            .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response());
     }
     let response = if path.ends_with("/runtime/task-trust") {
         task_trust_response(d, value)
@@ -1847,9 +1876,29 @@ fn content_response(d: &mut Data, headers: HeaderMap) -> Response {
             ),
         );
     }
-    response
-        .body(Body::from(d.bytes[start..].to_vec()))
-        .unwrap()
+    if let Some(gate) = d.content_gate.clone() {
+        let bytes = d.bytes[start..].to_vec();
+        let stream = futures_util::stream::unfold(
+            (bytes, 0usize, gate),
+            |(bytes, offset, gate)| async move {
+                if offset == bytes.len() {
+                    return None;
+                }
+                if offset > 0 {
+                    let permit = gate.acquire().await.ok()?;
+                    permit.forget();
+                }
+                let end = (offset + 1024).min(bytes.len());
+                let chunk = bytes[offset..end].to_vec();
+                Some((Ok::<_, std::io::Error>(chunk), (bytes, end, gate)))
+            },
+        );
+        response.body(Body::from_stream(stream)).unwrap()
+    } else {
+        response
+            .body(Body::from(d.bytes[start..].to_vec()))
+            .unwrap()
+    }
 }
 
 pub fn collections() -> Vec<rss_mdm_agent_wire::runtime::CollectionDefinition> {

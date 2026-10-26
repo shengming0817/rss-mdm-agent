@@ -24,6 +24,8 @@ function fixture() {
     failure: null,
     action: {
       kind: "policy",
+      definition: { id: "policy", revision: "version" },
+      policyRevision: 1,
 
       choice: {
         request: "operation-1",

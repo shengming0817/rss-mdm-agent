@@ -16,6 +16,15 @@ use tokio_util::sync::CancellationToken;
 /// Accepted effects must remain queryable even when this adapter or its process disappears.
 /// Only explicitly identified test implementations may synthesize authority/evidence.
 pub trait ExecutionServicePort: Send + Sync + 'static {
+    /// Unified original-task reads and controls, under the native-attested caller.
+    fn task_operation(
+        &self,
+        _: execution_app::tasks::TaskOperation,
+        _: CancellationToken,
+    ) -> impl Future<Output = Result<execution_app::tasks::TaskResponse, ServiceError>> + Send {
+        async { Err(ServiceError::Unsupported) }
+    }
+
     /// Local collected data and explicit queries using native-attested caller identity.
     fn collected_data(
         &self,
@@ -49,14 +58,6 @@ pub trait ExecutionServicePort: Send + Sync + 'static {
     ) -> impl Future<Output = Result<LocalSoftwareResult, ServiceError>> + Send {
         async { Err(ServiceError::Unsupported) }
     }
-    /// Cancel the original local software request; not a rollback guarantee.
-    fn software_cancel(
-        &self,
-        _: execution_contract::QueryRequest,
-        _: CancellationToken,
-    ) -> impl Future<Output = Result<LocalSoftwareResult, ServiceError>> + Send {
-        async { Err(ServiceError::Unsupported) }
-    }
     /// Bind one call from bounded, untrusted MCP metadata to the authenticated connection.
     /// The composition owns metadata semantics and must reject missing/mismatched provenance.
     /// Return an immutable per-call service; never mutate shared connection identity.
@@ -67,7 +68,7 @@ pub trait ExecutionServicePort: Send + Sync + 'static {
     /// Fail startup when no trusted binding exists. This is not a substitute for per-call checks.
     fn check_binding(&self) -> Result<(), ServiceError>;
     /// Read current verified backend offers. Their presence never substitutes for Start.
-    fn tasks(
+    fn offers(
         &self,
         wait: CancellationToken,
     ) -> impl Future<Output = Result<Vec<BackendTask>, ServiceError>> + Send;
@@ -128,16 +129,4 @@ pub trait ExecutionServicePort: Send + Sync + 'static {
         request: BackendSelection,
         wait: CancellationToken,
     ) -> impl Future<Output = Result<TaskSubmission, ServiceError>> + Send;
-    /// Authorized recovery after response loss, scoped to the trusted namespace.
-    fn status(
-        &self,
-        request: OperationRequest,
-        wait: CancellationToken,
-    ) -> impl Future<Output = Result<OperationStatus, ServiceError>> + Send;
-    /// Request business cancellation. It does not promise termination or rollback.
-    fn cancel(
-        &self,
-        request: OperationRequest,
-        wait: CancellationToken,
-    ) -> impl Future<Output = Result<CancelResult, ServiceError>> + Send;
 }

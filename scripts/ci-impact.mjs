@@ -124,6 +124,7 @@ export const testOwners = [
   ["packages/execution-bindings/src/tools.json", "execution-mcp"],
   ["packages/execution-bindings/src/task-details.ts", "execution-app"],
   ["tests/assistant/execution-fixtures.json", "execution-app"],
+  ["tests/assistant/execution-fixtures.json", "execution-mcp"],
   ["tests/ai-contract", npm("ai-contract")],
   ["tests/ai-access", npm("ai-access")],
   ["tests/ai-access", npm("ai-client")],

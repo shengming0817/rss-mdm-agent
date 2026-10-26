@@ -10,6 +10,28 @@ fn metadata<T: serde::de::DeserializeOwned>(plan: &FrozenExecution, key: &str) -
     serde_json::from_value(value.clone()).map_err(|_| Error::Untrusted)
 }
 impl Core {
+    pub(super) fn task_cancel_settings(&mut self, request: &RequestId) -> Result<(), Error> {
+        let frozen = self
+            .app
+            .service_frozen_input(request)
+            .map_err(map_app_error)?;
+        if frozen.spec().launch.interpreter.profile.id.as_str() == local_settings::PROFILE
+            && matches!(
+                metadata::<Action>(&frozen, "local-settings-action")?,
+                Action::Change {
+                    patch: SettingsPatch::Display { .. },
+                    ..
+                }
+            )
+        {
+            match local_settings::decide(&self.config, request, false) {
+                Ok(()) | Err(Error::Conflict) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn cancel_settings_previews(&mut self) -> Result<(), Error> {
         let mut after = None;
         loop {
@@ -136,26 +158,8 @@ impl Core {
                 });
             }
             SettingsOperation::Status { request }
-            | SettingsOperation::Cancel { request }
             | SettingsOperation::KeepDisplay { request, .. } => {
                 let frozen = self.settings_input(command, context, request)?;
-                if matches!(input, SettingsOperation::Cancel { .. }) {
-                    if matches!(
-                        metadata::<Action>(&frozen, "local-settings-action")?,
-                        Action::Change {
-                            patch: SettingsPatch::Display { .. },
-                            ..
-                        }
-                    ) {
-                        match local_settings::decide(&self.config, request, false) {
-                            Ok(()) | Err(Error::Conflict) => {}
-                            Err(error) => return Err(error),
-                        }
-                    }
-                    self.app
-                        .cancel(&self.local_caller(), request)
-                        .map_err(map_app_error)?;
-                }
                 if let SettingsOperation::KeepDisplay { digest, .. } = input {
                     let Initiator::Human { os_session } = &frozen.spec().request.initiator else {
                         return Err(Error::Denied);

@@ -57,15 +57,33 @@ export function createFixturePorts() {
       await rpc("confirm", { request, task: task.task, attempt, revision });
     },
     async cancelTask(requestId) {
-      await rpc("cancel", { requestId });
+      const reference = { kind: "request", request: requestId };
+      const detail = await rpc<
+        import("../../apps/desktop/src/self-service/types").TaskDetail
+      >("task-detail", reference);
+      const receipt = await rpc<
+        import("../../apps/desktop/src/self-service/types").TaskControlReceipt
+      >("task-control", {
+        reference,
+        id: crypto.randomUUID(),
+        scope: detail.scope,
+        expectedRevision: detail.revision,
+        action: "cancel",
+      });
+      if (receipt.disposition !== "confirmed")
+        throw Error("fixture cancellation unconfirmed");
     },
     async taskDetails(operationRequestId, signal) {
-      const response = await fetch(
-        `/__fixture/details?request=${encodeURIComponent(operationRequestId)}`,
-        { signal },
-      );
-      if (!response.ok) throw new Error("fixture read denied");
-      return response.json();
+      if (signal.aborted) throw Error("fixture aborted");
+      const result = await rpc<
+        import("../../apps/desktop/src/self-service/types").TaskDetail
+      >("task-detail", { kind: "request", request: operationRequestId });
+      if (signal.aborted) throw Error("fixture aborted");
+      if (result.facts.kind === "execution")
+        return { kind: "execution", value: result.facts.value };
+      if (result.facts.kind === "preparation")
+        return { kind: "pending", value: result.facts.value };
+      throw Error("fixture owner mismatch");
     },
   };
 
@@ -84,22 +102,28 @@ export function createFixturePorts() {
     return response.json();
   }
   const selfServicePort: SelfServicePort = {
+    offers: () => rpc("offers"),
     policy_resolve: (input) => rpc("policy_resolve", input),
     policy_directory: (input) => rpc("policy_directory", input),
     policy_invoke: (input) => rpc("policy_invoke", input),
     policy_confirm: (input) => rpc("policy_confirm", input),
     policy_status: (input) => rpc("policy_status", input),
     observe_software: (input) => rpc("observe_software", input),
-    recent_tasks: (input) => rpc("recent_tasks", input),
-    snapshot: (input) => rpc("snapshot", input),
     execute: (input) => rpc("execute", input),
     confirm: (input) => rpc("confirm", input),
-    cancel: (input) => rpc("cancel", input),
   };
 
   const environment: FixtureEnvironment = {
     kind: "fixture",
-    local: fixtureLocalPorts(),
+    local: {
+      ...fixtureLocalPorts(),
+      tasks: {
+        list: (input) => rpc("task-list", input),
+        detail: (input) => rpc("task-detail", input),
+        control: (input) => rpc("task-control", input),
+        controlStatus: (input) => rpc("task-control-status", input),
+      },
+    },
     account: createLoginFixture(() => rpc<UserContext>("identity")),
     device: {
       async read() {

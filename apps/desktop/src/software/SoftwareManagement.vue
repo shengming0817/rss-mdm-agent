@@ -11,7 +11,7 @@ import {
 } from "vue";
 import { Package, UiSearchInput } from "@rss-mdm-agent/ui";
 import type { PageNavigation } from "../workspace/page-navigation";
-import type { Controller } from "../self-service/controller";
+import type { Controller } from "../task-center/controller";
 import type {
   InstalledSoftware,
   LocalSoftwareAction,
@@ -454,7 +454,7 @@ onBeforeUnmount(() => {
       <PolicySelfService
         ref="enterprise"
         :port="execution?.port ?? null"
-        :records="execution?.state.snapshot?.preparations ?? []"
+        :records="execution?.preparations.value ?? []"
         kind="software"
         :filter="query"
         @changed="execution?.refresh()"

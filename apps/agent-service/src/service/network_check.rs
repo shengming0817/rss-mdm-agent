@@ -23,8 +23,7 @@ impl Core {
         }
         let request = match input {
             NetworkCheckOperation::Run { request, .. }
-            | NetworkCheckOperation::Status { request }
-            | NetworkCheckOperation::Cancel { request } => request,
+            | NetworkCheckOperation::Status { request } => request,
             NetworkCheckOperation::Defaults => return Err(Error::Protocol),
         };
         let uuid = uuid::Uuid::parse_str(request.as_str()).map_err(|_| Error::Protocol)?;
@@ -43,11 +42,6 @@ impl Core {
                 {
                     return Err(Error::Conflict);
                 }
-            }
-            if matches!(input, NetworkCheckOperation::Cancel { .. }) {
-                self.app
-                    .cancel(&self.local_caller(), request)
-                    .map_err(map_app_error)?;
             }
             return Ok(Reply::NetworkCheck {
                 value: self.network_status(&plan)?,

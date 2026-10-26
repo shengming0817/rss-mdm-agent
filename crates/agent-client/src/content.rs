@@ -183,6 +183,29 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     /// Stream all signed materials, validating the entire set before a Start request.
     pub async fn prepare(&mut self, offer: &Offer) -> Result<Materials, Error> {
         self.verify(&offer.signed, wire::TaskPermit::Offer)?;
+        for task in self.pending_tasks(self.configuration().limits.pending_tasks)? {
+            let Ok(peer) = self.offer(task) else { continue };
+            for (key, length, sha256) in artifacts(peer.payload())? {
+                let name = hash(&encode(&(
+                    self.store.cfg.service_id,
+                    self.store.cfg.tenant,
+                    sha256,
+                    length,
+                ))?);
+                self.transfers.attach(
+                    peer.task_id(),
+                    peer.attempt_id(),
+                    &key,
+                    &name,
+                    Some(length),
+                    true,
+                )?;
+                self.store.conn.execute(
+                    "INSERT OR IGNORE INTO cache_refs VALUES(?1,?2)",
+                    params![peer.task_id().to_string(), name],
+                )?;
+            }
+        }
         let artifacts = artifacts(offer.payload())?;
         let total = artifacts.iter().try_fold(0u64, |n, (_, length, _)| {
             n.checked_add(*length).ok_or(Error::Capacity)
@@ -206,6 +229,14 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 sha256,
                 length,
             ))?);
+            self.transfers.attach(
+                offer.task_id(),
+                offer.attempt_id(),
+                &key,
+                &name,
+                Some(length),
+                true,
+            )?;
             self.store.conn.execute(
                 "INSERT OR IGNORE INTO cache_refs VALUES(?1,?2)",
                 params![offer.task_id().to_string(), name],
@@ -217,6 +248,12 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         }
         self.prepare_native_sources(offer, &root, &mut files)
             .await?;
+        if !self
+            .transfers
+            .consumer_ready(offer.task_id(), offer.attempt_id())?
+        {
+            return Err(Error::TransferPaused);
+        }
         Ok(Materials {
             files,
             task: offer.task_id(),
@@ -238,6 +275,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             let file = open(&path, false)?;
             FileExt::try_lock_shared(&file).map_err(|_| Error::Storage)?;
             if file.metadata()?.len() == length && digest(file.try_clone()?)? == sha256 {
+                self.transfers.publish(name, length, "complete")?;
                 return Ok(ContentFile {
                     file,
                     path,
@@ -259,6 +297,12 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         };
         file.try_lock_exclusive().map_err(|_| Error::Storage)?;
         let mut offset = file.metadata()?.len();
+        if !self.transfers.active(name)? {
+            file.sync_all()?;
+            FileExt::unlock(&file)?;
+            self.transfers.publish(name, offset, "paused")?;
+            return Err(Error::TransferPaused);
+        }
         if offset > length {
             file.set_len(0)?;
             offset = 0;
@@ -350,12 +394,22 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             }
             file.seek(SeekFrom::Start(start))?;
             let mut count = start;
-            while let Some(chunk) = response
-                .chunk()
-                .await
-                .map_err(crate::client::transport_error)
-                .map_err(|error| self.handle_transport_error(error))?
-            {
+            self.transfers.publish(name, count, "downloading")?;
+            loop {
+                if !self.transfers.active(name)? {
+                    file.sync_all()?;
+                    drop(response);
+                    FileExt::unlock(&file)?;
+                    self.transfers.publish(name, count, "paused")?;
+                    return Err(Error::TransferPaused);
+                }
+                let chunk = tokio::select! {
+                    biased;
+                    _ = self.transfers.changed() => continue,
+                    chunk = response.chunk() => chunk.map_err(crate::client::transport_error).map_err(|error| self.handle_transport_error(error))?,
+                };
+                let Some(chunk) = chunk else { break };
+
                 count = count
                     .checked_add(chunk.len() as u64)
                     .ok_or(Error::Capacity)?;
@@ -363,13 +417,16 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                     return Err(Error::Untrusted);
                 }
                 file.write_all(&chunk)?;
+                self.transfers.publish(name, count, "downloading")?;
             }
             file.sync_all()?;
             if count != length {
                 return Err(Error::Untrusted);
             }
         }
+        self.transfers.publish(name, length, "verifying")?;
         if digest_handle(&file)? != sha256 {
+            self.transfers.publish(name, 0, "failed")?;
             file.set_len(0)?;
             file.sync_all()?;
             return Err(Error::Untrusted);
@@ -380,6 +437,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         // create_new is write-only; return a separately opened read handle.
         let file = open(&path, false)?;
         FileExt::try_lock_shared(&file).map_err(|_| Error::Storage)?;
+        self.transfers.publish(name, length, "complete")?;
         Ok(ContentFile {
             file,
             path,

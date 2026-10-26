@@ -229,8 +229,14 @@ test("lost submit receipt recovers the same Rust attempt and keeps process exit 
   assert.equal(
     unwrap(
       connection.router.prepare(session.namespace, {
-        name: "execution_cancel",
-        arguments: { operationRequestId: input.request },
+        name: "execution_task_control",
+        arguments: {
+          reference: { kind: "request", request: input.request },
+          id: "cancel-permission",
+          scope: "explicit-s1-task",
+          expectedRevision: { owner: 0, transfers: [] },
+          action: "cancel",
+        },
       }),
     ).permission,
     "ask",
@@ -297,8 +303,8 @@ test("lost submit receipt recovers the same Rust attempt and keeps process exit 
     ),
   );
   assert.equal(duplicate.status, "ok");
-  assert.equal(duplicate.result.phase, "outcomeUnknown");
-  assert.equal(duplicate.result.cancelRequested, false);
+  assert.equal(duplicate.result.facts.value.status.phase, "outcomeUnknown");
+  assert.equal(duplicate.result.facts.value.status.cancelRequested, false);
   saved = unwrap(
     await store.delivery(session.namespace, request.body.operationId),
   );
@@ -308,9 +314,32 @@ test("lost submit receipt recovers the same Rust attempt and keeps process exit 
     "duplicate receipt must stay idempotent",
   );
 
+  const current = JSON.parse(
+    unwrap(
+      await connection.router.send(
+        {
+          ...request,
+          body: {
+            ...request.body,
+            proposal: {
+              name: "execution_task_detail",
+              arguments: { kind: "request", request: "ai-unknown" },
+            },
+          },
+        },
+        budget(),
+      ),
+    ).reply.text,
+  ).result;
   const cancelProposal = {
-    name: "execution_cancel",
-    arguments: { operationRequestId: "ai-unknown" },
+    name: "execution_task_control",
+    arguments: {
+      reference: current.reference,
+      id: "cancel-original",
+      scope: current.scope,
+      expectedRevision: current.revision,
+      action: "cancel",
+    },
   };
   const cancelPrepared = unwrap(
     connection.router.prepare(session.namespace, cancelProposal),
@@ -333,8 +362,26 @@ test("lost submit receipt recovers the same Rust attempt and keeps process exit 
   );
   const cancelled = JSON.parse(cancelReceipt.reply.text);
   assert.equal(cancelled.status, "ok");
-  assert.equal(cancelled.result.operation.cancelRequested, true);
-  assert.equal(cancelled.result.operation.phase, "outcomeUnknown");
+  assert.equal(cancelled.result.disposition, "confirmed");
+  const after = JSON.parse(
+    unwrap(
+      await connection.router.send(
+        {
+          ...request,
+          body: {
+            ...request.body,
+            proposal: {
+              name: "execution_task_detail",
+              arguments: current.reference,
+            },
+          },
+        },
+        budget(),
+      ),
+    ).reply.text,
+  ).result;
+  assert.equal(after.facts.value.status.cancelRequested, true);
+  assert.equal(after.facts.value.status.phase, "outcomeUnknown");
 
   await connection.close();
   rust.stdin.end();

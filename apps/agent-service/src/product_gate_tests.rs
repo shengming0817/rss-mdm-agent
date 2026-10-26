@@ -187,6 +187,9 @@ impl Case {
     }
     fn selection(&self, human: bool) -> Selection {
         let mut selection = Selection::from_record(&BackendRequest {
+            retry_of: None,
+            recorded_at_unix_ms: 1,
+            cancellation_control: None,
             action: execution_contract::PreparedAction::Offered {
                 offer: offered(&self.offer).unwrap(),
             },
@@ -1363,6 +1366,49 @@ impl Case {
             self.selection.binding.clone(),
         )
     }
+    async fn cancel_task(&mut self, request: &RequestId) {
+        use execution_app::tasks::*;
+        let reference = TaskRef::Request {
+            request: request.clone(),
+        };
+        let reply = self
+            .policy_call(execution_ipc::host::Request::Task {
+                input: TaskOperation::Detail(reference.clone()),
+                origin: ClientOrigin::Desktop {},
+            })
+            .await;
+        let Reply::Task {
+            value: TaskResponse::Detail(detail),
+        } = reply
+        else {
+            panic!("task detail: {}", serde_json::to_string(&reply).unwrap())
+        };
+        let reply = self
+            .policy_call(execution_ipc::host::Request::Task {
+                input: TaskOperation::Control(TaskControl {
+                    reference,
+                    id: plan::id(uuid::Uuid::new_v4().to_string()).unwrap(),
+                    scope: detail.scope,
+                    expected_revision: detail.revision,
+                    action: TaskAction::Cancel,
+                }),
+                origin: ClientOrigin::Desktop {},
+            })
+            .await;
+        assert!(
+            matches!(
+                reply,
+                Reply::Task {
+                    value: TaskResponse::Control(TaskControlReceipt {
+                        disposition: ControlDisposition::Confirmed,
+                        ..
+                    })
+                }
+            ),
+            "task cancel: {}",
+            serde_json::to_string(&reply).unwrap()
+        );
+    }
     async fn recent_call(&mut self, before: Option<String>) -> Reply {
         let (reply, receive) = tokio::sync::oneshot::channel();
         self.service.core.handle(Command {
@@ -1371,7 +1417,14 @@ impl Case {
             session: self.selection.session,
             binding: Some(self.selection.binding.clone()),
             reply,
-            request: LocalRequest::operation(execution_ipc::host::Request::RecentTasks { before }),
+            request: LocalRequest::operation(execution_ipc::host::Request::Task {
+                input: execution_app::tasks::TaskOperation::List(execution_app::tasks::TaskQuery {
+                    cursor: before,
+                    limit: 32,
+                    ..Default::default()
+                }),
+                origin: ClientOrigin::Desktop {},
+            }),
         });
         receive.await.unwrap()
     }
@@ -1550,6 +1603,7 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
     assert!(c._server.data.lock().unwrap().invocations.is_empty());
     assert!(matches!(
         c.policy_call(Request::PolicyStatus {
+            origin: ClientOrigin::Desktop {},
             context: c.context(),
             request: choice.request.clone()
         })
@@ -1588,6 +1642,7 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
     }
     let Reply::PolicyStatus { value: status } = c
         .policy_call(Request::PolicyStatus {
+            origin: ClientOrigin::Desktop {},
             context: c.context(),
             request: choice.request.clone(),
         })
@@ -1600,6 +1655,7 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
     c.policy_call(Request::RevokeContext {}).await;
     assert!(matches!(
         c.policy_call(Request::PolicyStatus {
+            origin: ClientOrigin::Desktop {},
             context: c.context(),
             request: choice.request
         })
@@ -1982,6 +2038,9 @@ async fn settled_software_observation_replays_the_original_fact_and_never_create
         };
         let now = c.service.core.host.clock.millis().unwrap();
         let record = BackendRequest {
+            retry_of: None,
+            recorded_at_unix_ms: 1,
+            cancellation_control: None,
             action: PreparedAction::SoftwareRead {
                 choice: choice.clone(),
                 definition: definition.clone(),
@@ -2152,6 +2211,7 @@ async fn durable_ready_policy_resumes_original_uuid_from_each_native_entrypoint(
                 origin: c.selection.origin.clone(),
             },
             1 => Request::PolicyStatus {
+                origin: ClientOrigin::Desktop {},
                 context: c.context(),
                 request: original.clone(),
             },
@@ -2826,6 +2886,7 @@ async fn unknown_device_submission_queries_original_before_any_repeat_post_after
         };
         let reply = c
             .policy_call(Request::PolicyStatus {
+                origin: ClientOrigin::Desktop {},
                 context: c.context(),
                 request: choice.request.clone(),
             })
@@ -2892,6 +2953,7 @@ async fn fences_isolate_os_sessions_and_user_requests_never_downgrade() {
     let calls = c._server.data.lock().unwrap().employee_calls.len();
     assert!(matches!(
         c.policy_call(Request::PolicyStatus {
+            origin: ClientOrigin::Desktop {},
             context: c.context(),
             request: choice.request.clone()
         })
@@ -3499,6 +3561,7 @@ async fn operation_draft_freezes_current_parameters_once_and_queries_do_not_exec
         for _ in 0..2 {
             let Reply::PolicyRequest { value } = c
                 .policy_call(Request::PolicyStatus {
+                    origin: ClientOrigin::Desktop {},
                     context: c.context(),
                     request: choice.request.clone(),
                 })
@@ -4758,9 +4821,10 @@ async fn local_software_api_stages_no_attempt_and_replays_the_original_after_los
         .items
         .iter()
         .any(|i| i.prepared.request == choice.request));
+    c.cancel_task(&choice.request).await;
     let Reply::SoftwareStatus { value: cancel } = c
         .local_software_call(
-            LocalSoftwareOperation::Cancel(QueryRequest {
+            LocalSoftwareOperation::Status(QueryRequest {
                 request: choice.request.clone(),
             }),
             false,
@@ -5062,6 +5126,9 @@ async fn installation_owner_exists_before_registration_and_preserves_both_scopes
     // Preparation also reserves the global UUID, before an execution exists.
     let prepared_id = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
     let record = BackendRequest {
+        retry_of: None,
+        recorded_at_unix_ms: 1,
+        cancellation_control: None,
         action: PreparedAction::Offered {
             offer: BackendTask {
                 request: prepared_id.clone(),
@@ -5311,8 +5378,9 @@ async fn settings_retained_task_survives_same_account_reconnection() {
         .await,
         Reply::DataFailure { .. }
     ));
+    c.cancel_task(&request).await;
     assert!(
-        matches!(c.policy_call(call(c.context(),ClientOrigin::Desktop{},SettingsOperation::Cancel{request:request.clone()})).await,Reply::Settings{value} if value.finished && value.effect==SettingsEffect::Cancelled)
+        matches!(c.policy_call(call(c.context(),ClientOrigin::Desktop{},SettingsOperation::Status{request:request.clone()})).await,Reply::Settings{value} if value.finished && value.effect==SettingsEffect::Cancelled)
     );
     assert!(
         matches!(c.policy_call(call(c.context(),ClientOrigin::Desktop{},SettingsOperation::Refresh{request:request.clone(),section:SettingsSection::Network})).await,Reply::Settings{value} if value.finished && value.digest.as_ref()==Some(frozen.digest()))
@@ -5495,15 +5563,17 @@ async fn network_check_replay_and_cancel_keep_the_original_sqlite_plan_and_login
         .app
         .stage_execution(&c.service.core.local_caller(), &frozen)
         .unwrap();
-    let Reply::RecentTasks { value } = c.recent_call(None).await else {
+    let Reply::Task {
+        value: execution_app::tasks::TaskResponse::Page(value),
+    } = c.recent_call(None).await
+    else {
         panic!("recent tasks");
     };
     assert!(
         value
             .items
             .iter()
-            .any(|item| item.details.action.request_id == request
-                && item.details.status.attempts == 0)
+            .any(|item| matches!(&item.facts,execution_app::tasks::TaskFacts::Execution(details) if details.action.request_id==request && details.status.attempts==0))
     );
     use execution_ipc::host::Request;
     let call = |context, input| Request::NetworkCheck {
@@ -5532,19 +5602,22 @@ async fn network_check_replay_and_cancel_keep_the_original_sqlite_plan_and_login
             reason: DataError::Conflict
         }
     ));
+    c.cancel_task(&request).await;
     assert!(
-        matches!(c.policy_call(call(c.context(),NetworkCheckOperation::Cancel {request:request.clone()})).await,Reply::NetworkCheck {value} if value.status.phase==execution_app::TaskPhase::Cancelled && value.status.attempts==0)
+        matches!(c.policy_call(call(c.context(),NetworkCheckOperation::Status {request:request.clone()})).await,Reply::NetworkCheck {value} if value.status.phase==execution_app::TaskPhase::Cancelled && value.status.attempts==0)
     );
     c.employee("network-retired-owner").await;
-    let Reply::RecentTasks { value } = c.recent_call(None).await else {
+    let Reply::Task {
+        value: execution_app::tasks::TaskResponse::Page(value),
+    } = c.recent_call(None).await
+    else {
         panic!("recent tasks");
     };
     assert!(
         value
             .items
             .iter()
-            .any(|item| item.details.action.request_id == request
-                && item.details.status.attempts == 0)
+            .any(|item| matches!(&item.facts,execution_app::tasks::TaskFacts::Execution(details) if details.action.request_id==request && details.status.attempts==0))
     );
 
     assert!(matches!(
@@ -5559,12 +5632,14 @@ async fn recent_activity_rejects_invalid_cursors_without_creating_work() {
     let _budget = crate::scenario_budget::enter();
     let mut c = Case::new(None).await;
     assert!(
-        matches!(c.recent_call(None).await, Reply::RecentTasks{value} if value.items.is_empty() && value.next.is_none())
+        matches!(c.recent_call(None).await, Reply::Task { value: execution_app::tasks::TaskResponse::Page(value) } if value.items.is_empty() && value.next.is_none())
     );
     for cursor in ["0", "-1", "01", "not-a-cursor"] {
         assert!(matches!(
             c.recent_call(Some(cursor.into())).await,
-            Reply::Rejected
+            Reply::DataFailure {
+                reason: DataError::InvalidInput
+            }
         ));
     }
     assert!(c
@@ -5635,4 +5710,186 @@ async fn slow_access_refresh_services_psso_callbacks_and_joins_before_returning(
     result.unwrap();
     assert!(joined.load(Ordering::Acquire));
     assert!(c.service.core.psso.commands.is_empty());
+}
+
+#[tokio::test]
+async fn unified_preparation_controls_keep_original_cas_receipts_and_fence_retired_native_scopes() {
+    let _budget = crate::scenario_budget::enter();
+    use execution_app::tasks::*;
+    use execution_ipc::host::Request;
+    let mut c = Case::new(Some(RiskLevel::Two)).await;
+    c.service.core.start_task(c.selection(false)).unwrap();
+    let original = c.record();
+    let reference = TaskRef::Request {
+        request: original.action.request().clone(),
+    };
+    let read = Request::Task {
+        input: TaskOperation::Detail(reference.clone()),
+        origin: ClientOrigin::Desktop {},
+    };
+    let Reply::Task {
+        value: TaskResponse::Detail(detail),
+    } = c.policy_call(read).await
+    else {
+        panic!("task detail")
+    };
+    assert_eq!(detail.source, TaskSource::Ai);
+    assert!(detail.human_confirmation);
+    assert!(detail.allowed_actions.contains(&TaskAction::Cancel));
+    let control = TaskControl {
+        reference: reference.clone(),
+        id: plan::id("preparation-control").unwrap(),
+        scope: detail.scope.clone(),
+        expected_revision: detail.revision.clone(),
+        action: TaskAction::Cancel,
+    };
+    let mut stale = control.clone();
+    stale.id = plan::id("stale-preparation").unwrap();
+    stale.expected_revision.owner += 1;
+    assert!(matches!(
+        c.policy_call(Request::Task {
+            input: TaskOperation::Control(stale),
+            origin: ClientOrigin::Desktop {}
+        })
+        .await,
+        Reply::Task {
+            value: TaskResponse::Control(TaskControlReceipt {
+                disposition: ControlDisposition::Stale,
+                ..
+            })
+        }
+    ));
+    assert_eq!(c.record(), original);
+    for _ in 0..2 {
+        assert!(matches!(
+            c.policy_call(Request::Task {
+                input: TaskOperation::Control(control.clone()),
+                origin: ClientOrigin::Desktop {}
+            })
+            .await,
+            Reply::Task {
+                value: TaskResponse::Control(TaskControlReceipt {
+                    disposition: ControlDisposition::Confirmed,
+                    ..
+                })
+            }
+        ));
+    }
+    assert_eq!(c.record().revision, original.revision + 1);
+    let query = TaskControlQuery {
+        reference,
+        id: control.id,
+        scope: detail.scope,
+    };
+    assert!(matches!(
+        c.policy_call(Request::Task {
+            input: TaskOperation::ControlStatus(query.clone()),
+            origin: ClientOrigin::Desktop {}
+        })
+        .await,
+        Reply::Task {
+            value: TaskResponse::Control(TaskControlReceipt {
+                disposition: ControlDisposition::Confirmed,
+                ..
+            })
+        }
+    ));
+    c.employee("changed-native-generation").await;
+    assert!(matches!(
+        c.policy_call(Request::Task {
+            input: TaskOperation::ControlStatus(query),
+            origin: ClientOrigin::Desktop {}
+        })
+        .await,
+        Reply::DataFailure {
+            reason: DataError::Denied
+        }
+    ));
+    assert!(c._server.data.lock().unwrap().start_ops.is_empty());
+}
+
+#[tokio::test]
+async fn unified_preparation_pages_bind_owner_watermarks_filters_and_session_authorization() {
+    let _budget = crate::scenario_budget::enter();
+    use execution_app::tasks::*;
+    use execution_ipc::host::Request;
+    let mut c = Case::new(Some(RiskLevel::Two)).await;
+    c.service.core.start_task(c.selection(false)).unwrap();
+    let original = c.record();
+    let insert = |c: &mut Case, name: &str| {
+        let mut record = original.clone();
+        let PreparedAction::Offered { offer } = &mut record.action else {
+            panic!("offered")
+        };
+        offer.request = RequestId::new(name).unwrap();
+        c.service
+            .core
+            .app
+            .record_backend_request(&c.service.core.caller(), None, &record)
+            .unwrap();
+    };
+    insert(&mut c, "a-original");
+    insert(&mut c, "c-original");
+    let query = TaskQuery {
+        limit: 1,
+        ..Default::default()
+    };
+    let Reply::Task {
+        value: TaskResponse::Page(first),
+    } = c
+        .policy_call(Request::Task {
+            input: TaskOperation::List(query.clone()),
+            origin: ClientOrigin::Desktop {},
+        })
+        .await
+    else {
+        panic!("task page")
+    };
+    assert_eq!(first.items.len(), 1);
+    let mut next = query.clone();
+    next.cursor = first.next.clone();
+    insert(&mut c, "b-after-watermark");
+    let mut found = first
+        .items
+        .iter()
+        .map(|v| v.reference.clone())
+        .collect::<Vec<_>>();
+    for _ in 0..16 {
+        let Reply::Task {
+            value: TaskResponse::Page(page),
+        } = c
+            .policy_call(Request::Task {
+                input: TaskOperation::List(next.clone()),
+                origin: ClientOrigin::Desktop {},
+            })
+            .await
+        else {
+            panic!("continuation")
+        };
+        found.extend(page.items.into_iter().map(|v| v.reference));
+        next.cursor = page.next;
+        if next.cursor.is_none() {
+            break;
+        }
+    }
+    assert!(found.contains(&TaskRef::Request {
+        request: RequestId::new("c-original").unwrap()
+    }));
+    assert!(!found.contains(&TaskRef::Request {
+        request: RequestId::new("b-after-watermark").unwrap()
+    }));
+    let mut changed = query;
+    changed.cursor = first.next;
+    changed.source = Some(TaskSource::Human);
+    assert!(matches!(
+        c.policy_call(Request::Task {
+            input: TaskOperation::List(changed),
+            origin: ClientOrigin::Desktop {}
+        })
+        .await,
+        Reply::DataFailure {
+            reason: DataError::Conflict
+        }
+    ));
+    assert!(c._server.data.lock().unwrap().start_ops.is_empty());
 }

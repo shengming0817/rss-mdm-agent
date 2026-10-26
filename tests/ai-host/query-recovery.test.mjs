@@ -45,23 +45,32 @@ test("query response loss reconciles the Host-owned original ID and never replay
     calls.push(params);
     const failure = [
       "execution_query_submit",
-      "execution_query_cancel",
+      "execution_task_control",
     ].includes(params.name);
     const value = failure
       ? { status: "error", error: { code: "outcomeUnknown" } }
-      : {
-          status: "ok",
-          result: {
-            kind: "status",
-            value: {
-              request: params.arguments.request,
-              query: { id: "native:fixture", revision: "a".repeat(64) },
-              preparation: null,
-              phase: "running",
-              cancelRequested: cancelled,
+      : params.name === "execution_task_control_status"
+        ? {
+            status: "ok",
+            result: {
+              id: params.arguments.id,
+              disposition: cancelled ? "confirmed" : "unknown",
+              created: null,
             },
-          },
-        };
+          }
+        : {
+            status: "ok",
+            result: {
+              kind: "status",
+              value: {
+                request: params.arguments.request,
+                query: { id: "native:fixture", revision: "a".repeat(64) },
+                preparation: null,
+                phase: "running",
+                cancelRequested: cancelled,
+              },
+            },
+          };
     return { content: [], structuredContent: value, isError: failure };
   });
   await peer.connect(new ParentTransport(incoming, outgoing));
@@ -107,8 +116,14 @@ test("query response loss reconciles the Host-owned original ID and never replay
     1,
   );
   const cancelProposal = {
-    name: "execution_query_cancel",
-    arguments: { request: prepared.value.operationId },
+    name: "execution_task_control",
+    arguments: {
+      reference: { kind: "request", request: prepared.value.operationId },
+      id: "cancel-original",
+      scope: "fixture-scope",
+      expectedRevision: { owner: 0, transfers: [] },
+      action: "cancel",
+    },
   };
   const cancellation = connection.router.prepare(
     namespace,
@@ -128,6 +143,12 @@ test("query response loss reconciles the Host-owned original ID and never replay
   assert.equal(
     (await connection.router.reconcile(cancelRequest, budget())).value.state,
     "unknown",
+  );
+  assert.equal(calls.at(-1).name, "execution_task_control_status");
+  assert.equal(calls.at(-1).arguments.id, "cancel-original");
+  assert.equal(
+    calls.filter((c) => c.name === "execution_task_control").length,
+    0,
   );
   cancelled = true;
   assert.equal(

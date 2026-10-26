@@ -1,6 +1,6 @@
 use crate::{
     database::bounded_blob,
-    journal::{authorize, decode, encode},
+    journal::{authorize, decode, encode, integer},
     *,
 };
 use execution_contract::BackendRequest;
@@ -112,6 +112,20 @@ impl Store {
             return Err(Error::Conflict);
         }
         if expected.is_some_and(|p| {
+            p.recorded_at_unix_ms != next.recorded_at_unix_ms || p.retry_of != next.retry_of
+        }) {
+            return Err(Error::Conflict);
+        }
+        if next.cancellation_control.is_some() && (next.state != S::Cancelled || expected.is_none())
+        {
+            return Err(Error::InvalidInput);
+        }
+        if expected.is_some_and(|p| {
+            p.cancellation_control.is_some() && p.cancellation_control != next.cancellation_control
+        }) {
+            return Err(Error::Conflict);
+        }
+        if expected.is_some_and(|p| {
             !(p.action.same_choice(&next.action) || p.prepares_call(next))
                 || p.trigger != next.trigger
                 || (p.risk != next.risk && !p.prepares_call(next))
@@ -157,4 +171,45 @@ pub(crate) fn reserve_request(conn: &rusqlite::Connection, scope: &Scope) -> Res
         return Err(Error::Conflict);
     }
     Ok(())
+}
+
+impl Store {
+    pub(crate) fn sql_backend_request_page(
+        &self,
+        authority: &execution_contract::Authority,
+        actor: &execution_contract::ActorId,
+        after: Option<&execution_contract::RequestId>,
+        watermark: u64,
+        limit: usize,
+        host: &impl JournalHost,
+    ) -> Result<Vec<BackendRequest>, Error> {
+        if !(1..=128).contains(&limit) {
+            return Err(Error::InvalidInput);
+        }
+        crate::database::ensure_current(&self.conn, &self.authority, self.limits)?;
+        let mut query=self.conn.prepare("SELECT request_id FROM backend_requests WHERE actor=?1 AND request_id>?2 AND rowid<=?4 ORDER BY request_id LIMIT ?3")?;
+        let ids = query
+            .query_map(
+                params![
+                    actor.as_str(),
+                    after.map_or("", |v| v.as_str()),
+                    limit,
+                    integer(watermark)?
+                ],
+                |r| r.get::<_, String>(0),
+            )?
+            .collect::<Result<Vec<_>, _>>()?;
+        ids.into_iter()
+            .map(|id| {
+                let scope = Scope {
+                    authority: authority.clone(),
+                    actor: actor.clone(),
+                    request_id: execution_contract::RequestId::new(id)
+                        .map_err(|_| Error::Corrupt)?,
+                };
+                self.sql_backend_request(&scope, host)?
+                    .ok_or(Error::Corrupt)
+            })
+            .collect()
+    }
 }

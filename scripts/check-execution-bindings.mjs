@@ -43,11 +43,13 @@ const files = [
 ];
 for (const [name, type, file] of [
   ["execution_execute", "BackendSelection", "execute"],
-  ["execution_status", "OperationRequest", "operation"],
+  ["execution_task_detail", "TaskRef", "task-ref"],
+  ["execution_task_control", "TaskControl", "task-control"],
+  ["execution_task_control_status", "TaskControlQuery", "task-control-status"],
 ]) {
   const schema = tools.find((tool) => tool.name === name).inputSchema;
   files.push([
-    `${generated}/${file === "execute" ? "execute-input" : "operation-request"}.ts`,
+    `${generated}/${file === "execute" ? "execute-input" : file}.ts`,
     await format(
       await compile(typescriptSchema(schema), type, {
         bannerComment:

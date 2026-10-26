@@ -3,8 +3,8 @@ import { mount, flushPromises } from "@vue/test-utils";
 import { it, expect, vi } from "vitest";
 import Workspace from "./Workspace.vue";
 import Assistant from "./assistant/Assistant.vue";
-import Tasks from "./self-service/Tasks.vue";
-import { snapshot } from "../../../tests/self-service/support";
+import Tasks from "./task-center/TaskCenter.vue";
+import { taskPort } from "../../../tests/self-service/support";
 import { createHostSettings } from "./settings/controller";
 
 it("attaches the current page to one shared assistant and preserves question text when the sidebar closes", async () => {
@@ -17,10 +17,9 @@ it("attaches the current page to one shared assistant and preserves question tex
       host: createHostSettings(undefined),
       selfServicePort: {
         ...policyFixturePort,
-        snapshot: vi.fn().mockResolvedValue(snapshot()),
+        offers: vi.fn(async () => []),
         execute: vi.fn(),
         confirm: vi.fn(),
-        cancel: vi.fn(),
       },
     },
   });
@@ -70,10 +69,9 @@ it("uses one content header, a sidebar brand and a main welcome without remounti
       host: createHostSettings(undefined),
       selfServicePort: {
         ...policyFixturePort,
-        snapshot: vi.fn().mockResolvedValue(snapshot()),
+        offers: vi.fn(async () => []),
         execute: vi.fn(),
         confirm: vi.fn(),
-        cancel: vi.fn(),
       },
     },
   });
@@ -119,10 +117,9 @@ it("keeps one composer while the page assistant stages a suggestion and returns 
       host: createHostSettings(undefined),
       selfServicePort: {
         ...policyFixturePort,
-        snapshot: vi.fn().mockResolvedValue(snapshot()),
+        offers: vi.fn(async () => []),
         execute,
         confirm: vi.fn(),
-        cancel: vi.fn(),
       },
     },
   });

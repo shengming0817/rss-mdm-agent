@@ -641,9 +641,10 @@ impl Store {
     }
 }
 
+impl Store {}
+
 impl Store {
-    /// Uses the existing receipt indexes; no parallel history or persistent projection.
-    pub(crate) fn sql_recent_requests(
+    pub(crate) fn sql_task_requests(
         &self,
         before: Option<u64>,
         limit: usize,
@@ -657,7 +658,7 @@ impl Store {
         crate::database::ensure_current(&tx, &self.authority, self.limits)?;
         // Scan a fixed receipt window before filtering or de-duplicating: hot tasks and historical
         // refreshes cannot turn a page read into an unbounded history walk.
-        let sql = format!("SELECT r.sequence,{},e.request_id,e.scope FROM receipts r LEFT JOIN executions e ON e.scope=r.scope WHERE r.sequence<?1 ORDER BY r.sequence DESC LIMIT ?2", bounded_blob("r.body", self.limits.max_record_bytes));
+        let sql = format!("SELECT r.sequence,{},e.request_id,e.scope FROM receipts r LEFT JOIN executions e ON e.scope=r.scope WHERE r.sequence<?1 AND r.sequence=(SELECT MIN(first.sequence) FROM receipts first WHERE first.scope=r.scope) ORDER BY r.sequence DESC LIMIT ?2", bounded_blob("r.body", self.limits.max_record_bytes));
         let mut statement = tx.prepare(&sql)?;
         let rows = statement.query_map(params![before, limit as i64], |row| {
             Ok((
@@ -714,5 +715,47 @@ impl Store {
             items,
             next: (scanned == limit).then_some(last).flatten(),
         })
+    }
+}
+
+impl Store {
+    pub(crate) fn sql_remote_request(
+        &self,
+        task: &execution_contract::Id,
+        attempt: &execution_contract::Id,
+        host: &impl JournalHost,
+    ) -> Result<Option<execution_contract::RequestId>, Error> {
+        crate::database::ensure_current(&self.conn, &self.authority, self.limits)?;
+        let mut query=self.conn.prepare("SELECT request_id FROM executions WHERE json_extract(CAST(plan AS TEXT),'$.request.initiator.task')=?1 AND json_extract(CAST(plan AS TEXT),'$.request.initiator.attempt')=?2 ORDER BY request_id LIMIT 2")?;
+        let ids = query
+            .query_map(params![task.as_str(), attempt.as_str()], |r| {
+                r.get::<_, String>(0)
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        if ids.len() > 1 {
+            return Err(Error::Corrupt);
+        }
+        let Some(id) = ids.into_iter().next() else {
+            return Ok(None);
+        };
+        let request = execution_contract::RequestId::new(id).map_err(|_| Error::Corrupt)?;
+        let record = self.sql_execution_by_request(&request, ExecutionAccess::RunnerFact, host)?;
+        if !matches!(&record.execution.input().spec().request.initiator,execution_contract::Initiator::Backend{task:t,attempt:a,..} if t==task&&a==attempt)
+        {
+            return Err(Error::Corrupt);
+        }
+        Ok(Some(request))
+    }
+}
+
+impl Store {
+    pub(crate) fn sql_task_watermarks(&self) -> Result<(u64, u64), Error> {
+        let tx = self.conn.unchecked_transaction()?;
+        crate::database::ensure_current(&tx, &self.authority, self.limits)?;
+        let (preparations, receipts): (i64, i64) = tx.query_row("SELECT (SELECT COALESCE(MAX(rowid),0) FROM backend_requests),(SELECT COALESCE(MAX(sequence),0) FROM receipts)", [], |r| Ok((r.get(0)?,r.get(1)?)))?;
+        Ok((
+            u64::try_from(preparations).map_err(|_| Error::Corrupt)?,
+            u64::try_from(receipts).map_err(|_| Error::Corrupt)?,
+        ))
     }
 }

@@ -29,17 +29,35 @@ test("backend task references retain the server-selected request and reject old 
   ]) {
     assert.equal(operationRequestId("execution_execute", input), undefined);
   }
-  for (const name of ["execution_status", "execution_cancel"]) {
-    assert.equal(
-      operationRequestId(name, { operationRequestId: "backend-request" }),
-      "backend-request",
-    );
-    assert.equal(
-      operationRequestId(name, {
-        operationRequestId: "backend-request",
-        actor: "forged",
-      }),
-      undefined,
-    );
-  }
+  const reference = { kind: "request", request: "backend-request" };
+  assert.equal(
+    operationRequestId("execution_task_detail", reference),
+    "backend-request",
+  );
+  const control = {
+    reference,
+    id: "control-original",
+    scope: "native-scope",
+    expectedRevision: { owner: 1, transfers: [] },
+    action: "cancel",
+  };
+  assert.equal(
+    operationRequestId("execution_task_control", control),
+    "backend-request",
+  );
+  assert.equal(
+    operationRequestId("execution_task_control", {
+      ...control,
+      actor: "forged",
+    }),
+    undefined,
+  );
+  assert.equal(
+    operationRequestId("execution_task_control_status", {
+      reference,
+      id: control.id,
+      scope: control.scope,
+    }),
+    "backend-request",
+  );
 });

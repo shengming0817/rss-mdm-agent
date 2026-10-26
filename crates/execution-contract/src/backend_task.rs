@@ -197,6 +197,10 @@ pub enum PreparedAction {
     },
     /// Policy invocation and its eventual exact Offer, held in the same journal record.
     Policy {
+        /// Exact original published Policy ID/version, independent of its eventual task.
+        definition: crate::VersionedRef,
+        /// Original configuration revision.
+        policy_revision: u64,
         /// Immutable employee choice.
         choice: PolicyChoice,
         /// Prepared operation interface for display and input editing, never authorization.
@@ -395,6 +399,12 @@ pub enum BackendRequestFailure {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BackendRequest {
+    /// Original failed request when this explicit retry was independently admitted.
+    pub retry_of: Option<RequestId>,
+    /// Trusted original request acceptance time in UTC milliseconds.
+    pub recorded_at_unix_ms: u64,
+    /// Original explicit cancellation control, absent for owner-driven retirement.
+    pub cancellation_control: Option<Id>,
     /// The sole choice, frozen on submission, and appended backend association.
     pub action: PreparedAction,
     /// OS-authenticated original trigger; never accepted from an IPC request body.

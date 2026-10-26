@@ -1,8 +1,12 @@
 import validExecute from "./validate-execute.js";
-import validOperation from "./validate-operation.js";
+import validTaskRef from "./validate-task-ref.js";
+import validTaskControl from "./validate-task-control.js";
+import validTaskControlStatus from "./validate-task-control-status.js";
 import type { BackendSelection } from "./execute-input.js";
-import type { OperationRequest } from "./operation-request.js";
-export type { BackendSelection, OperationRequest };
+import type { TaskRef } from "./task-ref.js";
+import type { TaskControl } from "./task-control.js";
+import type { TaskControlQuery } from "./task-control-status.js";
+export type { BackendSelection, TaskRef, TaskControl, TaskControlQuery };
 
 /** Rust-owned request syntax only. This never grants execution or read authority. */
 export function operationRequestId(
@@ -14,9 +18,23 @@ export function operationRequestId(
     const request = input as BackendSelection;
     return request.request;
   }
-  if (name === "execution_status" || name === "execution_cancel") {
-    if (!validOperation(input)) return undefined;
-    return (input as OperationRequest).operationRequestId;
+  if (name === "execution_task_detail") {
+    if (!validTaskRef(input)) return undefined;
+    const reference = input as TaskRef;
+    return reference.kind === "request" ? reference.request : undefined;
+  }
+  if (
+    name === "execution_task_control" ||
+    name === "execution_task_control_status"
+  ) {
+    if (
+      !(name === "execution_task_control"
+        ? validTaskControl(input)
+        : validTaskControlStatus(input))
+    )
+      return undefined;
+    const reference = (input as TaskControl | TaskControlQuery).reference;
+    return reference.kind === "request" ? reference.request : undefined;
   }
   return undefined;
 }

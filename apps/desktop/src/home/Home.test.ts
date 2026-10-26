@@ -1,32 +1,30 @@
 import { DOMWrapper, mount, flushPromises } from "@vue/test-utils";
 import { expect, it, vi } from "vitest";
 import Home from "./Home.vue";
-import { createController } from "../self-service/controller";
-import { activityKey, createActivity } from "../self-service/activity";
-import { executionTask } from "../../../../tests/self-service/support";
-const controller = () => createController(null);
+import { createTaskCenter, taskCenterKey } from "../task-center/controller";
+import {
+  taskDetail,
+  taskPage,
+  taskPort,
+} from "../../../../tests/self-service/support";
+const controller = () => createTaskCenter(null, null);
 it("shows appended activity beyond six rows and keeps it visible after a polling refresh", async () => {
-  const task = (id: string) => {
-    const details = executionTask();
-    details.action.requestId = id;
-    details.action.operation.resource.id = id;
-    return { details, recordedAtUnixMs: 1000 };
-  };
+  const task = taskDetail;
   const first = Array.from({ length: 6 }, (_, i) => task(`task-${i}`));
   const recent = vi
     .fn()
-    .mockResolvedValueOnce({ items: first, next: "10" })
-    .mockResolvedValueOnce({ items: [task("seventh")], next: "5" })
-    .mockResolvedValueOnce({ items: first, next: "11" })
-    .mockResolvedValueOnce({ items: [task("seventh")], next: "4" });
-  const activity = createActivity({ recent_tasks: recent });
+    .mockResolvedValueOnce({ ...taskPage(first), next: "10" })
+    .mockResolvedValueOnce({ ...taskPage([task("seventh")]), next: "5" })
+    .mockResolvedValueOnce({ ...taskPage(first), next: "11" })
+    .mockResolvedValueOnce({ ...taskPage([task("seventh")]), next: "4" });
+  const activity = createTaskCenter({ ...taskPort(), list: recent }, null);
   const c = controller();
   const wrapper = mount(Home, {
     props: { controller: c, draft: "", connected: false },
-    global: { provide: { [activityKey as symbol]: activity } },
+    global: { provide: { [taskCenterKey as symbol]: activity } },
   });
   try {
-    await activity.load();
+    await activity.loadRecent();
     await flushPromises();
     expect(wrapper.findAll(".activity-row")).toHaveLength(6);
     const more = () =>
@@ -36,7 +34,7 @@ it("shows appended activity beyond six rows and keeps it visible after a polling
     expect(wrapper.findAll(".activity-row")).toHaveLength(7);
     await wrapper.findAll(".activity-row")[6].trigger("click");
     expect(wrapper.emitted("task")).toEqual([["seventh"]]);
-    await activity.load();
+    await activity.loadRecent();
     await flushPromises();
     expect(wrapper.findAll(".activity-row")).toHaveLength(7);
     expect(activity.state.next).toBe("4");

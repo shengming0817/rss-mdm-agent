@@ -70,24 +70,111 @@ impl FixtureService {
 fn failure(_: execution_app::Error) -> ServiceError {
     ServiceError::Unavailable
 }
-fn project(status: ExecutionStatus) -> OperationStatus {
-    OperationStatus {
-        mode: status.mode,
-        process: status.process,
-        assessment: status.assessment,
-        cancel_requested: status.cancel_requested,
-        operation_request_id: status.operation_request_id,
-        content_digest: status.content_digest,
-        phase: OperationPhase::OutcomeUnknown,
-        attempt_id: status.attempt_id,
-        evidence: status
-            .evidence
-            .into_iter()
-            .map(|e| e.reference.id)
-            .collect(),
-    }
-}
 impl ExecutionServicePort for FixtureService {
+    async fn task_operation(
+        &self,
+        input: execution_app::tasks::TaskOperation,
+        _: CancellationToken,
+    ) -> Result<execution_app::tasks::TaskResponse, ServiceError> {
+        use execution_app::tasks::*;
+        let scope = "explicit-s1-task".to_string();
+        let mut app = self.app.lock().unwrap();
+        let projection = |value: ExecutionTaskDetails| {
+            let revision = value.revision;
+            let request = value.action.request_id.clone();
+            TaskDetail {
+                reference: TaskRef::Request { request },
+                scope: scope.clone(),
+                revision: TaskRevision {
+                    owner: revision,
+                    transfers: vec![],
+                },
+                recorded_at: None,
+                source: TaskSource::Ai,
+                task_kind: TaskKind::Policy,
+                stage: "test".into(),
+                active: true,
+                facts: TaskFacts::Execution(Box::new(value)),
+                nodes: vec![],
+                allowed_actions: vec![TaskAction::Cancel],
+                control_reason: None,
+                upload_acknowledged: None,
+                collection_quality: None,
+                collection_complete: None,
+                software_state: None,
+                policy: None,
+                policy_revision: None,
+                retry_of: None,
+                related: vec![],
+                missing: vec![],
+                parameter_summary: Default::default(),
+                human_confirmation: false,
+            }
+        };
+        let receipt = |id: Id, value: Option<execution_app::Receipt>| {
+            TaskResponse::Control(TaskControlReceipt {
+                id,
+                disposition: match value.map(|v| v.outcome) {
+                    Some(Outcome::Stale) => ControlDisposition::Stale,
+                    Some(Outcome::Rejected) => ControlDisposition::Denied,
+                    Some(_) => ControlDisposition::Confirmed,
+                    None => ControlDisposition::Unknown,
+                },
+                created: None,
+            })
+        };
+        match input {
+            TaskOperation::List(q) => {
+                let page = app
+                    .tasks(&self.caller, None, usize::from(q.limit))
+                    .map_err(failure)?;
+                Ok(TaskResponse::Page(TaskPage {
+                    items: page.items.into_iter().map(projection).collect(),
+                    next: None,
+                    scope,
+                    as_of: 1000,
+                    last_sync: None,
+                    remote_available: false,
+                    coverage: vec![],
+                    retained_from: None,
+                    complete: true,
+                }))
+            }
+            TaskOperation::Detail(TaskRef::Request { request }) => {
+                Ok(TaskResponse::Detail(Box::new(projection(
+                    app.task_details(&self.caller, &request)
+                        .map_err(|_| ServiceError::NotFound)?,
+                ))))
+            }
+            TaskOperation::Control(c) => {
+                let TaskRef::Request { request } = c.reference else {
+                    return Err(ServiceError::Denied);
+                };
+                if c.scope != scope || c.action != TaskAction::Cancel {
+                    return Err(ServiceError::Denied);
+                }
+                let value = app
+                    .cancel_control(&self.caller, &request, &c.id, c.expected_revision.owner)
+                    .map_err(failure)?;
+                Ok(receipt(c.id, Some(value)))
+            }
+            TaskOperation::ControlStatus(c) => {
+                let TaskRef::Request { request } = c.reference else {
+                    return Err(ServiceError::Denied);
+                };
+                if c.scope != scope {
+                    return Err(ServiceError::Denied);
+                }
+                Ok(receipt(
+                    c.id.clone(),
+                    app.control_receipt(&self.caller, &request, &c.id)
+                        .map_err(failure)?,
+                ))
+            }
+            _ => Err(ServiceError::Denied),
+        }
+    }
+
     fn bind_call(
         self: &Arc<Self>,
         _: &serde_json::Map<String, serde_json::Value>,
@@ -125,7 +212,7 @@ impl ExecutionServicePort for FixtureService {
         // S1 proves SDK delivery only. Real backend consent/Start are verified by agent-service.
         Err(ServiceError::Denied)
     }
-    async fn tasks(&self, _: CancellationToken) -> Result<Vec<BackendTask>, ServiceError> {
+    async fn offers(&self, _: CancellationToken) -> Result<Vec<BackendTask>, ServiceError> {
         let s = self.selection();
         Ok(vec![BackendTask {
             presentation: execution_contract::BackendPresentation {
@@ -165,31 +252,6 @@ impl ExecutionServicePort for FixtureService {
         Ok(TaskSubmission {
             request: selection.request,
             confirmation_required: true,
-        })
-    }
-    async fn status(
-        &self,
-        request: OperationRequest,
-        _: CancellationToken,
-    ) -> Result<OperationStatus, ServiceError> {
-        self.details(&request.operation_request_id)
-            .map(project)
-            .map_err(|_| ServiceError::NotFound)
-    }
-    async fn cancel(
-        &self,
-        request: OperationRequest,
-        _: CancellationToken,
-    ) -> Result<CancelResult, ServiceError> {
-        let status = self
-            .app
-            .lock()
-            .unwrap()
-            .cancel(&self.caller, &request.operation_request_id)
-            .map_err(failure)?;
-        Ok(CancelResult {
-            disposition: CancelDisposition::Requested,
-            operation: project(status),
         })
     }
 }

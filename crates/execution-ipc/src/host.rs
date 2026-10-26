@@ -2,7 +2,7 @@
 use execution_contract::{Digest, Id, RequestId, VersionedRef};
 use serde::{Deserialize, Serialize};
 /// Current desktop/system IPC. No negotiation or legacy parser exists.
-pub const IPC_VERSION: u8 = 6;
+pub const IPC_VERSION: u8 = 7;
 /// Current protected installation document format.
 pub const DEPLOYMENT_VERSION: u32 = 6;
 
@@ -854,6 +854,8 @@ pub enum Request {
     },
     /// Authorized result of the original Policy invocation.
     PolicyStatus {
+        /// Native-attested source; AI cannot read another human's private input form.
+        origin: ClientOrigin,
         /// Exact current native context binding.
         context: execution_contract::NativeContextRef,
         /// Stable original request.
@@ -876,16 +878,15 @@ pub enum Request {
     },
     /// Explicitly request browser authorization for this configured installation.
     RequestRegistration {},
-    /// List authorized local projections and the current offered task.
-    Tasks {
-        /// Exclusive journal page cursor.
-        after: Option<RequestId>,
+    /// Unified task reads and controls, authorized against the native caller.
+    Task {
+        /// Original task operation.
+        input: execution_app::tasks::TaskOperation,
+        /// Attested caller source; this cannot confer human confirmation.
+        origin: ClientOrigin,
     },
-    /// Bounded latest activities from the existing journal, under current peer authorization.
-    RecentTasks {
-        /// Exclusive receipt sequence, decimal text from the previous page.
-        before: Option<String>,
-    },
+    /// Current verified backend offers; discovery does not authorize execution.
+    Offers {},
     /// Select the precise backend offer. This is a user action, not an enterprise approval.
     StartTask {
         /// Deterministic request from the displayed offer.
@@ -904,21 +905,6 @@ pub enum Request {
     ConfirmTask {
         /// Original backend task reference; never executable content or an approval claim.
         selection: execution_contract::BackendSelection,
-    },
-    /// Read an existing execution.
-    Status {
-        /// Journal request identity.
-        request: RequestId,
-    },
-    /// Read the safe immutable details of an existing execution.
-    Details {
-        /// Journal request identity.
-        request: RequestId,
-    },
-    /// Request cancellation of the caller's user-triggered task.
-    Cancel {
-        /// Journal request identity.
-        request: RequestId,
     },
 }
 #[derive(Deserialize, Serialize)]
@@ -1061,34 +1047,20 @@ pub enum Reply {
         /// Closed public progress.
         value: RegistrationStatus,
     },
-    /// Existing journal state.
-    Status {
-        /// Authorized projection.
-        value: execution_app::ExecutionStatus,
+    /// Unified task projection or original control receipt.
+    Task {
+        /// Safe owner response.
+        value: execution_app::tasks::TaskResponse,
     },
-    /// Durable preparation, before an execution plan or attempt exists.
+    /// Current original preparation, returned by dedicated submission/confirmation.
     Pending {
-        /// Original authenticated local intent.
+        /// Original owner record.
         value: Box<execution_contract::BackendRequest>,
     },
-    /// Existing safe task details.
-    Details {
-        /// Authorized details without raw output.
-        value: Box<execution_app::ExecutionTaskDetails>,
-    },
-    /// Bounded task page.
-    Tasks {
-        /// Existing executions.
-        value: execution_app::TaskPage,
-        /// Current offered task.
+    /// Current verified offers, separately from task history.
+    Offers {
+        /// Original backend offer identities.
         available: Vec<execution_contract::BackendTask>,
-        /// Recent preparation records retained in the same journal.
-        preparations: Vec<execution_contract::BackendRequest>,
-    },
-    /// Authorized newest-per-request activities, with current safe task facts.
-    RecentTasks {
-        /// Bounded page; empty does not imply end of discovery.
-        value: execution_app::RecentTaskPage,
     },
     /// User selection accepted; this does not assert dispatch or installation.
     Queued {

@@ -6,8 +6,13 @@ import PolicyPreparation from "./PolicyPreparation.vue";
 import { currentUser } from "../test-users";
 import type { BackendRequest, SelfServicePort, SelfServiceTask } from "./types";
 const record = (id: string): BackendRequest => ({
+  recordedAtUnixMs: 1000,
+  cancellationControl: null,
+  retryOf: null,
   action: {
     kind: "policy",
+    definition: { id: "policy", revision: "version" },
+    policyRevision: 1,
 
     choice: {
       request: id,

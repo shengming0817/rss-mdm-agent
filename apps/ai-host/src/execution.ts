@@ -1,4 +1,4 @@
-import { operationRequestId } from "@rss-mdm-agent/execution-bindings";
+import { operationRequestId, tools } from "@rss-mdm-agent/execution-bindings";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import {
   ReadBuffer,
@@ -89,27 +89,7 @@ export class ParentTransport implements Transport {
     this.onclose?.();
   }
 }
-const methods = new Set([
-  "execution_query_directory",
-  "execution_data_read",
-  "execution_query_submit",
-  "execution_query_status",
-  "execution_query_cancel",
-  "execution_software_read",
-  "execution_software_prepare",
-  "execution_software_status",
-  "execution_software_cancel",
-  "execution_policy_invoke",
-  "execution_software_observe",
-  "execution_policy_tools",
-  "execution_operation_prepare",
-  "execution_policy_status",
-  "execution_tasks",
-  "execution_capabilities",
-  "execution_execute",
-  "execution_status",
-  "execution_cancel",
-]);
+const methods = new Set<string>(tools.map((tool) => tool.name));
 /** MCP owns validation; this mapper supplies stage identity and reconciles against Rust. */
 export async function connectExecution(
   input: Readable,
@@ -263,19 +243,9 @@ export async function connectExecution(
     prepare: (namespace, proposal, commandId) => {
       if (!methods.has(proposal.name) && !proposal.name.startsWith("policy_"))
         return fail("unsupported_capability");
-      const read = [
-        "execution_query_directory",
-        "execution_data_read",
-        "execution_software_read",
-        "execution_software_status",
-        "execution_query_status",
-        "execution_software_observe",
-        "execution_policy_tools",
-        "execution_policy_status",
-        "execution_tasks",
-        "execution_capabilities",
-        "execution_status",
-      ].includes(proposal.name);
+      const read =
+        tools.find((tool) => tool.name === proposal.name)?.annotations
+          ?.readOnlyHint === true;
       const id =
         proposal.name.startsWith("policy_") ||
         proposal.name === "execution_operation_prepare" ||
@@ -285,11 +255,7 @@ export async function connectExecution(
           ? proposal.callId
           : read
             ? randomUUID()
-            : ["execution_query_cancel", "execution_software_cancel"].includes(
-                  proposal.name,
-                )
-              ? proposal.arguments.request
-              : operationRequestId(proposal.name, proposal.arguments);
+            : operationRequestId(proposal.name, proposal.arguments);
       if (!isId(id)) return fail("invalid_input");
       const digest = createHash("sha256")
         .update(JSON.stringify([namespace, commandId, proposal.name, id]))
@@ -306,7 +272,7 @@ export async function connectExecution(
       return ok({
         operationId,
         target: "rust-execution",
-        permission: proposal.name === "execution_cancel" ? "ask" : "none",
+        permission: proposal.name === "execution_task_control" ? "ask" : "none",
       });
     },
     send: async (request, b) => {
@@ -334,45 +300,33 @@ export async function connectExecution(
     reconcile: async (request, b) => {
       const { name, arguments: args } = request.body.proposal;
       try {
-        if (
-          name === "execution_software_prepare" ||
-          name === "execution_software_cancel"
-        ) {
-          const original =
-            name === "execution_software_prepare"
-              ? request.body.operationId
-              : args.request;
+        if (name === "execution_task_control") {
           const status = await call(
             request,
-            "execution_software_status",
-            { request: original },
+            "execution_task_control_status",
+            { reference: args.reference, id: args.id, scope: args.scope },
             b,
           );
-          if (status.status === "error")
-            return ok({
-              state:
-                status.error?.code === "notFound" ? "not_submitted" : "unknown",
-            });
           if (
-            name === "execution_software_cancel" &&
-            status.result?.operation?.cancelRequested !== true &&
-            status.result?.operation?.phase !== "cancelled"
+            status.status === "error" ||
+            status.result?.disposition == null ||
+            status.result.disposition === "unknown"
           )
             return ok({ state: "unknown" });
           return ok({ state: "committed", receipt: receipt(request, status) });
         }
         if (
-          name === "execution_query_submit" ||
-          name === "execution_query_cancel"
+          name === "execution_software_prepare" ||
+          name === "execution_query_submit"
         ) {
-          const original =
-            name === "execution_query_submit"
-              ? request.body.operationId
-              : args.request;
+          const query =
+            name === "execution_software_prepare"
+              ? "execution_software_status"
+              : "execution_query_status";
           const status = await call(
             request,
-            "execution_query_status",
-            { request: original },
+            query,
+            { request: request.body.operationId },
             b,
           );
           if (status.status === "error")
@@ -380,14 +334,6 @@ export async function connectExecution(
               state:
                 status.error?.code === "notFound" ? "not_submitted" : "unknown",
             });
-          if (
-            name === "execution_query_cancel" &&
-            status.result?.value?.cancelRequested !== true &&
-            !["cancelled", "completed", "failed"].includes(
-              status.result?.value?.phase,
-            )
-          )
-            return ok({ state: "unknown" });
           return ok({ state: "committed", receipt: receipt(request, status) });
         }
         if (
@@ -409,20 +355,15 @@ export async function connectExecution(
           return ok({ state: "committed", receipt: receipt(request, status) });
         }
         // Reads and exact immutable registrations are receiver-idempotent.
-        if (!["execution_execute", "execution_cancel"].includes(name))
+        if (name !== "execution_execute")
           return ok({
             state: "committed",
             receipt: receipt(request, await call(request, name, args, b)),
           });
         const status = await call(
           request,
-          "execution_status",
-          {
-            operationRequestId: operationRequestId(
-              request.body.proposal.name,
-              request.body.proposal.arguments,
-            ),
-          },
+          "execution_task_detail",
+          { kind: "request", request: operationRequestId(name, args) },
           b,
         );
         if (status.status === "error")
@@ -430,12 +371,6 @@ export async function connectExecution(
             state:
               status.error?.code === "notFound" ? "not_submitted" : "unknown",
           });
-        if (
-          name === "execution_cancel" &&
-          status.result.cancelRequested !== true &&
-          !["cancelled", "verified", "failed"].includes(status.result.phase)
-        )
-          return ok({ state: "unknown" });
         return ok({ state: "committed", receipt: receipt(request, status) });
       } catch {
         return ok({ state: "unknown" });

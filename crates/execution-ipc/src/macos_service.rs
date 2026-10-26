@@ -378,7 +378,7 @@ mod tests {
             "contextRevoked"
         );
         assert!(fence.0.load(Ordering::Acquire));
-        for bytes in [b"{}".to_vec(), host::encode(host::Request::Tasks { after: None }).unwrap(), serde_json::to_vec(&serde_json::json!({"version": host::IPC_VERSION - 1, "request": {"method":"employeeSession", "value":null}})).unwrap()] {
+        for bytes in [b"{}".to_vec(), host::encode(host::Request::Offers {}).unwrap(), serde_json::to_vec(&serde_json::json!({"version": host::IPC_VERSION - 1, "request": {"method":"employeeSession", "value":null}})).unwrap()] {
             assert!(host::dispatch_fence(&fence, &peer, &bytes).is_none());
         }
         drop(held);

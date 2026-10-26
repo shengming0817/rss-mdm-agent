@@ -8,9 +8,14 @@ import { homeFacts } from "../system-settings/facts";
 const settings = inject(systemSettingsKey, undefined);
 const facts = computed(() => homeFacts(settings));
 import { UiPopover, Package, Sparkles } from "@rss-mdm-agent/ui";
-import type { Controller } from "../self-service/controller";
+import type { Controller } from "../task-center/controller";
 import type { DeviceOverview } from "../self-service/types";
-import { activityKey, taskPhase } from "../self-service/activity";
+import {
+  taskCenterKey,
+  taskPhase,
+  taskTitle,
+  taskKey,
+} from "../task-center/controller";
 const props = defineProps<{
   controller: Controller;
   draft: string;
@@ -23,7 +28,7 @@ const emit = defineEmits<{
   open: [target: import("../workspace/page-navigation").NavigationTarget];
   task: [request: string];
 }>();
-const activity = inject(activityKey, undefined);
+const activity = inject(taskCenterKey, undefined);
 const summary = inject(softwareSummaryKey, undefined);
 const installed = computed(
   () =>
@@ -193,33 +198,31 @@ const addressesOpen = ref(false);
         </div>
         <div class="home-activity">
           <button
-            v-for="item in activity?.state.items ?? []"
-            :key="item.details.action.requestId"
-            @click="emit('task', item.details.action.requestId)"
+            v-for="item in activity?.recentItems.value ?? []"
+            :key="taskKey(item.reference)"
+            @click="
+              item.reference.kind === 'request'
+                ? emit('task', item.reference.request)
+                : emit('navigate', 'tasks')
+            "
             class="activity-row"
           >
             <span
-              ><strong
-                >{{ item.details.action.operation.action }} ·
-                {{ item.details.action.operation.resource.id }}</strong
-              >
-              <small
-                >{{ taskPhase[item.details.status.phase] ?? "状态未知"
-                }}{{
-                  item.details.status.cancelRequested
-                    ? " · 已请求取消，终止单独核实"
-                    : ""
-                }}</small
-              ></span
+              ><strong>{{ taskTitle(item) }}</strong>
+              <small>{{ taskPhase[item.stage] ?? item.stage }}</small></span
             >
-            <time>{{ new Date(item.recordedAtUnixMs).toLocaleString() }}</time>
+            <time>{{
+              item.recordedAt == null
+                ? "时间未知"
+                : new Date(item.recordedAt).toLocaleString()
+            }}</time>
           </button>
-          <p v-if="!activity?.state.loaded" class="home-empty">
+          <p v-if="!activity?.state.recentLoaded" class="home-empty">
             {{ activity?.available ? "动态尚未读取" : "执行服务未连接" }}
           </p>
-          <p v-else-if="!activity.state.items.length" class="home-empty">
+          <p v-else-if="!activity.recentItems.value.length" class="home-empty">
             {{
-              activity.state.next
+              activity.state.recentNext
                 ? "当前页无可见记录，仍可继续读取"
                 : "暂无操作记录"
             }}
@@ -228,9 +231,9 @@ const addressesOpen = ref(false);
             {{ activity.state.error }}
           </p>
           <button
-            v-if="activity?.state.next"
-            :disabled="activity.state.loading"
-            @click="activity.load(true)"
+            v-if="activity?.state.recentNext"
+            :disabled="activity.state.recentLoading"
+            @click="activity.loadRecent(true)"
           >
             继续读取动态
           </button>

@@ -1,10 +1,9 @@
 //! Production IPC consumer. The desktop owns neither an execution journal nor a runner.
 use crate::self_service as ui;
-use execution_app::{BackendTaskView, Error, ExecutionStatus, TaskPhase};
+use execution_app::{Error, ExecutionStatus, TaskPhase};
 use execution_contract::*;
 use execution_ipc::host::{ClientOrigin, Reply, Request, ServiceClient};
 use execution_mcp as mcp;
-use sha2::Digest as _;
 use std::{
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -24,6 +23,17 @@ pub fn now() -> Result<u64, Error> {
 }
 fn bad(_: Error) -> ui::ServiceError {
     ui::error("execution_unavailable", "执行服务未确认操作，请查询原任务")
+}
+fn task_ui_error(error: Error) -> ui::ServiceError {
+    let (code, message) = match error {
+        Error::Denied | Error::NotFound | Error::Unbound => {
+            ("task_denied", "原任务不可访问或授权已变化，操作未获准")
+        }
+        Error::Conflict => ("task_stale", "任务或策略版本已变化，操作未提交，请重新读取"),
+        Error::InvalidInput => ("task_input", "任务请求无效，操作未提交"),
+        _ => ("task_unknown", "控制结果未知，请查询原操作"),
+    };
+    ui::error(code, message)
 }
 fn mcp_error(error: Error) -> mcp::ServiceError {
     eprintln!("RSS_EXECUTION_MCP_FAILURE code={error:?}");
@@ -315,16 +325,6 @@ impl ExecutionHandle {
             _ => Err(bad(Error::Unavailable)),
         }
     }
-    pub async fn query_cancel(&self, input: QueryRequest) -> ui::Result<QueryStatus> {
-        match self
-            .request_data(DataOperation::Cancel(input))
-            .await
-            .map_err(data_error)?
-        {
-            DataResponse::Status(value) => Ok(value),
-            _ => Err(bad(Error::Unavailable)),
-        }
-    }
     async fn software_request(
         &self,
         input: LocalSoftwareOperation,
@@ -456,19 +456,6 @@ impl ExecutionHandle {
     ) -> ui::Result<execution_app::LocalSoftwareStatus> {
         match self
             .software_request(LocalSoftwareOperation::Status(input))
-            .await
-            .map_err(software_ui_error)?
-        {
-            Reply::SoftwareStatus { value } => Ok(value),
-            _ => Err(bad(Error::OutcomeUnknown)),
-        }
-    }
-    pub async fn software_cancel(
-        &self,
-        input: QueryRequest,
-    ) -> ui::Result<execution_app::LocalSoftwareStatus> {
-        match self
-            .software_request(LocalSoftwareOperation::Cancel(input))
             .await
             .map_err(software_ui_error)?
         {
@@ -677,6 +664,7 @@ impl ExecutionHandle {
     pub async fn policy_status(&self, input: ui::ActionRef) -> ui::Result<ui::PolicyStatus> {
         match self
             .request(Request::PolicyStatus {
+                origin: self.origin.clone(),
                 context: self.context_ref()?,
                 request: input.request_id,
             })
@@ -707,42 +695,86 @@ impl ExecutionHandle {
     pub async fn close(&self) {
         self.permits.close();
     }
-    pub async fn snapshot(&self, query: ui::SnapshotQuery) -> ui::Result<ui::Snapshot> {
+    pub async fn offers_ui(&self, _: ()) -> ui::Result<Vec<BackendTask>> {
+        self.offers().await
+    }
+    pub async fn offers(&self) -> ui::Result<Vec<BackendTask>> {
+        match self.request(Request::Offers {}).await.map_err(bad)? {
+            Reply::Offers { available } => Ok(available),
+            _ => Err(bad(Error::Unavailable)),
+        }
+    }
+    async fn task_request(
+        &self,
+        input: execution_app::tasks::TaskOperation,
+    ) -> Result<execution_app::tasks::TaskResponse, Error> {
         match self
-            .request(Request::Tasks { after: query.after })
-            .await
-            .map_err(bad)?
+            .request(Request::Task {
+                input,
+                origin: self.origin.clone(),
+            })
+            .await?
         {
-            Reply::Tasks {
-                value,
-                available,
-                preparations,
-            } => Ok(ui::Snapshot {
-                available,
-                preparations,
-                selected: match query.selected {
-                    Some(request) => self.details(request).await.ok(),
-                    None => None,
-                },
-                requests: value.items,
-                next: value.next,
+            Reply::Task { value } => Ok(value),
+            Reply::DataFailure { reason } => Err(match reason {
+                DataError::InvalidInput => Error::InvalidInput,
+                DataError::Conflict => Error::Conflict,
+                DataError::Denied | DataError::NotFound | DataError::Expired => Error::Denied,
+                _ => Error::OutcomeUnknown,
             }),
+            _ => Err(Error::OutcomeUnknown),
+        }
+    }
+    pub async fn task_list(
+        &self,
+        input: execution_app::tasks::TaskQuery,
+    ) -> ui::Result<execution_app::tasks::TaskPage> {
+        match self
+            .task_request(execution_app::tasks::TaskOperation::List(input))
+            .await
+            .map_err(task_ui_error)?
+        {
+            execution_app::tasks::TaskResponse::Page(value) => Ok(value),
             _ => Err(bad(Error::InvalidInput)),
         }
     }
-    pub async fn recent_tasks(
+    pub async fn task_detail(
         &self,
-        query: ui::RecentTasksQuery,
-    ) -> ui::Result<execution_app::RecentTaskPage> {
+        input: execution_app::tasks::TaskRef,
+    ) -> ui::Result<execution_app::tasks::TaskDetail> {
         match self
-            .request(Request::RecentTasks {
-                before: query.before,
-            })
+            .task_request(execution_app::tasks::TaskOperation::Detail(input))
             .await
-            .map_err(bad)?
+            .map_err(task_ui_error)?
         {
-            Reply::RecentTasks { value } => Ok(value),
-            _ => Err(bad(Error::Unavailable)),
+            execution_app::tasks::TaskResponse::Detail(value) => Ok(*value),
+            _ => Err(bad(Error::InvalidInput)),
+        }
+    }
+    pub async fn task_control(
+        &self,
+        input: execution_app::tasks::TaskControl,
+    ) -> ui::Result<execution_app::tasks::TaskControlReceipt> {
+        match self
+            .task_request(execution_app::tasks::TaskOperation::Control(input))
+            .await
+            .map_err(task_ui_error)?
+        {
+            execution_app::tasks::TaskResponse::Control(value) => Ok(value),
+            _ => Err(bad(Error::InvalidInput)),
+        }
+    }
+    pub async fn task_control_status(
+        &self,
+        input: execution_app::tasks::TaskControlQuery,
+    ) -> ui::Result<execution_app::tasks::TaskControlReceipt> {
+        match self
+            .task_request(execution_app::tasks::TaskOperation::ControlStatus(input))
+            .await
+            .map_err(task_ui_error)?
+        {
+            execution_app::tasks::TaskResponse::Control(value) => Ok(value),
+            _ => Err(bad(Error::InvalidInput)),
         }
     }
     async fn select(&self, input: BackendSelection) -> Result<TaskSubmission, Error> {
@@ -774,38 +806,6 @@ impl ExecutionHandle {
             .await
             .map_err(bad)?;
         selection_reply(&expected, reply).map_err(bad)
-    }
-    pub async fn cancel_ui(&self, input: ui::ActionRef) -> ui::Result<BackendTaskView> {
-        self.cancel_task(input.request_id).await.map_err(bad)
-    }
-    pub async fn details(&self, request: RequestId) -> Result<BackendTaskView, Error> {
-        match self.request(Request::Details { request }).await? {
-            Reply::Details { value } => Ok(BackendTaskView::Execution { value }),
-            Reply::Pending { value } => Ok(BackendTaskView::Pending { value }),
-            _ => Err(Error::InvalidInput),
-        }
-    }
-    pub async fn cancel_task(&self, request: RequestId) -> Result<BackendTaskView, Error> {
-        if let BackendTaskView::Execution { value } = self.details(request.clone()).await? {
-            if value.action.operation.action.as_str() == "network.check" {
-                self.network_check(NetworkCheckOperation::Cancel {
-                    request: request.clone(),
-                })
-                .await
-                .map_err(|_| Error::OutcomeUnknown)?;
-                return self.details(request).await;
-            }
-        }
-        match self
-            .request(Request::Cancel {
-                request: request.clone(),
-            })
-            .await?
-        {
-            Reply::Status { .. } => self.details(request).await,
-            Reply::Pending { value } => Ok(BackendTaskView::Pending { value }),
-            _ => Err(Error::OutcomeUnknown),
-        }
     }
 }
 impl Default for ExecutionHandle {
@@ -851,6 +851,14 @@ fn local_software_result(value: execution_app::LocalSoftwareStatus) -> mcp::Loca
     }
 }
 impl mcp::ExecutionServicePort for ExecutionHandle {
+    async fn task_operation(
+        &self,
+        input: execution_app::tasks::TaskOperation,
+        _: CancellationToken,
+    ) -> Result<execution_app::tasks::TaskResponse, mcp::ServiceError> {
+        self.task_request(input).await.map_err(mcp_error)
+    }
+
     fn bind_call(
         self: &Arc<Self>,
         metadata: &serde_json::Map<String, serde_json::Value>,
@@ -876,13 +884,9 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
         }
         Ok(())
     }
-    async fn tasks(&self, _: CancellationToken) -> Result<Vec<BackendTask>, mcp::ServiceError> {
-        match self
-            .request(Request::Tasks { after: None })
-            .await
-            .map_err(mcp_error)?
-        {
-            Reply::Tasks { available, .. } => Ok(available),
+    async fn offers(&self, _: CancellationToken) -> Result<Vec<BackendTask>, mcp::ServiceError> {
+        match self.request(Request::Offers {}).await.map_err(mcp_error)? {
+            Reply::Offers { available } => Ok(available),
             _ => Err(mcp::ServiceError::Unavailable),
         }
     }
@@ -970,20 +974,6 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
         };
         Ok(local_software_result(value))
     }
-    async fn software_cancel(
-        &self,
-        input: QueryRequest,
-        _: CancellationToken,
-    ) -> Result<mcp::LocalSoftwareResult, mcp::ServiceError> {
-        let value = match self
-            .software_request(LocalSoftwareOperation::Cancel(input))
-            .await?
-        {
-            Reply::SoftwareStatus { value } => value,
-            _ => return Err(mcp::ServiceError::Unavailable),
-        };
-        Ok(local_software_result(value))
-    }
     async fn policy_tools(
         &self,
         input: mcp::PolicyToolsQuery,
@@ -1058,9 +1048,7 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
         &self,
         _: CancellationToken,
     ) -> Result<mcp::CapabilityView, mcp::ServiceError> {
-        self.request(Request::Tasks { after: None })
-            .await
-            .map_err(mcp_error)?;
+        self.request(Request::Offers {}).await.map_err(mcp_error)?;
         Ok(mcp::CapabilityView {
             state: mcp::CapabilityState::Supported,
             reasons: vec![Id::new("backend-task-selection").expect("constant")],
@@ -1075,40 +1063,6 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
             return Err(mcp::ServiceError::Denied);
         }
         self.select(request).await.map_err(mcp_error)
-    }
-    async fn status(
-        &self,
-        request: mcp::OperationRequest,
-        _: CancellationToken,
-    ) -> Result<mcp::OperationStatus, mcp::ServiceError> {
-        match self
-            .request(Request::Status {
-                request: request.operation_request_id,
-            })
-            .await
-            .map_err(mcp_error)?
-        {
-            Reply::Status { value } => Ok(operation(value)),
-            Reply::Pending { value } => Ok(pending_operation(*value)),
-            _ => Err(mcp::ServiceError::Unavailable),
-        }
-    }
-    async fn cancel(
-        &self,
-        request: mcp::OperationRequest,
-        _: CancellationToken,
-    ) -> Result<mcp::CancelResult, mcp::ServiceError> {
-        Ok(mcp::CancelResult {
-            disposition: mcp::CancelDisposition::Requested,
-            operation: match self
-                .cancel_task(request.operation_request_id)
-                .await
-                .map_err(mcp_error)?
-            {
-                BackendTaskView::Execution { value } => operation(value.status),
-                BackendTaskView::Pending { value } => pending_operation(*value),
-            },
-        })
     }
 }
 
@@ -1173,38 +1127,6 @@ fn selection_reply(input: &BackendSelection, reply: Reply) -> Result<TaskSubmiss
     }
 }
 
-fn pending_operation(value: execution_contract::BackendRequest) -> mcp::OperationStatus {
-    use execution_contract::BackendRequestState;
-    mcp::OperationStatus {
-        mode: execution_lifecycle::ExecutionMode::Real,
-        process: None,
-        assessment: None,
-        cancel_requested: value.state == BackendRequestState::Cancelled,
-        operation_request_id: value.action.request().clone(),
-        content_digest: value
-            .action
-            .offer()
-            .map(|o| o.revision.clone())
-            .unwrap_or_else(|| {
-                Digest::new(format!(
-                    "{:x}",
-                    sha2::Sha256::digest(
-                        serde_json::to_vec(&value.action).expect("typed preparation")
-                    )
-                ))
-                .expect("digest")
-            }),
-        phase: match value.state {
-            BackendRequestState::Observed => mcp::OperationPhase::ExecutionEnded,
-            BackendRequestState::Failed => mcp::OperationPhase::Failed,
-            BackendRequestState::Cancelled => mcp::OperationPhase::Cancelled,
-            _ => mcp::OperationPhase::Waiting,
-        },
-        attempt_id: None,
-        evidence: vec![],
-    }
-}
-
 fn data_error(error: mcp::ServiceError) -> ui::ServiceError {
     ui::error(
         match error {
@@ -1235,6 +1157,9 @@ mod selection_tests {
             revision: Digest::new("a".repeat(64)).unwrap(),
         };
         let original = BackendRequest {
+            retry_of: None,
+            recorded_at_unix_ms: 1,
+            cancellation_control: None,
             action: PreparedAction::Offered {
                 offer: BackendTask {
                     request: selection.request.clone(),

@@ -36,6 +36,7 @@ type Source = {
 export function createSoftware(
   data: DataAccessPort | null,
   port: SoftwarePort | null,
+  tasks?: import("../task-center/controller").Controller,
 ) {
   const state = reactive({
     sources: [] as Source[],
@@ -366,7 +367,9 @@ export function createSoftware(
   async function cancel(request: string) {
     if (!port) return;
     const call = epoch;
-    const value = await port.cancel({ request });
+    if (!tasks) throw Error("task port unavailable");
+    await tasks.cancel(request);
+    const value = await port.status({ request });
     if (active && call === epoch) accept(value);
   }
   async function refreshSource(source: Source) {
@@ -423,7 +426,9 @@ export function createSoftware(
     if (!data || !active) return;
     const call = epoch;
     try {
-      const value = await data.query_cancel({ request });
+      if (!tasks) throw Error("task port unavailable");
+      await tasks.cancel(request);
+      const value = await data.query_status({ request });
       if (active && call === epoch) state.queries.set(request, value);
     } catch {
       if (active && call === epoch)

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { taskCenterKey } from "../task-center/controller";
 import PolicyExecutionContext from "./PolicyExecutionContext.vue";
 import {
   computed,
@@ -19,6 +20,7 @@ import type {
 import { createDirectory, directoryKey, policyResource } from "./directory";
 import { currentUser } from "../test-users";
 import PolicyPreparation from "./PolicyPreparation.vue";
+const tasks = inject(taskCenterKey, undefined);
 const props = withDefaults(
   defineProps<{
     port: SelfServicePort | null;
@@ -304,7 +306,8 @@ async function cancel(id: string) {
   busy.value = true;
   const current = epoch;
   try {
-    await props.port.cancel({ requestId: id });
+    if (!tasks) throw Error("task port unavailable");
+    await tasks.cancel(id);
     await query(id);
     if (current !== epoch) return;
     emit("changed");
@@ -627,7 +630,7 @@ function presentationText(value: unknown, fallback = "未提供"): string {
         </template></template
       >
     </section>
-    <PolicyPreparation
+    <button
       v-for="record in records.filter(
         (r) =>
           r.action.kind === 'policy' &&
@@ -637,12 +640,12 @@ function presentationText(value: unknown, fallback = "未提供"): string {
             : r.action.task.kind !== 'enrollment'),
       )"
       :key="record.action.kind === 'policy' ? record.action.choice.request : ''"
-      :record="record"
-      :confirm-disabled="allowConfirm === false"
       :disabled="busy"
-      @confirm="confirm"
-      @cancel="cancel"
-      @query="query"
-    />
+      @click="
+        record.action.kind === 'policy' && query(record.action.choice.request)
+      "
+    >
+      查看原策略请求并处理
+    </button>
   </section>
 </template>

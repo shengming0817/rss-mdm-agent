@@ -197,16 +197,30 @@ export async function startModelFixture() {
         assert.equal(status.value.risk?.level, "two");
         assert.equal(status.value.confirmation, null);
       }
-      if (scenario.startsWith("CANCEL") && !output("cancel"))
-        return call("cancel", "execution_cancel", {
-          operationRequestId: facts.request,
-        });
+      if (scenario.startsWith("CANCEL")) {
+        if (!output("control-detail"))
+          return call("control-detail", "execution_task_detail", {
+            kind: "request",
+            request: facts.request,
+          });
+        const detail = resultFrom(output("control-detail").output);
+        assert.ok(detail?.scope && detail?.revision);
+        if (!output("cancel"))
+          return call("cancel", "execution_task_control", {
+            reference: detail.reference,
+            id: randomUUID(),
+            scope: detail.scope,
+            expectedRevision: detail.revision,
+            action: "cancel",
+          });
+      }
       if (scenario === "READ") {
         if (!output("capabilities"))
           return call("capabilities", "execution_capabilities", {});
         if (!output("status"))
-          return call("status", "execution_status", {
-            operationRequestId: facts.request,
+          return call("status", "execution_task_detail", {
+            kind: "request",
+            request: facts.request,
           });
       }
       facts.completions.push(scenario);

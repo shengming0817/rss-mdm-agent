@@ -401,10 +401,9 @@ const navigate = async (name) => {
         select.value = "tasks";
         select.dispatchEvent(new Event("change", { bubbles: true }));
       });
-      await wait(() => browser.$(".task-records").isDisplayed());
+      await wait(() => browser.$(".task-center").isDisplayed());
     } else {
-      await openAgentSettings("运行与诊断");
-      await click("执行服务记录");
+      await click("任务中心");
     }
     return;
   }
@@ -1875,14 +1874,14 @@ try {
     await text("完成 READ");
     await navigate("请求与任务");
     await wait(() =>
-      browser.$(".task-records .execution-records > button").isDisplayed(),
+      browser.$(".task-center-list button[data-task]").isDisplayed(),
     );
-    await browser.$(".task-records .execution-records > button").click();
+    await browser.$(".task-center-list button[data-task]").click();
     await wait(() =>
-      browser.$('.task-detail[aria-label="任务详情"]').isDisplayed(),
+      browser.$('.task-center-detail[aria-label="任务详情"]').isDisplayed(),
     );
     assert.ok(
-      (await browser.$(".task-detail").getText()).includes(
+      (await browser.$(".task-center-detail").getText()).includes(
         fixture.facts.request,
       ),
     );

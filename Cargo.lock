@@ -1492,6 +1492,7 @@ dependencies = [
  "execution-lifecycle",
  "execution-sqlite",
  "platform-private-storage",
+ "rss-mdm-agent-wire",
  "rusqlite",
  "schemars 1.2.2",
  "serde",
@@ -1562,6 +1563,7 @@ dependencies = [
 name = "execution-mcp"
 version = "0.1.0"
 dependencies = [
+ "execution-app",
  "execution-contract",
  "execution-lifecycle",
  "futures-util",
@@ -4609,7 +4611,7 @@ dependencies = [
 [[package]]
 name = "rss-mdm-agent-wire"
 version = "1.0.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=6f69a3e95217cbc385dc11764576b246aacd0838#6f69a3e95217cbc385dc11764576b246aacd0838"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=3097cbccade1bc8ef5520a6c76989379209534c4#3097cbccade1bc8ef5520a6c76989379209534c4"
 dependencies = [
  "base64 0.22.1",
  "ordered-float",

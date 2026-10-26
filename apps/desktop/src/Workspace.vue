@@ -38,8 +38,15 @@ import {
   createAssistant,
   type AssistantServices,
 } from "./assistant/controller";
-import { createActivity, activityKey } from "./self-service/activity";
-import Tasks from "./self-service/Tasks.vue";
+import {
+  createTaskCenter,
+  taskCenterKey,
+  taskNavigationKey,
+  requestRef,
+  taskTitle,
+} from "./task-center/controller";
+import type { TaskRef } from "./self-service/types";
+import Tasks from "./task-center/TaskCenter.vue";
 import { createDirectory, directoryKey } from "./self-service/directory";
 import type { LocalPorts } from "./assembly";
 import type { UserContext } from "@rss-mdm-agent/ai-contract/wire";
@@ -52,6 +59,7 @@ import {
 import SoftwareManagement from "./software/SoftwareManagement.vue";
 import { createSoftware, softwareSummaryKey } from "./software/controller";
 import {
+  nativeTaskPort,
   nativeDataPort,
   nativeSoftwarePort,
   nativeSettingsPort,
@@ -60,7 +68,7 @@ import {
 import ToolsPage from "./device-tools/ToolsPage.vue";
 import { createDeviceOverview, type DeviceOverviewPort } from "./home/device";
 import { nativeDeviceOverview } from "./home/native";
-import { createController } from "./self-service/controller";
+
 import { nativePort } from "./self-service/native";
 import Settings from "./settings/Settings.vue";
 import type { ServicePort } from "./settings/native";
@@ -98,11 +106,55 @@ const chromeNarrow = ref(false),
   searchRequest = ref(0);
 const designedPages = [
   "home",
+  "tasks",
   "settings",
   "system-settings",
   "software-management",
   "device-tools",
 ];
+const taskPage = computed<PageNavigation>(() => ({
+  sections: [
+    { id: "active", title: "正在进行" },
+    { id: "history", title: "历史记录" },
+    { id: "management", title: "管理活动" },
+  ],
+  section: controller.state.query.view,
+  path: controller.state.selected
+    ? [
+        {
+          id: JSON.stringify(controller.state.selected.reference),
+          title: taskTitle(controller.state.selected),
+        },
+      ]
+    : [],
+  searchEntries: [...controller.state.byRef.values()].map((task) => ({
+    id: JSON.stringify(task.reference),
+    title: taskTitle(task),
+    revision: JSON.stringify(task.revision),
+  })),
+  reset: () => {
+    controller.state.selected = null;
+  },
+  openSection: (id) => {
+    if (["active", "history", "management"].includes(id))
+      void controller.setQuery({
+        ...controller.state.query,
+        view: id as "active" | "history" | "management",
+      });
+  },
+  openResource: async (id, revision) => {
+    const item = controller.state.byRef.get(id);
+    if (!item || JSON.stringify(item.revision) !== revision) return false;
+    return (await openTask(item.reference)) === "ready";
+  },
+  search: {
+    loading: controller.state.loading,
+    complete: controller.state.loaded && !controller.state.next,
+    hasMore: !!controller.state.next,
+    error: controller.state.error,
+    loadMore: () => controller.load(true),
+  },
+}));
 const currentModule = computed(() =>
   props.page === "system-settings"
     ? systemPage.value
@@ -112,7 +164,9 @@ const currentModule = computed(() =>
         ? toolsPage.value
         : props.page === "settings"
           ? settingsPage.value
-          : undefined,
+          : props.page === "tasks"
+            ? taskPage.value
+            : undefined,
 );
 const moduleTitle = computed(
   () =>
@@ -122,6 +176,7 @@ const moduleTitle = computed(
       { id: "software-management", title: "软件管理" },
       { id: "device-tools", title: "工具中心" },
       { id: "home", title: "主页" },
+      { id: "tasks", title: "任务中心" },
     ].find((item) => item.id === props.page)?.title ?? "",
 );
 const searchEntries = computed<SearchEntry[]>(() => [
@@ -134,6 +189,7 @@ const searchEntries = computed<SearchEntry[]>(() => [
     { page: "device-tools", group: "工具", module: toolsPage.value },
     { page: "system-settings", group: "系统设置", module: systemPage.value },
     { page: "settings", group: "RSS Agent 设置", module: settingsPage.value },
+    { page: "tasks", group: "任务中心", module: taskPage.value },
   ].flatMap(({ page, group, module }) =>
     (module?.sections ?? []).map((e) => ({
       ...e,
@@ -153,6 +209,12 @@ const searchEntries = computed<SearchEntry[]>(() => [
     kind: "resource" as const,
     page: "device-tools",
     group: "工具",
+  })),
+  ...taskPage.value.searchEntries!.map((item) => ({
+    ...item,
+    kind: "resource" as const,
+    page: "tasks",
+    group: "任务",
   })),
   {
     kind: "section" as const,
@@ -218,7 +280,9 @@ async function openTarget(target: NavigationTarget) {
           ? systemPage.value
           : target.page === "settings"
             ? settingsPage.value
-            : undefined;
+            : target.page === "tasks"
+              ? taskPage.value
+              : undefined;
   if (!module) {
     navigationError.value = "目标页面不可用，请刷新后重试。";
     return;
@@ -263,34 +327,49 @@ function accountMenu(id: string) {
 function openConnectionSettings() {
   accountMenu("connection");
 }
-async function openTask(request: string) {
-  if (!controller) return;
-  const details = activity.state.items.find(
-    (item) => item.details.action.requestId === request,
-  )?.details;
-  const action = details?.action.operation.action;
-  if (
-    [
-      "local-software.launch",
-      "local-software.uninstall",
-      "local-software.detect",
-    ].includes(action ?? "")
-  ) {
-    navigateMain("software-management");
-    await nextTick();
-    await softwarePage.value?.openRequest?.(request);
-    return;
-  }
-  if (action === "network.check") {
-    navigateMain("device-tools");
-    await nextTick();
-    await toolsPage.value?.openRequest?.(request);
-    return;
-  }
-  controller.state.taskId = request;
+let taskReturn: { page: string; focus: HTMLElement | null } | undefined;
+async function openTask(request: string | TaskRef, node = "") {
+  if (props.page !== "tasks")
+    taskReturn = {
+      page: props.page,
+      focus:
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null,
+    };
   contextualNavigate("tasks");
-  await controller.refresh();
+  const result = await controller.openTask(
+    typeof request === "string" ? requestRef(request) : request,
+    node,
+  );
+  if (result !== "ready")
+    navigationError.value = "原任务不可访问或状态尚未确认";
+  await nextTick();
+  if (result === "ready") {
+    const element = node
+      ? [...document.querySelectorAll<HTMLElement>("[data-node]")].find(
+          (e) => e.dataset.node === node,
+        )
+      : document.querySelector<HTMLElement>(".task-center-detail h2");
+    element?.focus();
+  }
+  return result;
 }
+async function returnFromTask() {
+  if (!taskReturn) return;
+  const previous = taskReturn;
+  taskReturn = undefined;
+  navigateMain(previous.page);
+  await nextTick();
+  if (previous.focus?.isConnected) previous.focus.focus();
+  else
+    document
+      .querySelector<HTMLElement>(
+        ".workspace-page-header h1,.workspace-breadcrumb button",
+      )
+      ?.focus();
+}
+
 function contextualNavigate(page: string, section?: string) {
   navigateMain(page);
   if (section) {
@@ -359,28 +438,34 @@ const device = createDeviceOverview(
   props.fixture ? props.devicePort : nativeDeviceOverview(),
 );
 let devicePolling: ReturnType<typeof setInterval> | undefined;
-let taskPolling: ReturnType<typeof setInterval> | undefined;
 const lastContentPage = ref("home");
 const newIdentity = () => crypto.randomUUID();
 const ownerKey = workspaceIdentity(props.identity);
 const local: LocalPorts = props.localPorts ?? {
+  tasks: !props.ready || props.fixture ? null : nativeTaskPort(),
   data: !props.ready || props.fixture ? null : nativeDataPort(),
   software: !props.ready || props.fixture ? null : nativeSoftwarePort(),
   settings: !props.ready || props.fixture ? null : nativeSettingsPort(),
   network: !props.ready || props.fixture ? null : nativeNetworkCheckPort(),
 };
-const software = createSoftware(local.data, local.software);
+const controller = createTaskCenter(
+  local.tasks ?? null,
+  props.ready ? (props.selfServicePort ?? nativePort()) : null,
+);
+const software = createSoftware(local.data, local.software, controller);
 provide(softwareSummaryKey, software.summary);
 const networkCheck = local.network;
-const systemSettings = createSystemSettings(local.settings, local.data);
+const systemSettings = createSystemSettings(
+  local.settings,
+  local.data,
+  undefined,
+  controller,
+);
 provide(systemSettingsKey, systemSettings);
-const controller = props.ready
-  ? createController(props.selfServicePort ?? nativePort())
-  : undefined;
-const directory = createDirectory(controller?.port ?? null);
+provide(taskCenterKey, controller);
+provide(taskNavigationKey, { openTask, openNode: openTask });
+const directory = createDirectory(controller.port);
 provide(directoryKey, directory);
-const activity = createActivity(controller?.port ?? null);
-provide(activityKey, activity);
 onMounted(() => {
   for (const section of ["network", "storage", "power"] as const)
     void systemSettings.load(section);
@@ -389,12 +474,11 @@ onBeforeUnmount(() => {
   systemSettings.dispose();
   software.dispose();
   directory.dispose();
-  activity.dispose();
   controller?.dispose();
 });
 const assistant = props.ready
   ? createAssistant(
-      props.assistantServices ?? nativeAssistant(),
+      props.assistantServices ?? nativeAssistant(controller),
       newIdentity,
       () => Date.now(),
       ownerKey,
@@ -407,7 +491,10 @@ watch(
     if (id !== "assistant") lastContentPage.value = id;
     navigationError.value = "";
     if (id === "home" || id === "settings") void device.refresh();
-    if (id === "home") void activity.load();
+    controller.setVisible(
+      ["home", "tasks", "software-management", "device-tools"].includes(id),
+      id !== "tasks",
+    );
     if (["tasks", "software-management", "device-tools"].includes(id))
       void controller?.refresh();
     if (!historyPinned.value) historyOpen.value = false;
@@ -462,17 +549,14 @@ const homeResources = computed(() => {
         summary.collectedAt == null ? 0 : (summary.collectedAt + 300) * 1000,
       verified: summary.read && !summary.error,
     },
-    ...activity.state.items.slice(0, 6).map((item) => ({
-      id: item.details.action.requestId,
-      title: item.details.action.operation.action,
-      description: item.details.status.phase,
-      source: "原任务 journal",
-      revision: JSON.stringify([
-        item.details.action.contentDigest,
-        item.details.status,
-      ]),
-      collectedAt: item.recordedAtUnixMs,
-      verified: !activity.state.error,
+    ...controller.recentItems.value.slice(0, 6).map((item) => ({
+      id: JSON.stringify(item.reference),
+      title: taskTitle(item),
+      description: item.stage,
+      source: "原任务 owner",
+      revision: JSON.stringify([item.reference, item.revision]),
+      collectedAt: item.recordedAt ?? undefined,
+      verified: !controller.state.error,
     })),
   ];
 });
@@ -483,6 +567,7 @@ const pageContexts = computed(() =>
     ["system-settings", "系统设置", systemPage.value],
     ["settings", "RSS Agent 设置", settingsPage.value],
     ["home", "主页", undefined],
+    ["tasks", "任务中心", taskPage.value],
   ].map(([page, title, module]) => {
     const navigation = module as PageNavigation | undefined;
     return pageContext(
@@ -509,13 +594,7 @@ const currentPageContext = computed(
             ].find((item) => item.id === lastContentPage.value)?.title
           : moduleTitle.value),
     ) ??
-    pageContext(
-      props.page,
-      moduleTitle.value || "请求与任务",
-      [],
-      [],
-      ownerKey,
-    ),
+    pageContext(props.page, moduleTitle.value || "任务中心", [], [], ownerKey),
 );
 function attachPage() {
   assistant?.stageContext(currentPageContext.value);
@@ -591,9 +670,11 @@ const pageScroller = (page: string) => {
           ? ".catalog-preview"
           : page === "system-settings"
             ? ".system-settings"
-            : page === "settings"
-              ? ".settings"
-              : ".resource-content";
+            : page === "tasks"
+              ? ".task-center-list"
+              : page === "settings"
+                ? ".settings"
+                : ".resource-content";
   return root?.querySelector<HTMLElement>(selector) ?? root?.closest("main");
 };
 watch(
@@ -614,16 +695,6 @@ onMounted(() => {
     if (["home", "settings"].includes(props.page) && !document.hidden)
       void device.refresh();
   }, 30000);
-  taskPolling = setInterval(() => {
-    if (!document.hidden && props.page === "home") void activity.load();
-    if (
-      !document.hidden &&
-      ["tasks", "software-management", "device-tools"].includes(props.page) &&
-      !controller?.state.busy
-    )
-      void controller?.refresh();
-  }, 2000);
-  void controller?.refresh();
   void assistant?.connect();
   if (workspaceRoot.value) {
     const resize = () => {
@@ -642,7 +713,6 @@ onMounted(() => {
 });
 onBeforeUnmount(() => {
   if (devicePolling) clearInterval(devicePolling);
-  if (taskPolling) clearInterval(taskPolling);
   device.dispose();
   transition++;
   navigationEpoch++;
@@ -709,7 +779,7 @@ onBeforeUnmount(() => {
                   : page === "system-settings"
                     ? "系统设置"
                     : page === "tasks"
-                      ? "请求与任务"
+                      ? "任务中心"
                       : "首页"
           }}
         </h1>
@@ -752,6 +822,7 @@ onBeforeUnmount(() => {
           { id: 'assistant', label: 'AI 助手' },
           { id: 'software-management', label: '软件管理' },
           { id: 'device-tools', label: '工具中心' },
+          { id: 'tasks', label: '任务中心' },
           { id: 'system-settings', label: '系统设置' },
         ]"
         :model-value="page"
@@ -911,7 +982,7 @@ onBeforeUnmount(() => {
           v-show="page === 'tasks'"
           class="resource-content"
         >
-          <Tasks :controller="controller" />
+          <Tasks :controller="controller" @back="returnFromTask" />
         </div>
         <SoftwareManagement
           v-if="ready"

@@ -1,8 +1,20 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, shallowRef, watch } from "vue";
+import {
+  taskCenterKey,
+  taskNavigationKey,
+  requestRef,
+} from "../task-center/controller";
+import {
+  inject,
+  computed,
+  onMounted,
+  onUnmounted,
+  ref,
+  shallowRef,
+  watch,
+} from "vue";
 import { currentUser } from "../test-users";
 import { nativePort } from "../self-service/native";
-import TaskDetail from "../self-service/TaskDetail.vue";
 import PolicySelfService from "../self-service/PolicySelfService.vue";
 import type {
   BackendRequest,
@@ -12,6 +24,8 @@ import type {
 } from "../self-service/types";
 import type { MdmStatus } from "./service-contract";
 import { readMdmStatus, type ServicePort } from "./native";
+const tasks = inject(taskCenterKey, undefined);
+const navigation = inject(taskNavigationKey, undefined);
 const props = withDefaults(
   defineProps<{
     servicePort?: Pick<ServicePort, "mdmStatus">;
@@ -26,9 +40,17 @@ const status = ref<MdmStatus>(),
   error = ref(""),
   busy = ref(false),
   pending = ref(true);
-const records = ref<BackendRequest[]>([]),
+const records = computed(() => tasks?.preparations.value ?? []),
   available = ref<BackendTask[]>([]),
-  executions = ref<ExecutionTaskDetails[]>([]);
+  executions = computed(
+    () =>
+      tasks?.state.items.flatMap((t) =>
+        t.facts.kind === "execution" &&
+        t.facts.value.action.operation.action === "backend-enrollment"
+          ? [t.facts.value]
+          : [],
+      ) ?? [],
+  );
 function executionOwner() {
   if (props.fixture) return props.executionPort ?? null;
   return (
@@ -41,8 +63,6 @@ let timer: ReturnType<typeof setInterval> | undefined;
 let epoch = 0;
 let disposed = false;
 function clearTasks() {
-  records.value = [];
-  executions.value = [];
   available.value = [];
   pending.value = true;
 }
@@ -72,16 +92,12 @@ async function refresh() {
         : await readMdmStatus();
     if (!current()) return;
     if (owner && props.agentReady) {
-      const snapshot = await owner.snapshot({
-        after: null,
-        selected: null,
-      });
+      await tasks?.refresh();
+      const offers = await owner.offers();
       if (!current()) return;
-      const nextExecutions = snapshot.requests.filter(
-        (t) => t.action.operation.action === "backend-enrollment",
-      );
+      const nextExecutions = executions.value;
       const statuses = await Promise.all(
-        snapshot.preparations
+        records.value
           .filter(
             (r) =>
               r.action.kind === "policy" &&
@@ -108,8 +124,6 @@ async function refresh() {
           }),
       );
       if (!current()) return;
-      records.value = snapshot.preparations;
-      executions.value = nextExecutions;
       pending.value =
         statuses.some((value) => value) ||
         nextExecutions.some(
@@ -122,10 +136,8 @@ async function refresh() {
               "admissionDenied",
             ].includes(t.status.phase),
         ) ||
-        snapshot.available.some(
-          (t) => t.presentation.summary.kind === "enrollment",
-        );
-      available.value = snapshot.available.filter(
+        offers.some((t) => t.presentation.summary.kind === "enrollment");
+      available.value = offers.filter(
         (t) => t.presentation.summary.kind === "enrollment",
       );
     } else {
@@ -209,13 +221,13 @@ onUnmounted(() => {
     <p v-if="pending && !error && port && agentReady">
       已有注册流程，请查询或继续原请求。
     </p>
-    <TaskDetail
+    <button
       v-for="task in executions"
       :key="task.action.requestId"
-      :task="task"
-      :disabled="busy"
-      @cancel="port?.cancel({ requestId: task.action.requestId }).then(refresh)"
-    />
+      @click="navigation?.openTask(requestRef(task.action.requestId))"
+    >
+      查看原注册任务 {{ task.status.phase }}
+    </button>
     <PolicySelfService
       v-if="status && agentReady && port"
       :port="port"

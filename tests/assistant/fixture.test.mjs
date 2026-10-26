@@ -6,7 +6,7 @@ test("one fixture simulates exact confirmation, replay and cancellation without 
   const f = await createFixture();
   t.after(() => f.close());
   f.selectScenario("proposed");
-  const offer = f.snapshot().available[0];
+  const offer = f.offers()[0];
   assert.equal(f.details(offer.request).value.state, "awaitingConfirmation");
   assert.throws(
     () => f.execute({ ...offer, revision: "b".repeat(64) }),
@@ -18,13 +18,20 @@ test("one fixture simulates exact confirmation, replay and cancellation without 
   assert.throws(() => f.confirm({ ...offer, attempt: "other" }), /mismatch/);
   assert.equal(f.confirm(offer).request, offer.request);
   assert.equal(f.confirm(offer).request, offer.request);
-  assert.equal(f.snapshot().requests.length, 1);
+  assert.equal(f.taskList({ view: "history" }).items.length, 1);
+  const detail = f.taskDetail({ kind: "request", request: offer.request });
+  const control = {
+    reference: detail.reference,
+    id: "cancel-original",
+    scope: detail.scope,
+    expectedRevision: detail.revision,
+    action: "cancel",
+  };
+  const receipt = f.taskControl(control);
+  assert.equal(receipt.disposition, "confirmed");
+  assert.deepEqual(f.taskControl(control), receipt);
   assert.equal(
-    f.cancel({ requestId: offer.request }).value.status.cancelRequested,
-    true,
-  );
-  assert.equal(
-    f.cancel({ requestId: offer.request }).value.status.cancelRequested,
+    f.taskDetail(detail.reference).facts.value.status.cancelRequested,
     true,
   );
   f.selectScenario("outcomeUnknown");
@@ -44,10 +51,10 @@ test("diagnostic and denied scenarios cannot be mistaken for a successful execut
     "configurationRequired",
   ]) {
     f.selectScenario(scenario);
-    assert.throws(() => f.snapshot(), /unavailable/);
+    assert.throws(() => f.taskList({ view: "history" }), /unavailable/);
   }
   f.selectScenario("denied");
-  const offer = f.snapshot().available[0];
+  const offer = f.offers()[0];
   assert.throws(() => f.execute(offer), /denied/);
   assert.equal(f.details(offer.request).value.state, "failed");
 });
@@ -62,7 +69,7 @@ test("browser factory and native Vite plugin share the same scenario and RPC own
   const state = await (await fetch(origin + "/__fixture/state")).json();
   assert.deepEqual(state.service, f.serviceView());
   assert.equal(state.service.status.readiness.phase, "ready");
-  assert.equal((await fetch(origin + "/__fixture/snapshot")).status, 500);
+  assert.equal((await fetch(origin + "/__fixture/task-list")).status, 500);
   const registration = async () =>
     (await fetch(origin + "/__fixture/registration")).json();
   assert.equal((await registration()).phase, "unregistered");
@@ -78,7 +85,7 @@ test("browser factory and native Vite plugin share the same scenario and RPC own
   assert.equal(pending.registered, false);
   assert.deepEqual(await (await request({})).json(), pending);
   assert.deepEqual(await registration(), pending);
-  assert.equal((await fetch(origin + "/__fixture/snapshot")).status, 500);
+  assert.equal((await fetch(origin + "/__fixture/task-list")).status, 500);
 });
 
 test("fixture supplies isolated current identity and Host operations with generation fencing", async (t) => {

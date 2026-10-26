@@ -41,6 +41,10 @@ export type BackendRequestFailure =
   | "expired"
   | "revoked";
 /**
+ * Local execution request identity.
+ */
+export type RequestId = string;
+/**
  * Safe native package effect for task details.
  */
 export type SoftwareDeploymentSummary = "targetUser" | "futureUsers";
@@ -144,6 +148,7 @@ export interface BackendRequest {
               sessionBinding: NativeContextRef;
             };
         choice: PolicyChoice;
+        definition: VersionedRef;
         /**
          * Bounded validity of the original preparation.
          */
@@ -153,6 +158,10 @@ export interface BackendRequest {
          * Eventual signed Offer; no task/attempt is invented before this exists.
          */
         offer: BackendTask1 | null;
+        /**
+         * Original configuration revision.
+         */
+        policyRevision: number;
         /**
          * Administrator-provided presentation, never executable content.
          */
@@ -238,6 +247,10 @@ export interface BackendRequest {
             };
       };
   /**
+   * Original explicit cancellation control, absent for owner-driven retirement.
+   */
+  cancellationControl: Id | null;
+  /**
    * Explicit risk-two response; readiness alone never proves confirmation.
    */
   confirmation: BackendConfirmation | null;
@@ -245,6 +258,14 @@ export interface BackendRequest {
    * Diagnosis when preparation failed.
    */
   failure: BackendRequestFailure | null;
+  /**
+   * Trusted original request acceptance time in UTC milliseconds.
+   */
+  recordedAtUnixMs: number;
+  /**
+   * Original failed request when this explicit retry was independently admitted.
+   */
+  retryOf: RequestId | null;
   /**
    * Monotonic journal revision.
    */
@@ -276,7 +297,7 @@ export interface BackendRequest {
         osSession: OsSessionRef1;
       }
     | {
-        config: VersionedRef1;
+        config: VersionedRef2;
         context: NativeContextRef1;
         /**
          * Opaque local reference identifier; syntax validity is not authenticity.
@@ -497,6 +518,19 @@ export interface PolicyChoice {
   request: string;
 }
 /**
+ * Exact original published Policy ID/version, independent of its eventual task.
+ */
+export interface VersionedRef {
+  /**
+   * Opaque reference identity; the revision must be supplied separately.
+   */
+  id: string;
+  /**
+   * Exact immutable revision reference; does not resolve or follow a moving alias.
+   */
+  revision: string;
+}
+/**
  * Exact displayed backend offer, without executable input or authorization claims.
  */
 export interface BackendTask1 {
@@ -619,7 +653,7 @@ export interface ExecutionRisk {
   source:
     | {
         kind: "policy";
-        policy: VersionedRef;
+        policy: VersionedRef1;
       }
     | {
         /**
@@ -632,13 +666,13 @@ export interface ExecutionRisk {
 /**
  * Exact configuration revision.
  */
-export interface VersionedRef {
+export interface VersionedRef1 {
   /**
-   * Opaque local reference identifier; syntax validity is not authenticity.
+   * Opaque reference identity; the revision must be supplied separately.
    */
   id: string;
   /**
-   * Opaque local reference identifier; syntax validity is not authenticity.
+   * Exact immutable revision reference; does not resolve or follow a moving alias.
    */
   revision: string;
 }
@@ -659,13 +693,13 @@ export interface OsSessionRef1 {
 /**
  * Native AI connection configuration, not a provider identity grant.
  */
-export interface VersionedRef1 {
+export interface VersionedRef2 {
   /**
-   * Opaque local reference identifier; syntax validity is not authenticity.
+   * Opaque reference identity; the revision must be supplied separately.
    */
   id: string;
   /**
-   * Opaque local reference identifier; syntax validity is not authenticity.
+   * Exact immutable revision reference; does not resolve or follow a moving alias.
    */
   revision: string;
 }
@@ -701,6 +735,14 @@ export interface OsSessionRef2 {
  */
 export interface ExecutionTaskDetails {
   action: FrozenExecutionSummary;
+  /**
+   * First durable opening time from the original lifecycle snapshot.
+   */
+  recordedAtUnixMs: number;
+  /**
+   * Original journal snapshot revision.
+   */
+  revision: number;
   status: ExecutionStatus;
 }
 /**
@@ -824,7 +866,7 @@ export interface FrozenExecutionSummary {
               osSession: OsSessionRef1;
             }
           | {
-              config: VersionedRef1;
+              config: VersionedRef2;
               context: NativeContextRef1;
               /**
                * Opaque local reference identifier; syntax validity is not authenticity.
@@ -843,7 +885,7 @@ export interface FrozenExecutionSummary {
         osSession: OsSessionRef3;
       }
     | {
-        config: VersionedRef3;
+        config: VersionedRef4;
         /**
          * Opaque local reference identifier; syntax validity is not authenticity.
          */
@@ -861,13 +903,13 @@ export interface FrozenExecutionSummary {
       }
     | {
         kind: "policy";
-        policy: VersionedRef4;
+        policy: VersionedRef5;
       };
   interpreter: InterpreterRef;
   operation: Operation;
-  policy: VersionedRef7;
+  policy: VersionedRef8;
   /**
-   * Exact frozen plan identity.
+   * Local execution request identity.
    */
   requestId: string;
   /**
@@ -911,7 +953,7 @@ export interface FrozenExecutionSummary {
  * Exact artifact revision and content hash.
  */
 export interface ExactArtifactRef {
-  resource: VersionedRef2;
+  resource: VersionedRef3;
   /**
    * Expected content SHA-256. The adapter must verify the actual bytes before use.
    */
@@ -920,13 +962,13 @@ export interface ExactArtifactRef {
 /**
  * Exact resource ID and revision; no latest-version lookup is performed here.
  */
-export interface VersionedRef2 {
+export interface VersionedRef3 {
   /**
-   * Opaque local reference identifier; syntax validity is not authenticity.
+   * Opaque reference identity; the revision must be supplied separately.
    */
   id: string;
   /**
-   * Opaque local reference identifier; syntax validity is not authenticity.
+   * Exact immutable revision reference; does not resolve or follow a moving alias.
    */
   revision: string;
 }
@@ -1024,13 +1066,13 @@ export interface OsSessionRef3 {
 /**
  * Exact connection configuration used at initiation; no external account identity.
  */
-export interface VersionedRef3 {
+export interface VersionedRef4 {
   /**
-   * Opaque local reference identifier; syntax validity is not authenticity.
+   * Opaque reference identity; the revision must be supplied separately.
    */
   id: string;
   /**
-   * Opaque local reference identifier; syntax validity is not authenticity.
+   * Exact immutable revision reference; does not resolve or follow a moving alias.
    */
   revision: string;
 }
@@ -1051,13 +1093,13 @@ export interface OsSessionRef4 {
 /**
  * Exact policy revision associated with this request or audit decision.
  */
-export interface VersionedRef4 {
+export interface VersionedRef5 {
   /**
-   * Opaque local reference identifier; syntax validity is not authenticity.
+   * Opaque reference identity; the revision must be supplied separately.
    */
   id: string;
   /**
-   * Opaque local reference identifier; syntax validity is not authenticity.
+   * Exact immutable revision reference; does not resolve or follow a moving alias.
    */
   revision: string;
 }
@@ -1066,13 +1108,13 @@ export interface VersionedRef4 {
  */
 export interface InterpreterRef {
   artifact: ExactArtifactRef1;
-  profile: VersionedRef5;
+  profile: VersionedRef6;
 }
 /**
  * Binary identity; the adapter must verify bytes, without PATH or version fallback.
  */
 export interface ExactArtifactRef1 {
-  resource: VersionedRef2;
+  resource: VersionedRef3;
   /**
    * Expected content SHA-256. The adapter must verify the actual bytes before use.
    */
@@ -1081,13 +1123,13 @@ export interface ExactArtifactRef1 {
 /**
  * Calling convention identity/revision; matched together with the binary.
  */
-export interface VersionedRef5 {
+export interface VersionedRef6 {
   /**
-   * Opaque local reference identifier; syntax validity is not authenticity.
+   * Opaque reference identity; the revision must be supplied separately.
    */
   id: string;
   /**
-   * Opaque local reference identifier; syntax validity is not authenticity.
+   * Exact immutable revision reference; does not resolve or follow a moving alias.
    */
   revision: string;
 }
@@ -1099,31 +1141,31 @@ export interface Operation {
    * Opaque local reference identifier; syntax validity is not authenticity.
    */
   action: string;
-  resource: VersionedRef6;
+  resource: VersionedRef7;
 }
 /**
  * Exact resource ID and revision; no latest-version lookup is performed here.
  */
-export interface VersionedRef6 {
+export interface VersionedRef7 {
   /**
-   * Opaque local reference identifier; syntax validity is not authenticity.
+   * Opaque reference identity; the revision must be supplied separately.
    */
   id: string;
   /**
-   * Opaque local reference identifier; syntax validity is not authenticity.
+   * Exact immutable revision reference; does not resolve or follow a moving alias.
    */
   revision: string;
 }
 /**
  * Exact policy revision.
  */
-export interface VersionedRef7 {
+export interface VersionedRef8 {
   /**
-   * Opaque local reference identifier; syntax validity is not authenticity.
+   * Opaque reference identity; the revision must be supplied separately.
    */
   id: string;
   /**
-   * Opaque local reference identifier; syntax validity is not authenticity.
+   * Exact immutable revision reference; does not resolve or follow a moving alias.
    */
   revision: string;
 }
@@ -1231,7 +1273,7 @@ export interface ExecutionStatus {
    */
   mode: "test" | "real";
   /**
-   * Original reliable business identity.
+   * Local execution request identity.
    */
   operationRequestId: string;
   /**
@@ -1269,7 +1311,7 @@ export interface EvidenceRef {
    * Recorded observation category; a category label does not prove an external fact.
    */
   kind: "testResult" | "processExited" | "stateObserved";
-  reference: VersionedRef8;
+  reference: VersionedRef9;
   /**
    * Opaque local reference identifier; syntax validity is not authenticity.
    */
@@ -1278,13 +1320,13 @@ export interface EvidenceRef {
 /**
  * Exact versioned reference. Authenticity and access are checked by its owner.
  */
-export interface VersionedRef8 {
+export interface VersionedRef9 {
   /**
-   * Opaque local reference identifier; syntax validity is not authenticity.
+   * Opaque reference identity; the revision must be supplied separately.
    */
   id: string;
   /**
-   * Opaque local reference identifier; syntax validity is not authenticity.
+   * Exact immutable revision reference; does not resolve or follow a moving alias.
    */
   revision: string;
 }

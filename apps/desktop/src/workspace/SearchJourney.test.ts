@@ -10,7 +10,7 @@ import {
   policyFixturePort,
   directoryItem,
   policyRecord,
-  snapshot,
+  taskPage,
 } from "../../../../tests/self-service/support";
 import type { SelfServiceDirectoryItem } from "../self-service/types";
 
@@ -66,10 +66,8 @@ it("searches subsequent authorized pages through the same directory and opens th
         ...policyFixturePort,
         policy_directory: directory,
         policy_invoke: invoke,
-        snapshot: async () => snapshot(),
         execute: vi.fn(),
         confirm: vi.fn(),
-        cancel: vi.fn(),
       },
     },
   });
