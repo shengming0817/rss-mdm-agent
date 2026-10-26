@@ -666,7 +666,8 @@ impl<S: IdentityProvider> DeviceService<S> {
             })
         });
         self.client.set_execution_context(context)?;
-        self.client.set_profiles(available_profiles(&self.core.config))?;
+        self.client
+            .set_profiles(available_profiles(&self.core.config))?;
         let interpreters = self.core.config.interpreters.clone();
         let environment = network(
             crate::collection_environment::observe(&interpreters),
@@ -678,10 +679,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         let claim = match network(self.client.claim(), &mut self.core, commands).await {
             Ok(v) => v,
             Err(e) => {
-                if matches!(
-                    e,
-                    Error::CredentialRevoked | Error::CredentialRetired
-                ) {
+                if matches!(e, Error::CredentialRevoked | Error::CredentialRetired) {
                     self.core.host.revoked.store(true, Ordering::Release);
                     self.core
                         .app
@@ -1026,7 +1024,8 @@ impl<S: IdentityProvider> DeviceService<S> {
             let offer = self.client.retained_offer(task)?;
             if self.policy_intent(&offer)?.is_some() {
                 network(self.client.received(&offer), &mut self.core, commands).await?;
-                let materials = network(self.client.prepare(&offer), &mut self.core, commands).await?;
+                let materials =
+                    network(self.client.prepare(&offer), &mut self.core, commands).await?;
                 self.submit_policy_offer(offer, materials, commands).await?;
             } else {
                 network(self.client.received(&offer), &mut self.core, commands).await?;
@@ -1321,7 +1320,10 @@ impl<S: IdentityProvider> DeviceService<S> {
                 return Ok(());
             }
         }
-        self.core.host.revoked.store(self.client.runtime_revoked()?, Ordering::Release);
+        self.core
+            .host
+            .revoked
+            .store(self.client.runtime_revoked()?, Ordering::Release);
         if self.core.host.revoked.load(Ordering::Acquire) {
             self.core.revoke_preparations()?;
             self.release_waiting();
@@ -1359,7 +1361,9 @@ impl<S: IdentityProvider> DeviceService<S> {
 }
 
 fn available_profiles(config: &ExecutionConfig) -> Vec<wire::ExecutorProfile> {
-    config.interpreters.iter()
+    config
+        .interpreters
+        .iter()
         .filter(|interpreter| interpreter.image.verify(&interpreter.image.path).is_ok())
         .map(|interpreter| interpreter.profile)
         .collect()

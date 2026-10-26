@@ -296,10 +296,20 @@ fn main() {
                     payload: install.launch.artifact.clone(),
                     materials: vec![],
                     signatures: vec![],
-                    upgrade: if intent == SoftwareOperation::Install { SoftwareUpgrade::InPlace {} } else { SoftwareUpgrade::Deny {} },
+                    upgrade: if intent == SoftwareOperation::Install {
+                        SoftwareUpgrade::InPlace {}
+                    } else {
+                        SoftwareUpgrade::Deny {}
+                    },
                     invocations: match intent {
-                        SoftwareOperation::Install => [(SoftwarePhase::Mutation, install), (SoftwarePhase::Upgrade, upgrade)].into(),
-                        SoftwareOperation::Uninstall => [(SoftwarePhase::Mutation, uninstall)].into(),
+                        SoftwareOperation::Install => [
+                            (SoftwarePhase::Mutation, install),
+                            (SoftwarePhase::Upgrade, upgrade),
+                        ]
+                        .into(),
+                        SoftwareOperation::Uninstall => {
+                            [(SoftwarePhase::Mutation, uninstall)].into()
+                        }
                         SoftwareOperation::Detect => Default::default(),
                     },
                     detection: SoftwareDetector::Script {

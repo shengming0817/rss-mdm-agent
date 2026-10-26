@@ -1222,7 +1222,12 @@ fn software_application_commits_boundaries_before_ack_and_never_replays_unknown_
     let ExecutionSpec::SoftwareProgram { program } = &mut input.execution else {
         panic!("software");
     };
-    program.steps[0].invocations.get_mut(&SoftwarePhase::Mutation).unwrap().exit_codes.reboot = [3010].into();
+    program.steps[0]
+        .invocations
+        .get_mut(&SoftwarePhase::Mutation)
+        .unwrap()
+        .exit_codes
+        .reboot = [3010].into();
     program.steps[0].allow_reboot = true;
     let plan = FrozenExecution::freeze(input, &test_execution_limits()).unwrap();
     host.template = plan.clone();
@@ -1548,8 +1553,10 @@ fn dmg_cleanup_plan() -> FrozenExecution {
     cleanup.launch.interpreter.profile.id = id("native-software-worker");
     cleanup.timeout_ms = 900;
     cleanup.output_bytes = 6144;
-    step.invocations
-        .insert(SoftwarePhase::Attach, step.invocations[&SoftwarePhase::Mutation].clone());
+    step.invocations.insert(
+        SoftwarePhase::Attach,
+        step.invocations[&SoftwarePhase::Mutation].clone(),
+    );
     step.invocations.insert(SoftwarePhase::Cleanup, cleanup);
     FrozenExecution::freeze(input, &test_execution_limits()).unwrap()
 }

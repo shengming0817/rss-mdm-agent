@@ -121,13 +121,23 @@ pub(crate) fn native(
     if choice.action == LocalSoftwareAction::Uninstall {
         let key = match &target {
             super::native::Target::App { path, .. } => macos_application_resource(
-                match &item.scope { DataScope::Device => None, DataScope::User { subject } => Some(subject.as_str()) },
-                path.file_name().and_then(|name| name.to_str()).ok_or(Error::Untrusted)?,
+                match &item.scope {
+                    DataScope::Device => None,
+                    DataScope::User { subject } => Some(subject.as_str()),
+                },
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .ok_or(Error::Untrusted)?,
             ),
             super::native::Target::Msi { .. } => "manager-windows-installers".into(),
             super::native::Target::Msix { .. } => "manager-windows-package-deployment".into(),
         };
-        parameters.insert("exclusive-resources".into(), InputValue::Literal { value: serde_json::json!([key]) });
+        parameters.insert(
+            "exclusive-resources".into(),
+            InputValue::Literal {
+                value: serde_json::json!([key]),
+            },
+        );
     }
     let timeout = 300_000;
     let frozen = FrozenExecution::freeze(

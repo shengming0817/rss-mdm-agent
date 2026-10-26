@@ -2020,7 +2020,9 @@ async fn settled_software_observation_replays_the_original_fact_and_never_create
                 || {
                     execution_runner::software::observe_native(
                         &SoftwareDetector::PkgReceipt {
-                            run_as: RunAs::System { platform: Platform::Macos },
+                            run_as: RunAs::System {
+                                platform: Platform::Macos,
+                            },
                             session_requirement: SessionRequirement::NotRequired {},
                             receipt: if unavailable {
                                 "../../invalid".into()
@@ -2327,7 +2329,9 @@ async fn fresh_revocation_and_crl_expiry_close_admission_while_pending_status_wa
                     if revocation {
                         assert_eq!(retained.state, BackendRequestState::Failed);
                         assert_eq!(retained.failure, Some(BackendRequestFailure::Revoked));
-                    } else { assert_eq!(retained, original); }
+                    } else {
+                        assert_eq!(retained, original);
+                    }
                     assert_eq!(retained.action, original.action);
                     pause.notify_one();
                 }

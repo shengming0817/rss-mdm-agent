@@ -61,8 +61,8 @@ fn software_steps_bind_order_materials_and_context_with_exact_material_binding()
         assert_ne!(original.digest(), freeze(&changed).digest());
     }
     let mut changed = value.clone();
-    changed["execution"]["program"]["steps"][0]["invocations"]["mutation"]["launch"]["artifact"]["sha256"] =
-        "ab".repeat(32).into();
+    changed["execution"]["program"]["steps"][0]["invocations"]["mutation"]["launch"]["artifact"]
+        ["sha256"] = "ab".repeat(32).into();
     assert_ne!(original.digest(), freeze(&changed).digest());
     let steps = changed["execution"]["program"]["steps"]
         .as_array_mut()
@@ -153,7 +153,11 @@ fn msi_reboot_completion_requires_permission_detection_and_quiescence() {
                         } else {
                             SoftwareFormat::Pkg {}
                         };
-                        step.invocations.get_mut(&SoftwarePhase::Mutation).unwrap().exit_codes.reboot = if adapter == SoftwareKind::Msi {
+                        step.invocations
+                            .get_mut(&SoftwarePhase::Mutation)
+                            .unwrap()
+                            .exit_codes
+                            .reboot = if adapter == SoftwareKind::Msi {
                             [1641, 3010].into_iter().collect()
                         } else {
                             Default::default()
@@ -161,9 +165,16 @@ fn msi_reboot_completion_requires_permission_detection_and_quiescence() {
                         step.upgrade = SoftwareUpgrade::Deny {};
                         step.invocations.remove(&SoftwarePhase::Upgrade);
                         step.allow_reboot = allow_reboot;
-                        step.invocations.get_mut(&SoftwarePhase::Mutation).unwrap().run_as = RunAs::System { platform };
+                        step.invocations
+                            .get_mut(&SoftwarePhase::Mutation)
+                            .unwrap()
+                            .run_as = RunAs::System { platform };
                         if platform == Platform::Windows {
-                            step.invocations.get_mut(&SoftwarePhase::Mutation).unwrap().launch.cwd = r"C:\workspace".into();
+                            step.invocations
+                                .get_mut(&SoftwarePhase::Mutation)
+                                .unwrap()
+                                .launch
+                                .cwd = r"C:\workspace".into();
                         }
                         if adapter == SoftwareKind::Msi {
                             step.detection = SoftwareDetector::MsiProduct {
@@ -269,7 +280,12 @@ fn approved_exit_policy_and_update_invocation_are_frozen_and_closed() {
         unreachable!()
     };
     let step = &mut program.steps[0];
-    step.invocations.get_mut(&SoftwarePhase::Mutation).unwrap().exit_codes.success.insert(42);
+    step.invocations
+        .get_mut(&SoftwarePhase::Mutation)
+        .unwrap()
+        .exit_codes
+        .success
+        .insert(42);
     let mut update = step.invocations[&SoftwarePhase::Mutation].clone();
     update.launch.argv.push(LaunchArg::Literal {
         value: "--approved-update".into(),
@@ -282,7 +298,13 @@ fn approved_exit_policy_and_update_invocation_are_frozen_and_closed() {
     let ExecutionSpec::SoftwareProgram { program } = &mut invalid.execution else {
         unreachable!()
     };
-    program.steps[0].invocations.get_mut(&SoftwarePhase::Mutation).unwrap().exit_codes.reboot.insert(42);
+    program.steps[0]
+        .invocations
+        .get_mut(&SoftwarePhase::Mutation)
+        .unwrap()
+        .exit_codes
+        .reboot
+        .insert(42);
     assert!(FrozenExecution::freeze(invalid, &limits()).is_err());
     let mut old: serde_json::Value =
         serde_json::from_slice(include_bytes!("fixtures/software.json")).unwrap();
@@ -300,7 +322,10 @@ fn removal_updates_require_independent_absence_and_keep_failed_work_closed() {
     program.steps.truncate(1);
     let step = &mut program.steps[0];
     step.invocations.remove(&SoftwarePhase::Upgrade);
-    step.invocations.insert(SoftwarePhase::Removal, step.invocations[&SoftwarePhase::Mutation].clone());
+    step.invocations.insert(
+        SoftwarePhase::Removal,
+        step.invocations[&SoftwarePhase::Mutation].clone(),
+    );
     step.upgrade = SoftwareUpgrade::UninstallThenInstall {};
     let before = SoftwareState::Present {
         version: PackageValue::new("0.9").unwrap(),
@@ -446,8 +471,10 @@ fn cleanup_recovery_closes_resources_without_replaying_unknown_business_work() {
     cleanup.launch.interpreter.profile.id = Id::new("native-software-worker").unwrap();
     cleanup.timeout_ms = 900;
     cleanup.output_bytes = 6144;
-    step.invocations
-        .insert(SoftwarePhase::Attach, step.invocations[&SoftwarePhase::Mutation].clone());
+    step.invocations.insert(
+        SoftwarePhase::Attach,
+        step.invocations[&SoftwarePhase::Mutation].clone(),
+    );
     step.invocations.insert(SoftwarePhase::Cleanup, cleanup);
     let plan = FrozenExecution::freeze(input, &limits()).unwrap();
     for unknown_mutation in [false, true] {
@@ -542,8 +569,7 @@ fn cleanup_recovery_closes_resources_without_replaying_unknown_business_work() {
         });
         assert!(progress.valid_for(&plan) && !progress.resumable(&plan));
         // Losing an acknowledgement burns the whole granted slice; restart cannot refill it.
-        let next = progress.cleanup_allowance(&plan).unwrap();
-        assert_eq!(next.1, sequence + 1);
+        assert!(progress.cleanup_allowance(&plan).is_none());
         progress.checkpoints.push(SoftwareCheckpoint::CleanupEnd {
             step,
             sequence,
@@ -563,4 +589,26 @@ fn cleanup_recovery_closes_resources_without_replaying_unknown_business_work() {
             "cleanup never authorizes business redispatch"
         );
     }
+}
+
+#[test]
+fn read_only_software_leaves_installers_free_and_app_claims_follow_the_physical_target() {
+    use execution_contract::*;
+    let input = decode_execution(include_bytes!("fixtures/software.json"), &limits()).unwrap();
+    let mut program = input.execution.software_program().unwrap().clone();
+    assert_eq!(program.lock_keys(), vec!["manager-macos-installer"]);
+    program.intent = SoftwareOperation::Detect;
+    assert!(program.lock_keys().is_empty());
+    assert_eq!(
+        macos_application_resource(None, "Example.app"),
+        macos_application_resource(None, "example.app")
+    );
+    assert_ne!(
+        macos_application_resource(None, "Example.app"),
+        macos_application_resource(Some("501"), "Example.app")
+    );
+    assert_ne!(
+        macos_application_resource(None, "Example.app"),
+        macos_application_resource(None, "Other.app")
+    );
 }

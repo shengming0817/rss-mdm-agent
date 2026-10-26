@@ -97,19 +97,35 @@ pub(crate) fn prepare(
             SettingsPatch::Proxy { target, .. } => {
                 if cfg!(windows) {
                     // WinINet manual proxy preferences belong to the authenticated account.
-                    format!("settings:proxy:{}", crate::collected_data::digest(&crate::account_identity::local_owner(&initiator)?)?.as_str())
+                    format!(
+                        "settings:proxy:{}",
+                        crate::collected_data::digest(&crate::account_identity::local_owner(
+                            &initiator
+                        )?)?
+                        .as_str()
+                    )
                 } else {
-                    format!("settings:proxy:{}", crate::collected_data::digest(target)?.as_str())
+                    format!(
+                        "settings:proxy:{}",
+                        crate::collected_data::digest(target)?.as_str()
+                    )
                 }
-            },
+            }
             SettingsPatch::Power { target, .. } => {
                 if cfg!(windows) {
                     // Activating a scheme is shared even when only one AC/DC timeout was edited.
                     "settings:power-scheme".into()
-                } else { format!("settings:power:{target}") }
-            },
+                } else {
+                    format!("settings:power:{target}")
+                }
+            }
         };
-        parameters.insert("exclusive-resources".into(), InputValue::Literal { value: serde_json::json!([key]) });
+        parameters.insert(
+            "exclusive-resources".into(),
+            InputValue::Literal {
+                value: serde_json::json!([key]),
+            },
+        );
     }
     let frozen = FrozenExecution::freeze(
         ExecutionInput {

@@ -80,8 +80,8 @@ mod observation_tests {
             "../../../execution-contract/tests/fixtures/software.json"
         ))
         .unwrap();
-        let invocation = input.execution.software_program().unwrap().steps[0]
-            .invocations[&SoftwarePhase::Mutation]
+        let invocation = input.execution.software_program().unwrap().steps[0].invocations
+            [&SoftwarePhase::Mutation]
             .clone();
         assert_eq!(
             observe_native(
@@ -121,7 +121,9 @@ mod observation_tests {
         assert!(matches!(
             observe_native(
                 &SoftwareDetector::MsiProduct {
-                    run_as: RunAs::System { platform: Platform::Windows },
+                    run_as: RunAs::System {
+                        platform: Platform::Windows
+                    },
                     session_requirement: SessionRequirement::NotRequired {},
                     product_code: "{00000000-0000-0000-0000-000000000001}".into(),
                     version: expected

@@ -28,7 +28,10 @@ const targets = computed(() => snapshot.value?.targets ?? []);
 const selected = ref("");
 watch(targets, (values) => {
   if (!values.some((t) => t.id === selected.value))
-    selected.value = values.find((t) => t.fields.some((f) => f.writable))?.id ?? values[0]?.id ?? "";
+    selected.value =
+      values.find((t) => t.fields.some((f) => f.writable))?.id ??
+      values[0]?.id ??
+      "";
 });
 const target = computed(
   () => targets.value.find((t) => t.id === selected.value) ?? targets.value[0],
@@ -122,7 +125,8 @@ const editable = computed(
     !busy.value &&
     !!snapshot.value,
 );
-const writable = (key: string) => target.value?.fields.some((f) => f.key === key && f.writable) ?? false;
+const writable = (key: string) =>
+  target.value?.fields.some((f) => f.key === key && f.writable) ?? false;
 function refresh() {
   void controller?.load(effective.value, true);
   if (props.section === "lock") void controller?.load("lock", true);
@@ -453,7 +457,8 @@ async function submit() {
       <p v-if="target.reason" class="design-note">{{ target.reason }}</p>
       <form
         v-if="
-          ['network', 'display', 'power'].includes(effective) && target.fields.some((f) => f.writable)
+          ['network', 'display', 'power'].includes(effective) &&
+          target.fields.some((f) => f.writable)
         "
         @submit.prevent="prepare"
       >
@@ -468,22 +473,26 @@ async function submit() {
               <label
                 >{{ labels[protocol]
                 }}<UiSwitch
-                  v-model="proxies[protocol].enabled" :disabled="!writable(protocol)"
+                  v-model="proxies[protocol].enabled"
+                  :disabled="!writable(protocol)"
                   :aria-label="labels[protocol]" /></label
               ><label
                 >服务器<UiTextInput
-                  v-model="proxies[protocol].host" :disabled="!writable(protocol)"
+                  v-model="proxies[protocol].host"
+                  :disabled="!writable(protocol)"
                   :aria-label="`${protocol}服务器`" /></label
               ><label
                 >端口<UiTextInput
-                  v-model="ports[protocol]" :disabled="!writable(protocol)"
+                  v-model="ports[protocol]"
+                  :disabled="!writable(protocol)"
                   inputmode="numeric"
                   :aria-label="`${protocol}端口`"
               /></label>
             </div>
             <label
               >绕过代理的地址（每行一个）<UiTextInput
-                v-model="bypass" :disabled="!writable('bypass')"
+                v-model="bypass"
+                :disabled="!writable('bypass')"
                 multiline
             /></label>
             <p class="design-note">
@@ -493,7 +502,8 @@ async function submit() {
           <template v-else-if="effective === 'display'">
             <label
               >分辨率与缩放模式<UiSelect
-                v-model="mode" :disabled="!writable('mode')"
+                v-model="mode"
+                :disabled="!writable('mode')"
                 :options="
                   target.options.map((o) => ({ value: o.id, label: o.label }))
                 "
@@ -502,23 +512,32 @@ async function submit() {
               仅显示系统支持的模式；HiDPI 的逻辑尺寸与像素尺寸分别标示。
             </p>
             <label
-              >桌面横坐标<UiTextInput v-model="x" :disabled="!writable('origin')" inputmode="numeric" /></label
+              >桌面横坐标<UiTextInput
+                v-model="x"
+                :disabled="!writable('origin')"
+                inputmode="numeric" /></label
             ><label
-              >桌面纵坐标<UiTextInput v-model="y" :disabled="!writable('origin')" inputmode="numeric"
+              >桌面纵坐标<UiTextInput
+                v-model="y"
+                :disabled="!writable('origin')"
+                inputmode="numeric"
             /></label>
           </template>
           <template v-else>
             <label
               >闲置后关闭屏幕（分钟，0 为从不）<UiTextInput
-                v-model="displayOff" :disabled="!writable('displayOffMinutes')"
+                v-model="displayOff"
+                :disabled="!writable('displayOffMinutes')"
                 inputmode="numeric" /></label
             ><label
               >闲置后系统睡眠（分钟，0 为从不）<UiTextInput
-                v-model="sleep" :disabled="!writable('sleepMinutes')"
+                v-model="sleep"
+                :disabled="!writable('sleepMinutes')"
                 inputmode="numeric" /></label
             ><label v-if="target.options.length"
               >电源模式<UiSelect
-                v-model="energy" :disabled="!writable('mode')"
+                v-model="energy"
+                :disabled="!writable('mode')"
                 :options="
                   target.options.map((o) => ({ value: o.id, label: o.label }))
                 "

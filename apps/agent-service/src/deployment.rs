@@ -501,7 +501,9 @@ impl Deployment {
                 .any(|i| i.profile == profile && i.image.verify(&i.image.path).is_ok())
         };
         for manager in &self.execution.managers {
-            if manager.image.verify(&manager.image.path).is_err() { continue; }
+            if manager.image.verify(&manager.image.path).is_err() {
+                continue;
+            }
             match manager.executor {
                 M::Msi if cfg!(windows) && has(wire::ExecutorProfile::PowerShell7) => {
                     values.extend([C::SoftwareMsiSystemV1, C::SoftwareMsiUserV1])
@@ -847,9 +849,14 @@ pub(crate) mod tests {
         #[cfg(target_os = "macos")]
         let path = std::path::PathBuf::from("/bin/sh");
         #[cfg(windows)]
-        let path = std::path::PathBuf::from(std::env::var("SystemRoot").unwrap()).join("System32/cmd.exe");
+        let path =
+            std::path::PathBuf::from(std::env::var("SystemRoot").unwrap()).join("System32/cmd.exe");
         use sha2::{Digest as _, Sha256};
-        let image = installation_security::Artifact { sha256: format!("{:x}", Sha256::digest(std::fs::read(&path).unwrap())), path, cdhash: None };
+        let image = installation_security::Artifact {
+            sha256: format!("{:x}", Sha256::digest(std::fs::read(&path).unwrap())),
+            path,
+            cdhash: None,
+        };
         deployment.execution.managers[0].image = image.clone();
         assert!(!deployment.capabilities().iter().any(|v| v.is_software()));
         deployment.execution.interpreters.push(crate::Interpreter {
@@ -865,7 +872,13 @@ pub(crate) mod tests {
         } else {
             wire::Capability::SoftwarePkgSystemV1
         }));
-        deployment.execution.interpreters.last_mut().unwrap().image.sha256 = "0".repeat(64);
+        deployment
+            .execution
+            .interpreters
+            .last_mut()
+            .unwrap()
+            .image
+            .sha256 = "0".repeat(64);
         assert!(!deployment.capabilities().iter().any(|v| v.is_software()));
     }
 }

@@ -31,7 +31,12 @@ pub(crate) async fn submit<S: IdentityProvider>(
         return Err(Error::Denied);
     }
     let offered_request = super::request_id(&offer)?;
-    if service.core.available.as_ref().is_some_and(|available| available.request == offered_request) {
+    if service
+        .core
+        .available
+        .as_ref()
+        .is_some_and(|available| available.request == offered_request)
+    {
         service.core.available = None;
         service.core.available_risk = None;
         service.core.available_start = None;

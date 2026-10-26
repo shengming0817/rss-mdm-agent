@@ -115,17 +115,27 @@ pub(crate) fn materials(
     let mut delegate = None;
     for (index, step) in program.steps.iter().enumerate() {
         let original_recipe = |command: &SoftwareInvocation| -> Result<Box<Artifacts>, Error> {
-            let mut source = recipe(config, helpers, &command.launch, &command.run_as, &command.session_requirement)?;
+            let mut source = recipe(
+                config,
+                helpers,
+                &command.launch,
+                &command.run_as,
+                &command.session_requirement,
+            )?;
             if let Some((manifest, _)) = step.format.bundle() {
                 if let Some((member, _)) = manifest.entries.iter().find(|(_, file)| {
-                    crate::backend::plan::hex(&file.sha256) == command.launch.artifact.sha256.as_str()
+                    crate::backend::plan::hex(&file.sha256)
+                        == command.launch.artifact.sha256.as_str()
                 }) {
                     source.content = PathBuf::from(&command.launch.cwd).join(member);
                 }
             }
             Ok(Box::new(source))
         };
-        let detection = program.invocation(index, SoftwarePhase::Before).map(original_recipe).transpose()?;
+        let detection = program
+            .invocation(index, SoftwarePhase::Before)
+            .map(original_recipe)
+            .transpose()?;
         // Reuse every original protected coordinate. No current compiler decision, filename
         // convention, or filesystem availability can select a replacement on recovery.
         let files = step

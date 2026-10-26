@@ -1010,7 +1010,7 @@ fn software_encoding(
     input: &execution_contract::FrozenExecution,
     index: usize,
     phase: execution_contract::SoftwarePhase,
- ) -> Result<execution_contract::OutputSpec, Error> {
+) -> Result<execution_contract::OutputSpec, Error> {
     let invocation = input
         .spec()
         .execution
