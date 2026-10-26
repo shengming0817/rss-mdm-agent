@@ -590,6 +590,14 @@ export type Response =
        */
       nativeDeviceRegistered: boolean | null;
       /**
+       * Actual LoginManager readback matches the retained registration.
+       */
+      nativeConfigurationMatches: boolean | null;
+      /**
+       * Current user login-keychain accessibility only; never a synchronization fact.
+       */
+      loginKeychain: KeychainStatus;
+      /**
        * System user-registration observation.
        */
       nativeUserRegistered: boolean | null;
@@ -738,6 +746,13 @@ export type PasswordExchangeState =
   | "rejected"
   | "unavailable"
   | "unknown";
+/**
+ * Read-only current-user login-keychain diagnostic, never a login gate.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "KeychainStatus".
+ */
+export type KeychainStatus = "unlocked" | "locked" | "missing" | "unavailable";
 /**
  * Current credential-provider installation observation.
  *
@@ -2006,6 +2021,22 @@ export type BackendTaskView =
       value: ExecutionTaskDetails;
       kind: "execution";
     };
+/**
+ * Collection/transport facts only; none proves that a PRK can unlock the current volume.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "FilevaultState".
+ */
+export type FilevaultState =
+  | "notConfigured"
+  | "missingMaterial"
+  | "pending"
+  | "recipientMismatch"
+  | "escrowedUnverified"
+  | "unsafeMaterial"
+  | "rejected"
+  | "unavailable"
+  | "retired";
 
 export interface SelfServiceCommands {
   personal_vault: Command;
@@ -2726,13 +2757,10 @@ export interface AccessBindingStatus {
  */
 export interface AccessMacFacts {
   /**
-   * Native account password synchronization, never inferred from the IdP exchange.
+   * System configuration and registration readback. None means not yet observed.
+   * Password and login-keychain synchronization are owned by macOS, not inferred here.
    */
-  passwordSync: AccessObservation;
-  /**
-   * Native login keychain synchronization, independent of account password success.
-   */
-  keychainSync: AccessObservation;
+  platformSso: AccessMacPlatformSsoFacts | null;
   /**
    * The account's Secure Token status, not Bootstrap Token custody.
    */
@@ -2745,6 +2773,34 @@ export interface AccessMacFacts {
    * Actual FileVault unlock eligibility, not merely the disk encryption setting.
    */
   filevaultUnlock: AccessObservation;
+}
+/**
+ * Native PSSO readback for one exact user source; the server verifies its current parent.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "AccessMacPlatformSsoFacts".
+ */
+export interface AccessMacPlatformSsoFacts {
+  /**
+   * Both system login configurations match the requested configuration.
+   */
+  configuration: AccessObservation;
+  /**
+   * System LoginManager device registration, independent from the server receipt.
+   */
+  deviceRegistered: AccessObservation;
+  /**
+   * System LoginManager user registration, independent from token issuance.
+   */
+  userRegistered: AccessObservation;
+  /**
+   * Exact server-admitted user registration observed by the extension.
+   */
+  userSourceId: string;
+  /**
+   * Source generation, not the account binding revision.
+   */
+  userSourceVersion: number;
 }
 /**
  * Durable escrow coordinates returned only for the exact accepted task event.
@@ -4609,6 +4665,10 @@ export interface Command29 {
  * via the `definition` "DeviceOverview".
  */
 export interface DeviceOverview {
+  /**
+   * Independent CMS custody diagnostic, never a PSSO/login gate.
+   */
+  filevault?: FilevaultState | null;
   /**
    * Extensible device facts; OS peer identity is held separately.
    */

@@ -301,9 +301,16 @@ impl<S: IdentityProvider> DeviceService<S> {
         )?;
         #[cfg(windows)]
         access.sync_registration(&client)?;
+        let filevault = if client.configuration().platform == wire::TaskPlatform::Macos {
+            client.refresh_filevault()?;
+            Some(client.filevault_status()?)
+        } else {
+            None
+        };
         Ok(Self {
             client,
             core: Core {
+                filevault,
                 access,
                 #[cfg(test)]
                 local_policy_fixture: None,
@@ -373,6 +380,9 @@ impl<S: IdentityProvider> DeviceService<S> {
             .filter(|_| self.client.registration().is_ok())
         {
             if let Some(permit) = self.client.accepted_unmanage(deployment.installation_id)? {
+                if self.core.filevault.is_some() {
+                    self.core.filevault = Some(execution_contract::FilevaultState::Retired);
+                }
                 self.core.host.revoked.store(true, Ordering::Release);
                 self.core.revoke_preparations()?;
                 self.release_waiting();
@@ -402,6 +412,27 @@ impl<S: IdentityProvider> DeviceService<S> {
         }
         while let Ok(command) = commands.try_recv() {
             self.core.handle(command);
+        }
+        #[cfg(target_os = "macos")]
+        if !self.core.stopping
+            && self.core.filevault.is_some()
+            && self.client.registration().is_ok()
+        {
+            // This lane precedes employee, task-trust and ordinary execution gates.
+            let result = background(
+                self.client.drive_filevault(crate::filevault::read),
+                &mut self.core,
+                commands,
+            )
+            .await;
+            if let Err(error) = result {
+                eprintln!("filevault_custody: {error}");
+            }
+            self.core.filevault = Some(
+                self.client
+                    .filevault_status()
+                    .unwrap_or(execution_contract::FilevaultState::Unavailable),
+            );
         }
         if !self.core.stopping {
             self.drive_platform_sso(commands).await?;
@@ -775,6 +806,44 @@ impl<S: IdentityProvider> DeviceService<S> {
         }
         Ok(())
     }
+    // ref: Tokio task/blocking.rs: a running blocking job cannot be aborted.
+    // Retain and join it while the same owner continues servicing native callback queues.
+    #[cfg(target_os = "macos")]
+    async fn wait_access_refresh(
+        &mut self,
+        mut job: tokio::task::JoinHandle<Result<(), Error>>,
+        commands: &mut tokio::sync::mpsc::Receiver<Command>,
+    ) -> Result<(), Error> {
+        let mut failure = None;
+        let mut closed = false;
+        let mut tick = tokio::time::interval(std::time::Duration::from_millis(50));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            if !self.core.psso.commands.is_empty() {
+                if let Err(error) = self.drive_platform_sso(commands).await {
+                    failure.get_or_insert(error);
+                }
+            }
+            if !self.core.policy_commands.is_empty() {
+                if let Err(error) = self.drive_policy(commands).await {
+                    failure.get_or_insert(error);
+                }
+            }
+            tokio::select! {
+                result = &mut job => {
+                    let result = result.map_err(|_| Error::Unavailable)?;
+                    return failure.map_or(result, Err);
+                }
+                command = commands.recv(), if !closed => match command {
+                    Some(command) => self.core.handle(command),
+                    None => { closed = true; self.core.stopping = true; }
+                },
+                _ = tick.tick() => {
+                    if let Err(error) = self.core.reconcile() { failure.get_or_insert(error); }
+                }
+            }
+        }
+    }
     async fn resume_task(
         &mut self,
         task: uuid::Uuid,
@@ -877,6 +946,23 @@ impl<S: IdentityProvider> DeviceService<S> {
             }
             if let wire::TaskPayload::DeviceAccess(spec) = retained.payload() {
                 let root = crate::access_worker::root(&self.core.config);
+                #[cfg(target_os = "macos")]
+                if spec.platform == wire::TaskPlatform::Macos {
+                    let observed_root = root.clone();
+                    let observed_task = (**spec).clone();
+                    let installation = self.core.access.installation;
+                    let refresh = tokio::task::spawn_blocking(move || {
+                        crate::access_worker::macos::refresh(
+                            &observed_root,
+                            installation,
+                            &observed_task,
+                        )
+                    });
+                    self.wait_access_refresh(refresh, commands).await?;
+                    if self.core.stopping {
+                        return Ok(());
+                    }
+                }
                 #[cfg(windows)]
                 if matches!(spec.windows, Some(wire::AccessWindowsPlan::Whfb { .. })) {
                     // The read-only refresh is bounded and cannot launch policy mutations.
@@ -886,7 +972,9 @@ impl<S: IdentityProvider> DeviceService<S> {
                         spec,
                     );
                 }
-                if matches!(spec.windows, Some(wire::AccessWindowsPlan::Whfb { .. })) {
+                if spec.platform == wire::TaskPlatform::Macos
+                    || matches!(spec.windows, Some(wire::AccessWindowsPlan::Whfb { .. }))
+                {
                     if let Some(result) = crate::access_worker::stored_result(&root, spec)? {
                         network(
                             self.client.access_observation(task, result),
@@ -1366,6 +1454,7 @@ pub(crate) struct Core {
     pub(crate) stopping: bool,
     pub(crate) recovery_cursor: Option<RequestId>,
     pub(crate) mdm: execution_ipc::host::MdmStatus,
+    filevault: Option<execution_contract::FilevaultState>,
     mdm_reported: Option<wire::MdmEnrollmentState>,
     contexts: policy::Contexts,
     // Last explicit authenticated login, independent of remote projection acknowledgement.
@@ -1833,6 +1922,7 @@ impl Core {
                 Some(Request::DeviceOverview {}) => Ok(crate::device_overview::read(
                     &command.subject,
                     command.session,
+                    self.filevault,
                 )),
                 Some(Request::HelperStatus {}) => {
                     if self.stopping || self.host.local_stopped.load(Ordering::Acquire) {

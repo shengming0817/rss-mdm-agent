@@ -188,3 +188,6 @@ pub fn platform_sso_component(
 ) -> Result<(), Error> {
     service::platform_sso::component(deployment, args)
 }
+
+#[cfg(target_os = "macos")]
+mod filevault;

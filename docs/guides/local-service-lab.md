@@ -420,7 +420,9 @@ P6 可由 root 对固定安装的 Agent 调用：
 正式支持证据必须包含签名嵌入、系统识别、系统发起的设备/用户注册回调、已有账号与受控建号、注册/认证/修复/解绑、锁屏及会话切换、旧代/重放/取消/中断/回执丢失/换钥/撤销，以及 Desktop 或 Agent 停止时的本地登录。构建与协议测试不能替代这些证据；缺受管测试机、有效签名、配置或域关联时保留真实加载/回调阻塞。来源：[Apple 注册设备和用户](https://developer.apple.com/documentation/authenticationservices/registering-devices-and-users)，SDK 26.4 AuthenticationServices 头文件。
 
 
-Password 用户注册不登记用户签名密钥：注册与浏览器证明由当前设备密钥签署，并核对系统实际公钥。首次原生认证不等待 Applied；任务应用仍必须独立证明本地密码与登录钥匙串同步。当前客户端没有可核实的系统同步观察接口，这两项继续为 Unknown，Password 任务不得据此宣称完成，浏览器接入也不得绕过服务端 Applied 门禁。该缺口是产品完成阻塞，不是通过 ABI 或注册成功即可豁免的测试项。
+Password 用户注册不登记用户签名密钥：注册与浏览器证明由当前设备密钥签署，并核对系统实际公钥。首次原生认证不等待 Applied。Password 的 Applied 表示实际 LoginManager 配置读回、设备／用户注册、当前 source/version、真实角色及所需系统权限满足；不表示 RSS 独立证明了密码或钥匙串同步。期望配置单独保留，不能代替系统读回。观察绑定认证 IPC 的实际用户／会话及原注册回调 generation；会话、配置或来源变化使旧观察不能用于完成。只读 refresh 在原 worker 完成后沿 prepared、access-result、journal 与 ACK 结算，不重复建号或权限修改。SE 的完成及首次认证条件、浏览器 Applied 门禁保持原语义。
+
+当前用户 helper 仅用 `SecKeychainGetStatus` 检查固定登录钥匙串的可访问状态，显示已解锁／已锁定／缺失／不可读。它不读取钥匙串项，不主动解锁、锁定或重置，也不把该诊断作为密码同步证明或登录门禁。
 
 模式或配置切换先禁用原绑定、退休精确用户源，等待原生清理确认后发布新配置；其他用户及共享设备源不由该用户切换清理。网络返回后重新核对当前绑定。未决注册、撤销与清理保留，不能用删除记录恢复“正常”。卸载在停止服务前检查 PSSO 清理；未完成时保留服务和扩展供恢复。
 
@@ -428,8 +430,18 @@ Password 用户注册不登记用户签名密钥：注册与浏览器证明由�
 
 正式平台预检复用现有候选与旅程入口：`native-candidate.mjs freeze` 可增加 `--platform-sso <扩展可执行文件>` 和 `--installer <公证PKG>`，与 service／backend／desktop 一起冻结。执行 `verify-execution-macos.py --binary <服务> --backend <后端探针> --candidate <固定候选JSON> --output <证据目录> --psso-preflight`，只读核对实际 OS、签名团队及固定安装包公证。预检输出 `psso-preflight.json`，状态保持 blocked、`systemAccepted:false`，不执行安装或注册，也不证明包内映像与独立冻结映像一致；真实安装后须按候选摘要核对实际组件。
 
-受管测试机按同一候选依次验收：匹配 Team／容器／扩展的 MDM profile 与 AASA → 系统设备注册 → 两种用户模式 → 真实登录与指定应用 SSO → 上游改密、本地离线改密、重新联网与冲突 → 登录钥匙串实际访问 → 双用户切换 → 登录窗口、锁屏和 FileVault 冷启动 → Agent／Desktop 停止 → 修复、升级中断与注销卸载。分别记录系统回调、source/version、绑定代际、实际操作及结果；禁止用 `app-sso --messages` 的样本密钥证明硬件持钥，也不将含令牌或密码的原始诊断输出写入证据。没有实际执行的场景保持 notExecuted；真实平台支持与 #2872/#2923 关闭必须等待这些缺口闭合。
+受管测试机按同一候选依次验收：匹配 Team／容器／扩展的 MDM profile 与 AASA → 系统设备注册 → 两种用户模式 → 真实登录与指定应用 SSO → 上游改密、本地离线改密、重新联网与冲突 → 登录钥匙串实际访问 → 双用户切换 → 登录窗口、锁屏和 FileVault 冷启动 → Agent／Desktop 停止 → 修复、升级中断与注销卸载。分别记录系统回调、source/version、绑定代际、实际操作及结果；禁止用 `app-sso --messages` 的样本密钥证明硬件持钥，也不将含令牌或密码的原始诊断输出写入证据。没有实际执行的场景保持 notExecuted；真实平台支持由独立平台验收取证，本轮实现与本地 CI 不代替这些证据。
 
+
+### 独立 FileVault CMS 托管
+
+macOS Agent 只读固定 `/var/db/FileVaultPRK.dat`，校验普通文件、root 所有权、仅所有者访问且无扩展 ACL、单链接、64 KiB 上限及读取前后快照。不会安装或修改 escrow profile、轮换 PRK、在端上解密，也不接收文件路径或上传 URL 参数。Apple 所需配置可由 RSS 或第三方 MDM 提供；已有文件由 macOS 产生。缺少文件只报告缺材料，不推断当前 MDM 是否正常。
+
+采集默认关闭，由服务端管理者对当前 Agent 注册明确授权 custody/epoch、配置 revision 和收件证书。Agent 通过设备认证的 `filevault/configuration`、`filevault/escrows`、`filevault/operations/{id}` 通信，不依赖员工会话、普通执行任务或有效 MDM 注册。配置读回和 CMS 收件人不匹配时停止新上传，旧 CMS 不会以新证书材料名义提交。
+
+启动后检查配置，平时每 60 秒检查；未决操作每 30 秒按原 operation 恢复结果。受保护通信 SQLite 中最多保留一个冻结上传，落盘后才发送，匹配回执与清除 pending 原子保存；文件变化不覆盖结果未知的请求。明确拒绝后等待材料或授权变化。退管停止新采集；确认注册替换后旧载体不再发送，新身份必须取得自己的授权并创建新操作，不能改绑旧 operation。
+
+设备设置中的 FileVault 状态独立显示缺配置、缺材料、上传待确认、收件证书不匹配、已托管未验证及检查／通信失败。界面不显示 CMS、PRK 或私钥。已托管只表示服务端持久保存，不证明当前可恢复解锁，也不成为 PSSO 登录条件。本地测试只使用临时测试材料，不读取开发机真实 PRK。
 
 ## 个人 Vault 原生验证（#2928）
 

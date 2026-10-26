@@ -1349,6 +1349,7 @@ async fn installation_owner_replies_to_platform_sso_before_enterprise_registrati
             reply,
             request: LocalRequest::operation(execution_ipc::host::Request::PlatformSso {
                 input: execution_ipc::platform_sso::Operation::Bootstrap {
+                    callback_generation: 1,
                     authentication:
                         rss_mdm_agent_wire::platform_sso::AuthenticationMode::SecureEnclave,
                     scope: rss_mdm_agent_wire::platform_sso::Kind::Device,
@@ -2377,6 +2378,7 @@ async fn psso_drain_recovers_expired_trust_without_reopening_business_admission(
     platform_private_storage::directory(&root).unwrap();
     let source = uuid::Uuid::new_v4();
     crate::credential_worker::state::write(&root, "device.psso-source", &serde_json::json!({
+        "clientId": source, "authentication": "secure_enclave", "callbackGeneration": 1,
         "context": { "tenant": c.service.client.configuration().tenant,
             "agentRegistration": registration.registration_id, "installation": c.service.core.access.installation,
             "origin": c.service.client.configuration().origin.origin().ascii_serialization(),
@@ -2389,6 +2391,7 @@ async fn psso_drain_recovers_expired_trust_without_reopening_business_admission(
         "device.psso-observation",
         &serde_json::json!({
             "source": source, "sourceVersion": 1, "bindingGeneration": null, "observedAt": 1,
+            "callbackGeneration": 1, "subject": "501", "session": 1, "sessionBinding": null, "configuration": null,
             "deviceRegistered": false, "userRegistered": false
         }),
     )
@@ -5618,4 +5621,47 @@ async fn collected_software_physical_view_reaches_the_authenticated_software_rea
         .unwrap()
         .items
         .is_empty());
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn slow_access_refresh_services_psso_callbacks_and_joins_before_returning() {
+    let _budget = crate::scenario_budget::enter();
+    let mut c = Case::new(None).await;
+    let (reply, receive) = tokio::sync::oneshot::channel();
+    c.service.core.psso.commands.push_back(Command {
+        fence_epoch: 0,
+        subject: c.selection.subject.clone(),
+        session: c.selection.session,
+        binding: Some(c.selection.binding.clone()),
+        reply,
+        request: LocalRequest::operation(execution_ipc::host::Request::PlatformSso {
+            input: execution_ipc::platform_sso::Operation::Bootstrap {
+                callback_generation: 0,
+                authentication: rss_mdm_agent_wire::platform_sso::AuthenticationMode::Password,
+                scope: rss_mdm_agent_wire::platform_sso::Kind::Device,
+            },
+        }),
+    });
+    let (release, blocked) = std::sync::mpsc::channel();
+    let joined = Arc::new(AtomicBool::new(false));
+    let finished = joined.clone();
+    let job = tokio::task::spawn_blocking(move || {
+        blocked
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .map_err(|_| Error::Unavailable)?;
+        finished.store(true, Ordering::Release);
+        Ok(())
+    });
+    let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
+    let responder = async {
+        // This callback must be answered before the native sample is allowed to finish.
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), receive).await;
+        release.send(()).unwrap();
+        assert!(matches!(result, Ok(Ok(Reply::Rejected))));
+    };
+    let (result, ()) = tokio::join!(c.service.wait_access_refresh(job, &mut commands), responder);
+    result.unwrap();
+    assert!(joined.load(Ordering::Acquire));
+    assert!(c.service.core.psso.commands.is_empty());
 }

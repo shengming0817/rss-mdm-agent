@@ -2,6 +2,9 @@
 #[cfg(any(windows, test))]
 #[path = "helper/hello.rs"]
 mod hello;
+#[cfg(target_os = "macos")]
+#[path = "helper/keychain.rs"]
+mod keychain;
 use crate::{Artifacts, MaterialRegistry, NativeRunner};
 use execution_app::{DispatchOutcome, Error, RunnerPort};
 use execution_contract::*;
@@ -261,12 +264,22 @@ impl Helper {
                 }
                 Reply::Acknowledged
             }
-            Command::WindowsHello | Command::OpenWindowsHello
+            Command::WindowsHello | Command::OpenWindowsHello | Command::MacKeychain
                 if !host::active_login()
                     || host::current_subject()? != self.subject
                     || host::current_session_binding()? != self.binding =>
             {
                 return Err(Error::Unbound)
+            }
+            Command::MacKeychain => {
+                #[cfg(target_os = "macos")]
+                {
+                    Reply::MacKeychain(keychain::observe())
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    return Err(Error::Unsupported);
+                }
             }
             Command::WindowsHello => {
                 #[cfg(windows)]

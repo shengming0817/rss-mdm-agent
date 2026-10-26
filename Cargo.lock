@@ -50,6 +50,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "base64 0.23.1",
+ "cms",
  "der 0.7.10",
  "execution-contract",
  "flate2",
@@ -749,6 +750,18 @@ name = "cmov"
 version = "0.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
+
+[[package]]
+name = "cms"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7b77c319abfd5219629c45c34c89ba945ed3c5e49fcde9d16b6c3885f118a730"
+dependencies = [
+ "const-oid 0.9.6",
+ "der 0.7.10",
+ "spki 0.7.3",
+ "x509-cert",
+]
 
 [[package]]
 name = "combine"
@@ -4609,7 +4622,7 @@ dependencies = [
 [[package]]
 name = "rss-mdm-agent-wire"
 version = "1.0.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=ee464c4d1a450612c9c258a151f7139fae2bb110#ee464c4d1a450612c9c258a151f7139fae2bb110"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=6a883e443a53ac497eefcf76eec6a252a38278dd#6a883e443a53ac497eefcf76eec6a252a38278dd"
 dependencies = [
  "base64 0.22.1",
  "ordered-float",

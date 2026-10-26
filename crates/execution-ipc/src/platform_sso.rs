@@ -13,6 +13,8 @@ use uuid::Uuid;
 pub enum Operation {
     /// Obtain a device- or current-user-scoped registration challenge.
     Bootstrap {
+        /// Native registration callback generation, not an observation challenge.
+        callback_generation: u64,
         #[doc = "Device or current native user scope."]
         scope: w::Kind,
         /// Method supplied by the Apple system callback, checked against the signed policy.
@@ -30,6 +32,10 @@ pub enum Operation {
     },
     /// Report observations from the system-provided LoginManager.
     Observe {
+        /// Exact callback generation retained with the registered source.
+        callback_generation: u64,
+        /// Actual system LoginManager readback; never populated from bootstrap expectations.
+        configuration: Option<Box<platform_sso::NativeConfiguration>>,
         /// System device or native user callback scope.
         scope: w::Kind,
         /// Exact source whose system state was observed.

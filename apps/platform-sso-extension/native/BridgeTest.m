@@ -27,7 +27,7 @@ int main(void) { @autoreleasepool {
     NSString *id1=@"00000000-0000-0000-0000-000000000001";
     NSString *issuer=[@"https://mdm.example/api/v1/apple/platform-sso/" stringByAppendingString:id1];
     NSString *target=[issuer stringByAppendingString:@"/browser/complete"];
-    NSString *metadata=json(@{@"context":@{@"tenant":id1,@"agentRegistration":id1,@"installation":id1,@"origin":@"https://mdm.example",@"kind":@"user",@"binding":id1,@"bindingGeneration":@1,@"generatedUid":id1,@"bindingRevision":@1,@"configuration":@{@"authentication":@"secure_enclave",@"passwordProvider":NSNull.null,@"login":@"local",@"unlock":@"local",@"filevault":@"local",@"offlineGraceSeconds":NSNull.null,@"registrationGraceSeconds":NSNull.null,@"maintenanceAccounts":@[]}},@"sourceId":id1,@"sourceVersion":@1,@"clientId":id1,@"authentication":@"secure_enclave",@"proofKey":publicKey,@"signingKey":publicKey,@"encryptionKey":publicKey});
+    NSString *metadata=json(@{@"context":@{@"tenant":id1,@"agentRegistration":id1,@"installation":id1,@"origin":@"https://mdm.example",@"kind":@"user",@"binding":id1,@"bindingGeneration":@1,@"generatedUid":id1,@"bindingRevision":@1,@"configuration":@{@"authentication":@"secure_enclave",@"passwordProvider":NSNull.null,@"login":@"local",@"unlock":@"local",@"filevault":@"local",@"offlineGraceSeconds":NSNull.null,@"registrationGraceSeconds":NSNull.null,@"maintenanceAccounts":@[]}},@"callbackGeneration":@1,@"sourceId":id1,@"sourceVersion":@1,@"clientId":id1,@"authentication":@"secure_enclave",@"proofKey":publicKey,@"signingKey":publicKey,@"encryptionKey":publicKey});
     NSString *body=json(@{@"challengeId":id1,@"nonce":@"test-nonce",@"proof":@""});
     NSString *token=[@"a" stringByPaddingToLength:43 withString:@"a" startingAtIndex:0];
     char *result=rss_psso_browser(2,point.bytes,metadata.UTF8String,issuer.UTF8String,target.UTF8String,body.UTF8String,token.UTF8String,testSign,(void *)key);
@@ -51,7 +51,7 @@ int main(void) { @autoreleasepool {
     [passwordMetadata removeObjectForKey:@"proofKey"];
     assert(!rss_psso_browser(1,point.bytes,json(passwordMetadata).UTF8String,issuer.UTF8String,target.UTF8String,body.UTF8String,token.UTF8String,testSign,(void *)key));
     assert(signingCalls==2);
-    int32_t status=0;assert(!rss_psso_begin(1,2,NULL,NULL,&status) && status==-1);
+    int32_t status=0;assert(!rss_psso_begin(1,2,1,NULL,NULL,&status) && status==-1);
     NSString *suite=[@"com.rss.psso.test." stringByAppendingString:NSUUID.UUID.UUIDString];
     NSUserDefaults *defaults=[[NSUserDefaults alloc]initWithSuiteName:suite];
     RSSQueueRetirements(defaults);assert(RSSPendingRetirements(defaults).count==0);
@@ -81,6 +81,18 @@ int main(void) { @autoreleasepool {
     assert(RSSPendingRetirements(defaults).count==1);
     RSSCompleteRetirement(defaults,@"deviceRegistration",@"device-v2");
     assert(!RSSPendingRetirements(defaults).count && ![defaults dictionaryForKey:@"inflight"]);
+    // Cancelling repair before publishing new metadata must leave the old registration alone.
+    [defaults setObject:@"valid-old-user" forKey:@"registration"];
+    assert(!RSSQueueCancelledRegistration(defaults,@"registration",nil));
+    assert(!RSSPendingRetirements(defaults).count);
+    assert(RSSQueueCancelledRegistration(defaults,@"registration",@"new-callback-user"));
+    assert(RSSPendingRetirements(defaults).count==1 && !RSSPendingRetirements(defaults)[@"valid-old-user"]);
+    RSSCompleteRetirement(defaults,@"registration",@"new-callback-user");
+    assert([[defaults stringForKey:@"registration"] isEqual:@"valid-old-user"]);
+    assert(RSSObservationCurrent(defaults,@"registration",@"valid-old-user"));
+    assert(!RSSObservationCurrent(defaults,@"registration",@"new-callback-user"));
+    RSSQueueCancelledRegistration(defaults,@"registration",@"valid-old-user");
+    assert(!RSSObservationCurrent(defaults,@"registration",@"valid-old-user"));
     [defaults removePersistentDomainForName:suite];
     CFRelease(publicKeyRef);CFRelease(key);puts("Platform SSO native ABI and signature test passed; no system registration exercised");
 } return 0; }

@@ -35,7 +35,11 @@ fn addresses(values: Option<Vec<IpAddr>>) -> Option<Vec<String>> {
             .collect()
     })
 }
-pub(crate) fn read(subject: &str, session: u32) -> Reply {
+pub(crate) fn read(
+    subject: &str,
+    session: u32,
+    filevault: Option<execution_contract::FilevaultState>,
+) -> Reply {
     #[cfg(target_os = "macos")]
     let (name, ips, user) = {
         let _ = session;
@@ -53,6 +57,7 @@ pub(crate) fn read(subject: &str, session: u32) -> Reply {
     };
     Reply::DeviceOverview {
         value: DeviceOverview {
+            filevault,
             attributes: execution_ipc::host::DeviceAttributes {
                 computer_name: text(name),
                 ip_addresses: addresses(ips),

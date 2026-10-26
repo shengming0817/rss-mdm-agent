@@ -196,7 +196,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let wire::TaskPayload::DeviceAccess(task) = retained.payload() else {
             return Err(Error::Protocol);
         };
-        if !matches!(task.windows, Some(wire::AccessWindowsPlan::Whfb { .. }))
+        if !(task.platform == wire::TaskPlatform::Macos
+            || matches!(task.windows, Some(wire::AccessWindowsPlan::Whfb { .. })))
             || self
                 .association(id)?
                 .is_none_or(|v| v.local_attempt().is_none())

@@ -406,10 +406,8 @@ watch(
     if (id !== "settings") settingsExpanded.value = false;
     if (id !== "assistant") lastContentPage.value = id;
     navigationError.value = "";
-    if (id === "home") {
-      void device.refresh();
-      void activity.load();
-    }
+    if (id === "home" || id === "settings") void device.refresh();
+    if (id === "home") void activity.load();
     if (["tasks", "software-management", "device-tools"].includes(id))
       void controller?.refresh();
     if (!historyPinned.value) historyOpen.value = false;
@@ -613,7 +611,8 @@ watch(
 onMounted(() => {
   void device.refresh();
   devicePolling = setInterval(() => {
-    if (props.page === "home" && !document.hidden) void device.refresh();
+    if (["home", "settings"].includes(props.page) && !document.hidden)
+      void device.refresh();
   }, 30000);
   taskPolling = setInterval(() => {
     if (!document.hidden && props.page === "home") void activity.load();

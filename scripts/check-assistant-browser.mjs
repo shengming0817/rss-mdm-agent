@@ -901,9 +901,9 @@ try {
     .getByText("设备效果未知，需要可信核对", { exact: true })
     .waitFor();
   for (const [ms, note] of [
-    [500, "动作尚未生效"],
-    [1000, "动作在有效期内"],
-    [2000, "动作已过期"],
+    [500, "首启窗口尚未开始"],
+    [1000, "当前处于首启窗口"],
+    [2000, "首启窗口已结束"],
   ]) {
     await page.clock.setFixedTime(new Date(ms));
     await page.clock.runFor(1000);

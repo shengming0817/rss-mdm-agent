@@ -60,3 +60,6 @@ pub fn audit_schema() -> schemars::Schema {
         .into_generator()
         .into_root_schema_for::<AuditEvent>()
 }
+
+mod filevault;
+pub use filevault::FilevaultState;

@@ -142,6 +142,8 @@ it("Mac setup uses native password preparation and keeps backend and system fact
         userRegistered: true,
         loginReady: true,
         nativeDeviceRegistered: null,
+        nativeConfigurationMatches: null,
+        loginKeychain: "unavailable",
         nativeUserRegistered: null,
         observedAt: null,
       };
