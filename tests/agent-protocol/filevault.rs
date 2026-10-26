@@ -15,7 +15,19 @@ pub struct Fixture {
     pub config_reads: usize,
     pub status_reads: usize,
 }
-pub fn response(data: &mut Fixture, path: &str, value: Value) -> Response {
+pub fn response(
+    data: &mut Fixture,
+    path: &str,
+    value: Value,
+    headers: &HeaderMap,
+    authenticated: bool,
+) -> Response {
+    if !authenticated
+        || headers.contains_key("x-rss-user-session")
+        || headers.contains_key("cookie")
+    {
+        return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
+    }
     if path.ends_with("/configuration") {
         data.config_reads += 1;
         return axum::Json(data.configuration.clone().unwrap_or(w::Configuration {

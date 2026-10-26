@@ -39,7 +39,7 @@ fn observation(c: &Coordinate, actual: ::platform_sso::NativeConfiguration) -> O
     Operation::Observe {
         scope: w::Kind::User,
         callback_generation: c.callback_generation,
-        configuration: Some(actual),
+        configuration: Some(Box::new(actual)),
         source: c.source,
         source_version: c.source_version,
         device_registered: true,
@@ -286,7 +286,7 @@ async fn native_observation_refresh_settles_original_journal_after_restart_and_a
         crate::backend::plan::hex(&task.definition_digest),
     )
     .unwrap();
-    spec.validity.expires_at_unix_ms = task.expires_at as u64 * 1000 + spec.budget.total_timeout_ms;
+    spec.validity.expires_at_unix_ms = task.expires_at as u64 * 1000;
     spec.request.parameters.insert(
         "access-root".into(),
         InputValue::Literal {
@@ -300,7 +300,12 @@ async fn native_observation_refresh_settles_original_journal_after_restart_and_a
         },
     );
     let worker = crate::access_worker::Input {
-        task: task.clone(),
+        task: {
+            let mut normalized = task.clone();
+            normalized.permit = r::TaskPermit::Offer;
+            normalized.expires_at = normalized.deadline;
+            normalized
+        },
         root: access_root.clone(),
         installation,
         image_sha256: spec.launch.interpreter.artifact.sha256.clone(),

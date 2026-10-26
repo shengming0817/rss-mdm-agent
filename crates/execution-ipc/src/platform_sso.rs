@@ -35,7 +35,7 @@ pub enum Operation {
         /// Exact callback generation retained with the registered source.
         callback_generation: u64,
         /// Actual system LoginManager readback; never populated from bootstrap expectations.
-        configuration: Option<platform_sso::NativeConfiguration>,
+        configuration: Option<Box<platform_sso::NativeConfiguration>>,
         /// System device or native user callback scope.
         scope: w::Kind,
         /// Exact source whose system state was observed.

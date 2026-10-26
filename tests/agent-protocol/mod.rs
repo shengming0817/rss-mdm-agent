@@ -1104,13 +1104,7 @@ async fn handler(
         return current_user::response(&mut d.current_user, tenant, &method, &headers, value);
     }
     if path.contains("/filevault/") {
-        if !authenticated
-            || headers.contains_key("x-rss-user-session")
-            || headers.contains_key("cookie")
-        {
-            return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
-        }
-        return filevault::response(&mut d.filevault, path, value);
+        return filevault::response(&mut d.filevault, path, value, &headers, authenticated);
     }
     if path.contains("/platform-sso/") {
         if !authenticated
