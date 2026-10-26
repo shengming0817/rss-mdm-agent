@@ -27,6 +27,8 @@ pub enum SettingsSection {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SettingsField {
+    /// Whether this exact field can currently be edited through its native adapter.
+    pub writable: bool,
     /// Code-owned field identifier, used only for presentation.
     pub key: String,
     /// Observed value. Missing never means disabled, zero or absent.
@@ -57,8 +59,6 @@ pub struct SettingsTarget {
     pub fields: Vec<SettingsField>,
     /// Supported native display modes or energy modes.
     pub options: Vec<SettingsOption>,
-    /// Whether current policy, privilege and native support permit edits.
-    pub writable: bool,
     /// Why writes are unavailable; reads remain independent.
     pub reason: Option<String>,
 }

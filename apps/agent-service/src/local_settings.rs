@@ -71,7 +71,7 @@ impl Permit {
         policy: crate::local_permissions::Policy,
         action: &Action,
     ) -> Result<Self, Error> {
-        Self::checked(plan, policy, action, true)
+        Self::checked(plan, policy, action)
     }
     pub(crate) fn keep(
         plan: FrozenExecution,
@@ -87,13 +87,12 @@ impl Permit {
         ) {
             return Err(Error::Denied);
         }
-        Self::checked(plan, policy, action, false)
+        Self::checked(plan, policy, action)
     }
     fn checked(
         plan: FrozenExecution,
         policy: crate::local_permissions::Policy,
         action: &Action,
-        admission: bool,
     ) -> Result<Self, Error> {
         if !matches!(plan.spec().request.authority, Authority::Local { .. })
             || plan.spec().launch.interpreter.profile.id.as_str() != PROFILE
@@ -107,7 +106,7 @@ impl Permit {
             patch,
         } = action
         {
-            if before.revision != *expected || admission && !fresh(before, now()?) {
+            if before.revision != *expected {
                 return Err(Error::Conflict);
             }
             if !patch.valid()
@@ -210,9 +209,116 @@ pub(crate) fn control_path(
     }
     Ok(control_root(config)?.join(id.to_string()))
 }
-pub(crate) fn fresh(snapshot: &SettingsSnapshot, now: u64) -> bool {
-    now.checked_sub(snapshot.collected_at_unix_ms)
-        .is_some_and(|age| age < 30_000)
+
+fn edited_fields(patch: &SettingsPatch) -> Vec<&'static str> {
+    match patch {
+        SettingsPatch::Proxy {
+            http,
+            https,
+            socks,
+            bypass,
+            ..
+        } => [
+            ("http", http.is_some()),
+            ("https", https.is_some()),
+            ("socks", socks.is_some()),
+            ("bypass", bypass.is_some()),
+        ]
+        .into_iter()
+        .filter_map(|(key, present)| present.then_some(key))
+        .collect(),
+        SettingsPatch::Display { mode, origin, .. } => {
+            [("mode", mode.is_some()), ("origin", origin.is_some())]
+                .into_iter()
+                .filter_map(|(key, present)| present.then_some(key))
+                .collect()
+        }
+        SettingsPatch::Power {
+            display_off_minutes,
+            sleep_minutes,
+            mode,
+            ..
+        } => [
+            ("displayOffMinutes", display_off_minutes.is_some()),
+            ("sleepMinutes", sleep_minutes.is_some()),
+            ("mode", mode.is_some()),
+        ]
+        .into_iter()
+        .filter_map(|(key, present)| present.then_some(key))
+        .collect(),
+    }
+}
+fn patch_target(patch: &SettingsPatch) -> &str {
+    match patch {
+        SettingsPatch::Proxy { target, .. }
+        | SettingsPatch::Display { target, .. }
+        | SettingsPatch::Power { target, .. } => target,
+    }
+}
+fn setting_value<'a>(target: &'a SettingsTarget, key: &str) -> Option<&'a serde_json::Value> {
+    target
+        .fields
+        .iter()
+        .find(|f| f.key == key)
+        .and_then(|f| f.value.as_ref())
+}
+fn checked_target<'a>(
+    patch: &SettingsPatch,
+    targets: &'a [SettingsTarget],
+) -> Result<&'a SettingsTarget, Error> {
+    let target = targets
+        .iter()
+        .find(|t| t.id == patch_target(patch))
+        .ok_or(Error::Conflict)?;
+    if edited_fields(patch).iter().any(|key| {
+        !target.fields.iter().any(|f| {
+            f.key == *key && f.writable && f.quality == DataQuality::Complete && f.value.is_some()
+        })
+    }) {
+        return Err(Error::Denied);
+    }
+    Ok(target)
+}
+fn display_state_equal(before: &[SettingsTarget], current: &[SettingsTarget]) -> bool {
+    before.len() == current.len()
+        && before.iter().all(|old| {
+            current.iter().find(|t| t.id == old.id).is_some_and(|new| {
+                [
+                    "mode",
+                    "origin",
+                    "width",
+                    "height",
+                    "pixelWidth",
+                    "pixelHeight",
+                    "main",
+                ]
+                .iter()
+                .all(|key| setting_value(old, key) == setting_value(new, key))
+            })
+        })
+}
+fn check_change(
+    patch: &SettingsPatch,
+    before: &SettingsSnapshot,
+    current: &[SettingsTarget],
+) -> Result<(), Error> {
+    let actual = checked_target(patch, current)?;
+    let original = before
+        .targets
+        .iter()
+        .find(|t| t.id == actual.id)
+        .ok_or(Error::Conflict)?;
+    if edited_fields(patch).iter().any(|key| {
+        setting_value(original, key).is_none()
+            || setting_value(original, key) != setting_value(actual, key)
+    }) || matches!(patch, SettingsPatch::Display { .. })
+        && !display_state_equal(&before.targets, current)
+        || matches!(patch, SettingsPatch::Power { .. })
+            && setting_value(original, "scheme") != setting_value(actual, "scheme")
+    {
+        return Err(Error::Conflict);
+    }
+    Ok(())
 }
 pub(crate) fn snapshot(section: SettingsSection) -> Result<SettingsSnapshot, Error> {
     #[cfg(target_os = "macos")]
@@ -268,7 +374,7 @@ pub fn run(path: &Path) -> Result<i32, Error> {
     if let Err(error) = result {
         let observed = snapshot(input.action.section()).ok();
         let unchanged_display = !display_unsettled
-            && matches!(&input.action, Action::Change {before,patch:SettingsPatch::Display {..},..} if observed.as_ref().is_some_and(|actual|actual.targets==before.targets));
+            && matches!(&input.action, Action::Change {before,patch:SettingsPatch::Display {..},..} if observed.as_ref().is_some_and(|actual|display_state_equal(&actual.targets,&before.targets)));
         let row = serde_json::to_vec(&SettingsResponse {
             write_allowed: false,
             request: Some(input.request.clone()),
@@ -369,25 +475,11 @@ fn execute_inner(
             before,
             patch,
         } => {
-            if !patch.valid() || before.revision != *expected || !fresh(before, now()?) {
+            if !patch.valid() || before.revision != *expected {
                 return Err(Error::Conflict);
             }
             let current = snapshot(section)?;
-            if current.revision != *expected {
-                return Err(Error::Conflict);
-            }
-            let target = match patch {
-                SettingsPatch::Proxy { target, .. }
-                | SettingsPatch::Display { target, .. }
-                | SettingsPatch::Power { target, .. } => target,
-            };
-            if !current
-                .targets
-                .iter()
-                .any(|t| &t.id == target && t.writable)
-            {
-                return Err(Error::Denied);
-            }
+            check_change(patch, before, &current.targets)?;
             *display_unsettled = matches!(patch, SettingsPatch::Display { .. });
             #[cfg(target_os = "macos")]
             macos::apply(patch, before)?;
@@ -396,10 +488,7 @@ fn execute_inner(
             let applied = snapshot(section)?;
             if !satisfied(patch, &applied)
                 || matches!(patch, SettingsPatch::Display { .. })
-                    && !applied
-                        .targets
-                        .iter()
-                        .any(|t| &t.id == target && t.writable)
+                    && checked_target(patch, &applied.targets).is_err()
             {
                 #[cfg(target_os = "macos")]
                 if *display_unsettled {
@@ -545,19 +634,65 @@ mod native_tests;
 #[cfg(test)]
 mod control_tests {
     use super::*;
-    #[test]
-    fn future_or_expired_native_observations_do_not_authorize_edits() {
-        let snapshot = SettingsSnapshot {
-            section: SettingsSection::Display,
+    fn proxy_snapshot() -> SettingsSnapshot {
+        SettingsSnapshot {
+            section: SettingsSection::Network,
             revision: Digest::new("a".repeat(64)).unwrap(),
-            collected_at_unix_ms: 1000,
+            collected_at_unix_ms: 1,
             source: "native fixture".into(),
-            targets: vec![],
-        };
-        assert!(!fresh(&snapshot, 999));
-        assert!(fresh(&snapshot, 1000));
-        assert!(!fresh(&snapshot, 31000));
+            targets: vec![SettingsTarget {
+                id: "service".into(),
+                name: "original name".into(),
+                options: vec![],
+                reason: None,
+                fields: vec![
+                    SettingsField {
+                        key: "bypass".into(),
+                        writable: true,
+                        value: Some(serde_json::json!(["localhost"])),
+                        quality: DataQuality::Complete,
+                        reason: None,
+                    },
+                    SettingsField {
+                        key: "http".into(),
+                        writable: true,
+                        value: Some(serde_json::json!({"enabled": false,"host":"","port":0})),
+                        quality: DataQuality::Complete,
+                        reason: None,
+                    },
+                ],
+            }],
+        }
     }
+    #[test]
+    fn local_patch_compares_only_written_values_and_current_field_permission() {
+        let before = proxy_snapshot();
+        let patch = SettingsPatch::Proxy {
+            target: "service".into(),
+            http: None,
+            https: None,
+            socks: None,
+            bypass: Some(vec!["example.test".into()]),
+        };
+        let mut current = before.targets.clone();
+        current[0].name = "renamed".into();
+        current[0].reason = Some("unrelated diagnostic".into());
+        current[0].fields[1].value =
+            Some(serde_json::json!({"enabled":true,"host":"new-proxy","port":8080}));
+        check_change(&patch, &before, &current).unwrap();
+        current[0].fields[0].value = Some(serde_json::json!(["changed-by-other-writer"]));
+        assert!(matches!(
+            check_change(&patch, &before, &current),
+            Err(Error::Conflict)
+        ));
+        current[0].fields[0].value = before.targets[0].fields[0].value.clone();
+        current[0].fields[0].writable = false;
+        assert!(matches!(
+            check_change(&patch, &before, &current),
+            Err(Error::Denied)
+        ));
+    }
+
     #[test]
     fn decision_paths_reject_uuid_aliases_and_nil_instead_of_sharing_another_task_marker() {
         let config = crate::ExecutionConfig {

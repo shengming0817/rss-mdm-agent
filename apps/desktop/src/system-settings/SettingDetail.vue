@@ -28,7 +28,7 @@ const targets = computed(() => snapshot.value?.targets ?? []);
 const selected = ref("");
 watch(targets, (values) => {
   if (!values.some((t) => t.id === selected.value))
-    selected.value = values.find((t) => t.writable)?.id ?? values[0]?.id ?? "";
+    selected.value = values.find((t) => t.fields.some((f) => f.writable))?.id ?? values[0]?.id ?? "";
 });
 const target = computed(
   () => targets.value.find((t) => t.id === selected.value) ?? targets.value[0],
@@ -67,6 +67,7 @@ const dirty = computed(
   () => original.value !== "" && original.value !== form(),
 );
 const formRevision = ref("");
+const originalTarget = ref<SettingsTarget>();
 const adoption = ref(0);
 watch(
   [
@@ -104,6 +105,7 @@ watch(
       proxies[protocol] = p ? { ...p } : { enabled: false, host: "", port: 0 };
       ports[protocol] = p?.port ? String(p.port) : "";
     }
+    originalTarget.value = t ? JSON.parse(JSON.stringify(t)) : undefined;
     formRevision.value = String(revision ?? "");
     original.value = form();
   },
@@ -112,20 +114,15 @@ watch(
 const busy = computed(
   () => controller?.state.busy.has(effective.value) ?? false,
 );
-const conflict = computed(
-  () => !!snapshot.value && formRevision.value !== snapshot.value.revision,
-);
 const editable = computed(
   () =>
     controller?.available &&
     response.value?.writeAllowed &&
-    target.value?.writable &&
+    target.value?.fields.some((f) => f.writable) &&
     !busy.value &&
-    !conflict.value &&
-    !!snapshot.value &&
-    controller.state.now >= snapshot.value.collectedAtUnixMs &&
-    controller.state.now - snapshot.value.collectedAtUnixMs < 30_000,
+    !!snapshot.value,
 );
+const writable = (key: string) => target.value?.fields.some((f) => f.key === key && f.writable) ?? false;
 function refresh() {
   void controller?.load(effective.value, true);
   if (props.section === "lock") void controller?.load("lock", true);
@@ -271,7 +268,7 @@ const remaining = computed(() =>
 function prepare() {
   const t = target.value;
   if (!t || !editable.value || !dirty.value) return;
-  const base = (key: string) => value(t, key);
+  const base = (key: string) => value(originalTarget.value, key);
   if (effective.value === "display") {
     const origin = base("origin") as { x: number; y: number };
     if (
@@ -456,7 +453,7 @@ async function submit() {
       <p v-if="target.reason" class="design-note">{{ target.reason }}</p>
       <form
         v-if="
-          ['network', 'display', 'power'].includes(effective) && target.writable
+          ['network', 'display', 'power'].includes(effective) && target.fields.some((f) => f.writable)
         "
         @submit.prevent="prepare"
       >
@@ -471,22 +468,22 @@ async function submit() {
               <label
                 >{{ labels[protocol]
                 }}<UiSwitch
-                  v-model="proxies[protocol].enabled"
+                  v-model="proxies[protocol].enabled" :disabled="!writable(protocol)"
                   :aria-label="labels[protocol]" /></label
               ><label
                 >服务器<UiTextInput
-                  v-model="proxies[protocol].host"
+                  v-model="proxies[protocol].host" :disabled="!writable(protocol)"
                   :aria-label="`${protocol}服务器`" /></label
               ><label
                 >端口<UiTextInput
-                  v-model="ports[protocol]"
+                  v-model="ports[protocol]" :disabled="!writable(protocol)"
                   inputmode="numeric"
                   :aria-label="`${protocol}端口`"
               /></label>
             </div>
             <label
               >绕过代理的地址（每行一个）<UiTextInput
-                v-model="bypass"
+                v-model="bypass" :disabled="!writable('bypass')"
                 multiline
             /></label>
             <p class="design-note">
@@ -496,7 +493,7 @@ async function submit() {
           <template v-else-if="effective === 'display'">
             <label
               >分辨率与缩放模式<UiSelect
-                v-model="mode"
+                v-model="mode" :disabled="!writable('mode')"
                 :options="
                   target.options.map((o) => ({ value: o.id, label: o.label }))
                 "
@@ -505,32 +502,29 @@ async function submit() {
               仅显示系统支持的模式；HiDPI 的逻辑尺寸与像素尺寸分别标示。
             </p>
             <label
-              >桌面横坐标<UiTextInput v-model="x" inputmode="numeric" /></label
+              >桌面横坐标<UiTextInput v-model="x" :disabled="!writable('origin')" inputmode="numeric" /></label
             ><label
-              >桌面纵坐标<UiTextInput v-model="y" inputmode="numeric"
+              >桌面纵坐标<UiTextInput v-model="y" :disabled="!writable('origin')" inputmode="numeric"
             /></label>
           </template>
           <template v-else>
             <label
               >闲置后关闭屏幕（分钟，0 为从不）<UiTextInput
-                v-model="displayOff"
+                v-model="displayOff" :disabled="!writable('displayOffMinutes')"
                 inputmode="numeric" /></label
             ><label
               >闲置后系统睡眠（分钟，0 为从不）<UiTextInput
-                v-model="sleep"
+                v-model="sleep" :disabled="!writable('sleepMinutes')"
                 inputmode="numeric" /></label
             ><label v-if="target.options.length"
               >电源模式<UiSelect
-                v-model="energy"
+                v-model="energy" :disabled="!writable('mode')"
                 :options="
                   target.options.map((o) => ({ value: o.id, label: o.label }))
                 "
             /></label>
           </template>
         </fieldset>
-        <p v-if="conflict" role="alert">
-          保留了未保存的修改，但系统状态已经变化。请重新选择目标并确认新状态。
-        </p>
         <UiButton type="submit" :disabled="!editable || !dirty"
           >检查并应用修改</UiButton
         >

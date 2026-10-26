@@ -56,36 +56,13 @@ pub(super) fn read(section: SettingsSection) -> Result<Vec<SettingsTarget>, Erro
     ) {
         return Err(Error::Unsupported);
     }
-    let mut targets: Vec<SettingsTarget> =
+    let targets: Vec<SettingsTarget> =
         if matches!(section, SettingsSection::Power | SettingsSection::Lock) {
             power(section)?
         } else {
             serde_json::from_value(call(json!({"kind":"read","section":section}))?)
                 .map_err(|_| Error::Protocol)?
         };
-    if matches!(
-        section,
-        SettingsSection::Network
-            | SettingsSection::Display
-            | SettingsSection::Power
-            | SettingsSection::Lock
-    ) {
-        // The public preference APIs identify forced keys, but cannot prove that an MDM
-        // payload outside those domains leaves a field editable. Unknown stays read-only.
-        let unforced = command_image(
-            "/usr/bin/profiles",
-            &["status".into(), "-type".into(), "enrollment".into()],
-        )
-        .is_ok_and(|text| crate::mdm_state::macos_enrollment_flag(&text) == Some(false));
-        if !unforced {
-            for target in &mut targets {
-                if target.writable {
-                    target.writable = false;
-                    target.reason = Some("无法确认此设置未受组织管理，请使用系统设置".into());
-                }
-            }
-        }
-    }
     Ok(targets)
 }
 pub(super) fn open(section: SettingsSection) -> Result<(), Error> {
@@ -99,9 +76,7 @@ pub(super) fn apply(patch: &SettingsPatch, before: &SettingsSnapshot) -> Result<
         mode,
     } = patch
     {
-        if power(SettingsSection::Power)? != before.targets {
-            return Err(Error::Conflict);
-        }
+        check_change(patch, before, &power(SettingsSection::Power)?)?;
         let mut args = vec![if target == "ac" {
             "-c".into()
         } else {
@@ -214,6 +189,7 @@ fn command_image(image: &'static str, args: &[String]) -> Result<String, Error> 
 fn field(key: &str, value: Value) -> SettingsField {
     SettingsField {
         key: key.into(),
+        writable: true,
         value: Some(value),
         quality: DataQuality::Complete,
         reason: None,
@@ -221,9 +197,6 @@ fn field(key: &str, value: Value) -> SettingsField {
 }
 fn power(section: SettingsSection) -> Result<Vec<SettingsTarget>, Error> {
     let text = command(&["-g".into(), "custom".into()])?;
-    let forced = call(json!({"kind":"powerManaged"}))?
-        .as_bool()
-        .ok_or(Error::Protocol)?;
     let mut targets = Vec::new();
     let mut current = None;
     for line in text.lines() {
@@ -234,8 +207,7 @@ fn power(section: SettingsSection) -> Result<Vec<SettingsTarget>, Error> {
                     name: "电池供电".into(),
                     fields: vec![],
                     options: vec![],
-                    writable: !forced,
-                    reason: forced.then(|| "由组织策略管理".into()),
+                    reason: None,
                 });
                 current = Some(targets.len() - 1);
                 continue;
@@ -246,8 +218,7 @@ fn power(section: SettingsSection) -> Result<Vec<SettingsTarget>, Error> {
                     name: "外接电源".into(),
                     fields: vec![],
                     options: vec![],
-                    writable: !forced,
-                    reason: forced.then(|| "由组织策略管理".into()),
+                    reason: None,
                 });
                 current = Some(targets.len() - 1);
                 continue;
@@ -289,6 +260,15 @@ fn power(section: SettingsSection) -> Result<Vec<SettingsTarget>, Error> {
     }
     if targets.is_empty() {
         return Err(Error::Unavailable);
+    }
+    for target in &mut targets {
+        let managed = call(json!({"kind":"powerManaged", "target":target.id}))?
+            .as_bool()
+            .ok_or(Error::Protocol)?;
+        for field in &mut target.fields {
+            field.writable = !managed;
+        }
+        target.reason = managed.then(|| "由组织策略管理".into());
     }
     let mut source: Vec<SettingsTarget> =
         serde_json::from_value(call(json!({"kind":"read","section":"power"}))?)

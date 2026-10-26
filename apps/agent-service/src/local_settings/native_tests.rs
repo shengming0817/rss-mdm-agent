@@ -15,7 +15,7 @@ fn display_change(before: &SettingsSnapshot) -> SettingsPatch {
     let target = before
         .targets
         .iter()
-        .find(|t| t.writable && t.options.len() > 1)
+        .find(|t| t.fields.iter().any(|f| f.writable) && t.options.len() > 1)
         .expect("requires an unmanaged interactive display with alternate modes");
     let mode = target
         .options
@@ -141,7 +141,7 @@ fn machine_proxy_and_power_apply_preserve_unmodified_values_and_restore() {
     let t = before
         .targets
         .iter()
-        .find(|t| t.writable && t.fields.iter().any(|f| f.key == "bypass"))
+        .find(|t| t.fields.iter().any(|f| f.writable) && t.fields.iter().any(|f| f.key == "bypass"))
         .expect("unmanaged native network service");
     let original: Vec<String> = serde_json::from_value(field(t, "bypass").clone()).unwrap();
     let mut bypass = original.clone();
@@ -188,7 +188,7 @@ fn machine_proxy_and_power_apply_preserve_unmodified_values_and_restore() {
     let targets = before
         .targets
         .iter()
-        .filter(|t| t.writable && ["ac", "dc"].contains(&t.id.as_str()))
+        .filter(|t| t.fields.iter().any(|f| f.writable) && ["ac", "dc"].contains(&t.id.as_str()))
         .collect::<Vec<_>>();
     assert!(!targets.is_empty(), "requires writable native AC/DC timers");
     for t in targets {
@@ -233,7 +233,7 @@ fn refused_native_display_transaction_proves_no_change_and_closes() {
     let target = before
         .targets
         .iter()
-        .find(|t| t.writable)
+        .find(|t| t.fields.iter().any(|f| f.writable))
         .expect("unmanaged connected display");
     let input = Input {
         request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),

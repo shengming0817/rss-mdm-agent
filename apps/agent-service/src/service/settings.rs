@@ -225,13 +225,7 @@ impl Core {
                         _ => return Err(Error::Conflict),
                     }
                 } else {
-                    self.data
-                        .settings_read(
-                            &command.subject,
-                            command.binding.as_ref().ok_or(Error::Denied)?,
-                            patch.section(),
-                        )?
-                        .ok_or(Error::Unavailable)?
+                    self.settings_before(command, context, patch.section(), expected)?
                 };
                 (
                     request,
@@ -289,12 +283,10 @@ impl Core {
             patch,
         } = &action
         {
-            if !patch.valid() || before.revision != *expected || !local_settings::fresh(before, now)
-            {
+            if !patch.valid() || before.revision != *expected {
                 return Err(Error::Conflict);
             }
         }
-        let policy = self.software_policy()?;
         // User visual state and Windows WinINet always execute in the exact attested login.
         let needs_user = matches!(action, Action::Open { .. })
             || matches!(
@@ -417,6 +409,57 @@ impl Core {
             return Err(Error::Denied);
         }
         Ok(plan)
+    }
+    fn settings_before(
+        &self,
+        command: &Command,
+        context: &NativeContextRef,
+        section: SettingsSection,
+        expected: &Digest,
+    ) -> Result<SettingsSnapshot, Error> {
+        if let Some(snapshot) = self.data.settings_read(
+            &command.subject,
+            command.binding.as_ref().ok_or(Error::Denied)?,
+            section,
+        )? {
+            if &snapshot.revision == expected {
+                return Ok(snapshot);
+            }
+        }
+        // The journal already retains authenticated native observations. Resolve the original
+        // observation there rather than requiring the newest cache entry to have the same digest.
+        let mut after = None;
+        loop {
+            let page = self
+                .app
+                .service_tasks(after.as_ref(), 128)
+                .map_err(map_app_error)?;
+            for item in &page.items {
+                if item.action.policy.id.as_str() != "local-settings:native" {
+                    continue;
+                }
+                let Ok(plan) = self.settings_input(command, context, &item.action.request_id)
+                else {
+                    continue;
+                };
+                let Some(facts) = self
+                    .app
+                    .service_process_evidence(&item.action.request_id)
+                    .map_err(map_app_error)?
+                else {
+                    continue;
+                };
+                if let Some(snapshot) = native_response(&plan, &facts)?.and_then(|r| r.snapshot) {
+                    if snapshot.section == section && &snapshot.revision == expected {
+                        return Ok(snapshot);
+                    }
+                }
+            }
+            let Some(next) = page.next else {
+                return Err(Error::NotFound);
+            };
+            after = Some(next);
+        }
     }
     fn settings_status(&mut self, plan: &FrozenExecution) -> Result<SettingsResponse, Error> {
         let request = &plan.spec().request.request_id;

@@ -9,12 +9,18 @@
 #import <IOKit/ps/IOPSKeys.h>
 #import <AudioToolbox/AudioServices.h>
 static NSDictionary *field(NSString *key, id value, NSString *reason) {
-    return @{@"key":key,@"value":value?:NSNull.null,@"quality":value?@"complete":@"unknown",@"reason":reason?:NSNull.null};
+    return @{@"key":key,@"writable":@NO,@"value":value?:NSNull.null,@"quality":value?@"complete":@"unknown",@"reason":reason?:NSNull.null};
 }
 static NSDictionary *target(NSString *identity, NSString *name, NSArray *fields, NSArray *options, BOOL writable, NSString *reason) {
-    return @{@"id":identity,@"name":name,@"fields":fields,@"options":options,@"writable":@(writable),@"reason":reason?:NSNull.null};
+    NSMutableArray *resolved=[NSMutableArray array];
+    for(NSDictionary *f in fields){NSMutableDictionary *item=[f mutableCopy];item[@"writable"]=@(writable && f[@"value"]!=NSNull.null && [@[@"mode",@"origin",@"http",@"https",@"socks",@"bypass"] containsObject:f[@"key"]]);[resolved addObject:item];}
+    return @{@"id":identity,@"name":name,@"fields":resolved,@"options":options,@"reason":reason?:NSNull.null};
 }
 static id value(NSDictionary *t, NSString *key) { for (NSDictionary *f in t[@"fields"]) if ([f[@"key"] isEqual:key]) return f[@"value"] == NSNull.null ? nil : f[@"value"]; return nil; }
+static NSDictionary *findTarget(NSArray *targets, NSString *identity) { for(NSDictionary *t in targets)if([t[@"id"] isEqual:identity])return t;return nil; }
+static BOOL writableField(NSDictionary *target, NSString *key) { for(NSDictionary *f in target[@"fields"])if([f[@"key"] isEqual:key])return [f[@"writable"] boolValue];return NO; }
+static BOOL writablePatch(NSDictionary *target, NSDictionary *patch) { for(NSString *key in @[@"http",@"https",@"socks",@"bypass",@"mode",@"origin"])if(patch[key] && patch[key]!=NSNull.null && !writableField(target,key))return NO;return YES; }
+static BOOL sameDisplayState(NSArray *before, NSArray *current) { if(!current || before.count!=current.count)return NO;for(NSDictionary *old in before){NSDictionary *actual=findTarget(current,old[@"id"]);if(!actual)return NO;for(NSString *key in @[@"mode",@"origin",@"width",@"height",@"pixelWidth",@"pixelHeight",@"main"]){id a=value(old,key),b=value(actual,key);if(a!=b && ![a isEqual:b])return NO;}}return YES; }
 static BOOL forced(NSString *domain, NSArray *keys) { for (NSString *key in keys) if (CFPreferencesAppValueIsForced((__bridge CFStringRef)key,(__bridge CFStringRef)domain)) return YES; return NO; }
 static NSString *displayID(CGDirectDisplayID display) { CFUUIDRef uuid=CGDisplayCreateUUIDFromDisplayID(display); if (!uuid) return nil; NSString *s=CFBridgingRelease(CFUUIDCreateString(NULL,uuid)); CFRelease(uuid); return s; }
 static NSString *modeID(CGDisplayModeRef mode) { return [NSString stringWithFormat:@"%u",CGDisplayModeGetIODisplayModeID(mode)]; }
@@ -47,9 +53,11 @@ static NSArray *proxies(SCPreferencesRef preferences) {
     NSMutableArray *result=[NSMutableArray array];
     for (id item in services) { SCNetworkServiceRef service=(__bridge SCNetworkServiceRef)item; SCNetworkProtocolRef protocol=SCNetworkServiceCopyProtocol(service,kSCNetworkProtocolTypeProxies); if (!protocol) continue;
         NSDictionary *config=(__bridge NSDictionary *)SCNetworkProtocolGetConfiguration(protocol); config=config?:@{};
-        BOOL managed=forced(@"com.apple.SystemConfiguration",@[@"Proxies",@"HTTPEnable",@"HTTPSEnable",@"SOCKSEnable"]);
+        BOOL managed=forced(@"com.apple.SystemConfiguration",@[@"Proxies"]);
         NSArray *fields=@[field(@"http",endpoint(config,@"HTTP"),nil),field(@"https",endpoint(config,@"HTTPS"),nil),field(@"socks",endpoint(config,@"SOCKS"),nil),field(@"bypass",config[(__bridge NSString *)kSCPropNetProxiesExceptionsList]?:@[],nil),field(@"pacEnabled",@([config[(__bridge NSString *)kSCPropNetProxiesProxyAutoConfigEnable] boolValue]),nil),field(@"wpadEnabled",@([config[(__bridge NSString *)kSCPropNetProxiesProxyAutoDiscoveryEnable] boolValue]),nil),field(@"enabled",@(SCNetworkServiceGetEnabled(service)),nil)];
-        [result addObject:target((__bridge NSString *)SCNetworkServiceGetServiceID(service),(__bridge NSString *)SCNetworkServiceGetName(service)?:@"网络服务",fields,@[],!managed,managed?@"由组织策略管理":nil)]; CFRelease(protocol);
+        NSMutableDictionary *view=[target((__bridge NSString *)SCNetworkServiceGetServiceID(service),(__bridge NSString *)SCNetworkServiceGetName(service)?:@"网络服务",fields,@[],!managed,managed?@"由组织策略管理":nil) mutableCopy];NSMutableArray *editable=[NSMutableArray array];
+        for(NSDictionary *f in view[@"fields"]){NSMutableDictionary *item=[f mutableCopy];NSString *key=f[@"key"],*prefix=@{@"http":@"HTTP",@"https":@"HTTPS",@"socks":@"SOCKS"}[key];NSArray *keys=prefix?@[[prefix stringByAppendingString:@"Enable"],[prefix stringByAppendingString:@"Proxy"],[prefix stringByAppendingString:@"Port"]]:[key isEqual:@"bypass"]?@[@"ExceptionsList"]:@[];if(forced(@"com.apple.SystemConfiguration",keys)){item[@"writable"]=@NO;item[@"reason"]=@"由组织策略管理";}[editable addObject:item];}
+        view[@"fields"]=editable;[result addObject:view];CFRelease(protocol);
     }
     SCDynamicStoreRef store=SCDynamicStoreCreate(NULL,CFSTR("RSS active network read"),NULL,NULL);
     NSDictionary *active=store?CFBridgingRelease(SCDynamicStoreCopyValue(store,CFSTR("State:/Network/Global/IPv4"))):nil;
@@ -65,8 +73,11 @@ static int proxyApply(NSDictionary *request) {
     if(!SCPreferencesLock(preferences,FALSE)){CFRelease(preferences);return 2;}
     int status=3; NSDictionary *patch=request[@"patch"];
     NSArray *current=proxies(preferences);
-    if ([current isEqual:request[@"before"]]) {
-        for(NSDictionary *t in current) if ([t[@"id"] isEqual:patch[@"target"]] && [t[@"writable"] boolValue]) {
+    NSDictionary *original=findTarget(request[@"before"],patch[@"target"]),*selected=findTarget(current,patch[@"target"]);
+    BOOL unchanged=original && selected;
+    for(NSString *key in @[@"http",@"https",@"socks",@"bypass"])if(patch[key] && patch[key]!=NSNull.null && ![value(original,key) isEqual:value(selected,key)])unchanged=NO;
+    if (unchanged) {
+        for(NSDictionary *t in current) if ([t[@"id"] isEqual:patch[@"target"]] && writablePatch(t,patch)) {
             SCNetworkServiceRef service=SCNetworkServiceCopy(preferences,(__bridge CFStringRef)t[@"id"]); SCNetworkProtocolRef protocol=service?SCNetworkServiceCopyProtocol(service,kSCNetworkProtocolTypeProxies):NULL;
             if(protocol) {
                 NSDictionary *old=(__bridge NSDictionary *)SCNetworkProtocolGetConfiguration(protocol); NSMutableDictionary *next=old?[old mutableCopy]:[NSMutableDictionary dictionary];
@@ -81,12 +92,12 @@ static int proxyApply(NSDictionary *request) {
 }
 static int displayConfigure(NSDictionary *request, BOOL restore, BOOL permanent) {
     NSDictionary *patch=request[@"patch"]; NSArray *before=request[@"before"];
-    if(!restore && !permanent && ![displays() isEqual:before])return 3;
+    if(!restore && !permanent && !sameDisplayState(before,displays()))return 3;
     CGDisplayConfigRef config=NULL; if(CGBeginDisplayConfiguration(&config)!=kCGErrorSuccess)return 1;
     int status=3; CGDirectDisplayID ids[64];uint32_t count=0;
     if(CGGetOnlineDisplayList(64,ids,&count)==kCGErrorSuccess) for(uint32_t i=0;i<count;i++) if([displayID(ids[i]) isEqual:patch[@"target"]]) {
         NSDictionary *original=nil;for(NSDictionary *t in before)if([t[@"id"] isEqual:patch[@"target"]])original=t;
-        if(!original || ![original[@"writable"] boolValue])break;
+        if(!original || !writablePatch(original,patch))break;
         NSString *mid=restore?value(original,@"mode"):([patch[@"mode"] isKindOfClass:NSString.class]?patch[@"mode"]:nil);
         NSDictionary *origin=restore?value(original,@"origin"):([patch[@"origin"] isKindOfClass:NSDictionary.class]?patch[@"origin"]:nil);
         status=0;
@@ -99,8 +110,8 @@ static int displayConfigure(NSDictionary *request, BOOL restore, BOOL permanent)
 }
 static int preserveDisplay(NSArray *expected) {
     CGDisplayConfigRef config=NULL;if(CGBeginDisplayConfiguration(&config)!=kCGErrorSuccess)return 1;
-    NSArray *actual=displays();BOOL match=actual && actual.count==expected.count;
-    for(NSDictionary *old in expected){NSDictionary *found=nil;for(NSDictionary *current in actual)if([current[@"id"] isEqual:old[@"id"]])found=current;if(!found || ![found[@"fields"] isEqual:old[@"fields"]])match=NO;}
+    NSArray *actual=displays();BOOL match=sameDisplayState(expected,actual);
+
     if(!match){CGCancelDisplayConfiguration(config);return 3;}
     CGDirectDisplayID ids[64];uint32_t count=0;int status=0;
     if(CGGetOnlineDisplayList(64,ids,&count)!=kCGErrorSuccess)status=1;
@@ -133,7 +144,7 @@ int rss_settings_call(const uint8_t *bytes,size_t length,uint8_t **output,size_t
         NSDictionary *request=[NSJSONSerialization JSONObjectWithData:[NSData dataWithBytes:bytes length:length] options:0 error:NULL];if(![request isKindOfClass:NSDictionary.class])return 1;
         NSString *kind=request[@"kind"];id result=nil;int status=0;
         if([kind isEqual:@"read"])result=readSettings(request[@"section"]);
-        else if([kind isEqual:@"powerManaged"])result=@(forced(@"com.apple.PowerManagement",@[@"AC Power",@"Battery Power",@"SystemPowerSettings"]));
+        else if([kind isEqual:@"powerManaged"])result=@(forced(@"com.apple.PowerManagement",@[[request[@"target"] isEqual:@"ac"]?@"AC Power":@"Battery Power",@"SystemPowerSettings"]));
         else if([kind isEqual:@"apply"]){NSString *p=request[@"patch"][@"kind"];status=[p isEqual:@"proxy"]?proxyApply(request):[p isEqual:@"display"]?displayConfigure(request,NO,NO):4;result=@YES;}
         else if([kind isEqual:@"preserveDisplay"]){status=preserveDisplay(request[@"before"]);result=@YES;}
         else if([kind isEqual:@"keepDisplay"] || [kind isEqual:@"restoreDisplay"]){status=displayConfigure(request,[kind isEqual:@"restoreDisplay"],[kind isEqual:@"keepDisplay"]);result=@YES;}

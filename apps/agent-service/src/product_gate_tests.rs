@@ -5272,9 +5272,6 @@ async fn settings_desktop_cache_and_retained_task_are_bound_to_exact_context() {
         Reply::DataFailure { .. }
     ));
     let request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
-    let policy =
-        crate::local_permissions::Policy::fixture(&c.service.core.config.local_permissions)
-            .unwrap();
     let (frozen, artifacts) = crate::local_settings::compile::prepare(
         crate::local_settings::Action::Read {
             section: SettingsSection::Network,
@@ -5293,7 +5290,6 @@ async fn settings_desktop_cache_and_retained_task_are_bound_to_exact_context() {
             },
         },
         &c.context(),
-        &policy,
         c.service.core.host.clock.millis().unwrap(),
         &c.service.core.config,
         &mut c.service.core.material_root,
