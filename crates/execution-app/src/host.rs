@@ -6,54 +6,29 @@ pub(crate) struct Host<'a, H> {
     inner: &'a H,
     binding: &'a ServiceBinding,
     caller: Option<&'a RequestContext>,
-    config: Option<AppConfig>,
-    plan: Option<&'a FrozenExecution>,
+    config: AppConfig,
 }
 impl<'a, H> Host<'a, H> {
     pub(crate) fn new(
         inner: &'a H,
         binding: &'a ServiceBinding,
-        config: &Configuration,
+        config: &AppConfig,
         caller: Option<&'a RequestContext>,
     ) -> Self {
         Self {
             inner,
             binding,
             caller,
-            config: config.active().ok(),
-            plan: None,
+            config: *config,
         }
     }
-    pub(crate) fn with_input(mut self, plan: Option<&'a FrozenExecution>) -> Self {
-        self.plan = plan;
-        self
-    }
 }
-pub(crate) fn capabilities(
-    host: &impl AppHost,
-    plan: &FrozenExecution,
-    config: AppConfig,
-) -> Result<(), Error> {
-    let snapshot = host.capabilities(plan)?;
-    let now = host.reliable_now()?;
+pub(crate) fn check_budget(plan: &FrozenExecution, config: AppConfig) -> Result<(), Error> {
     let budget = plan.spec().budget;
-    if snapshot.verified_at_unix_ms > now
-        || now >= snapshot.fresh_until_unix_ms
-        || budget.total_timeout_ms > config.max_timeout_ms
+    if budget.total_timeout_ms > config.max_timeout_ms
         || budget.total_output_bytes > config.max_output_bytes
     {
-        return Err(Error::Capability);
-    }
-    let report = execution_capability::match_capabilities(
-        plan,
-        &snapshot.environment,
-        execution_capability::MatchLimits {
-            max_entries: config.max_capability_entries,
-        },
-    )
-    .map_err(|_| Error::Capability)?;
-    if report.status != execution_capability::MatchStatus::Supported {
-        return Err(Error::Capability);
+        return Err(Error::Configuration);
     }
     Ok(())
 }
@@ -108,11 +83,7 @@ impl<H: AppHost> JournalHost for Host<'_, H> {
         attempt: &AttemptId,
         now: u64,
     ) -> Result<AdmissionGate, JournalError> {
-        let config = self.config.ok_or(JournalError::Trust)?;
-        capabilities(self.inner, plan, config).map_err(|error| {
-            eprintln!("execution_admit_capabilities: {error:?}");
-            JournalError::Trust
-        })?;
+        check_budget(plan, self.config).map_err(|_| JournalError::Configuration)?;
         self.inner.admit(plan, attempt, now)
     }
 }

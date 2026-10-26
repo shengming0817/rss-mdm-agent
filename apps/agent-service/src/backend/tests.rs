@@ -22,7 +22,7 @@ async fn mismatched_and_unsubmitted_started_offers_settle_without_journal_or_cac
     let host = local::TestHost::new();
     let runner =
         DeterministicTestRunner::new(local::id("test-runner"), TestScenario::Wait, 16).unwrap();
-    let app = create_app(&db.path, host, runner.clone(), AppConfig::test_defaults(1)).unwrap();
+    let app = create_app(&db.path, host, runner.clone(), AppConfig::test_defaults()).unwrap();
     let bridge = ExecutionBridge::new(local::id("agent-consumer"), FixtureOutput);
     let plan = adapted_plan(true, "foreign-device", &offer);
     let caller = RequestContext {
@@ -75,7 +75,7 @@ async fn denied_admission_without_attempt_delivers_and_releases() {
         &db.path,
         host.clone(),
         runner.clone(),
-        AppConfig::test_defaults(1),
+        AppConfig::test_defaults(),
     )
     .unwrap();
     let caller = RequestContext {
@@ -131,7 +131,7 @@ async fn reserved_binding_without_journal_can_settle_after_permission_revocation
         &db.path,
         host.clone(),
         runner.clone(),
-        AppConfig::test_defaults(1),
+        AppConfig::test_defaults(),
     )
     .unwrap();
     let caller = RequestContext {
@@ -157,7 +157,7 @@ async fn reserved_binding_without_journal_can_settle_after_permission_revocation
     drop(client);
     server.time.set(72);
     host.state.lock().unwrap().accesses = None;
-    let app = reopen_app(&db.path, host, runner.clone(), AppConfig::test_defaults(1)).unwrap();
+    let app = reopen_app(&db.path, host, runner.clone(), AppConfig::test_defaults()).unwrap();
     let mut client = server.client(&root, OpenMode::Existing);
     bridge
         .abandon(&mut client, offer.task_id(), &app)
@@ -199,7 +199,7 @@ async fn no_process_terminal(cancel: bool) {
         &db.path,
         host.clone(),
         runner.clone(),
-        AppConfig::test_defaults(1),
+        AppConfig::test_defaults(),
     )
     .unwrap();
     let caller = RequestContext {
@@ -211,11 +211,12 @@ async fn no_process_terminal(cancel: bool) {
         .unwrap();
     let start = client.request_start(&offer, &materials).await.unwrap();
     if cancel {
-        host.state.lock().unwrap().capability = false;
+        app.stage_execution(&caller, &plan).unwrap();
+        host.state.lock().unwrap().bound = false;
         assert!(bridge
             .dispatch(&mut client, start, &materials, &mut app, prepared)
             .is_err());
-        host.state.lock().unwrap().capability = true;
+        host.state.lock().unwrap().bound = true;
         app.cancel(&caller, &plan.spec().request.request_id)
             .unwrap();
     } else {
@@ -283,7 +284,7 @@ async fn accepted_remote_result_with_failed_local_confirmation_never_resends() {
         &db.path,
         host.clone(),
         runner.clone(),
-        AppConfig::test_defaults(1),
+        AppConfig::test_defaults(),
     )
     .unwrap();
     let caller = RequestContext {
@@ -353,7 +354,7 @@ async fn exercise_bridge(software: bool) {
         &db.path,
         host.clone(),
         runner.clone(),
-        AppConfig::test_defaults(1),
+        AppConfig::test_defaults(),
     )
     .unwrap();
     let caller = RequestContext {
@@ -398,7 +399,7 @@ async fn exercise_bridge(software: bool) {
         &db.path,
         host.clone(),
         runner.clone(),
-        AppConfig::test_defaults(1),
+        AppConfig::test_defaults(),
     )
     .unwrap();
     check_frozen_delivery_permissions(
@@ -495,7 +496,7 @@ async fn partial_cache_reopens_and_checks_range_etag_and_reference_cleanup() {
         &db.path,
         host,
         runner,
-        execution_app::AppConfig::test_defaults(1),
+        execution_app::AppConfig::test_defaults(),
     )
     .unwrap();
     let bridge = ExecutionBridge::new(local::id("agent-consumer"), FixtureOutput);
@@ -701,7 +702,7 @@ async fn check_encoded_result(
             end,
         }))),
     };
-    let mut app = create_app(&db.path, host, runner.clone(), AppConfig::test_defaults(1)).unwrap();
+    let mut app = create_app(&db.path, host, runner.clone(), AppConfig::test_defaults()).unwrap();
     let caller = RequestContext {
         actor: plan.spec().request.actor.clone(),
     };
@@ -753,7 +754,7 @@ async fn start_window_does_not_replace_the_signed_runtime_budget() {
     let runner =
         DeterministicTestRunner::new(local::id("test-runner"), TestScenario::Wait, 16).unwrap();
     let db = local::Database::new();
-    let mut app = create_app(&db.path, host, runner.clone(), AppConfig::test_defaults(1)).unwrap();
+    let mut app = create_app(&db.path, host, runner.clone(), AppConfig::test_defaults()).unwrap();
     let caller = RequestContext {
         actor: plan.spec().request.actor.clone(),
     };
@@ -797,7 +798,7 @@ async fn root_exit_is_delivered_while_overall_quiescence_stays_unknown() {
             end: execution_contract::ProcessEnd::Exited,
         }))),
     };
-    let mut app = create_app(&db.path, host, runner.clone(), AppConfig::test_defaults(1)).unwrap();
+    let mut app = create_app(&db.path, host, runner.clone(), AppConfig::test_defaults()).unwrap();
     let caller = RequestContext {
         actor: plan.spec().request.actor.clone(),
     };
@@ -862,7 +863,7 @@ async fn acknowledged_v6_result_is_not_replaced_by_later_local_facts() {
             end: execution_contract::ProcessEnd::Unknown,
         }))),
     };
-    let mut app = create_app(&db.path, host, runner.clone(), AppConfig::test_defaults(1)).unwrap();
+    let mut app = create_app(&db.path, host, runner.clone(), AppConfig::test_defaults()).unwrap();
     let caller = RequestContext {
         actor: plan.spec().request.actor.clone(),
     };
@@ -964,7 +965,7 @@ impl Started {
             &db.path,
             host.clone(),
             runner.clone(),
-            AppConfig::test_defaults(1),
+            AppConfig::test_defaults(),
         )
         .unwrap();
         let caller = RequestContext {
@@ -1081,7 +1082,7 @@ async fn durable_ack_then_partial_confirm_then_restart_confirms_only_original_so
         &db.path,
         host,
         runner.clone(),
-        execution_app::AppConfig::test_defaults(1),
+        execution_app::AppConfig::test_defaults(),
     )
     .unwrap();
     assert_eq!(
@@ -1140,7 +1141,7 @@ async fn recovery_rejects_wrong_digest_and_attempt_without_dispatching() {
         &db.path,
         host,
         runner.clone(),
-        execution_app::AppConfig::test_defaults(1),
+        execution_app::AppConfig::test_defaults(),
     )
     .unwrap();
     for field in ["digest", "attempt", "request"] {
@@ -1251,7 +1252,7 @@ async fn revoked_and_expired_unknown_keeps_original_execution_and_association() 
             &case.db.path,
             next_host,
             case.runner.clone(),
-            execution_app::AppConfig::test_defaults(76)
+            execution_app::AppConfig::test_defaults()
         ),
         Err(execution_app::Error::Denied)
     ));
@@ -1426,7 +1427,7 @@ async fn software_restart_projects_each_steps_own_committed_facts() {
         &db.path,
         host,
         runner.clone(),
-        execution_app::AppConfig::test_defaults(1),
+        execution_app::AppConfig::test_defaults(),
     )
     .unwrap();
     // No new runner observation participates in this wire result; only the committed journal does.

@@ -1,5 +1,5 @@
 use crate::{
-    host::{capabilities, Host, ObservationEvidence},
+    host::{check_budget, Host, ObservationEvidence},
     *,
 };
 use execution_contract::{AttemptId, Authority, EventId, FrozenExecution, RequestId};
@@ -18,7 +18,7 @@ pub struct ExecutionApp<H, R, J: JournalPort> {
     pub(crate) host: H,
     runner: R,
     pub(crate) binding: ServiceBinding,
-    pub(crate) config: Configuration,
+    pub(crate) config: AppConfig,
 }
 impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
     /// Bounded pre-execution history for the same authenticated actor.
@@ -77,7 +77,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
     /// Attach an already-opened trusted journal. Storage creation/opening belongs to the
     /// product composition root, which validates production inputs before touching storage.
     pub fn new(journal: J, host: H, runner: R, config: AppConfig) -> Result<Self, Error> {
-        let config = Configuration::new(config, journal.input_limits())?;
+        config.validate(journal.input_limits())?;
         let binding = host.service_binding()?;
         let expected_mode = if matches!(binding.authority, Authority::Test { .. }) {
             ExecutionMode::Test
@@ -106,12 +106,8 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         self.host = host;
         Ok(())
     }
-    pub(crate) fn adapter<'a>(
-        &'a self,
-        context: Option<&'a RequestContext>,
-        plan: Option<&'a FrozenExecution>,
-    ) -> Host<'a, H> {
-        Host::new(&self.host, &self.binding, &self.config, context).with_input(plan)
+    pub(crate) fn adapter<'a>(&'a self, context: Option<&'a RequestContext>) -> Host<'a, H> {
+        Host::new(&self.host, &self.binding, &self.config, context)
     }
     fn check_binding(
         &self,
@@ -138,13 +134,13 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
     ) -> Result<Execution, Error> {
         let execution = self
             .journal
-            .execution_by_request(request, access, &self.adapter(context, None))?
+            .execution_by_request(request, access, &self.adapter(context))?
             .execution;
         self.check_binding(context, execution.input())?;
         Ok(execution)
     }
     /// Accept a single immutable execution. Exact replays continue only before the first intent.
-    /// Check current host binding, creation access, configuration and capabilities without
+    /// Check current host binding, creation access, static limits without
     /// opening a journal task or consuming approval. Actual submission still repeats its gates.
     pub fn prepare_execution(
         &self,
@@ -162,7 +158,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
                 interaction: None,
             },
         )?;
-        capabilities(&self.host, plan, self.config.active()?)?;
+        check_budget(plan, self.config)?;
         Ok(())
     }
     /// Retain an exact preparation in the existing journal without admission, an attempt or dispatch.
@@ -175,8 +171,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
     ) -> Result<ExecutionStatus, Error> {
         self.prepare_execution(caller, plan)?;
         let op = operation(plan, "prepare", "")?;
-        let host =
-            Host::new(&self.host, &self.binding, &self.config, Some(caller)).with_input(Some(plan));
+        let host = Host::new(&self.host, &self.binding, &self.config, Some(caller));
         self.journal.open_execution(&op, plan, &host)?;
         self.status_for(
             Some(caller),
@@ -193,8 +188,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         self.check_binding(Some(caller), plan)?;
         let request = &plan.spec().request.request_id;
         let op = operation(plan, "request", "")?;
-        let host =
-            Host::new(&self.host, &self.binding, &self.config, Some(caller)).with_input(Some(plan));
+        let host = Host::new(&self.host, &self.binding, &self.config, Some(caller));
         self.journal.open_execution(&op, plan, &host)?;
         let current = self.status_for(Some(caller), request, ExecutionAccess::Submission)?;
         if current.attempts > 0 || current.cancel_requested || current.admission.is_some() {
@@ -294,7 +288,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         }
         self.advance(caller, request, command)
     }
-    /// Explicit owner action, distinct from submit replay. Every new attempt rechecks capabilities,
+    /// Explicit owner action, distinct from submit replay. Every new attempt rechecks admission,
     /// the current product permit inside the same transaction as the attempt.
     pub(crate) fn advance(
         &mut self,
@@ -303,7 +297,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         command: &CommandId,
     ) -> Result<ExecutionStatus, Error> {
         let context = Some(caller);
-        let config = self.config.active()?;
+        let config = self.config;
         let mut execution = self.load(context, request, ExecutionAccess::Execute)?;
         let result =
             if let Some(replay) = self.committed_attempt(caller, execution.input(), command)? {
@@ -345,7 +339,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
             .map_err(|_| Error::InvalidInput)?;
         let Some(receipt) =
             self.journal
-                .execution_receipt(&scope, &op, &self.adapter(Some(caller), None))?
+                .execution_receipt(&scope, &op, &self.adapter(Some(caller)))?
         else {
             return Ok(None);
         };
@@ -372,7 +366,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         config: AppConfig,
     ) -> Result<CommitOutcome, Error> {
         let context = Some(caller);
-        capabilities(&self.host, execution.input(), config)?;
+        check_budget(execution.input(), config)?;
         if execution.snapshot().attempt.is_none()
             && execution.snapshot().preparation != Preparation::Prepared
         {
@@ -414,23 +408,12 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
     fn dispatch(&mut self, request: &RequestId, action: DispatchAction) -> Result<(), Error> {
         let context = None;
         let execution = self.load(context, request, ExecutionAccess::RunnerFact)?;
-        // Capability verification can take time or overlap another service handle's cancellation.
-        // Re-read the protected stop facts and clock after it, immediately before first delivery.
-        let capability = self
-            .config
-            .active()
-            .and_then(|config| capabilities(&self.host, execution.input(), config));
+        check_budget(execution.input(), self.config)?;
+        // Re-read persisted stop/revision facts immediately before first delivery.
         let execution = self.load(context, request, ExecutionAccess::RunnerFact)?;
         let attempt = action.attempt_id().clone();
         let current = execution.snapshot();
-        let gate = if let Err(error) = capability {
-            Some(match error {
-                Error::Clock => DispatchCause::ClockUnavailable,
-                Error::Degraded | Error::Configuration => DispatchCause::ConfigurationUnavailable,
-                Error::Denied | Error::Unbound => DispatchCause::AuthorityUnavailable,
-                _ => DispatchCause::CapabilityUnavailable,
-            })
-        } else if current.cancel_requested {
+        let gate = if current.cancel_requested {
             Some(DispatchCause::Cancelled)
         } else if current.revision != action.committed_revision() {
             Some(DispatchCause::StaleRevision)
@@ -513,8 +496,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         } else {
             revision_operation(execution, stage, identity)?
         };
-        let host =
-            Host::new(&self.host, &self.binding, &self.config, context).with_input(Some(plan));
+        let host = Host::new(&self.host, &self.binding, &self.config, context);
         let event = CommandEvent {
             id: EventId::new(op.as_str()).map_err(|_| Error::InvalidInput)?,
             expected_revision: execution.snapshot().revision,
@@ -538,8 +520,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
             attempt_id: attempt_id.clone(),
             evidence: facts.evidence.clone(),
         };
-        let host =
-            Host::new(&self.host, &self.binding, &self.config, context).with_input(Some(plan));
+        let host = Host::new(&self.host, &self.binding, &self.config, context);
         Ok(self.journal.apply_observation(
             &op,
             &Scope::from_input(plan),
@@ -553,27 +534,24 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
             return Ok(());
         };
         let scope = Scope::from_input(execution.input());
-        if let Some(previous) = self.journal.software_progress(
-            &scope,
-            &active.id,
-            &self.adapter(None, Some(execution.input())),
-        )? {
+        if let Some(previous) =
+            self.journal
+                .software_progress(&scope, &active.id, &self.adapter(None))?
+        {
             if let Some(facts) = self
                 .runner
                 .recover_software_progress(execution.input(), &previous)?
             {
-                let host = Host::new(&self.host, &self.binding, &self.config, None)
-                    .with_input(Some(execution.input()));
+                let host = Host::new(&self.host, &self.binding, &self.config, None);
                 self.journal
                     .record_software_progress(&scope, &facts, &host)?;
             }
         }
         if !execution.snapshot().cancel_requested && active.termination.is_none() {
-            if let Some(progress) = self.journal.software_progress(
-                &scope,
-                &active.id,
-                &self.adapter(None, Some(execution.input())),
-            )? {
+            if let Some(progress) =
+                self.journal
+                    .software_progress(&scope, &active.id, &self.adapter(None))?
+            {
                 if progress.resumable(execution.input()) {
                     if let Ok(allowance) = execution.allowance(self.host.reliable_now()?) {
                         if allowance.remaining_timeout_ms > 0
@@ -589,11 +567,10 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
                 }
             }
         }
-        if let Some(progress) = self.journal.software_progress(
-            &scope,
-            &active.id,
-            &self.adapter(None, Some(execution.input())),
-        )? {
+        if let Some(progress) =
+            self.journal
+                .software_progress(&scope, &active.id, &self.adapter(None))?
+        {
             if progress.cleanup_allowance(execution.input()).is_some() {
                 self.runner
                     .resume_software_cleanup(crate::SoftwareCleanupResume {
@@ -602,8 +579,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
                     })?;
             }
         }
-        let host = Host::new(&self.host, &self.binding, &self.config, None)
-            .with_input(Some(execution.input()));
+        let host = Host::new(&self.host, &self.binding, &self.config, None);
         if let Some(facts) = self
             .runner
             .software_progress(execution.input(), &active.id)?
@@ -637,7 +613,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
                 let stored = self.journal.runner_evidence(
                     &Scope::from_input(execution.input()),
                     &active.id,
-                    &self.adapter(None, Some(execution.input())),
+                    &self.adapter(None),
                 )?;
                 if stored.as_ref().is_some_and(|f| f.finished) {
                     stored
@@ -645,7 +621,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
                     let progress = self.journal.software_progress(
                         &Scope::from_input(execution.input()),
                         &active.id,
-                        &self.adapter(None, Some(execution.input())),
+                        &self.adapter(None),
                     )?;
                     progress
                         .filter(|progress| progress.complete(execution.input()))
@@ -682,8 +658,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
             }
         };
         if let Some(facts) = &capture {
-            let host = Host::new(&self.host, &self.binding, &self.config, None)
-                .with_input(Some(execution.input()));
+            let host = Host::new(&self.host, &self.binding, &self.config, None);
             self.journal
                 .record_process(&Scope::from_input(execution.input()), facts, &host)?;
             if execution
@@ -722,7 +697,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         if let Some(progress) = self.journal.software_progress(
             &Scope::from_input(execution.input()),
             &active.id,
-            &self.adapter(None, Some(execution.input())),
+            &self.adapter(None),
         )? {
             let charged = execution
                 .snapshot()
@@ -777,11 +752,10 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
             actor: input.spec().request.actor.clone(),
         };
         let spec = crate::execution_confirmation(input);
-        match self.journal.interaction(
-            &Scope::from_input(input),
-            &spec.id,
-            &self.adapter(None, None),
-        ) {
+        match self
+            .journal
+            .interaction(&Scope::from_input(input), &spec.id, &self.adapter(None))
+        {
             Ok(state) if self.host.reliable_now()? >= spec.expires_at_unix_ms => {
                 if matches!(
                     state.snapshot().status,
@@ -939,7 +913,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
                 .software_progress(
                     &Scope::from_input(execution.input()),
                     &attempt.id,
-                    &self.adapter(None, Some(execution.input())),
+                    &self.adapter(None),
                 )?
                 .filter(|progress| {
                     progress.complete(execution.input())
@@ -1075,7 +1049,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
     }
     fn authorize_runner(&self, plan: &FrozenExecution, access: Access) -> Result<(), Error> {
         let context = None;
-        self.adapter(context, Some(plan)).authorize(AccessRequest {
+        self.adapter(context).authorize(AccessRequest {
             access,
             scope: &Scope::from_input(plan),
             consumer: None,
@@ -1126,7 +1100,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         Ok(self.journal.runner_evidence(
             &Scope::from_input(execution.input()),
             &attempt.id,
-            &self.adapter(None, Some(execution.input())),
+            &self.adapter(None),
         )?)
     }
     /// Sole device-owner read of the original frozen recovery input. No UI/model transport
@@ -1155,9 +1129,9 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         limit: usize,
         consumer: &execution_contract::Id,
     ) -> Result<crate::ServiceMaterialPage, Error> {
-        let items =
-            self.journal
-                .material_page(after, limit, consumer, &self.adapter(None, None))?;
+        let items = self
+            .journal
+            .material_page(after, limit, consumer, &self.adapter(None))?;
         for item in &items {
             self.check_binding(None, &item.input)?;
         }
@@ -1178,7 +1152,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
     ) -> Result<crate::ServiceMaterialFact, Error> {
         let fact = self
             .journal
-            .material_fact(request, consumer, &self.adapter(None, None))?;
+            .material_fact(request, consumer, &self.adapter(None))?;
         self.check_binding(None, &fact.input)?;
         Ok(fact)
     }
@@ -1189,12 +1163,9 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         limit: usize,
         consumer: &execution_contract::Id,
     ) -> Result<crate::ServiceMaterialChanges<J::MaterialCheckpoint>, Error> {
-        let changes = self.journal.material_changes(
-            checkpoint,
-            limit,
-            consumer,
-            &self.adapter(None, None),
-        )?;
+        let changes =
+            self.journal
+                .material_changes(checkpoint, limit, consumer, &self.adapter(None))?;
         for item in &changes.items {
             self.check_binding(None, &item.input)?;
         }
@@ -1216,9 +1187,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         if key.is_empty() || key.len() > 256 || self.host.service_binding()? != self.binding {
             return Err(Error::Denied);
         }
-        let owner = self
-            .journal
-            .resource_owner(key, &self.adapter(None, None))?;
+        let owner = self.journal.resource_owner(key, &self.adapter(None))?;
         if let Some(request) = &owner {
             self.service_frozen_input(request)?;
         }
@@ -1235,7 +1204,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         }
         let requests = self
             .journal
-            .service_requests(after, limit, &self.adapter(None, None))?;
+            .service_requests(after, limit, &self.adapter(None))?;
         let page = crate::ExecutionRequestPage {
             next: (requests.len() == limit)
                 .then(|| requests.last().expect("nonempty page").clone()),
@@ -1262,7 +1231,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         }
         let page = self
             .journal
-            .recent_requests(before, limit, &self.adapter(None, None))?;
+            .recent_requests(before, limit, &self.adapter(None))?;
         let next = page.next.map(|value| value.to_string());
         let items = page
             .items
@@ -1296,7 +1265,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
             &self.host.binding_for_actor(&caller.actor)?.device,
             after,
             limit,
-            &self.adapter(context, None),
+            &self.adapter(context),
         )?;
         let items = page
             .requests
@@ -1323,9 +1292,9 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         request: &RequestId,
         access: ExecutionAccess<'_>,
     ) -> Result<crate::ExecutionTaskDetails, Error> {
-        let record =
-            self.journal
-                .execution_by_request(request, access, &self.adapter(context, None))?;
+        let record = self
+            .journal
+            .execution_by_request(request, access, &self.adapter(context))?;
         let execution = record.execution;
         self.check_binding(context, execution.input())?;
         let s = execution.snapshot();
@@ -1369,7 +1338,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
             match self.journal.execution_confirmation_state(
                 execution.input(),
                 access,
-                &self.adapter(context, None),
+                &self.adapter(context),
             )? {
                 Some(i)
                     if matches!(i.snapshot().status, execution_interaction::Status::Pending) =>
@@ -1405,28 +1374,6 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         Ok(crate::ExecutionTaskDetails {
             status,
             action: crate::FrozenExecutionSummary::from_input(execution.input()),
-        })
-    }
-    /// Current service configuration health.
-    pub fn configuration_state(&self) -> ConfigState {
-        self.config.state()
-    }
-    /// Trusted owner notification, not a transport/model operation.
-    pub fn configuration_load_failed(&mut self, mandatory_revision: u64) {
-        self.config.load_failed(mandatory_revision);
-    }
-    /// Audit an authenticated administrative change before atomic in-memory activation.
-    pub fn replace_configuration(
-        &mut self,
-        caller: &RequestContext,
-        next: AppConfig,
-    ) -> Result<(), Error> {
-        let actual = self.host.service_binding()?;
-        if actual != self.binding {
-            return Err(Error::Denied);
-        }
-        self.config.replace(next, &caller.actor, |change| {
-            self.host.configuration_change(change)
         })
     }
 }
@@ -1470,7 +1417,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
     ) -> Result<Option<RequestId>, Error> {
         let requests = self
             .journal
-            .service_requests(after, limit, &self.adapter(None, None))?;
+            .service_requests(after, limit, &self.adapter(None))?;
         for request in &requests {
             self.resume_initial(request)?;
             self.reconcile(request)?;
@@ -1491,7 +1438,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         loop {
             let requests =
                 self.journal
-                    .service_requests(after.as_ref(), limit, &self.adapter(None, None))?;
+                    .service_requests(after.as_ref(), limit, &self.adapter(None))?;
             for request in &requests {
                 let execution = self.load(None, request, ExecutionAccess::RunnerFact)?;
                 if let Some(attempt) = execution
@@ -1503,7 +1450,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
                     let facts = self.journal.runner_evidence(
                         &Scope::from_input(execution.input()),
                         &attempt.id,
-                        &self.adapter(None, Some(execution.input())),
+                        &self.adapter(None),
                     )?;
                     if !facts.is_some_and(|f| {
                         f.finished
@@ -1546,7 +1493,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         loop {
             let requests =
                 self.journal
-                    .service_requests(after.as_ref(), limit, &self.adapter(None, None))?;
+                    .service_requests(after.as_ref(), limit, &self.adapter(None))?;
             for request in &requests {
                 if std::time::Instant::now() >= until {
                     return Err(Error::Unavailable);
@@ -1564,7 +1511,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
                     let facts = self.journal.runner_evidence(
                         &Scope::from_input(execution.input()),
                         &attempt.id,
-                        &self.adapter(None, Some(execution.input())),
+                        &self.adapter(None),
                     )?;
                     if !facts.is_some_and(|f| f.finished) {
                         self.stop_and_record(&execution)?;

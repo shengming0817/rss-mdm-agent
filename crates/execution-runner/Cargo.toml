@@ -16,7 +16,6 @@ rss-mdm-agent-wire.workspace = true
 uuid = { version = "=1.26.0", features = ["serde"] }
 fs2 = "=0.4.3"
 script-plan = { path = "../script-plan" }
-sqlparser = { version = "=0.63.0", default-features = false, features = ["std", "visitor"] }
 zip = { version = "=8.6.0", default-features = false, features = ["deflate"] }
 zeroize = "=1.8.2"
 execution-contract = { path = "../execution-contract" }
@@ -40,7 +39,6 @@ plist = "=1.10.1"
 windows-sys = { version = "=0.61.2", features = ["Wdk_System_SystemInformation", "Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Cryptography", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_ApplicationInstallationAndServicing", "Win32_System_SystemInformation", "Win32_System_JobObjects", "Win32_System_SystemServices", "Win32_System_Services", "Win32_System_RemoteDesktop", "Win32_System_Environment", "Win32_System_Console", "Win32_System_EventLog", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
-execution-capability = { path = "../execution-capability" }
 execution-sqlite = { path = "../execution-sqlite", features = ["test-support"] }
 rusqlite.workspace = true
 

@@ -65,7 +65,7 @@ fn start(
         mode,
         host(tenant),
         NoDispatch,
-        AppConfig::test_defaults(1),
+        AppConfig::test_defaults(),
         test_store_limits(),
     )
 }
@@ -94,7 +94,7 @@ fn production_rejects_test_identity_and_test_runner_before_touching_storage() {
             ProductionStartup::Create,
             TestHost::new(),
             NoDispatch,
-            AppConfig::test_defaults(1),
+            AppConfig::test_defaults(),
             test_store_limits()
         ),
         Err(Error::Unbound)
@@ -106,7 +106,7 @@ fn production_rejects_test_identity_and_test_runner_before_touching_storage() {
             ProductionStartup::Create,
             host("tenant-a"),
             runner,
-            AppConfig::test_defaults(1),
+            AppConfig::test_defaults(),
             test_store_limits()
         ),
         Err(Error::Unbound)
@@ -153,8 +153,8 @@ fn invalid_production_inputs_leave_existing_journal_untouched() {
     drop(start(&db, ProductionStartup::Create, "tenant-a").unwrap());
     let original = std::fs::read(&db.path).unwrap();
     for startup in [ProductionStartup::Create, ProductionStartup::Open] {
-        let mut config = AppConfig::test_defaults(1);
-        config.max_capability_entries = 0;
+        let mut config = AppConfig::test_defaults();
+        config.max_output_bytes = 0;
         assert!(matches!(
             assemble_journal(
                 &db.path,
@@ -174,7 +174,7 @@ fn invalid_production_inputs_leave_existing_journal_untouched() {
                 startup,
                 h,
                 NoDispatch,
-                AppConfig::test_defaults(1),
+                AppConfig::test_defaults(),
                 test_store_limits()
             ),
             Err(Error::Unbound)
@@ -187,7 +187,7 @@ fn invalid_production_inputs_leave_existing_journal_untouched() {
                 startup,
                 h,
                 NoDispatch,
-                AppConfig::test_defaults(1),
+                AppConfig::test_defaults(),
                 test_store_limits()
             ),
             Err(Error::Clock)

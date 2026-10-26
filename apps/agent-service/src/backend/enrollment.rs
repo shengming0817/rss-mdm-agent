@@ -326,7 +326,7 @@ mod tests {
             plan::storage_limits(),
         )
         .unwrap();
-        let mut config = AppConfig::test_defaults(1);
+        let mut config = AppConfig::test_defaults();
         config.max_timeout_ms = plan::storage_limits().input.max_timeout_ms;
         let app = ExecutionApp::new(store, host, runner, config).unwrap();
         let caller = RequestContext { actor };

@@ -37,7 +37,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
             &Scope::from_input(execution.input()),
             consumer,
             limit,
-            &self.adapter(None, None),
+            &self.adapter(None),
         )?;
         self.load(None, request, ExecutionAccess::Delivery(consumer))?;
         Ok(result)
@@ -79,8 +79,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
             kind,
             expires_at_unix_ms,
         };
-        let host =
-            Host::new(&self.host, &self.binding, &self.config, context).with_input(Some(plan));
+        let host = Host::new(&self.host, &self.binding, &self.config, context);
         Ok(self
             .journal
             .open_interaction(&op, &scope, &spec, &host)?
@@ -99,7 +98,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         Ok(self.journal.interaction(
             &Scope::from_input(execution.input()),
             id,
-            &self.adapter(context, None),
+            &self.adapter(context),
         )?)
     }
     /// Answer/cancel/expire through C04/C18. Administrator answers carry references only and
@@ -116,8 +115,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         let execution = self.load(context, request, ExecutionAccess::Interact)?;
         let plan = execution.input();
         let op = operation(plan, "interaction-response", operation_id.as_str())?;
-        let host =
-            Host::new(&self.host, &self.binding, &self.config, context).with_input(Some(plan));
+        let host = Host::new(&self.host, &self.binding, &self.config, context);
         Ok(self
             .journal
             .apply_interaction(&op, &Scope::from_input(plan), id, command, &host)?
@@ -138,7 +136,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
             &Scope::from_input(execution.input()),
             consumer,
             limit,
-            &self.adapter(context, None),
+            &self.adapter(context),
         )?)
     }
     /// Confirm one exact delivered event after the consumer has durably handled it. Out-of-order
@@ -173,7 +171,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         Ok(self.journal.audit(
             &Scope::from_input(execution.input()),
             operation,
-            &self.adapter(context, None),
+            &self.adapter(context),
         )?)
     }
 }

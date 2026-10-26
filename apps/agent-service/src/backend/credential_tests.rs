@@ -181,7 +181,7 @@ async fn settlement(case: u8) {
         &db.path,
         host.clone(),
         runner.clone(),
-        AppConfig::test_defaults(1),
+        AppConfig::test_defaults(),
     )
     .unwrap();
     let bridge = ExecutionBridge::new(local::id("agent-consumer"), FixtureOutput);
@@ -257,7 +257,7 @@ async fn settlement(case: u8) {
     let original = server.data.lock().unwrap().results.clone();
     drop(app);
     drop(client);
-    let mut app = reopen_app(&db.path, host, runner.clone(), AppConfig::test_defaults(1)).unwrap();
+    let mut app = reopen_app(&db.path, host, runner.clone(), AppConfig::test_defaults()).unwrap();
     let mut client = server.client(&root, OpenMode::Existing);
     bridge
         .flush(&mut client, task.task_id, &mut app, 64)

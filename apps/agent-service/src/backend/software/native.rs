@@ -1069,7 +1069,7 @@ mod gc_tests {
                         journal.take().unwrap(),
                         host,
                         runner,
-                        AppConfig::test_defaults(1),
+                        AppConfig::test_defaults(),
                     )
                     .unwrap(),
                 );

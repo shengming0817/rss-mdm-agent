@@ -247,7 +247,7 @@ async fn capture_recovery(case: u8) {
         &db.path,
         host.clone(),
         runner.clone(),
-        AppConfig::test_defaults(1),
+        AppConfig::test_defaults(),
     )
     .unwrap();
     let bridge = ExecutionBridge::new(local::id("agent-consumer"), FixtureOutput);
@@ -270,7 +270,7 @@ async fn capture_recovery(case: u8) {
     drop(client);
     // A replacement fixture would return different output if recovery incorrectly dispatched.
     runner.capture.lock().unwrap().as_mut().unwrap().stdout = b"{\"wrong\":true}".to_vec();
-    let mut app = reopen_app(&db.path, host, runner.clone(), AppConfig::test_defaults(1)).unwrap();
+    let mut app = reopen_app(&db.path, host, runner.clone(), AppConfig::test_defaults()).unwrap();
     let mut client = server.client(&root, OpenMode::Existing);
     for _ in 0..32 {
         bridge

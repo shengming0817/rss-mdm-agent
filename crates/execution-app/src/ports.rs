@@ -1,5 +1,4 @@
-use crate::{AccessRequest, AdmissionGate, ConfigChange, Error};
-use execution_capability::EnvironmentSnapshot;
+use crate::{AccessRequest, AdmissionGate, Error};
 use execution_contract::{ActorId, AttemptId, Authority, DeviceId, FrozenExecution, Id};
 use execution_lifecycle::{DispatchAction, ExecutionMode, ObservationFacts};
 
@@ -16,15 +15,6 @@ pub struct ServiceBinding {
 pub struct RequestContext {
     /// Permission-bearing product actor, independent of service and provider identities.
     pub actor: ActorId,
-}
-/// Verified current capability inventory, with independently checked source freshness.
-pub struct CapabilitySnapshot {
-    /// Exact authority/device inventory, evaluated by C06.
-    pub environment: EnvironmentSnapshot,
-    /// Reliable time when this snapshot was verified.
-    pub verified_at_unix_ms: u64,
-    /// Exclusive freshness bound.
-    pub fresh_until_unix_ms: u64,
 }
 /// The host is trusted product code, never a model DTO decoder. Methods invoked within SQLite
 /// transactions must be bounded, non-reentrant and use independently verified local snapshots.
@@ -60,8 +50,6 @@ pub trait AppHost {
     fn authorize_service(&self, request: AccessRequest<'_>) -> Result<(), crate::JournalError>;
     /// Independently reliable UTC; uncertainty/rollback is an error.
     fn reliable_now(&self) -> Result<u64, crate::JournalError>;
-    /// Verified capability inventory for the bound plan, never a preview cache.
-    fn capabilities(&self, plan: &FrozenExecution) -> Result<CapabilitySnapshot, Error>;
     /// Validate the configured product permit for this exact new attempt.
     /// Called synchronously inside the journal write transaction; no network or persistence.
     fn admit(
@@ -70,9 +58,6 @@ pub trait AppHost {
         attempt: &AttemptId,
         now: u64,
     ) -> Result<AdmissionGate, crate::JournalError>;
-    /// Authenticate administrative rights and durably record a configuration activation.
-    /// Failure must leave the previous configuration usable; no UI/AI approval boolean is accepted.
-    fn configuration_change(&self, change: &ConfigChange) -> Result<(), Error>;
 }
 
 /// Only the application can construct this first-dispatch value after both current gates.

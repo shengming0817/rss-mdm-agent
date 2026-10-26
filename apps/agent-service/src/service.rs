@@ -2547,9 +2547,6 @@ pub(crate) fn login_binding_id(binding: &execution_contract::Id) -> uuid::Uuid {
 pub(crate) fn app_config() -> AppConfig {
     let bounds = plan::storage_limits().input;
     AppConfig {
-        revision: 1,
-
-        max_capability_entries: 32,
         max_timeout_ms: bounds.max_timeout_ms,
         max_output_bytes: bounds.max_output_bytes,
     }
@@ -2583,7 +2580,7 @@ pub(crate) fn assemble_journal<H: execution_app::AppHost, R: execution_app::Runn
     limits: execution_sqlite::Limits,
 ) -> Result<ExecutionApp<H, R, execution_sqlite::Store>, execution_app::Error> {
     // Validate production inputs before any database access, including read-only inspection.
-    execution_app::Configuration::new(config, limits.input)?;
+    config.validate(limits.input)?;
     let binding = host.service_binding()?;
     if matches!(
         binding.authority,

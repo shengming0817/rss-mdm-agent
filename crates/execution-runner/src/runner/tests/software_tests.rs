@@ -85,7 +85,7 @@ fn unknown_detector_activity_keeps_real_exit_and_cannot_skip_to_mutation() {
         &f.root.join("software.sqlite"),
         host,
         carrier.clone(),
-        execution_app::AppConfig::test_defaults(1),
+        execution_app::AppConfig::test_defaults(),
     )
     .unwrap();
     let status = app.request_execution(&caller, &plan).unwrap();
@@ -362,7 +362,7 @@ fn main() {
             &database,
             host,
             carrier.clone(),
-            execution_app::AppConfig::test_defaults(1),
+            execution_app::AppConfig::test_defaults(),
         )
         .unwrap();
         let _attempt = app
@@ -536,7 +536,7 @@ fn native_before_checkpoint_does_not_consume_first_dispatch_deadline() {
         &f.root.join("deadline.sqlite"),
         host,
         carrier.clone(),
-        execution_app::AppConfig::test_defaults(1),
+        execution_app::AppConfig::test_defaults(),
     )
     .unwrap();
     let attempt = app

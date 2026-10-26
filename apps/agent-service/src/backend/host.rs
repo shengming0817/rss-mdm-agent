@@ -1,9 +1,6 @@
 use crate::SystemClock;
 use execution_app::{ai_execution_gate, AccessRequest, AdmissionGate, ExecutionGate, JournalError};
-use execution_app::{
-    AppHost, CapabilitySnapshot, ConfigChange, Error, RequestContext, ServiceBinding,
-};
-use execution_capability::*;
+use execution_app::{AppHost, Error, RequestContext, ServiceBinding};
 use execution_contract::*;
 use execution_runner::MaterialRegistry;
 use std::sync::{Arc, Mutex};
@@ -63,18 +60,7 @@ impl EnterpriseHost {
         Ok(permit)
     }
 }
-fn inventory<T>(items: Vec<T>) -> Inventory<T> {
-    Inventory {
-        complete: true,
-        entries: items
-            .into_iter()
-            .map(|capability| Entry {
-                capability,
-                availability: Availability::Available,
-            })
-            .collect(),
-    }
-}
+
 impl AppHost for EnterpriseHost {
     fn service_binding(&self) -> Result<ServiceBinding, Error> {
         // Revocation blocks new admission, while the original journal remains available for
@@ -134,51 +120,16 @@ impl AppHost for EnterpriseHost {
             .millis()
             .map_err(|_| execution_app::JournalError::Clock)
     }
-    fn capabilities(&self, plan: &FrozenExecution) -> Result<CapabilitySnapshot, Error> {
-        let binding = self.binding_for_authority(&plan.spec().request.authority)?;
-        self.materials.inspect(plan)?;
-        let now = self.reliable_now()?;
-        let p = plan.spec();
-        Ok(CapabilitySnapshot {
-            verified_at_unix_ms: now,
-            fresh_until_unix_ms: now + 1000,
-            environment: EnvironmentSnapshot {
-                authority: binding.authority,
-                device: binding.device,
-                source: p.policy.clone(),
-                platform: Some(p.request.target.platform),
-                interpreters: inventory(vec![p.launch.interpreter.clone()]),
-                software: inventory(if let Some(program) = p.execution.software_program() {
-                    let mut kinds = Vec::new();
-                    for step in &program.steps {
-                        if !kinds.contains(&step.format.adapter()) {
-                            kinds.push(step.format.adapter());
-                        }
-                    }
-                    kinds
-                } else {
-                    vec![]
-                }),
-                launch_io: inventory(vec![
-                    LaunchIoCapability::ControlledStdin(TextEncoding::Utf8),
-                    LaunchIoCapability::CapturedText(TextEncoding::Utf8),
-                    LaunchIoCapability::CapturedText(TextEncoding::Utf16Le),
-                ]),
-                run_as: inventory(vec![p.run_as.clone()]),
-                user_sessions: inventory(match &p.run_as {
-                    RunAs::User { account } => vec![account.clone()],
-                    _ => vec![],
-                }),
-                isolation: inventory(vec![]),
-            },
-        })
-    }
+
     fn admit(
         &self,
         plan: &FrozenExecution,
         _: &AttemptId,
         now: u64,
     ) -> Result<AdmissionGate, JournalError> {
+        self.materials
+            .inspect(plan)
+            .map_err(|_| JournalError::Trust)?;
         let p = plan.spec();
         let denied = || JournalError::Denied;
         if p.request.authority == self.root.authority
@@ -230,8 +181,5 @@ impl AppHost for EnterpriseHost {
                     .ok_or(JournalError::Denied)?,
             ),
         })
-    }
-    fn configuration_change(&self, _: &ConfigChange) -> Result<(), Error> {
-        Err(Error::Denied)
     }
 }
