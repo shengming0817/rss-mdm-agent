@@ -106,10 +106,6 @@ fn mode_id(mode: &DEVMODEW) -> String {
 pub(super) fn read() -> Result<Vec<SettingsTarget>, Error> {
     let topology = topology()?;
     let mut result = vec![];
-    let managed = policy_present(
-        HKEY_LOCAL_MACHINE,
-        r"SOFTWARE\Policies\Microsoft\Windows\Control Panel\Desktop",
-    );
     for path in &topology.paths {
         let (id, name) = monitor(path)?;
         let source = source(path)?;
@@ -140,10 +136,8 @@ pub(super) fn read() -> Result<Vec<SettingsTarget>, Error> {
                     Some("系统未提供可靠的公开每显示器 DPI 写入 API，请打开系统显示设置"),
                 ),
             ],
-            !managed && !cloned,
-            if managed {
-                Some("由组织显示策略管理")
-            } else if cloned {
+            !cloned,
+            if cloned {
                 Some("复制显示拓扑需要通过系统设置修改")
             } else {
                 None
@@ -186,18 +180,10 @@ pub(super) fn apply(
     else {
         return Err(Error::Unsupported);
     };
-    if !permanent && read()? != before.targets {
-        return Err(Error::Conflict);
+    if !permanent {
+        check_change(patch, before, &read()?)?;
     }
-    if !before.targets.iter().any(|t| t.id == *target && t.writable) {
-        return Err(Error::Denied);
-    }
-    if policy_present(
-        HKEY_LOCAL_MACHINE,
-        r"SOFTWARE\Policies\Microsoft\Windows\Control Panel\Desktop",
-    ) {
-        return Err(Error::Denied);
-    }
+    checked_target(patch, &before.targets)?;
     let mut topology = topology()?;
     let mut found = false;
     for path in &mut topology.paths {

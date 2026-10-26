@@ -11,12 +11,18 @@ pub(crate) const DETECT_ACTION: &str = "local-software.detect";
 pub(crate) fn metadata(
     choice: &LocalSoftwareChoice,
     item: &InstalledSoftware,
-    context: &NativeContextRef,
+    initiator: &Initiator,
     target: Option<String>,
 ) -> Result<BTreeMap<String, InputValue>, Error> {
     [
         ("local-software-choice", serde_json::to_value(choice)),
-        ("local-software-context", serde_json::to_value(context)),
+        (
+            "local-owner",
+            match crate::account_identity::local_owner(initiator)? {
+                InputValue::Literal { value } => Ok(value),
+                _ => return Err(Error::Protocol),
+            },
+        ),
         ("local-software-name", serde_json::to_value(&item.name)),
         (
             "local-software-target-version",
@@ -43,7 +49,6 @@ pub(crate) fn native(
     binding: &execution_app::ServiceBinding,
     actor: &ActorId,
     initiator: Initiator,
-    context: &NativeContextRef,
     policy: &Policy,
     now: u64,
     config: &crate::ExecutionConfig,
@@ -106,23 +111,34 @@ pub(crate) fn native(
         )
         .map_err(crate::error::app_error)?;
     let image = plan::worker_image(config)?;
-    let mut parameters = metadata(choice, item, context, None)?;
+    let mut parameters = metadata(choice, item, &initiator, None)?;
     parameters.insert(
         "local-software-native".into(),
         InputValue::Literal {
             value: serde_json::to_value(&target).map_err(|_| Error::Protocol)?,
         },
     );
-    parameters.insert(
-        "exclusive-resources".into(),
-        InputValue::Literal {
-            value: serde_json::json!([match target {
-                super::native::Target::App { .. } => "manager-macos-applications",
-                super::native::Target::Msi { .. } => "manager-windows-installers",
-                super::native::Target::Msix { .. } => "manager-windows-package-deployment",
-            }]),
-        },
-    );
+    if choice.action == LocalSoftwareAction::Uninstall {
+        let key = match &target {
+            super::native::Target::App { path, .. } => macos_application_resource(
+                match &item.scope {
+                    DataScope::Device => None,
+                    DataScope::User { subject } => Some(subject.as_str()),
+                },
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .ok_or(Error::Untrusted)?,
+            ),
+            super::native::Target::Msi { .. } => "manager-windows-installers".into(),
+            super::native::Target::Msix { .. } => "manager-windows-package-deployment".into(),
+        };
+        parameters.insert(
+            "exclusive-resources".into(),
+            InputValue::Literal {
+                value: serde_json::json!([key]),
+            },
+        );
+    }
     let timeout = 300_000;
     let frozen = FrozenExecution::freeze(
         ExecutionInput {
@@ -147,7 +163,7 @@ pub(crate) fn native(
                         LocalSoftwareAction::Detect => DETECT_ACTION,
                         _ => return Err(Error::Unsupported),
                     })?,
-                    resource: plan::reference(&item.native_id, policy.revision.as_str())?,
+                    resource: plan::reference(&item.native_id, artifact.sha256.as_str())?,
                 },
                 parameters,
             },
@@ -185,10 +201,7 @@ pub(crate) fn native(
                 not_before_unix_ms: now,
                 expires_at_unix_ms: now.checked_add(60_000 + timeout).ok_or(Error::Clock)?,
             },
-            policy: plan::reference(
-                format!("local-software:{}", policy.revision.as_str()),
-                policy.revision.as_str(),
-            )?,
+            policy: plan::reference("local-software:native", "1")?,
         },
         &plan::storage_limits().input,
     )

@@ -22,8 +22,19 @@ impl RuntimeGate {
         let until = self.0.load(Ordering::Acquire);
         (until > 0).then_some(until)
     }
+    /// The communication owner has received explicit credential revocation/retirement.
+    pub fn revoked(&self) -> bool {
+        self.0.load(Ordering::Acquire) == -1
+    }
+    pub(crate) fn revoke(&self) {
+        self.0.store(-1, Ordering::Release);
+    }
     pub(crate) fn close(&self) {
-        self.0.store(0, Ordering::Release);
+        let _ = self
+            .0
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
+                (value != -1).then_some(0)
+            });
     }
 }
 
@@ -74,9 +85,17 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     }
 
     pub(crate) fn publish_runtime_gate(&self) {
-        self.runtime_gate
-            .0
-            .store(self.runtime_deadline().unwrap_or(0), Ordering::Release);
+        self.runtime_gate.0.store(
+            if self
+                .runtime_revoked()
+                .unwrap_or(self.runtime_gate.revoked())
+            {
+                -1
+            } else {
+                self.runtime_deadline().unwrap_or(0)
+            },
+            Ordering::Release,
+        );
     }
 
     pub(crate) fn pki_state(&self) -> Result<State, Error> {
@@ -87,6 +106,18 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     pub fn runtime_readiness(&self) -> Result<(), Error> {
         self.active()?;
         self.task_trust_ready()
+    }
+
+    /// Explicit server-confirmed retirement/revocation, independent of natural expiry.
+    pub fn runtime_revoked(&self) -> Result<bool, Error> {
+        use rss_mdm_agent_wire::enroll::ErrorCode;
+        Ok(matches!(
+            self.identity_state()?.failure,
+            Some(ErrorCode::CredentialRevoked | ErrorCode::CredentialRetired)
+        ) || matches!(
+            self.active(),
+            Err(Error::CredentialRevoked | Error::CredentialRetired)
+        ))
     }
 
     /// Earliest credential or approved trust expiry, for the existing execution owner's admission gate.
@@ -174,6 +205,11 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         // Approved revision and all historical CRL watermarks commit together before enrollment or acknowledgement.
         self.runtime_gate.close();
         self.store.put("pki", &state)?;
+        // A verified current CRL is an explicit revocation fact, retained by the existing
+        // identity owner even if later communication or trust freshness becomes unavailable.
+        if matches!(self.active(), Err(Error::CredentialRevoked)) {
+            self.identity_failure(rss_mdm_agent_wire::enroll::ErrorCode::CredentialRevoked)?;
+        }
         self.publish_runtime_gate();
         if self.identity_state()?.active.is_some() {
             let document = self.pki_state()?.document.ok_or(Error::Storage)?;

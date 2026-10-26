@@ -120,7 +120,14 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         } else {
             state.failure = Some(code);
             if crate::identity::blocks_runtime(code) {
-                self.runtime_gate.close();
+                if matches!(
+                    code,
+                    enroll::ErrorCode::CredentialRevoked | enroll::ErrorCode::CredentialRetired
+                ) {
+                    self.runtime_gate.revoke();
+                } else {
+                    self.runtime_gate.close();
+                }
             }
         }
         self.store.put("identity", &state)

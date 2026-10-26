@@ -452,9 +452,16 @@ fn artifacts(payload: &wire::TaskPayload) -> Result<Vec<(String, u64, [u8; 32])>
         wire::TaskPayload::Software(v) => v
             .steps
             .iter()
-            .flat_map(|v| {
-                v.artifacts
+            .enumerate()
+            .flat_map(|(index, step)| {
+                let keys = execution_contract::software_artifact_keys(step, v.intent);
+                step.artifacts
                     .iter()
+                    .filter(move |a| {
+                        a.key
+                            .strip_prefix(&format!("{index}/"))
+                            .is_some_and(|key| keys.contains(key))
+                    })
                     .map(|a| (a.key.clone(), a.length, a.sha256))
             })
             .collect(),

@@ -610,10 +610,7 @@ async fn material_gc_finishes_old_content_under_continuing_publication_and_new_j
         next.request.request_id = RequestId::new(name).unwrap();
         next.launch.artifact.sha256 = digest;
         let input = FrozenExecution::freeze(next, &plan::storage_limits().input).unwrap();
-        assert!(matches!(
-            service.core.app.request_execution(&caller, &input),
-            Err(execution_app::Error::Unbound)
-        ));
+        service.core.app.stage_execution(&caller, &input).unwrap();
         service
             .core
             .app
@@ -777,10 +774,10 @@ async fn material_gc_history(materials_per_request: usize) {
                         materials,
                         signatures: vec![],
                         upgrade: SoftwareUpgrade::Deny {},
-                        install: invocation,
-                        auxiliary: Default::default(),
-                        uninstall: None,
+                        invocations: [(SoftwarePhase::Mutation, invocation)].into(),
                         detection: SoftwareDetector::PkgReceipt {
+                            run_as: spec.run_as.clone(),
+                            session_requirement: spec.session_requirement.clone(),
                             receipt: "example.receipt".into(),
                             version: PackageValue::new("1").unwrap(),
                         },
@@ -791,10 +788,7 @@ async fn material_gc_history(materials_per_request: usize) {
             };
         }
         let input = FrozenExecution::freeze(spec, &plan::storage_limits().input).unwrap();
-        assert!(matches!(
-            c.service.core.app.request_execution(&caller, &input),
-            Err(execution_app::Error::Unbound)
-        ));
+        c.service.core.app.stage_execution(&caller, &input).unwrap();
         let status = c
             .service
             .core
@@ -956,13 +950,11 @@ async fn material_gc_history(materials_per_request: usize) {
     pending_spec.launch.interpreter.artifact.sha256 = digest;
     let pending_input =
         FrozenExecution::freeze(pending_spec, &plan::storage_limits().input).unwrap();
-    assert!(matches!(
-        c.service
-            .core
-            .app
-            .request_execution(&caller, &pending_input),
-        Err(execution_app::Error::Unbound)
-    ));
+    c.service
+        .core
+        .app
+        .stage_execution(&caller, &pending_input)
+        .unwrap();
     c.service
         .core
         .app
@@ -2020,6 +2012,10 @@ async fn settled_software_observation_replays_the_original_fact_and_never_create
                 || {
                     execution_runner::software::observe_native(
                         &SoftwareDetector::PkgReceipt {
+                            run_as: RunAs::System {
+                                platform: Platform::Macos,
+                            },
+                            session_requirement: SessionRequirement::NotRequired {},
                             receipt: if unavailable {
                                 "../../invalid".into()
                             } else {
@@ -2316,14 +2312,18 @@ async fn fresh_revocation_and_crl_expiry_close_admission_while_pending_status_wa
                 core.reconcile()?;
                 if data.lock().unwrap().status_waiting && !identity_ready {
                     observed = true;
-                    assert!(core.host.revoked.load(Ordering::Acquire));
+                    assert_eq!(core.host.revoked.load(Ordering::Acquire), revocation);
                     let retained = core
                         .app
                         .backend_request(&core.caller(), original.action.request())
                         .unwrap()
                         .unwrap();
-                    assert_eq!(retained.state, BackendRequestState::Failed);
-                    assert_eq!(retained.failure, Some(BackendRequestFailure::Revoked));
+                    if revocation {
+                        assert_eq!(retained.state, BackendRequestState::Failed);
+                        assert_eq!(retained.failure, Some(BackendRequestFailure::Revoked));
+                    } else {
+                        assert_eq!(retained, original);
+                    }
                     assert_eq!(retained.action, original.action);
                     pause.notify_one();
                 }
@@ -2336,7 +2336,7 @@ async fn fresh_revocation_and_crl_expiry_close_admission_while_pending_status_wa
         );
         assert!(result.is_err());
         c.service.drive_error(result.unwrap_err());
-        assert!(c.service.waiting.is_none());
+        assert_eq!(c.service.waiting.is_none(), revocation);
         assert_eq!(c.service.client.registration().unwrap(), binding);
         assert!(matches!(
             c.service.core.start_task(c.selection(false)),
@@ -2510,8 +2510,7 @@ async fn software_self_service_binds_signed_policy_and_native_context() {
             version: step.action.version.clone(),
             variant: "default".into(),
         },
-        run_as: backend::commands::software_commands(&step.action)
-            .unwrap()
+        run_as: execution_contract::software_commands(&step.action)
             .install
             .run_as,
         target: step.target.clone(),
@@ -3131,7 +3130,7 @@ async fn expired_unadmitted_task_releases_waiting_and_replays_abandonment_after_
 }
 
 #[tokio::test]
-async fn device_recovery_reopens_both_journals_and_preserves_every_accepted_intent_at_capacity() {
+async fn device_recovery_keeps_each_original_intent_when_native_identity_rejects_dispatch() {
     let _budget = crate::scenario_budget::enter();
     let mut c = Case::new(None).await;
     let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
@@ -3157,9 +3156,7 @@ async fn device_recovery_reopens_both_journals_and_preserves_every_accepted_inte
     c._server.data.lock().unwrap().claim_failure = true;
     let result = c.service.drive(&mut commands).await;
     assert!(matches!(result, Err(Error::Unavailable)), "{result:?}");
-    let waiting = &c.service.waiting.as_ref().unwrap().0;
-    assert_eq!(waiting.task_id(), first_offer.task_id());
-    assert_eq!(waiting.attempt_id(), first_offer.attempt_id());
+    assert!(c.service.waiting.is_none());
     let tasks = c
         .service
         .client
@@ -3175,7 +3172,11 @@ async fn device_recovery_reopens_both_journals_and_preserves_every_accepted_inte
             .backend_request(&c.service.core.caller(), original.action.request())
             .unwrap()
             .unwrap();
-        assert_eq!(&restored, original);
+        assert_eq!(restored.state, BackendRequestState::Failed);
+        assert_eq!(restored.failure, Some(BackendRequestFailure::Revoked));
+        assert_eq!(restored.confirmation, original.confirmation);
+        assert_eq!(restored.trigger, original.trigger);
+        assert_eq!(restored.action.request(), original.action.request());
         assert!(restored.confirmation.is_some());
         assert!(c.service.core.current_policy_access(&restored).is_ok());
     }
@@ -3357,9 +3358,10 @@ async fn transient_start_replays_original_attempt_without_retiring_policy_or_con
         // Device resumes across both journals. User resumes only while its exact native
         // context remains live in this owner; a process restart cannot reconstruct it.
         let mut c = if device { c.reopen() } else { c };
-        c.service.next_network = std::time::Instant::now();
-        c.service.drive(&mut commands).await.unwrap();
-        let (restored, materials) = c.service.waiting.take().unwrap();
+        // Reopen the original protocol owner without invoking this non-root fixture as a
+        // native system service. The signed Start replay below proves its exact HTTP identity.
+        let restored = c.service.client.retained_offer(offer.task_id()).unwrap();
+        let materials = c.service.client.prepare(&restored).await.unwrap();
         assert_eq!(restored.task_id(), offer.task_id());
         assert_eq!(restored.attempt_id(), offer.attempt_id());
         let selection = c.service.bind_policy_offer(&restored).unwrap();
@@ -3415,10 +3417,7 @@ async fn transient_start_replays_original_attempt_without_retiring_policy_or_con
         )
         .unwrap();
         let caller = c.service.core.caller();
-        assert!(matches!(
-            c.service.core.app.request_execution(&caller, &input),
-            Err(execution_app::Error::Unbound)
-        ));
+        c.service.core.app.stage_execution(&caller, &input).unwrap();
         assert_eq!(
             c.service
                 .core
@@ -3721,15 +3720,15 @@ async fn full_report_queue_after_restart_drains_before_retrying_native_observati
         let mut data = case._server.data.lock().unwrap();
         data.task = uuid::Uuid::new_v4();
         data.attempt = uuid::Uuid::new_v4();
-        data.software(1, true);
+        data.software(1, false);
         data.task
     };
     service.next_network = std::time::Instant::now();
-    service.drive(&mut commands).await.unwrap();
+    assert_eq!(service.drive(&mut commands).await, Err(Error::Untrusted));
     assert_eq!(
-        service.waiting.as_ref().unwrap().0.task_id(),
+        service.client.retained_offer(next_task).unwrap().task_id(),
         next_task,
-        "report capacity must not starve task claims"
+        "report capacity must not starve unrelated automatic task claims"
     );
     assert_eq!(
         service.client.flush_reports(1).await.unwrap(),
@@ -4304,14 +4303,23 @@ async fn local_data_queries_keep_os_prerequisites_exact_authority_and_offline_re
     *c.service.core.host.local_read.lock().unwrap() =
         Some(crate::local_execution::ReadPermit::new(frozen.clone()).unwrap());
     let attempt = AttemptId::new("proof-only-no-dispatch").unwrap();
-    let facts = execution_app::AppHost::admit(
+    c.service
+        .core
+        .host
+        .local_read
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .verify(&frozen, crate::wall().unwrap())
+        .unwrap();
+    assert!(execution_app::AppHost::admit(
         &c.service.core.host,
         &frozen,
         &attempt,
-        crate::wall().unwrap(),
+        crate::wall().unwrap()
     )
-    .unwrap();
-    assert_eq!(facts.execution_gate, execution_app::ExecutionGate::Direct);
+    .is_err());
     *c.service.core.host.local_read.lock().unwrap() = None;
     assert!(execution_app::AppHost::admit(
         &c.service.core.host,
@@ -4772,7 +4780,7 @@ async fn local_software_api_stages_no_attempt_and_replays_the_original_after_los
             context,
             origin: ClientOrigin::Desktop {},
             input: LocalSoftwareOperation::Status(QueryRequest {
-                request: choice.request
+                request: choice.request.clone()
             })
         })
         .await,
@@ -4783,79 +4791,47 @@ async fn local_software_api_stages_no_attempt_and_replays_the_original_after_los
     c.employee("fresh-software-history-context").await;
     assert!(
         matches!(c.local_software_call(LocalSoftwareOperation::History(SoftwareHistoryQuery{after:None,limit:64}),false).await,
-        Reply::SoftwareHistory{value} if value.items.is_empty())
+        Reply::SoftwareHistory{value} if value.items.iter().any(|item| item.prepared.request == choice.request))
     );
 }
 #[cfg(target_os = "macos")]
 #[tokio::test]
 #[ignore = "requires root for production material/OS identity admission; explicitly run the built test binary"]
-async fn local_software_api_rechecks_rules_and_snapshot_before_any_attempt() {
+async fn local_software_api_preserves_the_original_intent_across_unrelated_rule_edits() {
     let _budget = crate::scenario_budget::enter();
-    for changed_rules in [false, true] {
-        let (mut c, choice) = local_software_case().await;
-        let prepared = match c
-            .local_software_call(LocalSoftwareOperation::Prepare(choice.clone()), false)
-            .await
-        {
-            Reply::SoftwarePrepared { value } => value,
-            Reply::DataFailure { reason } => panic!("prepare: {reason:?}"),
-            _ => panic!("unexpected prepare reply"),
-        };
-        if changed_rules {
-            let path = &c.service.core.config.local_permissions.policy_file;
-            let mut rules: crate::local_permissions::Restrictions =
-                serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
-            rules.allow_launch = false;
-            std::fs::write(path, serde_json::to_vec(&rules).unwrap()).unwrap();
-        } else {
-            // Changing the immutable observation selected by the original cursor is not a new grant.
-            let read = DataRead {
-                selection: DataSelection::Query {
-                    query: choice.software.query.clone(),
-                },
-                after: None,
-                limit: 16,
-                max_age_seconds: None,
-            };
-            let mut value = c
-                .service
-                .core
-                .data
-                .read(
-                    &read,
-                    &c.selection.subject,
-                    &c.selection.binding,
-                    c.service.core.host.clock.millis().unwrap() / 1000,
-                )
-                .unwrap();
-            value.rows[0]["version"] = serde_json::json!("2.0.0");
-            c.service.core.data.snapshot(&value).unwrap();
-        }
-        let reply = c
-            .local_software_call(
-                LocalSoftwareOperation::Submit(LocalSoftwareSubmission {
-                    request: choice.request.clone(),
-                    digest: prepared.digest,
-                }),
-                false,
-            )
-            .await;
-        assert!(matches!(
-            reply,
-            Reply::DataFailure {
-                reason: DataError::Denied | DataError::Conflict
-            }
-        ));
-        assert_eq!(
-            c.service
-                .core
-                .app
-                .status(&c.service.core.local_caller(), &choice.request)
-                .unwrap()
-                .attempts,
-            0
-        );
-    }
+    let (mut c, choice) = local_software_case().await;
+    let prepared = match c
+        .local_software_call(LocalSoftwareOperation::Prepare(choice.clone()), false)
+        .await
+    {
+        Reply::SoftwarePrepared { value } => value,
+        Reply::DataFailure { reason } => panic!("prepare: {reason:?}"),
+        _ => panic!("unexpected prepare reply"),
+    };
+    let path = &c.service.core.config.local_permissions.policy_file;
+    let mut rules: crate::local_permissions::Restrictions =
+        serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    rules.allow_launch = false;
+    std::fs::write(path, serde_json::to_vec(&rules).unwrap()).unwrap();
+    let reply = c
+        .local_software_call(
+            LocalSoftwareOperation::Submit(LocalSoftwareSubmission {
+                request: choice.request.clone(),
+                digest: prepared.digest,
+            }),
+            false,
+        )
+        .await;
+    assert!(matches!(reply, Reply::SoftwareStatus { .. }));
+    assert_eq!(
+        c.service
+            .core
+            .app
+            .status(&c.service.core.local_caller(), &choice.request)
+            .unwrap()
+            .attempts,
+        1
+    );
 }
 
 #[cfg(target_os = "macos")]
@@ -5221,7 +5197,7 @@ async fn installation_owner_exists_before_registration_and_preserves_both_scopes
 
 #[tokio::test]
 #[ignore = "requires root for production material/OS identity admission; explicitly run the built test binary"]
-async fn settings_desktop_cache_and_retained_task_are_bound_to_exact_context() {
+async fn settings_retained_task_survives_same_account_reconnection() {
     use execution_ipc::host::Request;
     let _budget = crate::scenario_budget::enter();
     let mut c = Case::new(None).await;
@@ -5272,9 +5248,6 @@ async fn settings_desktop_cache_and_retained_task_are_bound_to_exact_context() {
         Reply::DataFailure { .. }
     ));
     let request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
-    let policy =
-        crate::local_permissions::Policy::fixture(&c.service.core.config.local_permissions)
-            .unwrap();
     let (frozen, artifacts) = crate::local_settings::compile::prepare(
         crate::local_settings::Action::Read {
             section: SettingsSection::Network,
@@ -5292,8 +5265,6 @@ async fn settings_desktop_cache_and_retained_task_are_bound_to_exact_context() {
                 session: c.selection.binding.clone(),
             },
         },
-        &c.context(),
-        &policy,
         c.service.core.host.clock.millis().unwrap(),
         &c.service.core.config,
         &mut c.service.core.material_root,
@@ -5363,7 +5334,7 @@ async fn settings_desktop_cache_and_retained_task_are_bound_to_exact_context() {
             SettingsOperation::Status { request }
         ))
         .await,
-        Reply::DataFailure { .. }
+        Reply::Settings { value } if value.digest.as_ref() == Some(frozen.digest()) && value.finished
     ));
 }
 
@@ -5507,7 +5478,6 @@ async fn network_check_replay_and_cancel_keep_the_original_sqlite_plan_and_login
         &c.service.core.host.root,
         &c.service.core.host.local_actor,
         Initiator::Human { os_session },
-        &c.context(),
         c.service.core.host.clock.millis().unwrap(),
         &c.service.core.config,
         &mut c.service.core.material_root,
@@ -5569,17 +5539,18 @@ async fn network_check_replay_and_cancel_keep_the_original_sqlite_plan_and_login
     let Reply::RecentTasks { value } = c.recent_call(None).await else {
         panic!("recent tasks");
     };
-    assert!(value
-        .items
-        .iter()
-        .all(|item| item.details.action.request_id != request));
+    assert!(
+        value
+            .items
+            .iter()
+            .any(|item| item.details.action.request_id == request
+                && item.details.status.attempts == 0)
+    );
 
     assert!(matches!(
         c.policy_call(call(c.context(), NetworkCheckOperation::Status { request }))
             .await,
-        Reply::DataFailure {
-            reason: DataError::Denied
-        }
+        Reply::NetworkCheck { value } if value.status.content_digest == *frozen.digest() && value.status.attempts == 0
     ));
 }
 

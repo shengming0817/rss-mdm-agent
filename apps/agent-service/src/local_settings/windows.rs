@@ -31,6 +31,7 @@ pub(super) unsafe fn text(pointer: *const u16) -> Result<String, Error> {
 pub(super) fn field(key: &str, value: Option<Value>, reason: Option<&str>) -> SettingsField {
     SettingsField {
         key: key.into(),
+        writable: false,
         quality: if value.is_some() {
             DataQuality::Complete
         } else {
@@ -43,35 +44,75 @@ pub(super) fn field(key: &str, value: Option<Value>, reason: Option<&str>) -> Se
 pub(super) fn target(
     id: &str,
     name: &str,
-    fields: Vec<SettingsField>,
+    mut fields: Vec<SettingsField>,
     writable: bool,
     reason: Option<&str>,
 ) -> SettingsTarget {
+    for field in &mut fields {
+        field.writable = writable
+            && field.value.is_some()
+            && matches!(
+                field.key.as_str(),
+                "http"
+                    | "https"
+                    | "socks"
+                    | "bypass"
+                    | "mode"
+                    | "origin"
+                    | "displayOffMinutes"
+                    | "sleepMinutes"
+            );
+    }
     SettingsTarget {
         id: id.into(),
         name: name.into(),
         fields,
         options: vec![],
-        writable,
         reason: reason.map(str::to_owned),
     }
 }
 pub(super) fn get<'a>(t: &'a SettingsTarget, key: &str) -> Option<&'a Value> {
     t.fields.iter().find(|f| f.key == key)?.value.as_ref()
 }
-/// A policy key's existence blocks mutation, including denied/unknown policy reads.
-pub(super) fn policy_present(root: HKEY, path: &str) -> bool {
-    let mut key = std::ptr::null_mut();
-    let code = unsafe { RegOpenKeyExW(root, wide(path).as_ptr(), 0, KEY_READ, &mut key) };
-    if code == 2 {
-        return false;
+/// Read only the relevant policy value; absence is distinct from an unreadable value.
+pub(super) fn policy_dword(root: HKEY, path: &str, name: &str) -> Result<Option<u32>, Error> {
+    let mut value = 0u32;
+    let mut size = std::mem::size_of::<u32>() as u32;
+    let code = unsafe {
+        RegGetValueW(
+            root,
+            wide(path).as_ptr(),
+            wide(name).as_ptr(),
+            RRF_RT_REG_DWORD,
+            std::ptr::null_mut(),
+            (&mut value as *mut u32).cast(),
+            &mut size,
+        )
+    };
+    match code {
+        0 if size == 4 => Ok(Some(value)),
+        2 | 3 => Ok(None),
+        _ => Err(Error::Denied),
     }
-    if code == 0 {
-        unsafe {
-            RegCloseKey(key);
-        }
+}
+fn setting_writable(
+    ac: bool,
+    setting: &windows_sys::core::GUID,
+    active: &windows_sys::core::GUID,
+) -> bool {
+    unsafe {
+        PowerSettingAccessCheckEx(
+            if ac {
+                ACCESS_AC_POWER_SETTING_INDEX
+            } else {
+                ACCESS_DC_POWER_SETTING_INDEX
+            },
+            setting,
+            KEY_WRITE,
+        ) == 0
+            && PowerSettingAccessCheckEx(ACCESS_ACTIVE_SCHEME, std::ptr::null(), KEY_WRITE) == 0
+            && PowerSettingAccessCheckEx(ACCESS_SCHEME, active, KEY_WRITE) == 0
     }
-    true
 }
 pub(super) fn read(section: SettingsSection) -> Result<Vec<SettingsTarget>, Error> {
     match section {
@@ -140,10 +181,6 @@ fn power() -> Result<Vec<SettingsTarget>, Error> {
     };
     let scheme = scheme()?;
     let mut targets = vec![];
-    let managed = policy_present(
-        HKEY_LOCAL_MACHINE,
-        r"SOFTWARE\Policies\Microsoft\Power\PowerSettings",
-    );
     for (ac, id, name) in [(true, "ac", "外接电源"), (false, "dc", "电池供电")] {
         let mut fields = vec![field(
             "scheme",
@@ -199,13 +236,20 @@ fn power() -> Result<Vec<SettingsTarget>, Error> {
             None,
             Some("用户选择可能被系统、硬件或组织策略覆盖"),
         ));
-        let mut t = target(
-            id,
-            name,
-            fields,
-            !managed,
-            managed.then_some("由组织电源策略管理"),
-        );
+        let mut t = target(id, name, fields, true, None);
+        for field in &mut t.fields {
+            let setting = match field.key.as_str() {
+                "displayOffMinutes" => Some(GUID_VIDEO_POWERDOWN_TIMEOUT),
+                "sleepMinutes" => Some(GUID_STANDBY_TIMEOUT),
+                _ => None,
+            };
+            if let Some(setting) = setting {
+                field.writable &= setting_writable(ac, &setting, &scheme);
+                if !field.writable && field.reason.is_none() {
+                    field.reason = Some("当前电源设置受策略或原生权限限制".into());
+                }
+            }
+        }
         if mode.is_some() {
             t.options = vec![
                 SettingsOption {
@@ -273,15 +317,7 @@ fn power_apply(patch: &SettingsPatch, before: &SettingsSnapshot) -> Result<(), E
     else {
         return Err(Error::Unsupported);
     };
-    if power()? != before.targets {
-        return Err(Error::Conflict);
-    }
-    if policy_present(
-        HKEY_LOCAL_MACHINE,
-        r"SOFTWARE\Policies\Microsoft\Power\PowerSettings",
-    ) {
-        return Err(Error::Denied);
-    }
+    check_change(patch, before, &power()?)?;
     let scheme = scheme()?;
     for (value, group, setting) in [
         (
@@ -292,6 +328,9 @@ fn power_apply(patch: &SettingsPatch, before: &SettingsSnapshot) -> Result<(), E
         (sleep_minutes, GUID_SLEEP_SUBGROUP, GUID_STANDBY_TIMEOUT),
     ] {
         if let Some(minutes) = value {
+            if !setting_writable(target == "ac", &setting, &scheme) {
+                return Err(Error::Denied);
+            }
             let code = unsafe {
                 if target == "ac" {
                     PowerWriteACValueIndex(
@@ -319,7 +358,9 @@ fn power_apply(patch: &SettingsPatch, before: &SettingsSnapshot) -> Result<(), E
     if let Some(mode) = mode {
         energy_mode::set(target == "ac", mode)?;
     }
-    if unsafe { PowerSetActiveScheme(std::ptr::null_mut(), &scheme) } != 0 {
+    if (display_off_minutes.is_some() || sleep_minutes.is_some())
+        && unsafe { PowerSetActiveScheme(std::ptr::null_mut(), &scheme) } != 0
+    {
         return Err(Error::Unavailable);
     }
     Ok(())

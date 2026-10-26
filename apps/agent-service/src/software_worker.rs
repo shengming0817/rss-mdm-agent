@@ -117,7 +117,7 @@ pub fn run(path: &std::path::Path) -> Result<i32, Error> {
     };
     let scripted_detector = request.operation == WorkerOperation::Detect
         && matches!(
-            crate::backend::commands::software_commands(&request.action)?.detection,
+            execution_contract::software_commands(&request.action).detection,
             Some(wire::SoftwareTaskDetection::Script { .. })
         );
     #[cfg(target_os = "macos")]
@@ -201,7 +201,7 @@ fn native_package(
     request: &WorkerRequest,
     before: Option<&SoftwareState>,
 ) -> Result<(i32, SoftwareWorkerResult), Error> {
-    let commands = crate::backend::commands::software_commands(&request.action)?;
+    let commands = execution_contract::software_commands(&request.action);
     if request.operation == WorkerOperation::Detect {
         return Ok(result(0, Some(source::detect(request)?), String::new()));
     }
@@ -224,7 +224,12 @@ fn native_package(
         }
         _ => return Err(Error::Unsupported),
     };
-    for signature in &request.action.signatures {
+    for signature in request
+        .action
+        .signatures
+        .iter()
+        .filter(|s| request.materials.contains_key(&s.artifact))
+    {
         #[cfg(windows)]
         windows::authenticode(request, &signature.artifact)?;
         #[cfg(target_os = "macos")]

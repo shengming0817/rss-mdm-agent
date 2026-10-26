@@ -583,7 +583,7 @@ fn macos_capture_is_durable_and_reopened_attempt_does_not_launch() {
         &database,
         host.clone(),
         carrier.clone(),
-        AppConfig::test_defaults(1),
+        AppConfig::test_defaults(),
     )
     .unwrap();
     assert_eq!(app.request_execution(&caller, &f.plan).unwrap().attempts, 1);
@@ -622,7 +622,7 @@ fn macos_capture_is_durable_and_reopened_attempt_does_not_launch() {
         ),
         Arc::new(std::sync::atomic::AtomicUsize::new(0)),
     );
-    let mut app = reopen_app(&database, host, empty.clone(), AppConfig::test_defaults(1)).unwrap();
+    let mut app = reopen_app(&database, host, empty.clone(), AppConfig::test_defaults()).unwrap();
     let recovered = app.request_execution(&caller, &f.plan).unwrap();
     assert_eq!(recovered.attempts, 1);
     assert_eq!(
@@ -809,7 +809,7 @@ fn application_cancel_captures_real_process_and_reopen_does_not_dispatch() {
         &database,
         host.clone(),
         carrier.clone(),
-        AppConfig::test_defaults(1),
+        AppConfig::test_defaults(),
     )
     .unwrap();
     let started = app.request_execution(&caller, &f.plan).unwrap();
@@ -849,7 +849,7 @@ fn application_cancel_captures_real_process_and_reopen_does_not_dispatch() {
         ),
         Arc::new(std::sync::atomic::AtomicUsize::new(0)),
     );
-    let mut app = reopen_app(&database, host, empty.clone(), AppConfig::test_defaults(1)).unwrap();
+    let mut app = reopen_app(&database, host, empty.clone(), AppConfig::test_defaults()).unwrap();
     assert_eq!(app.request_execution(&caller, &f.plan).unwrap().attempts, 1);
     assert_eq!(
         app.status(&caller, request).unwrap().process.unwrap().end,

@@ -46,6 +46,10 @@ pub enum SoftwareDetector {
         product_code: String,
         /// Expected exact version.
         version: PackageValue,
+        /// Original native observation account.
+        run_as: RunAs,
+        /// Original OS session required by the observation.
+        session_requirement: SessionRequirement,
     },
     /// Query the exact macOS package receipt.
     PkgReceipt {
@@ -53,12 +57,34 @@ pub enum SoftwareDetector {
         receipt: String,
         /// Expected exact version.
         version: PackageValue,
+        /// Original native observation account.
+        run_as: RunAs,
+        /// Original OS session required by the observation.
+        session_requirement: SessionRequirement,
     },
     /// Execute the backend's declared detector under its own cumulative bounds.
     Script {
         /// Exact detector invocation.
         invocation: Box<SoftwareInvocation>,
     },
+}
+impl SoftwareDetector {
+    /// Exact observation identity; no installation recipe is required for native reads.
+    pub fn context(&self) -> (&RunAs, &SessionRequirement) {
+        match self {
+            Self::MsiProduct {
+                run_as,
+                session_requirement,
+                ..
+            }
+            | Self::PkgReceipt {
+                run_as,
+                session_requirement,
+                ..
+            } => (run_as, session_requirement),
+            Self::Script { invocation } => (&invocation.run_as, &invocation.session_requirement),
+        }
+    }
 }
 /// One executable step; dependency selection and ordering have already happened on the server.
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -80,25 +106,14 @@ pub struct SoftwareProgramStep {
     pub signatures: Vec<SoftwareSignature>,
     /// Frozen strategy for an existing different version.
     pub upgrade: SoftwareUpgrade,
-    /// Frozen install/update invocation.
-    pub install: SoftwareInvocation,
-    /// Exact additional physical operations, each with its own durable phase boundary.
-    pub auxiliary: std::collections::BTreeMap<SoftwarePhase, SoftwareInvocation>,
-    /// Explicit frozen removal; absence means unsupported.
-    pub uninstall: Option<SoftwareInvocation>,
+    /// Only reachable physical operations, keyed by their existing durable phase.
+    pub invocations: std::collections::BTreeMap<SoftwarePhase, SoftwareInvocation>,
     /// Independent detector used under one shared observation budget.
     pub detection: SoftwareDetector,
     /// Permission for an exact downgrade; unknown comparisons do not imply permission.
     pub allow_downgrade: bool,
     /// Whether a required reboot may be reported for separately authorized handling.
     pub allow_reboot: bool,
-}
-impl SoftwareProgramStep {
-    /// Installer completion only; independent detection and quiescence still gate the step.
-    /// MSI reboot codes never authorize this client to initiate a reboot.
-    pub fn mutation_succeeded(&self, facts: &ProcessEvidence) -> bool {
-        self.install.succeeded(facts, self.allow_reboot)
-    }
 }
 /// A single backend attempt and one execution intent, containing every ordered step.
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -115,29 +130,16 @@ impl SoftwareProgram {
     /// Select exact immutable invocation inputs from the original program.
     pub fn invocation(&self, step: usize, phase: SoftwarePhase) -> Option<&SoftwareInvocation> {
         let step = self.steps.get(step)?;
-        match phase {
-            SoftwarePhase::Mutation => match self.intent {
-                SoftwareOperation::Install => Some(&step.install),
-                SoftwareOperation::Uninstall => step.uninstall.as_ref(),
-                SoftwareOperation::Detect => None,
-            },
-            SoftwarePhase::Removal => step.auxiliary.get(&phase).or(step.uninstall.as_ref()),
-            SoftwarePhase::Upgrade => match &step.upgrade {
-                SoftwareUpgrade::InPlace { invocation } => Some(invocation),
+        if phase.is_observation() {
+            match &step.detection {
+                SoftwareDetector::Script { invocation } => Some(invocation),
                 _ => None,
-            },
-            SoftwarePhase::Prepare
-            | SoftwarePhase::Attach
-            | SoftwarePhase::Stage
-            | SoftwarePhase::Cleanup => step.auxiliary.get(&phase),
-            SoftwarePhase::Before | SoftwarePhase::RemovalAfter | SoftwarePhase::After => {
-                match &step.detection {
-                    SoftwareDetector::Script { invocation } => Some(invocation),
-                    _ => None,
-                }
             }
+        } else {
+            step.invocations.get(&phase)
         }
     }
+
     /// Desired effect, evaluated independently of installer process exits.
     pub fn satisfied(&self, step: &SoftwareProgramStep, state: &SoftwareState) -> bool {
         match self.intent {
@@ -165,14 +167,14 @@ impl SoftwareProgram {
             return Vec::new();
         }
         let mut phases = Vec::new();
-        if step.auxiliary.contains_key(&SoftwarePhase::Prepare) {
+        if step.invocations.contains_key(&SoftwarePhase::Prepare) {
             phases.push(SoftwarePhase::Prepare);
         }
-        if step.auxiliary.contains_key(&SoftwarePhase::Attach)
+        if step.invocations.contains_key(&SoftwarePhase::Attach)
             && self.intent == SoftwareOperation::Install
         {
             phases.push(SoftwarePhase::Attach);
-            if step.auxiliary.contains_key(&SoftwarePhase::Stage) {
+            if step.invocations.contains_key(&SoftwarePhase::Stage) {
                 phases.push(SoftwarePhase::Stage);
             }
         }
@@ -187,7 +189,7 @@ impl SoftwareProgram {
                 SoftwarePhase::Mutation
             },
         );
-        if step.auxiliary.contains_key(&SoftwarePhase::Cleanup) {
+        if step.invocations.contains_key(&SoftwarePhase::Cleanup) {
             phases.push(SoftwarePhase::Cleanup);
         }
         phases
@@ -199,14 +201,28 @@ impl SoftwareProgram {
                 && self.intent == SoftwareOperation::Uninstall
                 && self.steps.get(step as usize).is_some_and(|s| {
                     matches!(s.format, SoftwareFormat::DmgApp { .. })
-                        && s.auxiliary.contains_key(&SoftwarePhase::Cleanup)
+                        && s.invocations.contains_key(&SoftwarePhase::Cleanup)
                 }))
     }
     /// Agent serialization keys, deliberately independent of tenant and package-name aliases.
     /// These claims never promise exclusion of unrelated OS writers.
     pub fn lock_keys(&self) -> Vec<String> {
+        if self.intent == SoftwareOperation::Detect {
+            return Vec::new();
+        }
         let mut keys = std::collections::BTreeSet::new();
         for step in &self.steps {
+            if let SoftwareFormat::DmgApp { target_name, .. } = &step.format {
+                let (run_as, _) = step.detection.context();
+                keys.insert(macos_application_resource(
+                    match run_as {
+                        RunAs::User { account } => Some(account.subject.as_str()),
+                        RunAs::System { .. } => None,
+                    },
+                    target_name,
+                ));
+                continue;
+            }
             keys.insert(format!(
                 "manager-{}",
                 match step.format.adapter() {
@@ -267,4 +283,16 @@ pub struct SoftwareWorkerResult {
     pub closed: bool,
     /// Captured native tool diagnostics within the original budget.
     pub diagnostics: String,
+}
+
+/// Shared claim for one Applications child, across local removal and enterprise install/removal.
+/// Case folding conservatively covers case-insensitive native directories.
+pub fn macos_application_resource(subject: Option<&str>, name: &str) -> String {
+    use sha2::{Digest as _, Sha256};
+    format!(
+        "macos-app:{:x}",
+        Sha256::digest(
+            serde_json::to_vec(&(subject, name.to_lowercase())).expect("string tuple serializes")
+        )
+    )
 }

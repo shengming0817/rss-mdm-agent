@@ -19,7 +19,6 @@
 - [AI Runtime 来源](reference/ai-runtime.md)：固定上游版本、生成链和许可。
 - [契约来源与改写](reference/contracts-extraction.md)：C01/C02 的固定对标及参考重写边界。
 - [交互核心](../crates/execution-interaction/README.md)：回答、取消、过期与恢复。
-- [能力核心](../crates/execution-capability/README.md)：计划要求与环境快照匹配。
 - [生命周期核心](../crates/execution-lifecycle/README.md)：有界快照、证据核实与安全重试。
 - [脚本计划核心](../crates/script-plan/README.md)：字面脚本调用编译与解释器文件启动规则。
 - [生产执行服务](guides/local-service-lab.md#后台授权执行服务)：V1 有序软件步骤的生产编译、执行及恢复入口。

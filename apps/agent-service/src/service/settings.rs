@@ -157,6 +157,12 @@ impl Core {
                         .map_err(map_app_error)?;
                 }
                 if let SettingsOperation::KeepDisplay { digest, .. } = input {
+                    let Initiator::Human { os_session } = &frozen.spec().request.initiator else {
+                        return Err(Error::Denied);
+                    };
+                    if command.binding.as_ref() != Some(&os_session.session) {
+                        return Err(Error::Identity);
+                    }
                     let policy = self.software_policy()?;
                     let action: Action = metadata(&frozen, "local-settings-action")?;
                     local_settings::Permit::keep(frozen.clone(), policy, &action)?
@@ -225,13 +231,7 @@ impl Core {
                         _ => return Err(Error::Conflict),
                     }
                 } else {
-                    self.data
-                        .settings_read(
-                            &command.subject,
-                            command.binding.as_ref().ok_or(Error::Denied)?,
-                            patch.section(),
-                        )?
-                        .ok_or(Error::Unavailable)?
+                    self.settings_before(command, context, patch.section(), expected)?
                 };
                 (
                     request,
@@ -289,12 +289,10 @@ impl Core {
             patch,
         } = &action
         {
-            if !patch.valid() || before.revision != *expected || !local_settings::fresh(before, now)
-            {
+            if !patch.valid() || before.revision != *expected {
                 return Err(Error::Conflict);
             }
         }
-        let policy = self.software_policy()?;
         // User visual state and Windows WinINet always execute in the exact attested login.
         let needs_user = matches!(action, Action::Open { .. })
             || matches!(
@@ -318,8 +316,6 @@ impl Core {
             &self.host.root,
             &self.host.local_actor,
             initiator,
-            context,
-            &policy,
             now,
             &self.config,
             &mut self.material_root,
@@ -347,6 +343,14 @@ impl Core {
             .is_ok_and(|s| s.attempts > 0 || s.cancel_requested || s.admission.is_some())
         {
             return self.settings_status(frozen);
+        }
+        if matches!(frozen.spec().run_as, RunAs::User { .. }) {
+            let Initiator::Human { os_session } = &frozen.spec().request.initiator else {
+                return Err(Error::Denied);
+            };
+            if command.binding.as_ref() != Some(&os_session.session) {
+                return Err(Error::Identity);
+            }
         }
         let policy = self.software_policy()?;
         let permit = local_settings::Permit::new(frozen.clone(), policy, action)?;
@@ -403,21 +407,63 @@ impl Core {
             .app
             .frozen_input(&self.local_caller(), request)
             .map_err(map_app_error)?;
-        if plan.spec().launch.interpreter.profile.id.as_str() != local_settings::PROFILE
-            || metadata::<NativeContextRef>(&plan, "local-settings-context")? != *context
-        {
+        if plan.spec().launch.interpreter.profile.id.as_str() != local_settings::PROFILE {
             return Err(Error::Denied);
         }
-        let Initiator::Human { os_session } = &plan.spec().request.initiator else {
-            return Err(Error::Denied);
-        };
-        if os_session.account.subject.as_str() != command.subject
-            || command.binding.as_ref() != Some(&os_session.session)
-            || os_session.device != self.host.root.device
-        {
-            return Err(Error::Denied);
-        }
+        self.data_context(command, context)?;
+        crate::account_identity::verify_local_owner(&plan, &self.host.root, &command.subject)?;
         Ok(plan)
+    }
+    fn settings_before(
+        &self,
+        command: &Command,
+        context: &NativeContextRef,
+        section: SettingsSection,
+        expected: &Digest,
+    ) -> Result<SettingsSnapshot, Error> {
+        if let Some(snapshot) = self.data.settings_read(
+            &command.subject,
+            command.binding.as_ref().ok_or(Error::Denied)?,
+            section,
+        )? {
+            if &snapshot.revision == expected {
+                return Ok(snapshot);
+            }
+        }
+        // The journal already retains authenticated native observations. Resolve the original
+        // observation there rather than requiring the newest cache entry to have the same digest.
+        let mut after = None;
+        loop {
+            let page = self
+                .app
+                .service_tasks(after.as_ref(), 128)
+                .map_err(map_app_error)?;
+            for item in &page.items {
+                if item.action.policy.id.as_str() != "local-settings:native" {
+                    continue;
+                }
+                let Ok(plan) = self.settings_input(command, context, &item.action.request_id)
+                else {
+                    continue;
+                };
+                let Some(facts) = self
+                    .app
+                    .service_process_evidence(&item.action.request_id)
+                    .map_err(map_app_error)?
+                else {
+                    continue;
+                };
+                if let Some(snapshot) = native_response(&plan, &facts)?.and_then(|r| r.snapshot) {
+                    if snapshot.section == section && &snapshot.revision == expected {
+                        return Ok(snapshot);
+                    }
+                }
+            }
+            let Some(next) = page.next else {
+                return Err(Error::NotFound);
+            };
+            after = Some(next);
+        }
     }
     fn settings_status(&mut self, plan: &FrozenExecution) -> Result<SettingsResponse, Error> {
         let request = &plan.spec().request.request_id;

@@ -114,49 +114,28 @@ pub(crate) fn materials(
     let mut sources = Vec::new();
     let mut delegate = None;
     for (index, step) in program.steps.iter().enumerate() {
-        let mut mutation = program
-            .invocation(index, SoftwarePhase::Mutation)
-            .map(|c| {
-                recipe(
-                    config,
-                    helpers,
-                    &c.launch,
-                    &c.run_as,
-                    &c.session_requirement,
-                )
-                .map(Box::new)
-            })
-            .transpose()?;
-        let mut detection = program
-            .invocation(index, SoftwarePhase::Before)
-            .map(|c| {
-                recipe(
-                    config,
-                    helpers,
-                    &c.launch,
-                    &c.run_as,
-                    &c.session_requirement,
-                )
-                .map(Box::new)
-            })
-            .transpose()?;
-        for (source, phase) in [
-            (&mut mutation, SoftwarePhase::Mutation),
-            (&mut detection, SoftwarePhase::Before),
-        ] {
-            if let (Some(source), Some(invocation), Some(bundle)) = (
-                source.as_mut(),
-                program.invocation(index, phase),
-                step.format.bundle().map(|(manifest, _)| manifest),
-            ) {
-                if let Some((member, _)) = bundle.entries.iter().find(|(_, f)| {
-                    crate::backend::plan::hex(&f.sha256)
-                        == invocation.launch.artifact.sha256.as_str()
+        let original_recipe = |command: &SoftwareInvocation| -> Result<Box<Artifacts>, Error> {
+            let mut source = recipe(
+                config,
+                helpers,
+                &command.launch,
+                &command.run_as,
+                &command.session_requirement,
+            )?;
+            if let Some((manifest, _)) = step.format.bundle() {
+                if let Some((member, _)) = manifest.entries.iter().find(|(_, file)| {
+                    crate::backend::plan::hex(&file.sha256)
+                        == command.launch.artifact.sha256.as_str()
                 }) {
-                    source.content = PathBuf::from(&invocation.launch.cwd).join(member);
+                    source.content = PathBuf::from(&command.launch.cwd).join(member);
                 }
             }
-        }
+            Ok(Box::new(source))
+        };
+        let detection = program
+            .invocation(index, SoftwarePhase::Before)
+            .map(original_recipe)
+            .transpose()?;
         // Reuse every original protected coordinate. No current compiler decision, filename
         // convention, or filesystem availability can select a replacement on recovery.
         let files = step
@@ -165,39 +144,37 @@ pub(crate) fn materials(
             .map(|m| (PathBuf::from(&m.path), m.artifact.clone()))
             .collect();
         let mut mutations = std::collections::BTreeMap::new();
-        for phase in [
-            SoftwarePhase::Mutation,
-            SoftwarePhase::Upgrade,
-            SoftwarePhase::Removal,
-            SoftwarePhase::Attach,
-            SoftwarePhase::Stage,
-            SoftwarePhase::Cleanup,
-        ] {
-            if let Some(command) = program.invocation(index, phase) {
-                mutations.insert(
-                    phase,
-                    Box::new(recipe(
-                        config,
-                        helpers,
-                        &command.launch,
-                        &command.run_as,
-                        &command.session_requirement,
-                    )?),
-                );
+        for (&phase, command) in &step.invocations {
+            mutations.insert(phase, original_recipe(command)?);
+        }
+        if delegate.is_none() {
+            delegate = mutations
+                .values()
+                .find_map(|source| source.delegate.clone())
+                .or_else(|| {
+                    detection
+                        .as_ref()
+                        .and_then(|source| source.delegate.clone())
+                });
+            if delegate.is_none() {
+                if let (RunAs::User { account }, SessionRequirement::ActiveUser { session, .. }) =
+                    step.detection.context()
+                {
+                    delegate = Some(
+                        helpers.connect_peer(
+                            account.subject.as_str(),
+                            session
+                                .as_str()
+                                .split('/')
+                                .nth(1)
+                                .ok_or(Error::Identity)?
+                                .parse()
+                                .map_err(|_| Error::Identity)?,
+                            session,
+                        )?,
+                    );
+                }
             }
-        }
-        if let Some(original) = mutation {
-            mutations.insert(SoftwarePhase::Mutation, original);
-        }
-        if delegate.is_none() && matches!(step.install.run_as, RunAs::User { .. }) {
-            delegate = recipe(
-                config,
-                helpers,
-                &step.install.launch,
-                &step.install.run_as,
-                &step.install.session_requirement,
-            )?
-            .delegate;
         }
         sources.push(SoftwareStepArtifacts {
             mutations,
@@ -215,22 +192,15 @@ pub(crate) fn materials(
     })
 }
 
-/// Every frozen software input, including commands not selected by this intent or state.
-/// Material ownership follows declarations; executable phase selection is a separate concern.
+/// Every invocation retained by the original reachable phase closure.
+/// Recovery uses only original frozen inputs.
 pub(crate) fn software_invocations(
     step: &SoftwareProgramStep,
 ) -> impl Iterator<Item = &SoftwareInvocation> {
-    std::iter::once(&step.install)
-        .chain(step.auxiliary.values())
-        .chain(step.uninstall.iter())
-        .chain(match &step.upgrade {
-            SoftwareUpgrade::InPlace { invocation } => Some(invocation.as_ref()),
-            _ => None,
-        })
-        .chain(match &step.detection {
-            SoftwareDetector::Script { invocation } => Some(invocation.as_ref()),
-            _ => None,
-        })
+    step.invocations.values().chain(match &step.detection {
+        SoftwareDetector::Script { invocation } => Some(invocation.as_ref()),
+        _ => None,
+    })
 }
 
 /// Pure reference projection of the original frozen input. Never reconnect a helper or
@@ -297,7 +267,7 @@ pub(crate) fn references(
                     )
                 };
                 insert(path, &invocation.launch.artifact.sha256)?;
-                if let Some(manifest) = bundle {
+                if let (Some(manifest), Some(_)) = (bundle, member) {
                     for (name, member) in &manifest.entries {
                         let digest = Digest::new(crate::backend::plan::hex(&member.sha256))
                             .map_err(|_| Error::Untrusted)?;

@@ -272,12 +272,16 @@ async fn crl_watermarks_reject_rollback_and_conflict_and_revocation_survives_res
         client.runtime_readiness().unwrap_err(),
         Error::CredentialRevoked
     );
+    assert!(client.runtime_revoked().unwrap());
+    assert!(client.runtime_gate().revoked());
     drop(client);
     let client = server.client(&root, OpenMode::Existing);
     assert_eq!(
         client.runtime_readiness().unwrap_err(),
         Error::CredentialRevoked
     );
+    assert!(client.runtime_revoked().unwrap());
+    assert!(client.runtime_gate().revoked());
     assert_eq!(client.registration().unwrap(), binding);
 }
 

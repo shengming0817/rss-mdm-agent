@@ -73,16 +73,27 @@ fn parse(
     }
     Ok(result)
 }
+fn proxy_writable() -> bool {
+    let control = r"Software\Policies\Microsoft\Internet Explorer\Control Panel";
+    for root in [HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE] {
+        match policy_dword(root, control, "Proxy") {
+            Ok(None | Some(0)) => (),
+            _ => return false,
+        }
+    }
+    matches!(
+        policy_dword(
+            HKEY_LOCAL_MACHINE,
+            r"Software\Policies\Microsoft\Windows\CurrentVersion\Internet Settings",
+            "ProxySettingsPerUser"
+        ),
+        Ok(None | Some(1))
+    )
+}
 pub(super) fn read() -> Result<Vec<SettingsTarget>, Error> {
     let options = options()?;
     let parsed = parse(&options.server, options.flags & PROXY_TYPE_PROXY != 0);
-    let managed = policy_present(
-        HKEY_CURRENT_USER,
-        r"Software\Policies\Microsoft\Internet Explorer\Control Panel",
-    ) || policy_present(
-        HKEY_LOCAL_MACHINE,
-        r"Software\Policies\Microsoft\Windows\CurrentVersion\Internet Settings",
-    );
+    let managed = !proxy_writable();
     let mut fields = vec![];
     for protocol in ["http", "https", "socks"] {
         let value = parsed.as_ref().ok().map(|p| {
@@ -128,7 +139,7 @@ pub(super) fn read() -> Result<Vec<SettingsTarget>, Error> {
         "current-user",
         "当前用户代理",
         fields,
-        !managed && parsed.is_ok(),
+        !managed,
         managed.then_some("由组织代理策略管理"),
     )];
     let mut proxy = WINHTTP_PROXY_INFO::default();
@@ -166,12 +177,10 @@ pub(super) fn apply(patch: &SettingsPatch, before: &SettingsSnapshot) -> Result<
     else {
         return Err(Error::Unsupported);
     };
-    if target != "current-user" || read()? != before.targets {
-        return Err(Error::Conflict);
-    }
-    if !before.targets.iter().any(|t| t.id == *target && t.writable) {
+    if target != "current-user" {
         return Err(Error::Denied);
     }
+    check_change(patch, before, &read()?)?;
     let current = options()?;
     // WinINet has one manual enable flag. Preserve dormant protocol settings rather than
     // silently enabling or discarding unedited entries when an individual endpoint changes.
@@ -184,7 +193,11 @@ pub(super) fn apply(patch: &SettingsPatch, before: &SettingsSnapshot) -> Result<
         return Err(Error::Unsupported);
     }
     let endpoints_changed = [http, https, socks].iter().any(|p| p.is_some());
-    let mut servers = parse(&current.server, current.flags & PROXY_TYPE_PROXY != 0)?;
+    let mut servers = if endpoints_changed {
+        parse(&current.server, current.flags & PROXY_TYPE_PROXY != 0)?
+    } else {
+        std::collections::BTreeMap::new()
+    };
     if let Some(all) = servers.remove("all") {
         for protocol in ["http", "https", "socks", "ftp"] {
             servers

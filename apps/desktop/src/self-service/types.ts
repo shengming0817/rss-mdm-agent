@@ -212,7 +212,6 @@ export type AdmissionStatus = "admitted" | "denied";
  * via the `definition` "DispatchCause".
  */
 export type DispatchCause =
-  | "capabilityUnavailable"
   | "clockUnavailable"
   | "cancelled"
   | {
@@ -220,7 +219,6 @@ export type DispatchCause =
     }
   | "staleRevision"
   | "runnerMismatch"
-  | "configurationUnavailable"
   | "authorityUnavailable"
   | "lifecycleChanged"
   | "runnerRejected"
@@ -1274,7 +1272,6 @@ export type SoftwareBlock =
   | "protected"
   | "ruleDisabled"
   | "identityUnknown"
-  | "observationUnavailable"
   | "updateUnknown"
   | "noGui"
   | "unsupported";
@@ -2469,10 +2466,6 @@ export interface SettingsTarget {
    */
   options: SettingsOption[];
   /**
-   * Whether current policy, privilege and native support permit edits.
-   */
-  writable: boolean;
-  /**
    * Why writes are unavailable; reads remain independent.
    */
   reason: string | null;
@@ -2484,6 +2477,10 @@ export interface SettingsTarget {
  * via the `definition` "SettingsField".
  */
 export interface SettingsField {
+  /**
+   * Whether this exact field can currently be edited through its native adapter.
+   */
+  writable: boolean;
   /**
    * Code-owned field identifier, used only for presentation.
    */
@@ -2871,7 +2868,7 @@ export interface LocalSoftwareChoice {
   action: LocalSoftwareAction;
 }
 /**
- * Exact observed installation in an authorized immutable data snapshot.
+ * Stable installation identity within a currently authorized collection definition.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "SoftwareRef".
@@ -2881,10 +2878,6 @@ export interface SoftwareRef {
    * Service-owned collection definition.
    */
   query: QueryRef;
-  /**
-   * Snapshot digest and row position, independently revalidated by the service.
-   */
-  cursor: DataCursor;
   /**
    * Native collector's stable installation identity.
    */
@@ -2905,22 +2898,6 @@ export interface QueryRef {
    * Digest of the complete current definition.
    */
   revision: Digest;
-}
-/**
- * A cursor is only a position; every read rechecks caller authorization.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "DataCursor".
- */
-export interface DataCursor {
-  /**
-   * Exact snapshot digest, preventing pages from mixing observations.
-   */
-  snapshot: Digest;
-  /**
-   * Exclusive row position.
-   */
-  offset: number;
 }
 /**
  * Safe immutable preview of a locally prepared operation; executable input stays in the journal.
@@ -3163,6 +3140,22 @@ export interface DataRead {
   maxAgeSeconds: number | null;
 }
 /**
+ * A cursor is only a position; every read rechecks caller authorization.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "DataCursor".
+ */
+export interface DataCursor {
+  /**
+   * Exact snapshot digest, preventing pages from mixing observations.
+   */
+  snapshot: Digest;
+  /**
+   * Exclusive row position.
+   */
+  offset: number;
+}
+/**
  * Authorized software projection carrying the original observation quality.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -3214,7 +3207,7 @@ export interface InstalledSoftware {
    */
   coverage: Digest;
   /**
-   * Snapshot-bound reference, never a filesystem path selector.
+   * Collector identity, never a filesystem path selector.
    */
   reference: SoftwareRef;
   /**

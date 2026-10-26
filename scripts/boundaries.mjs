@@ -1023,7 +1023,6 @@ export function checkTree(treeRoot = root, executable) {
         "rusqlite.workspace = true",
         'execution-sqlite = { path = "../../../crates/execution-sqlite", features = ["test-support"] }',
         'execution-mcp = { path = "../../../crates/execution-mcp" }',
-        'execution-capability = { path = "../../../crates/execution-capability" }',
         'execution-lifecycle = { path = "../../../crates/execution-lifecycle" }',
         'tokio = { workspace = true, features = ["process", "net", "rt-multi-thread"] }',
         "tokio-util.workspace = true",

@@ -60,9 +60,10 @@ impl Core {
             return Err(Error::Denied);
         }
         let target = network_check::normalize(target)?;
+        let initiator = self.software_initiator(command, origin)?;
         if let Some(original) = self
             .app
-            .service_resource_owner(&network_check::resource(context, &target)?)
+            .service_resource_owner(&network_check::resource(&initiator, &target)?)
             .map_err(map_app_error)?
         {
             let plan = self.network_input(command, context, &original)?;
@@ -75,14 +76,12 @@ impl Core {
             command.session,
             command.binding.as_ref().ok_or(Error::Denied)?,
         )?;
-        let initiator = self.software_initiator(command, origin)?;
         let (plan, artifacts) = network_check::compile::prepare(
             target,
             request.clone(),
             &self.host.root,
             &self.host.local_actor,
             initiator,
-            context,
             self.host.clock.millis()?,
             &self.config,
             &mut self.material_root,
@@ -130,19 +129,11 @@ impl Core {
             .map_err(map_app_error)?;
         if plan.spec().launch.interpreter.profile.id.as_str() != PROFILE
             || plan.spec().request.operation.action.as_str() != ACTION
-            || metadata::<NativeContextRef>(&plan, "network-check-context")? != *context
         {
             return Err(Error::Denied);
         }
-        let Initiator::Human { os_session } = &plan.spec().request.initiator else {
-            return Err(Error::Denied);
-        };
-        if os_session.account.subject.as_str() != command.subject
-            || command.binding.as_ref() != Some(&os_session.session)
-            || os_session.device != self.host.root.device
-        {
-            return Err(Error::Denied);
-        }
+        self.data_context(command, context)?;
+        crate::account_identity::verify_local_owner(&plan, &self.host.root, &command.subject)?;
         Ok(plan)
     }
     fn network_status(

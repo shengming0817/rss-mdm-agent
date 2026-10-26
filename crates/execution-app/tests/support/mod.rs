@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 use execution_app::*;
-use execution_capability::*;
 use execution_contract::*;
 
 use std::sync::{Arc, Mutex};
@@ -70,8 +69,7 @@ pub struct State {
     pub risk: Option<RiskLevel>,
     pub accesses: Option<Vec<Access>>,
     pub consumer: Option<Id>,
-    pub capability_error: Option<execution_app::Error>,
-    pub capability_hook: Option<(usize, Arc<dyn Fn() + Send + Sync>)>,
+    pub read_hook_access: Option<Access>,
     pub read_hook: Option<Arc<dyn Fn() + Send + Sync>>,
     pub runner_facts: bool,
     pub bound: bool,
@@ -82,11 +80,7 @@ pub struct State {
     pub read: bool,
     pub audit: bool,
 
-    pub capability: bool,
-    pub capabilities: usize,
-    pub block_capability_on: usize,
     pub admissions: usize,
-    pub config_audits: Vec<ConfigChange>,
 }
 #[derive(Clone)]
 pub struct TestHost {
@@ -101,8 +95,7 @@ impl TestHost {
                 risk: Some(RiskLevel::One),
                 accesses: None,
                 consumer: None,
-                capability_error: None,
-                capability_hook: None,
+                read_hook_access: None,
                 read_hook: None,
                 runner_facts: true,
                 bound: true,
@@ -113,11 +106,7 @@ impl TestHost {
                 read: true,
                 audit: true,
 
-                capability: true,
-                capabilities: 0,
-                block_capability_on: usize::MAX,
                 admissions: 0,
-                config_audits: vec![],
             })),
             template,
         }
@@ -160,9 +149,12 @@ impl AppHost for TestHost {
         {
             return Err(execution_app::JournalError::Denied);
         }
-        let hook = if matches!(
-            r.access,
-            Access::ReadResult | Access::Execute | Access::RunnerFact
+        let hook = if s.read_hook_access.map_or(
+            matches!(
+                r.access,
+                Access::ReadResult | Access::Execute | Access::RunnerFact
+            ),
+            |access| access == r.access,
         ) {
             s.read_hook.take()
         } else {
@@ -175,108 +167,14 @@ impl AppHost for TestHost {
         Ok(())
     }
     fn reliable_now(&self) -> Result<u64, execution_app::JournalError> {
-        let state = self.state.lock().unwrap();
-        if state.clock_error {
+        let mut state = self.state.lock().unwrap();
+        if std::mem::take(&mut state.clock_error) {
             Err(execution_app::JournalError::Clock)
         } else {
             Ok(state.now)
         }
     }
-    fn capabilities(
-        &self,
-        _: &FrozenExecution,
-    ) -> Result<CapabilitySnapshot, execution_app::Error> {
-        let mut s = self.state.lock().unwrap();
-        s.capabilities += 1;
-        let hook = if s
-            .capability_hook
-            .as_ref()
-            .is_some_and(|(count, _)| *count == s.capabilities)
-        {
-            s.capability_hook.take().map(|(_, hook)| hook)
-        } else {
-            None
-        };
-        let available = s.capability && s.capabilities < s.block_capability_on;
-        let p = self.template.spec();
-        fn inventory<T>(value: Vec<T>, available: bool) -> Inventory<T> {
-            Inventory {
-                complete: true,
-                entries: value
-                    .into_iter()
-                    .map(|capability| Entry {
-                        capability,
-                        availability: if available {
-                            Availability::Available
-                        } else {
-                            Availability::Blocked
-                        },
-                    })
-                    .collect(),
-            }
-        }
-        let snapshot = CapabilitySnapshot {
-            verified_at_unix_ms: s.now,
-            fresh_until_unix_ms: 2000,
-            environment: EnvironmentSnapshot {
-                authority: p.request.authority.clone(),
-                device: p.request.target.device.clone(),
-                source: reference("fixture-capabilities"),
-                platform: Some(p.request.target.platform),
-                software: inventory(
-                    p.execution
-                        .software_program()
-                        .map(|p| {
-                            let mut kinds = vec![];
-                            for s in &p.steps {
-                                if !kinds.contains(&s.format.adapter()) {
-                                    kinds.push(s.format.adapter());
-                                }
-                            }
-                            kinds
-                        })
-                        .unwrap_or_default(),
-                    available,
-                ),
-                interpreters: inventory(vec![p.launch.interpreter.clone()], available),
-                launch_io: inventory(
-                    vec![
-                        LaunchIoCapability::ControlledStdin(TextEncoding::Utf8),
-                        LaunchIoCapability::CapturedText(TextEncoding::Utf8),
-                        LaunchIoCapability::CapturedText(TextEncoding::Utf16Le),
-                    ],
-                    available,
-                ),
-                run_as: inventory(vec![p.run_as.clone()], available),
-                user_sessions: inventory(
-                    match &p.run_as {
-                        RunAs::User { account } => vec![account.clone()],
-                        _ => vec![],
-                    },
-                    available,
-                ),
-                isolation: inventory(
-                    vec![
-                        Isolation::NetworkDenied,
-                        Isolation::NetworkAllowlist,
-                        Isolation::ReadPaths,
-                        Isolation::WritePaths,
-                        Isolation::ChildProcessesDenied,
-                        Isolation::Sandbox,
-                    ],
-                    available,
-                ),
-            },
-        };
-        drop(s);
-        if let Some(hook) = hook {
-            hook();
-        }
-        if let Some(error) = self.state.lock().unwrap().capability_error {
-            return Err(error);
-        }
-        Ok(snapshot)
-    }
+
     fn admit(
         &self,
         plan: &FrozenExecution,
@@ -300,14 +198,6 @@ impl AppHost for TestHost {
             },
             valid_until_unix_ms: 2000.min(plan.spec().validity.expires_at_unix_ms),
         })
-    }
-    fn configuration_change(&self, change: &ConfigChange) -> Result<(), execution_app::Error> {
-        self.state
-            .lock()
-            .unwrap()
-            .config_audits
-            .push(change.clone());
-        Ok(())
     }
 }
 

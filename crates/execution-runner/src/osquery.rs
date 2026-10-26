@@ -1,8 +1,8 @@
 //! The template file and its parameters are independently frozen; no caller-supplied CLI flags.
 use execution_app::Error;
 use execution_contract::{InputValue, Platform};
+use rss_mdm_agent_wire::{osquery::SqlTemplate, runtime::TaskPlatform};
 use std::collections::BTreeMap;
-mod sql;
 /// Current interpreter calling convention; the former version-only profile is not accepted.
 pub const PROFILE: &str = "native-osquery-template";
 const PREFIX: &[&str] = &[
@@ -22,8 +22,14 @@ pub fn arguments(
     platform: Platform,
 ) -> Result<Vec<String>, Error> {
     let text = std::str::from_utf8(template).map_err(|_| Error::Denied)?;
-    let template = sql::SqlTemplate::new(text).map_err(|_| Error::Denied)?;
-    template.validate_platform(platform)?;
+    let template = SqlTemplate::new(text).map_err(|_| Error::Denied)?;
+    template
+        .validate_platform(match platform {
+            Platform::Windows => TaskPlatform::Windows,
+            Platform::Macos => TaskPlatform::Macos,
+            Platform::Linux => return Err(Error::Unsupported),
+        })
+        .map_err(|_| Error::Denied)?;
     let mut values = serde_json::Map::new();
     for (name, value) in parameters {
         let InputValue::Literal { value } = value else {

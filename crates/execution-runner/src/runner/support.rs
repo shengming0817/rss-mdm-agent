@@ -1,21 +1,8 @@
 //! Runner-owned test assembly. No fixture authority is compiled into production.
 use super::*;
 use execution_app::{AccessRequest, AdmissionGate, ExecutionGate};
-use execution_app::{
-    AppConfig, AppHost, CapabilitySnapshot, ExecutionApp, RequestContext, ServiceBinding,
-};
-use execution_capability::{
-    Availability, Entry, EnvironmentSnapshot, Inventory, Isolation, LaunchIoCapability,
-};
-pub fn id(value: &str) -> Id {
-    Id::new(value).unwrap()
-}
-fn reference(value: &str) -> VersionedRef {
-    VersionedRef {
-        id: id(value),
-        revision: id("1"),
-    }
-}
+use execution_app::{AppConfig, AppHost, ExecutionApp, RequestContext, ServiceBinding};
+
 pub fn plan() -> FrozenExecution {
     let original = FrozenExecution::freeze(
         decode_execution(
@@ -50,18 +37,6 @@ impl TestHost {
     }
 }
 
-fn inventory<T>(items: Vec<T>) -> Inventory<T> {
-    Inventory {
-        complete: true,
-        entries: items
-            .into_iter()
-            .map(|capability| Entry {
-                capability,
-                availability: Availability::Available,
-            })
-            .collect(),
-    }
-}
 impl AppHost for TestHost {
     fn service_binding(&self) -> Result<ServiceBinding, Error> {
         Ok(ServiceBinding {
@@ -91,45 +66,7 @@ impl AppHost for TestHost {
     fn reliable_now(&self) -> Result<u64, execution_app::JournalError> {
         Ok(self.now())
     }
-    fn capabilities(&self, _: &FrozenExecution) -> Result<CapabilitySnapshot, Error> {
-        let p = self.template.spec();
-        Ok(CapabilitySnapshot {
-            verified_at_unix_ms: self.now(),
-            fresh_until_unix_ms: self.now() + 60000,
-            environment: EnvironmentSnapshot {
-                authority: p.request.authority.clone(),
-                device: p.request.target.device.clone(),
-                source: reference("runner-test-capabilities"),
-                platform: Some(p.request.target.platform),
-                software: inventory(vec![
-                    SoftwareKind::Msi,
-                    SoftwareKind::Winget,
-                    SoftwareKind::Pkg,
-                    SoftwareKind::Homebrew,
-                    SoftwareKind::MacosBundle,
-                    SoftwareKind::WindowsBundle,
-                ]),
-                interpreters: inventory(vec![p.launch.interpreter.clone()]),
-                launch_io: inventory(vec![
-                    LaunchIoCapability::ControlledStdin(TextEncoding::Utf8),
-                    LaunchIoCapability::CapturedText(TextEncoding::Utf8),
-                ]),
-                run_as: inventory(vec![p.run_as.clone()]),
-                user_sessions: inventory(match &p.run_as {
-                    RunAs::User { account } => vec![account.clone()],
-                    _ => vec![],
-                }),
-                isolation: inventory(vec![
-                    Isolation::NetworkDenied,
-                    Isolation::NetworkAllowlist,
-                    Isolation::ReadPaths,
-                    Isolation::WritePaths,
-                    Isolation::ChildProcessesDenied,
-                    Isolation::Sandbox,
-                ]),
-            },
-        })
-    }
+
     fn admit(
         &self,
         plan: &FrozenExecution,
@@ -143,9 +80,6 @@ impl AppHost for TestHost {
             execution_gate: ExecutionGate::Direct,
             valid_until_unix_ms: plan.spec().validity.expires_at_unix_ms,
         })
-    }
-    fn configuration_change(&self, _: &execution_app::ConfigChange) -> Result<(), Error> {
-        Ok(())
     }
 }
 // Explicit fixture-only carrier: retain production's Real/Test authority separation.

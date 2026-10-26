@@ -261,7 +261,7 @@ fn arguments(
     tap: &str,
     cask: bool,
 ) -> Result<Vec<String>, Error> {
-    let commands = crate::backend::commands::software_commands(&request.action)?;
+    let commands = execution_contract::software_commands(&request.action);
     let invocation = match request.operation {
         WorkerOperation::Upgrade => commands.upgrade.ok_or(Error::Unsupported)?,
         WorkerOperation::Uninstall | WorkerOperation::RemovePrevious => {

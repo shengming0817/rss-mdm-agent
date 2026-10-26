@@ -36,9 +36,7 @@ fn unknown_detector_activity_keeps_real_exit_and_cannot_skip_to_mutation() {
                 materials: Vec::new(),
                 signatures: Vec::new(),
                 upgrade: SoftwareUpgrade::Deny {},
-                install: invocation.clone(),
-                auxiliary: Default::default(),
-                uninstall: None,
+                invocations: [(SoftwarePhase::Mutation, invocation.clone())].into(),
                 detection: SoftwareDetector::Script {
                     invocation: Box::new(invocation),
                 },
@@ -85,7 +83,7 @@ fn unknown_detector_activity_keeps_real_exit_and_cannot_skip_to_mutation() {
         &f.root.join("software.sqlite"),
         host,
         carrier.clone(),
-        execution_app::AppConfig::test_defaults(1),
+        execution_app::AppConfig::test_defaults(),
     )
     .unwrap();
     let status = app.request_execution(&caller, &plan).unwrap();
@@ -298,12 +296,22 @@ fn main() {
                     payload: install.launch.artifact.clone(),
                     materials: vec![],
                     signatures: vec![],
-                    upgrade: SoftwareUpgrade::InPlace {
-                        invocation: Box::new(upgrade),
+                    upgrade: if intent == SoftwareOperation::Install {
+                        SoftwareUpgrade::InPlace {}
+                    } else {
+                        SoftwareUpgrade::Deny {}
                     },
-                    install,
-                    uninstall: Some(uninstall),
-                    auxiliary: Default::default(),
+                    invocations: match intent {
+                        SoftwareOperation::Install => [
+                            (SoftwarePhase::Mutation, install),
+                            (SoftwarePhase::Upgrade, upgrade),
+                        ]
+                        .into(),
+                        SoftwareOperation::Uninstall => {
+                            [(SoftwarePhase::Mutation, uninstall)].into()
+                        }
+                        SoftwareOperation::Detect => Default::default(),
+                    },
                     detection: SoftwareDetector::Script {
                         invocation: Box::new(detect),
                     },
@@ -362,7 +370,7 @@ fn main() {
             &database,
             host,
             carrier.clone(),
-            execution_app::AppConfig::test_defaults(1),
+            execution_app::AppConfig::test_defaults(),
         )
         .unwrap();
         let _attempt = app
@@ -481,10 +489,10 @@ fn native_receipt_fixture() -> (Fixture, FrozenExecution, Artifacts) {
                 materials: vec![],
                 signatures: vec![],
                 upgrade: SoftwareUpgrade::Deny {},
-                install,
-                auxiliary: Default::default(),
-                uninstall: None,
+                invocations: [(SoftwarePhase::Mutation, install)].into(),
                 detection: SoftwareDetector::PkgReceipt {
+                    run_as: input.run_as.clone(),
+                    session_requirement: input.session_requirement.clone(),
                     receipt: "com.rss-mdm-agent.nonexistent-deadline-fixture".into(),
                     version: PackageValue::new("1").unwrap(),
                 },
@@ -536,7 +544,7 @@ fn native_before_checkpoint_does_not_consume_first_dispatch_deadline() {
         &f.root.join("deadline.sqlite"),
         host,
         carrier.clone(),
-        execution_app::AppConfig::test_defaults(1),
+        execution_app::AppConfig::test_defaults(),
     )
     .unwrap();
     let attempt = app

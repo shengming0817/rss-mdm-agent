@@ -34,9 +34,9 @@ impl FixtureService {
             .try_exists()
             .map_err(|_| execution_app::Error::Unavailable)?;
         let app = if existing {
-            support::reopen_app(path, host, runner, AppConfig::test_defaults(1))?
+            support::reopen_app(path, host, runner, AppConfig::test_defaults())?
         } else {
-            support::create_app(path, host, runner, AppConfig::test_defaults(1))?
+            support::create_app(path, host, runner, AppConfig::test_defaults())?
         };
         Ok(Arc::new(Self {
             app: Mutex::new(app),

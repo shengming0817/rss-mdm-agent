@@ -137,8 +137,6 @@ function limits(value: LimitReason): string {
 }
 function causes(value: Exclude<DispatchCause, object>): string {
   switch (value) {
-    case "capabilityUnavailable":
-      return "能力不可用";
     case "clockUnavailable":
       return "可信时间不可用";
     case "cancelled":
@@ -147,8 +145,6 @@ function causes(value: Exclude<DispatchCause, object>): string {
       return "可信快照已过期";
     case "runnerMismatch":
       return "执行器不匹配";
-    case "configurationUnavailable":
-      return "执行配置不可用";
     case "authorityUnavailable":
       return "执行授权不可用";
     case "lifecycleChanged":

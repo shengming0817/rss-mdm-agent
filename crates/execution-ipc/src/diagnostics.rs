@@ -85,7 +85,7 @@ fn classify(error: Error) -> ProcessFailureKind {
     match error {
         Error::Denied => ProcessFailureKind::Denied,
         Error::Unbound => ProcessFailureKind::Unbound,
-        Error::Capability | Error::Degraded => ProcessFailureKind::Capability,
+        Error::Capability => ProcessFailureKind::Capability,
         Error::Unsupported => ProcessFailureKind::Unsupported,
         Error::InvalidInput | Error::Configuration => ProcessFailureKind::InvalidInput,
         Error::Capacity => ProcessFailureKind::Capacity,

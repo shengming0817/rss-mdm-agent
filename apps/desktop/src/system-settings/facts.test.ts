@@ -104,10 +104,15 @@ it("reports old native power state even when the battery collection is fresh", (
           id: "power-source",
           name: "Power",
           options: [],
-          writable: false,
           reason: null,
           fields: [
-            { key: "source", value: "AC", quality: "complete", reason: null },
+            {
+              key: "source",
+              value: "AC",
+              quality: "complete",
+              writable: false,
+              reason: null,
+            },
           ],
         },
       ],

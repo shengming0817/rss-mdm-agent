@@ -1322,7 +1322,7 @@ mod local_software_error_tests {
             "detected":null,
             "prepared":{
                 "request":"local-detection","digest":"a".repeat(64),
-                "choice":{"request":"local-detection","software":{"query":{"id":"native:apps","revision":"b".repeat(64)},"cursor":{"snapshot":"c".repeat(64),"offset":0},"installation":"app"},"action":"detect"},
+                "choice":{"request":"local-detection","software":{"query":{"id":"native:apps","revision":"b".repeat(64)},"installation":"app"},"action":"detect"},
                 "name":"App","initiator":{"kind":"human","osSession":{"device":"device","account":{"platform":"macos","subject":"uid:501"},"session":"login"}},
                 "identity":"system","targetVersion":null,"startBeforeUnixMs":1000
             },

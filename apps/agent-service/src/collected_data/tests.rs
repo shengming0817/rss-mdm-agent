@@ -1329,7 +1329,7 @@ async fn journal_delivery_capture_checks_success_hash_and_confirms_terminal_fail
             &db.path,
             host.clone(),
             runner.clone(),
-            AppConfig::test_defaults(1),
+            AppConfig::test_defaults(),
         )
         .unwrap();
         app.request_execution(&caller, &input).unwrap();
@@ -1355,7 +1355,7 @@ async fn journal_delivery_capture_checks_success_hash_and_confirms_terminal_fail
         drop(app);
         drop(data);
         let mut app =
-            local::reopen_app(&db.path, host, runner.clone(), AppConfig::test_defaults(1)).unwrap();
+            local::reopen_app(&db.path, host, runner.clone(), AppConfig::test_defaults()).unwrap();
         let mut data = projection(&client);
         for _ in 0..32 {
             crate::service::Core::capture_native_delivery(&mut app, &mut data, &input, &read)

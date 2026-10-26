@@ -28,9 +28,6 @@ pub enum Error {
     /// Capability is blocked, unknown, unsupported or stale.
     #[error("required capability unavailable")]
     Capability,
-    /// No conforming configuration is active. Reads and safe recovery remain available.
-    #[error("new execution disabled")]
-    Degraded,
     /// The requested execution operation or adapter is unsupported.
     #[error("execution mode unsupported")]
     Unsupported,

@@ -11,8 +11,6 @@ pub(crate) fn prepare(
     binding: &ServiceBinding,
     actor: &ActorId,
     initiator: Initiator,
-    context: &NativeContextRef,
-    policy: &crate::local_permissions::Policy,
     now: u64,
     config: &crate::ExecutionConfig,
     root: &mut execution_runner::staging::MaterialRoot,
@@ -87,23 +85,41 @@ pub(crate) fn prepare(
             },
         ),
         (
-            "local-settings-context".into(),
-            InputValue::Literal {
-                value: serde_json::to_value(context).map_err(|_| Error::Protocol)?,
-            },
+            "local-owner".into(),
+            crate::account_identity::local_owner(&initiator)?,
         ),
     ]
     .into();
-    if action.is_write() {
-        let key = format!(
-            "settings:{}",
-            match action.section() {
-                SettingsSection::Display => "display",
-                SettingsSection::Network => "network",
-                SettingsSection::Power => "power",
-                _ => return Err(Error::Denied),
+    if let Action::Change { patch, .. } = &action {
+        let key = match patch {
+            // Native display configuration validates and commits the full shared topology.
+            SettingsPatch::Display { .. } => "settings:display-topology".into(),
+            SettingsPatch::Proxy { target, .. } => {
+                if cfg!(windows) {
+                    // WinINet manual proxy preferences belong to the authenticated account.
+                    format!(
+                        "settings:proxy:{}",
+                        crate::collected_data::digest(&crate::account_identity::local_owner(
+                            &initiator
+                        )?)?
+                        .as_str()
+                    )
+                } else {
+                    format!(
+                        "settings:proxy:{}",
+                        crate::collected_data::digest(target)?.as_str()
+                    )
+                }
             }
-        );
+            SettingsPatch::Power { target, .. } => {
+                if cfg!(windows) {
+                    // Activating a scheme is shared even when only one AC/DC timeout was edited.
+                    "settings:power-scheme".into()
+                } else {
+                    format!("settings:power:{target}")
+                }
+            }
+        };
         parameters.insert(
             "exclusive-resources".into(),
             InputValue::Literal {
@@ -173,10 +189,7 @@ pub(crate) fn prepare(
                 not_before_unix_ms: now,
                 expires_at_unix_ms: now.checked_add(timeout).ok_or(Error::Clock)?,
             },
-            policy: plan::reference(
-                format!("local-settings:{}", policy.revision.as_str()),
-                policy.revision.as_str(),
-            )?,
+            policy: plan::reference("local-settings:native", "1")?,
         },
         &plan::storage_limits().input,
     )

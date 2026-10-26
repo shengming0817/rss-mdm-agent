@@ -3,14 +3,12 @@ use crate::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Exact observed installation in an authorized immutable data snapshot.
+/// Stable installation identity within a currently authorized collection definition.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SoftwareRef {
     /// Service-owned collection definition.
     pub query: QueryRef,
-    /// Snapshot digest and row position, independently revalidated by the service.
-    pub cursor: DataCursor,
     /// Native collector's stable installation identity.
     pub installation: Id,
 }
@@ -52,8 +50,6 @@ pub enum SoftwareBlock {
     RuleDisabled,
     /// Native identity, source or installation context cannot be established.
     IdentityUnknown,
-    /// Data is missing, stale, incomplete or changed since selection.
-    ObservationUnavailable,
     /// No allowed fixed update candidate is known.
     UpdateUnknown,
     /// The record is not a launchable GUI application.
@@ -80,7 +76,7 @@ pub struct SoftwareActionView {
 pub struct InstalledSoftware {
     /// Physical inventory containing this row, matching one of its page coverage identities.
     pub coverage: Digest,
-    /// Snapshot-bound reference, never a filesystem path selector.
+    /// Collector identity, never a filesystem path selector.
     pub reference: SoftwareRef,
     /// Native installation family.
     pub kind: InstalledSoftwareKind,

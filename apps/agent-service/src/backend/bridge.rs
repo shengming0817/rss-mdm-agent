@@ -209,8 +209,8 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                     &v.device_id,
                     v.platform,
                     wire::ExecutionIdentity::System,
-                    timeout.clamp(1000, 86_400_000),
-                    output.clamp(1024, 1_048_576),
+                    timeout,
+                    output,
                 )
             }
             wire::TaskPayload::Enrollment(v) => {
@@ -721,7 +721,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                     wire::TaskEvent::SoftwareResult(software_result(
                         spec,
                         None,
-                        |i, p| software_encoding(&evidence.input, i, p, spec.intent),
+                        |i, p| software_encoding(&evidence.input, i, p),
                         &self.policy,
                         evidence.observed_at_unix_ms,
                     )?)
@@ -768,7 +768,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
             return Ok(Some(wire::TaskEvent::SoftwareResult(software_result(
                 spec,
                 Some(progress.as_ref()),
-                |i, p| software_encoding(&evidence.input, i, p, spec.intent),
+                |i, p| software_encoding(&evidence.input, i, p),
                 &self.policy,
                 evidence.observed_at_unix_ms,
             )?)));
@@ -1010,37 +1010,13 @@ fn software_encoding(
     input: &execution_contract::FrozenExecution,
     index: usize,
     phase: execution_contract::SoftwarePhase,
-    intent: wire::SoftwareTaskIntent,
 ) -> Result<execution_contract::OutputSpec, Error> {
-    use execution_contract::{SoftwareDetector, SoftwarePhase as P};
-    let step = input
+    let invocation = input
         .spec()
         .execution
         .software_program()
-        .and_then(|p| p.steps.get(index))
+        .and_then(|program| program.invocation(index, phase))
         .ok_or(Error::Protocol)?;
-    let invocation = match phase {
-        P::Mutation if intent == wire::SoftwareTaskIntent::Uninstall => {
-            step.uninstall.as_ref().ok_or(Error::Protocol)?
-        }
-        P::Mutation => &step.install,
-        P::Upgrade => match &step.upgrade {
-            execution_contract::SoftwareUpgrade::InPlace { invocation } => invocation,
-            _ => return Err(Error::Protocol),
-        },
-        P::Removal => step
-            .auxiliary
-            .get(&phase)
-            .or(step.uninstall.as_ref())
-            .ok_or(Error::Protocol)?,
-        P::Prepare | P::Attach | P::Stage | P::Cleanup => {
-            step.auxiliary.get(&phase).ok_or(Error::Protocol)?
-        }
-        P::Before | P::RemovalAfter | P::After => match &step.detection {
-            SoftwareDetector::Script { invocation } => invocation.as_ref(),
-            _ => &step.install,
-        },
-    };
     Ok(invocation.launch.output)
 }
 fn software_result(
@@ -1083,7 +1059,7 @@ fn software_result(
                 diagnostic: "native observation unavailable".into(),
             },
         };
-        let commands = super::commands::software_commands(&step.action)?;
+        let commands = execution_contract::software_commands(&step.action);
         let policy_for = |phase| match phase {
             P::Upgrade => commands.upgrade.unwrap_or(commands.install),
             P::Removal => commands.uninstall.unwrap_or(commands.install),

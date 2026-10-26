@@ -150,7 +150,7 @@ pub(super) fn compile(
     (architecture, image): (&PackageValue, SoftwareMaterial),
 ) -> Result<(SoftwareProgramStep, SoftwareStepArtifacts), Error> {
     let action = &step.action;
-    let commands = crate::backend::commands::software_commands(action)?;
+    let commands = execution_contract::software_commands(action);
     let mut compiler = Compiler {
         config,
         root,
@@ -158,7 +158,15 @@ pub(super) fn compile(
         files: BTreeMap::new(),
         bundle_root: None,
     };
+    let needed = execution_contract::software_artifact_keys(step, payload.intent);
     for declared in &step.artifacts {
+        if !declared
+            .key
+            .strip_prefix(&format!("{index}/"))
+            .is_some_and(|key| needed.contains(key))
+        {
+            continue;
+        }
         let file = materials
             .files()
             .iter()
@@ -200,7 +208,10 @@ pub(super) fn compile(
             })
             .collect(),
     });
-    if let Some(manifest) = &bundle {
+    if let Some(manifest) = bundle
+        .as_ref()
+        .filter(|_| needed.contains(action.behavior.installer()))
+    {
         let primary = compiler
             .files
             .get(action.behavior.installer())
@@ -215,7 +226,17 @@ pub(super) fn compile(
                 manifest,
             )
             .map_err(crate::error::app_error)?;
-        let entry = &commands.install_script.ok_or(Error::Protocol)?.entry;
+        let entry = match (&action.behavior, intent, commands.detection) {
+            (wire::SoftwareTaskBehavior::Bundle(b), SoftwareOperation::Uninstall, _) => {
+                &b.uninstall.as_ref().ok_or(Error::Unsupported)?.entry
+            }
+            (
+                _,
+                SoftwareOperation::Detect,
+                Some(wire::SoftwareTaskDetection::Script { command }),
+            ) => &command.entry,
+            _ => &commands.install_script.ok_or(Error::Protocol)?.entry,
+        };
         let depth = Path::new(entry).components().count();
         let path = members.get(entry).ok_or(Error::Untrusted)?;
         let directory = path
@@ -239,7 +260,9 @@ pub(super) fn compile(
     }
     let mut tools = BTreeMap::new();
     match &action.behavior {
-        wire::SoftwareTaskBehavior::Winget(_) | wire::SoftwareTaskBehavior::Brew(_) => {
+        wire::SoftwareTaskBehavior::Winget(_) | wire::SoftwareTaskBehavior::Brew(_)
+            if intent != SoftwareOperation::Detect =>
+        {
             let kind = if matches!(action.behavior, wire::SoftwareTaskBehavior::Brew(_)) {
                 SoftwareManagerKind::Brew
             } else {
@@ -292,9 +315,14 @@ pub(super) fn compile(
                 ("spctl", "/usr/sbin/spctl"),
                 ("lipo", "/usr/bin/lipo"),
             ] {
+                if name == "hdiutil" && intent != SoftwareOperation::Install {
+                    continue;
+                }
                 tools.insert(name.into(), pin(Path::new(path))?);
             }
-            if matches!(d.payload, wire::SoftwareTaskDmgPayload::ContainedPkg { .. }) {
+            if intent != SoftwareOperation::Detect
+                && matches!(d.payload, wire::SoftwareTaskDmgPayload::ContainedPkg { .. })
+            {
                 let manager = config
                     .managers
                     .iter()
@@ -308,7 +336,9 @@ pub(super) fn compile(
                 tools.insert("pkgutil".into(), pin(Path::new("/usr/sbin/pkgutil"))?);
             }
         }
-        wire::SoftwareTaskBehavior::Msi(_) | wire::SoftwareTaskBehavior::Pkg(_) => {
+        wire::SoftwareTaskBehavior::Msi(_) | wire::SoftwareTaskBehavior::Pkg(_)
+            if intent != SoftwareOperation::Detect =>
+        {
             let kind = if matches!(action.behavior, wire::SoftwareTaskBehavior::Msi(_)) {
                 SoftwareManagerKind::Msi
             } else {
@@ -332,6 +362,11 @@ pub(super) fn compile(
         wire::SoftwareTaskBehavior::Bundle(b) => {
             for (name, script) in std::iter::once(("install-interpreter", &b.install))
                 .chain(b.uninstall.as_ref().map(|s| ("uninstall-interpreter", s)))
+                .filter(|(name, _)| match intent {
+                    SoftwareOperation::Install => *name == "install-interpreter",
+                    SoftwareOperation::Uninstall => *name == "uninstall-interpreter",
+                    SoftwareOperation::Detect => false,
+                })
             {
                 let profile = match script.interpreter {
                     wire::SoftwareTaskInterpreter::PowerShell7 => {
@@ -359,7 +394,12 @@ pub(super) fn compile(
                 tools.insert(name.into(), pin(Path::new(path))?);
             }
         }
-        wire::SoftwareTaskBehavior::Exe(_) | wire::SoftwareTaskBehavior::Msix(_) => (),
+        wire::SoftwareTaskBehavior::Exe(_)
+        | wire::SoftwareTaskBehavior::Msix(_)
+        | wire::SoftwareTaskBehavior::Winget(_)
+        | wire::SoftwareTaskBehavior::Brew(_)
+        | wire::SoftwareTaskBehavior::Msi(_)
+        | wire::SoftwareTaskBehavior::Pkg(_) => (),
     }
     if let Some(wire::SoftwareTaskDetection::Script { command }) = commands.detection {
         let profile = match command.interpreter {
@@ -390,11 +430,10 @@ pub(super) fn compile(
             }
         }
     }
-    if action
-        .signatures
-        .iter()
-        .any(|s| s.mechanism == wire::SoftwareTaskSignatureMechanism::Authenticode)
-    {
+    if action.signatures.iter().any(|s| {
+        compiler.files.contains_key(&s.artifact)
+            && s.mechanism == wire::SoftwareTaskSignatureMechanism::Authenticode
+    }) {
         let interpreter = config
             .interpreters
             .iter()
@@ -426,17 +465,23 @@ pub(super) fn compile(
             },
         );
     }
-    if matches!(
-        action.behavior,
-        wire::SoftwareTaskBehavior::Msi(_) | wire::SoftwareTaskBehavior::Pkg(_)
-    ) {
+    if intent != SoftwareOperation::Detect
+        && matches!(
+            action.behavior,
+            wire::SoftwareTaskBehavior::Msi(_) | wire::SoftwareTaskBehavior::Pkg(_)
+        )
+    {
         let name = if matches!(action.behavior, wire::SoftwareTaskBehavior::Msi(_)) {
             "package.msi"
         } else {
             "package.pkg"
         };
-        let keys = std::iter::once(action.behavior.installer())
-            .chain(commands.removal_artifact)
+        let keys = needed
+            .iter()
+            .copied()
+            .filter(|key| {
+                *key == action.behavior.installer() || commands.removal_artifact == Some(*key)
+            })
             .collect::<std::collections::BTreeSet<_>>();
         for key in keys {
             let (path, reference) = compiler.files.get(key).cloned().ok_or(Error::Untrusted)?;
@@ -452,12 +497,15 @@ pub(super) fn compile(
             compiler.files.insert(key.into(), (exported, reference));
         }
     }
-    let primary = compiler
-        .files
-        .get(action.behavior.installer())
-        .ok_or(Error::Untrusted)?
-        .1
-        .clone();
+    let declared = |key: &str| -> Result<ExactArtifactRef, Error> {
+        let record = step
+            .artifacts
+            .iter()
+            .find(|a| a.key.strip_prefix(&format!("{index}/")) == Some(key))
+            .ok_or(Error::Untrusted)?;
+        artifact(&record.sha256)
+    };
+    let primary = declared(action.behavior.installer())?;
     let format = match &action.behavior {
         wire::SoftwareTaskBehavior::Bundle(_) => SoftwareFormat::Bundle {
             manifest: bundle.ok_or(Error::Protocol)?,
@@ -491,12 +539,7 @@ pub(super) fn compile(
             layout: exe
                 .layout
                 .iter()
-                .map(|(path, key)| {
-                    Ok((
-                        path.clone(),
-                        compiler.files.get(key).ok_or(Error::Untrusted)?.1.clone(),
-                    ))
-                })
+                .map(|(path, key)| Ok((path.clone(), declared(key)?)))
                 .collect::<Result<_, Error>>()?,
         },
         wire::SoftwareTaskBehavior::Msix(msix) => SoftwareFormat::Msix {
@@ -596,9 +639,13 @@ pub(super) fn compile(
         request.operation = operation;
         command(compiler, request, invocation, &image)
     };
-    let (install, install_source) = build(&mut compiler, O::Install, commands.install)?;
+    let install = (intent == SoftwareOperation::Install)
+        .then(|| build(&mut compiler, O::Install, commands.install))
+        .transpose()?;
     // Only InPlace freezes an upgrade invocation. Never publish an unjournaled input.
-    let update = if commands.upgrade_policy == wire::SoftwareTaskUpgrade::InPlace {
+    let update = if intent == SoftwareOperation::Install
+        && commands.upgrade_policy == wire::SoftwareTaskUpgrade::InPlace
+    {
         Some(build(
             &mut compiler,
             O::Upgrade,
@@ -607,12 +654,16 @@ pub(super) fn compile(
     } else {
         None
     };
-    let removal = commands
-        .uninstall
-        .map(|c| build(&mut compiler, O::Uninstall, c))
-        .transpose()?;
-    let uninstall = removal.as_ref().map(|(c, _)| c.clone());
-    let mut auxiliary = BTreeMap::new();
+    let removal = if intent == SoftwareOperation::Uninstall {
+        Some(build(
+            &mut compiler,
+            O::Uninstall,
+            commands.uninstall.ok_or(Error::Unsupported)?,
+        )?)
+    } else {
+        None
+    };
+    let mut invocations = BTreeMap::new();
     let mut mutations = BTreeMap::new();
     if matches!(
         format,
@@ -652,7 +703,7 @@ pub(super) fn compile(
                 // Reserve closure within the original source invocation before any image effect.
                 command.timeout_ms = (command.timeout_ms / 4).min(30_000);
                 command.output_bytes = (command.output_bytes / 4).min(65_536);
-                if command.timeout_ms == 0 || command.output_bytes < 1024 {
+                if command.timeout_ms == 0 || command.output_bytes == 0 {
                     return Err(Error::Unsupported);
                 }
             }
@@ -660,29 +711,35 @@ pub(super) fn compile(
                 success: [0].into(),
                 reboot: Default::default(),
             };
-            auxiliary.insert(phase, command);
+            invocations.insert(phase, command);
             mutations.insert(phase, Box::new(source));
         }
     }
     match intent {
         SoftwareOperation::Install => {
-            mutations.insert(SoftwarePhase::Mutation, Box::new(install_source));
-            if let Some((_, source)) = &update {
-                mutations.insert(SoftwarePhase::Upgrade, Box::new(source.clone()));
+            let (command, source) = install.ok_or(Error::Protocol)?;
+            invocations.insert(SoftwarePhase::Mutation, command);
+            mutations.insert(SoftwarePhase::Mutation, Box::new(source));
+            if let Some((command, source)) = update {
+                invocations.insert(SoftwarePhase::Upgrade, command);
+                mutations.insert(SoftwarePhase::Upgrade, Box::new(source));
             }
             if commands.upgrade_policy == wire::SoftwareTaskUpgrade::UninstallThenInstall {
                 let c = commands.uninstall.ok_or(Error::Unsupported)?;
                 let (removal, source) = build(&mut compiler, O::RemovePrevious, c)?;
-                auxiliary.insert(SoftwarePhase::Removal, removal);
+                invocations.insert(SoftwarePhase::Removal, removal);
                 mutations.insert(SoftwarePhase::Removal, Box::new(source));
             }
         }
         SoftwareOperation::Uninstall => {
-            let (_, source) = removal.clone().ok_or(Error::Unsupported)?;
+            let (command, source) = removal.ok_or(Error::Unsupported)?;
+            invocations.insert(SoftwarePhase::Mutation, command);
             mutations.insert(SoftwarePhase::Mutation, Box::new(source));
         }
         SoftwareOperation::Detect => (),
     }
+    let (detection_run_as, detection_session, _, _) =
+        identity(config, helper.as_ref(), commands.install)?;
     let (detection, detector_source) = match commands.detection {
         Some(wire::SoftwareTaskDetection::MsiProduct {
             product_code,
@@ -691,6 +748,8 @@ pub(super) fn compile(
             SoftwareDetector::MsiProduct {
                 product_code: product_code.clone(),
                 version: package(version)?,
+                run_as: detection_run_as.clone(),
+                session_requirement: detection_session.clone(),
             },
             None,
         ),
@@ -698,6 +757,8 @@ pub(super) fn compile(
             SoftwareDetector::PkgReceipt {
                 receipt: receipt.clone(),
                 version: package(version)?,
+                run_as: detection_run_as,
+                session_requirement: detection_session,
             },
             None,
         ),
@@ -738,6 +799,7 @@ pub(super) fn compile(
     let signatures = action
         .signatures
         .iter()
+        .filter(|s| compiler.files.contains_key(&s.artifact))
         .map(|s| {
             let artifact = compiler
                 .files
@@ -775,18 +837,18 @@ pub(super) fn compile(
             payload: primary,
             materials: files.clone(),
             signatures,
-            install,
-            auxiliary,
-            uninstall,
+            invocations,
             detection,
-            upgrade: match commands.upgrade_policy {
-                wire::SoftwareTaskUpgrade::InPlace => SoftwareUpgrade::InPlace {
-                    invocation: Box::new(update.ok_or(Error::Protocol)?.0),
-                },
-                wire::SoftwareTaskUpgrade::UninstallThenInstall => {
-                    SoftwareUpgrade::UninstallThenInstall {}
+            upgrade: if intent != SoftwareOperation::Install {
+                SoftwareUpgrade::Deny {}
+            } else {
+                match commands.upgrade_policy {
+                    wire::SoftwareTaskUpgrade::InPlace => SoftwareUpgrade::InPlace {},
+                    wire::SoftwareTaskUpgrade::UninstallThenInstall => {
+                        SoftwareUpgrade::UninstallThenInstall {}
+                    }
+                    wire::SoftwareTaskUpgrade::Deny => SoftwareUpgrade::Deny {},
                 }
-                wire::SoftwareTaskUpgrade::Deny => SoftwareUpgrade::Deny {},
             },
             allow_downgrade: action.downgrade == wire::SoftwareTaskDowngrade::Allow,
             allow_reboot: action.reboot == wire::SoftwareTaskReboot::Report,
@@ -1044,7 +1106,6 @@ mod gc_tests {
                 platform: Platform::Macos,
             };
             spec.session_requirement = SessionRequirement::NotRequired {};
-            spec.launch = step.install.launch.clone();
             spec.launch.interpreter.profile = reference("native-software-sequence", "1").unwrap();
             spec.execution = ExecutionSpec::SoftwareProgram {
                 program: Box::new(SoftwareProgram {
@@ -1069,7 +1130,7 @@ mod gc_tests {
                         journal.take().unwrap(),
                         host,
                         runner,
-                        AppConfig::test_defaults(1),
+                        AppConfig::test_defaults(),
                     )
                     .unwrap(),
                 );
@@ -1107,7 +1168,11 @@ mod gc_tests {
                 serde_json::from_slice::<WorkerRequest>(&std::fs::read(path).unwrap())
                     .is_ok_and(|r| r.operation == O::Upgrade)
             });
-            assert_eq!(has_upgrade, policy == wire::SoftwareTaskUpgrade::InPlace);
+            assert_eq!(
+                has_upgrade,
+                intent == SoftwareOperation::Install
+                    && policy == wire::SoftwareTaskUpgrade::InPlace
+            );
             let pending = app
                 .service_delivery(&input.spec().request.request_id, &consumer, 64)
                 .unwrap();

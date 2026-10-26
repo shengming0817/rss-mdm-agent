@@ -38,6 +38,10 @@ pub fn receipt_state(
         &execution_contract::SoftwareDetector::PkgReceipt {
             receipt: receipt.into(),
             version,
+            run_as: execution_contract::RunAs::System {
+                platform: execution_contract::Platform::Macos,
+            },
+            session_requirement: execution_contract::SessionRequirement::NotRequired {},
         },
         &execution_contract::RunAs::System {
             platform: execution_contract::Platform::Macos,
@@ -76,8 +80,8 @@ mod observation_tests {
             "../../../execution-contract/tests/fixtures/software.json"
         ))
         .unwrap();
-        let invocation = input.execution.software_program().unwrap().steps[0]
-            .install
+        let invocation = input.execution.software_program().unwrap().steps[0].invocations
+            [&SoftwarePhase::Mutation]
             .clone();
         assert_eq!(
             observe_native(
@@ -91,6 +95,8 @@ mod observation_tests {
         assert!(matches!(
             observe_native(
                 &SoftwareDetector::PkgReceipt {
+                    run_as: run_as.clone(),
+                    session_requirement: SessionRequirement::NotRequired {},
                     receipt,
                     version: expected.clone()
                 },
@@ -102,6 +108,8 @@ mod observation_tests {
         assert!(matches!(
             observe_native(
                 &SoftwareDetector::PkgReceipt {
+                    run_as: run_as.clone(),
+                    session_requirement: SessionRequirement::NotRequired {},
                     receipt: "../../etc".into(),
                     version: expected.clone()
                 },
@@ -113,6 +121,10 @@ mod observation_tests {
         assert!(matches!(
             observe_native(
                 &SoftwareDetector::MsiProduct {
+                    run_as: RunAs::System {
+                        platform: Platform::Windows
+                    },
+                    session_requirement: SessionRequirement::NotRequired {},
                     product_code: "{00000000-0000-0000-0000-000000000001}".into(),
                     version: expected
                 },

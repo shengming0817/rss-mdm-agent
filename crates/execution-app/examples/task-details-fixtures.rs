@@ -30,7 +30,7 @@ fn main() {
         };
         host.template = p.clone();
         let runner = DeterministicTestRunner::new(id("test-runner"), scenario, 16).unwrap();
-        let mut app = create_app(&db.path, host, runner, AppConfig::test_defaults(1)).unwrap();
+        let mut app = create_app(&db.path, host, runner, AppConfig::test_defaults()).unwrap();
         let request = &p.spec().request.request_id;
         app.request_execution(&caller(), &p).unwrap();
         if cancel {

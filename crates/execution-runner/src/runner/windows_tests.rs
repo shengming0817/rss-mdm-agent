@@ -397,7 +397,7 @@ fn windows_capture_is_durable_and_reopened_attempt_does_not_launch() {
         &database,
         host.clone(),
         carrier.clone(),
-        AppConfig::test_defaults(1),
+        AppConfig::test_defaults(),
     )
     .unwrap();
     app.request_execution(&caller, &f.plan).unwrap();
@@ -434,7 +434,7 @@ fn windows_capture_is_durable_and_reopened_attempt_does_not_launch() {
         Arc::new(NativeRunner::new(Id::new("test-runner").unwrap(), BTreeMap::new(), 8).unwrap()),
         Arc::new(std::sync::atomic::AtomicUsize::new(0)),
     );
-    let mut app = reopen_app(&database, host, empty.clone(), AppConfig::test_defaults(1)).unwrap();
+    let mut app = reopen_app(&database, host, empty.clone(), AppConfig::test_defaults()).unwrap();
     let recovered = app.request_execution(&caller, &f.plan).unwrap();
     assert_eq!(recovered.attempts, 1);
     assert_eq!(
