@@ -377,9 +377,12 @@ def native_policy_offer(probe, query, command, package, receipt, user=False, val
 
 
 def completed_replay_offer(current, completion):
-    matches=[item['selection'] for item in current['items'] if item['reference']==dict(kind='request',request=completion['request']) and item.get('selection')]
+    matches=[item for item in current['items'] if item['reference']==dict(kind='request',request=completion['request']) and item.get('selection')]
     assert len(matches)==1, 'completed original offer coordinates were not retained'
-    return matches[0]
+    item=matches[0];offer=item['selection'];origin=completion['record']['action']['initiator']
+    assert item['facts']['kind']=='execution' and offer['request']==completion['request'], 'original request changed'
+    assert offer['attempt']==origin['attempt'] and offer['task']==origin['task'], 'original remote identity changed'
+    return offer
 
 
 def native_offer_security(probe, matrix, query, command, package, receipt, completed, effect, protected, replay_offer):

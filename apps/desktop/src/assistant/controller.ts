@@ -938,11 +938,18 @@ export function createAssistant(
         result.reference.kind === "request"
           ? result.reference.request
           : undefined;
+      const factRequest =
+        result.facts.kind === "execution"
+          ? result.facts.value.status.operationRequestId
+          : result.facts.value.action.kind === "offered"
+            ? result.facts.value.action.offer.request
+            : result.facts.value.action.choice.request;
       if (
         current !== epoch ||
         signal.aborted ||
         state.selected !== session.namespace.sessionId ||
         actualRequest !== requestId ||
+        factRequest !== requestId ||
         origin.kind !== "ai" ||
         origin.conversation !== session.namespace.sessionId ||
         origin.toolCall !== operationId

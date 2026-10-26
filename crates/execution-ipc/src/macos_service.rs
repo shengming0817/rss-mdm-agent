@@ -347,7 +347,7 @@ mod tests {
             None,
             &stop,
             &peer,
-            &serde_json::to_vec(&serde_json::json!({"version": crate::host::IPC_VERSION, "request":{"method":"status","request":"r"}})).unwrap()
+            &serde_json::to_vec(&serde_json::json!({"version": crate::host::IPC_VERSION, "request":{"method":"offers"}})).unwrap()
         )
         .is_err());
         assert!(stop.load(Ordering::Acquire));

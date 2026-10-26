@@ -210,7 +210,7 @@ pub enum PreparedAction {
         /// Backend Run returned for the original request, absent until acceptance is known.
         run_id: Option<Id>,
         /// Eventual signed Offer; no task/attempt is invented before this exists.
-        offer: Option<BackendTask>,
+        offer: Option<Box<BackendTask>>,
         /// Local continuation binding; enterprise identity is solely directory.subject.
         access: PolicyAccess,
         /// Bounded validity of the original preparation.
@@ -241,7 +241,7 @@ impl PreparedAction {
         match self {
             Self::SoftwareRead { .. } => None,
             Self::Offered { offer } => Some(offer),
-            Self::Policy { offer, .. } => offer.as_ref(),
+            Self::Policy { offer, .. } => offer.as_deref(),
         }
     }
     /// The same immutable choice; only acceptance and eventual Offer may be appended.

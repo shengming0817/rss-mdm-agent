@@ -1056,7 +1056,8 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
                 &format!(
                     "{:x}",
                     Sha256::digest(
-                        serde_json::to_vec(expected_revision).map_err(|_| Error::InvalidInput)?
+                        serde_json::to_vec(&(id, expected_revision))
+                            .map_err(|_| Error::InvalidInput)?
                     )
                 ),
             )?)

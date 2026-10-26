@@ -40,7 +40,14 @@ test("query response loss reconciles the Host-owned original ID and never replay
   );
   const calls = [];
   let cancelled = false;
-  peer.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
+  peer.setRequestHandler(ListToolsRequestSchema, async ({ params }) => {
+    const start = Number(params?.cursor ?? 0),
+      end = Math.min(start + 3, tools.length);
+    return {
+      tools: tools.slice(start, end),
+      ...(end < tools.length ? { nextCursor: String(end) } : {}),
+    };
+  });
   peer.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
     calls.push(params);
     const failure = [

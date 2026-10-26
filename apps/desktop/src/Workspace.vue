@@ -333,11 +333,14 @@ function accountMenu(id: string) {
 function openConnectionSettings() {
   accountMenu("connection");
 }
-let taskReturn: { page: string; focus: HTMLElement | null } | undefined;
+let taskReturn:
+  | { page: string; focus: HTMLElement | null; reference: TaskRef }
+  | undefined;
 async function openTask(request: string | TaskRef, node = "") {
   if (props.page !== "tasks")
     taskReturn = {
       page: props.page,
+      reference: typeof request === "string" ? requestRef(request) : request,
       focus:
         document.activeElement instanceof HTMLElement
           ? document.activeElement
@@ -368,7 +371,22 @@ async function returnFromTask() {
   navigateMain(previous.page);
   await nextTick();
   if (previous.focus?.isConnected) previous.focus.focus();
-  else
+  else if (previous.reference) {
+    const target = [
+      ...document.querySelectorAll<HTMLElement>("[data-task-ref]"),
+    ].find(
+      (item) => item.dataset.taskRef === JSON.stringify(previous.reference),
+    );
+    if (target) {
+      target.focus();
+      return;
+    }
+    document
+      .querySelector<HTMLElement>(
+        ".workspace-page-header h1,.workspace-breadcrumb button",
+      )
+      ?.focus();
+  } else
     document
       .querySelector<HTMLElement>(
         ".workspace-page-header h1,.workspace-breadcrumb button",
@@ -988,7 +1006,11 @@ onBeforeUnmount(() => {
           v-show="page === 'tasks'"
           class="resource-content"
         >
-          <Tasks :controller="controller" @back="returnFromTask" />
+          <Tasks
+            v-if="ready && page === 'tasks'"
+            :controller="controller"
+            @back="returnFromTask"
+          />
         </div>
         <SoftwareManagement
           v-if="ready"

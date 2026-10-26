@@ -200,6 +200,7 @@ const addressesOpen = ref(false);
           <button
             v-for="item in activity?.recentItems.value ?? []"
             :key="taskKey(item.reference)"
+            :data-task-ref="taskKey(item.reference)"
             @click="emit('task', item.reference)"
             class="activity-row"
           >

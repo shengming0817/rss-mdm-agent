@@ -223,10 +223,15 @@ fn tool<I: JsonSchema, O: JsonSchema>(kind: ToolKind) -> Tool {
     t
 }
 pub(crate) fn tools() -> Vec<Tool> {
-    ToolKind::ALL
-        .into_iter()
-        .map(ToolKind::definition)
-        .collect()
+    static DEFINITIONS: std::sync::OnceLock<Vec<Tool>> = std::sync::OnceLock::new();
+    DEFINITIONS
+        .get_or_init(|| {
+            ToolKind::ALL
+                .into_iter()
+                .map(ToolKind::definition)
+                .collect()
+        })
+        .clone()
 }
 pub(crate) fn failure(code: ServiceError) -> CallToolResult {
     result::<()>(Err(code.into()), 1024).expect("static error fits minimum limit")
@@ -465,14 +470,42 @@ impl<S: ExecutionServicePort> ServerHandler for Handler<S> {
         self.service
             .check_binding()
             .map_err(|_| ErrorData::invalid_request("service binding unavailable", None))?;
-        if request.and_then(|r| r.cursor).is_some() {
-            return Err(ErrorData::invalid_params("invalid cursor", None));
+        // ref: rmcp v3.4.0 src/model.rs::PaginatedRequestParams; standard metadata pagination preserves the existing frame budget.
+        let all = tools();
+        let cursor = request.and_then(|r| r.cursor);
+        let start = cursor
+            .as_ref()
+            .map(|v| {
+                v.parse::<usize>()
+                    .ok()
+                    .filter(|i| i.to_string() == v.as_str() && *i < all.len())
+            })
+            .unwrap_or(Some(0))
+            .ok_or_else(|| ErrorData::invalid_params("invalid cursor", None))?;
+        let budget = self.limits.response_bytes.saturating_sub(4096);
+        let mut used = 0;
+        let mut page = Vec::new();
+        for tool in all.into_iter().skip(start) {
+            let bytes = serde_json::to_vec(&tool)
+                .map_err(|_| ErrorData::internal_error("tool metadata unavailable", None))?
+                .len();
+            if used + bytes > budget {
+                break;
+            }
+            used += bytes;
+            page.push(tool);
         }
+        if page.is_empty() {
+            return Err(ErrorData::internal_error("output budget exceeded", None));
+        }
+        let after = start + page.len();
         Ok(ListToolsResult {
-            tools: tools(),
+            tools: page,
+            next_cursor: (after < ToolKind::ALL.len()).then(|| after.to_string()),
             ..Default::default()
         })
     }
+
     async fn call_tool(
         &self,
         request: CallToolRequestParams,

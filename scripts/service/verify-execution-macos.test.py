@@ -69,20 +69,18 @@ class PssoPreflightTests(unittest.TestCase):
 
 class BackendLifecycleTests(unittest.TestCase):
     def test_completed_offer_is_bound_to_the_original_policy_request_and_execution(self):
-        offer = dict(request='original', attempt='attempt', task='run', revision='a'*64)
-        action = dict(kind='policy', choice=dict(request='original'), runId='run', offer=offer)
-        completion = dict(request='original', record=dict(action=dict(initiator=dict(attempt='attempt'))))
-        current = dict(preparations=[dict(action=action)], available=[dict(offer, request='other')])
-        self.assertEqual(acceptance.completed_replay_offer(current, completion), offer)
-        for change in ('missing', 'duplicate', 'request', 'attempt', 'choice', 'run'):
-            value = copy.deepcopy(current)
-            if change == 'missing': value['preparations'] = []
-            elif change == 'duplicate': value['preparations'] *= 2
-            elif change in ('request', 'attempt'): value['preparations'][0]['action']['offer'][change] = 'other'
-            elif change == 'choice': value['preparations'][0]['action']['choice']['request'] = 'other'
-            else: value['preparations'][0]['action']['runId'] = 'other'
-            with self.subTest(change=change), self.assertRaises(AssertionError):
-                acceptance.completed_replay_offer(value, completion)
+        offer=dict(request='original',attempt='attempt',task='run',revision='a'*64)
+        record=dict(action=dict(initiator=dict(attempt='attempt',task='run')))
+        completion=dict(request='original',record=record)
+        current=dict(items=[dict(reference=dict(kind='request',request='original'),selection=offer,facts=dict(kind='execution',value=record))])
+        self.assertEqual(acceptance.completed_replay_offer(current,completion),offer)
+        for change in ('missing','duplicate','request','attempt','reference','run'):
+            value=copy.deepcopy(current)
+            if change=='missing':value['items']=[]
+            elif change=='duplicate':value['items']*=2
+            elif change=='reference':value['items'][0]['reference']['request']='other'
+            else:value['items'][0]['selection']['task' if change=='run' else change]='other'
+            with self.subTest(change=change),self.assertRaises(AssertionError):acceptance.completed_replay_offer(value,completion)
 
     def test_security_completion_keeps_the_original_policy_offer(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -90,14 +88,15 @@ class BackendLifecycleTests(unittest.TestCase):
             (root/'package-payload/fixed.txt').write_bytes(b'original effect')
             (root/'service-stderr.log').write_bytes(b'')
             offer = dict(request='original', task='run', attempt='attempt', revision='c'*64)
-            record = dict(action=dict(initiator=dict(attempt='attempt')), status=dict(attempts=1))
+            record = dict(action=dict(initiator=dict(attempt='attempt',task='run')), status=dict(attempts=1))
             action = dict(kind='policy', choice=dict(request='original'), runId='run', offer=offer)
-            current = dict(available=[], preparations=[dict(action=action)], value=dict(items=[record]))
+            current = dict(items=[dict(reference=dict(kind='request',request='original'),selection=offer,facts=dict(kind='execution',value=record))])
             replay = acceptance.completed_replay_offer(current, dict(request='original', record=record))
             expiring = dict(request='expired', task='expired-run', attempt='expired-attempt', revision='b'*64, expiresAt=0)
             probe = MagicMock(); probe.suspended.side_effect = nullcontext
             def reply(request):
                 kind = 'pending'
+                if request['method']=='offers':return dict(envelope=dict(reply=dict(kind='offers',available=[])))
                 if request['method'] == 'serviceStatus':
                     return dict(transport='reply', peerUid=0, peerPid=123,
                         envelope=dict(reply=dict(kind='serviceStatus', value=dict(readiness=dict(phase='ready')))))
@@ -107,7 +106,7 @@ class BackendLifecycleTests(unittest.TestCase):
             probe.request.side_effect = reply
             command = MagicMock(side_effect=lambda name, **kw: dict(startRequests=1) if name == 'status' else expiring)
             expired_record = dict(action=dict(initiator=dict(attempt='expired-attempt')), status=dict(attempts=1))
-            views = lambda: dict(current, value=dict(items=[record, expired_record]))
+            views = lambda: dict(current,items=current['items']+[dict(reference=dict(kind='request',request='expired'),selection=expiring,facts=dict(kind='execution',value=expired_record))])
             expiring['expiresAt'] = time.time()+20
             def elapse(seconds): expiring['expiresAt'] = 0
             administrator = MagicMock()

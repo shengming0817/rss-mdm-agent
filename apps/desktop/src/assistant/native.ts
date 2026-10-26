@@ -112,10 +112,13 @@ export function nativeAssistant(
     },
     async taskDetails(requestId, signal) {
       if (signal.aborted) throw new ClientError("request_failed");
-      const result = await taskCenter.detail({
-        kind: "request",
-        request: requestId,
-      });
+      const result = await taskCenter.detail(
+        {
+          kind: "request",
+          request: requestId,
+        },
+        true,
+      );
       if (generation !== userGeneration() || signal.aborted)
         throw new ClientError("request_failed");
       return result;

@@ -726,7 +726,7 @@ impl Store {
         host: &impl JournalHost,
     ) -> Result<Option<execution_contract::RequestId>, Error> {
         crate::database::ensure_current(&self.conn, &self.authority, self.limits)?;
-        let mut query=self.conn.prepare("SELECT request_id FROM executions WHERE json_extract(CAST(plan AS TEXT),'$.request.initiator.task')=?1 AND json_extract(CAST(plan AS TEXT),'$.request.initiator.attempt')=?2 ORDER BY request_id LIMIT 2")?;
+        let mut query=self.conn.prepare("SELECT request_id FROM executions WHERE CASE WHEN json_valid(CAST(plan AS TEXT)) THEN json_extract(CAST(plan AS TEXT),'$.request.initiator.task') END=?1 AND CASE WHEN json_valid(CAST(plan AS TEXT)) THEN json_extract(CAST(plan AS TEXT),'$.request.initiator.attempt') END=?2 ORDER BY request_id LIMIT 2")?;
         let ids = query
             .query_map(params![task.as_str(), attempt.as_str()], |r| {
                 r.get::<_, String>(0)

@@ -395,9 +395,9 @@ it("queries the production execution service without a fixture fallback and repo
   await flushPromises();
   const nav = wrapper.find('[aria-label="打开主导航"]');
   if (nav.exists()) await nav.trigger("click");
-  wrapper.getComponent(Workspace).vm.$emit("navigate", "software");
+  wrapper.getComponent(Workspace).vm.$emit("navigate", "tasks");
   await flushPromises();
-  expect(wrapper.text()).toContain("无法读取执行服务；原任务保留");
+  expect(wrapper.text()).toContain("无法读取任务；已有记录待核实");
   expect(vi.mocked(invoke).mock.calls.some(([c]) => c === "task_list")).toBe(
     true,
   );

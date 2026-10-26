@@ -1817,10 +1817,10 @@ impl<S: IdentityProvider> DeviceService<S> {
             ..
         } = &mut next.action
         {
-            if bound.as_ref().is_some_and(|old| old != &current) {
+            if bound.as_deref().is_some_and(|old| old != &current) {
                 return Err(Error::Conflict);
             }
-            *bound = Some(current);
+            *bound = Some(Box::new(current));
             *run_id = Some(plan::id(task_id.to_string())?);
         }
         self.core

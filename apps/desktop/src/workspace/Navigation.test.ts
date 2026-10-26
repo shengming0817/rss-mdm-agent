@@ -146,6 +146,7 @@ it("restores each module subsection and category, while ancestor breadcrumbs exp
       "AI 助手",
       "软件管理",
       "工具中心",
+      "任务中心",
       "系统设置",
     ]);
     expect(

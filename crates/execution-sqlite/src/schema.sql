@@ -56,6 +56,6 @@ CREATE TABLE backend_requests (scope TEXT PRIMARY KEY, actor TEXT NOT NULL, requ
 
 -- Derived lookup over the sole immutable plan; no second task identity authority.
 CREATE INDEX executions_remote_identity ON executions (
-    json_extract(CAST(plan AS TEXT),'$.request.initiator.task'),
-    json_extract(CAST(plan AS TEXT),'$.request.initiator.attempt')
+    CASE WHEN json_valid(CAST(plan AS TEXT)) THEN json_extract(CAST(plan AS TEXT),'$.request.initiator.task') END,
+    CASE WHEN json_valid(CAST(plan AS TEXT)) THEN json_extract(CAST(plan AS TEXT),'$.request.initiator.attempt') END
 );

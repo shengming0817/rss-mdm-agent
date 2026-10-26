@@ -943,7 +943,7 @@ try {
   await Promise.all([
     page.waitForResponse(
       (response) =>
-        response.url().endsWith("/__fixture/cancel") && response.ok(),
+        response.url().endsWith("/__fixture/task-control") && response.ok(),
     ),
     activity.getByRole("button", { name: "取消操作", exact: true }).click(),
   ]);

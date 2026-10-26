@@ -169,7 +169,7 @@ test("remounted history queries its original UUID and does not invoke again", as
   await flushPromises();
   const button = wrapper
     .findAll("button")
-    .find((b) => b.text() === "查询原请求与结果")!;
+    .find((b) => b.text() === "查看原策略请求并处理")!;
   await button.trigger("click");
   await flushPromises();
   expect(policy_status).toHaveBeenCalledWith({ requestId: original });
@@ -344,6 +344,7 @@ test("Device history restores original AI consent independently of enterprise id
           nextCursor: null,
           asOf: 1,
         }),
+        policy_status: async () => ({ kind: "preparation", value: original }),
         policy_confirm,
         policy_invoke,
       } as unknown as SelfServicePort,
@@ -351,6 +352,11 @@ test("Device history restores original AI consent independently of enterprise id
     },
   });
   try {
+    await flushPromises();
+    await wrapper
+      .findAll("button")
+      .find((b) => b.text() === "查看原策略请求并处理")!
+      .trigger("click");
     await flushPromises();
     expect(wrapper.text()).toContain("设备准入 · 无需企业登录");
     expect(wrapper.text()).toContain("original-ai / original-tool");

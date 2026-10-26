@@ -2190,7 +2190,7 @@ fn unknown_schema_reports_exact_versions_and_keeps_bytes() {
     let host = TestHost::new();
     let runner = DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
     drop(open(&db, host.clone(), runner.clone(), false));
-    db.sql().execute_batch("PRAGMA user_version=4;").unwrap();
+    db.sql().execute_batch("PRAGMA user_version=3;").unwrap();
     let before = std::fs::read(&db.path).unwrap();
     let error = match reopen_app(&db.path, host, runner, AppConfig::test_defaults()) {
         Ok(_) => panic!("old format opened"),
@@ -2198,7 +2198,7 @@ fn unknown_schema_reports_exact_versions_and_keeps_bytes() {
     };
     assert_eq!(
         error.to_string(),
-        "execution database schema 4 is unsupported; required schema 3; preserve the existing database; initialization and automatic migration are disabled"
+        "execution database schema 3 is unsupported; required schema 4; preserve the existing database; initialization and automatic migration are disabled"
     );
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
 }

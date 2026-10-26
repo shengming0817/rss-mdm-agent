@@ -114,12 +114,25 @@ export async function connectExecution(
   const transport = new ParentTransport(input, output);
   try {
     await client.connect(transport, { timeout: 10000 });
-    const catalog = await client.listTools({}, { timeout: 10000 });
-    if (
-      catalog.tools.length !== methods.size ||
-      catalog.tools.some((t) => !methods.has(t.name))
-    )
-      throw new Error("execution tools mismatch");
+    const found = new Set<string>(),
+      seen = new Set<string>();
+    let cursor: string | undefined;
+    for (let page = 0; page < methods.size; page++) {
+      const catalog = await client.listTools(cursor ? { cursor } : {}, {
+        timeout: 10000,
+      });
+      for (const tool of catalog.tools) {
+        if (!methods.has(tool.name) || found.has(tool.name))
+          throw Error("execution tools mismatch");
+        found.add(tool.name);
+      }
+      if (!catalog.nextCursor) break;
+      if (seen.has(catalog.nextCursor))
+        throw Error("execution catalog did not advance");
+      seen.add(catalog.nextCursor);
+      cursor = catalog.nextCursor;
+    }
+    if (found.size !== methods.size) throw Error("execution tools mismatch");
   } catch {
     await client.close();
     await transport.close();

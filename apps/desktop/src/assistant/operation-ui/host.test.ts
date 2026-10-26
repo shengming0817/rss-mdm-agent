@@ -79,7 +79,8 @@ function fixture() {
         tenantId: "tenant",
       },
     }),
-    executionDetails: async () => structuredClone(raw),
+    executionDetails: async () =>
+      taskFromFacts({ kind: "preparation", value: structuredClone(record) }),
     preparationDetails: async () => structuredClone(record),
     submitOperation: async (input: any) => {
       if (rejection) throw { code: rejection };
@@ -102,7 +103,9 @@ function fixture() {
   return {
     controller,
     record,
-    raw,
+    get raw() {
+      return taskFromFacts({ kind: "preparation", value: record });
+    },
     sent,
     requests: () => requests,
     loseReply: () => {
@@ -570,8 +573,9 @@ describe("production operation adapter", () => {
       $defs: { fields: { type: "object" } },
       $ref: "#/$defs/fields",
     };
-    expect(operationProjection(f.raw, scope, 4).snapshot.allowed).toContain(
-      "submit",
-    );
+    expect(
+      operationProjection(f.raw, scope, 4, Date.now(), f.record).snapshot
+        .allowed,
+    ).toContain("submit");
   });
 });

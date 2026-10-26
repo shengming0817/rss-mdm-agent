@@ -814,6 +814,15 @@ export function checkSource(file, source) {
         "_ctx.labels",
         "_ctx.effectLabels",
       ];
+      dataRoots["apps/desktop/src/task-center/TaskCenter.vue"] = [
+        "taskPhase",
+        "labels",
+        "reasons",
+        "_ctx.taskPhase",
+        "_ctx.labels",
+        "_ctx.reasons",
+      ];
+      dataRoots["apps/desktop/src/task-center/controller.ts"] = ["state.items"];
       const dataIndex =
         ts.isElementAccessExpression(node) &&
         (dataRoots[file] ?? []).includes(node.expression.getText(ast)) &&
@@ -861,6 +870,13 @@ export function checkSource(file, source) {
           "write",
           "writeln",
         ].includes(member) &&
+        !(
+          member === "parent" &&
+          file === "apps/desktop/src/task-center/TaskCenter.vue" &&
+          ts.isPropertyAccessExpression(node) &&
+          ["node", "_ctx.node"].includes(node.expression.getText(ast)) &&
+          !(ts.isCallExpression(node.parent) && node.parent.expression === node)
+        ) &&
         !(
           member === "open" &&
           uiFoundations.has(file) &&
@@ -1131,7 +1147,7 @@ export function checkTree(treeRoot = root, executable) {
     ipc
       .match(/commands!\s*\{([\s\S]*?)\}/)?.[1]
       .match(
-        /\b(?:self_service_\w+|software_\w+|query_\w+|data_read|device_access|system_settings|network_check)(?=\s*\()/g,
+        /\b(?:self_service_\w+|task_\w+|software_\w+|query_\w+|data_read|device_access|system_settings|network_check)(?=\s*\()/g,
       ) ?? [];
   if (
     JSON.stringify(commands.toSorted()) !==

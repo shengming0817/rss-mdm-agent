@@ -33,7 +33,9 @@ it("shows appended activity beyond six rows and keeps it visible after a polling
     await flushPromises();
     expect(wrapper.findAll(".activity-row")).toHaveLength(7);
     await wrapper.findAll(".activity-row")[6].trigger("click");
-    expect(wrapper.emitted("task")).toEqual([["seventh"]]);
+    expect(wrapper.emitted("task")).toEqual([
+      [{ kind: "request", request: "seventh" }],
+    ]);
     await activity.loadRecent();
     await flushPromises();
     expect(wrapper.findAll(".activity-row")).toHaveLength(7);

@@ -26,6 +26,29 @@ struct Wire {
     stop: CancellationToken,
 }
 impl Wire {
+    async fn tools(&mut self, id: u64) -> Vec<Value> {
+        let mut found = Vec::new();
+        let mut cursor = Value::Null;
+        for _ in 0..32 {
+            self.send(
+                json!({"jsonrpc":"2.0","id":id,"method":"tools/list","params":{"cursor":cursor}}),
+            )
+            .await;
+            let response = self.recv().await;
+            found.extend(
+                response["result"]["tools"]
+                    .as_array()
+                    .expect("bounded tool page")
+                    .iter()
+                    .cloned(),
+            );
+            cursor = response["result"]["nextCursor"].clone();
+            if cursor.is_null() {
+                return found;
+            }
+        }
+        panic!("tool metadata did not advance")
+    }
     async fn open(service: Arc<TestService>, limits: McpLimits) -> Self {
         let (client, server) = tokio::io::duplex(1024);
         let (r, w) = tokio::io::split(server);
@@ -114,12 +137,9 @@ async fn action_input(_: &mut Wire, s: &TestService, id: &str) -> Value {
 async fn discovery_exposes_backend_references_and_rejects_old_script_and_catalog_inputs() {
     let s = service();
     let mut w = Wire::open(s.clone(), limits()).await;
-    w.send(json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}))
-        .await;
-    let list = w.recv().await;
-    let tools = list["result"]["tools"].as_array().unwrap();
+    let tools = w.tools(2).await;
     assert_eq!(tools.len(), 19);
-    for tool in tools {
+    for tool in &tools {
         jsonschema::draft202012::new(&tool["inputSchema"]).unwrap();
         jsonschema::draft202012::new(&tool["outputSchema"]).unwrap();
     }
@@ -398,16 +418,25 @@ async fn official_rmcp_client_can_consume_the_bounded_service() {
         CancellationToken::new(),
     ));
     let client = ().serve(client).await.unwrap();
-    assert_eq!(
-        client
+    let mut found = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page = client
             .peer()
-            .list_tools(Default::default())
+            .list_tools(cursor.clone().map(|cursor| {
+                let mut p = rmcp::model::PaginatedRequestParams::default();
+                p.cursor = Some(cursor);
+                p
+            }))
             .await
-            .unwrap()
-            .tools
-            .len(),
-        19
-    );
+            .unwrap();
+        found.extend(page.tools);
+        cursor = page.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert_eq!(found.len(), 19);
     client.cancel().await.unwrap();
     timeout(Duration::from_secs(2), task)
         .await
@@ -571,10 +600,7 @@ async fn every_tool_advertises_and_times_out_according_to_its_effects() {
         value(&w.call(11, "execution_execute", submit.clone()).await)["confirmationRequired"],
         true
     );
-    w.send(json!({"jsonrpc":"2.0","id":12,"method":"tools/list","params":{}}))
-        .await;
-    let list = w.recv().await;
-    let tools = list["result"]["tools"].as_array().unwrap();
+    let tools = w.tools(12).await;
     let operation = json!({"operationRequestId":"original-id"});
     let cases = [
         (
@@ -895,7 +921,7 @@ async fn data_tools_preserve_original_request_and_typed_results_through_real_mcp
     let cancelled = w
         .call(7, "execution_task_control", control_args(request))
         .await;
-    assert_eq!(value(&cancelled)["value"]["cancelRequested"], true);
+    assert_eq!(value(&cancelled)["disposition"], "confirmed");
     assert_eq!(s.attempts.load(Ordering::SeqCst), 1);
     w.close().await;
 }

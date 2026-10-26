@@ -92,7 +92,7 @@ const labels: Record<TaskAction, string> = {
   pause: "暂停本任务下载",
   resume: "恢复本任务下载",
 };
-async function open(key: string) {
+async function selectTask(key: string) {
   const item = s.items.find((t) => taskKey(t.reference) === key);
   if (!item) return;
   s.listFocus = key;
@@ -256,7 +256,7 @@ function time(event: Event, key: "from" | "until") {
           v-for="item in s.items"
           :key="taskKey(item.reference)"
           :data-task="taskKey(item.reference)"
-          @click="open(taskKey(item.reference))"
+          @click="selectTask(taskKey(item.reference))"
         >
           <strong>{{ taskTitle(item) }}</strong
           ><span
