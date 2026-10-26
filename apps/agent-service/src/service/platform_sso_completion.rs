@@ -13,6 +13,7 @@ use crate::{
 };
 use execution_app::*;
 use execution_contract::*;
+use execution_ipc::platform_sso::Operation;
 use rss_mdm_agent_wire::runtime as r;
 use sha2::{Digest as _, Sha256};
 use std::sync::{Arc, Mutex};

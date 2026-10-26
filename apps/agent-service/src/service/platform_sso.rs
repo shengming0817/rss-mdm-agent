@@ -1351,6 +1351,7 @@ mod tests {
         );
         assert!(!cleanup_operation(Some(&Request::PlatformSso {
             input: Operation::Bootstrap {
+                callback_generation: 1,
                 scope: w::Kind::Device,
                 authentication: w::AuthenticationMode::Password
             }
