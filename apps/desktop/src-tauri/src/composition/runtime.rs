@@ -228,14 +228,21 @@ impl DesktopRuntime {
             .lock()
             .map_err(|_| unavailable())?
             .prepare(name)?;
+        eprintln!("RSS_NATIVE_USER_SWITCH stage=retire-start");
         let retired = self.retire_locked().await;
+        eprintln!(
+            "RSS_NATIVE_USER_SWITCH stage=retire-end ok={}",
+            retired.is_ok()
+        );
         if let Err(error) = &retired {
             if error.code != "logout_unconfirmed" {
                 return Err(error.clone());
             }
         }
         let context = self.users.lock().map_err(|_| unavailable())?.commit(page)?;
+        eprintln!("RSS_NATIVE_USER_SWITCH stage=activate-start");
         let context = self.activate_context(context).await?;
+        eprintln!("RSS_NATIVE_USER_SWITCH stage=activate-end");
         self.account_result(retired.map(|()| context))
     }
     async fn retry_cleanup(&self) -> ui::Result<()> {

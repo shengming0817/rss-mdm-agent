@@ -254,3 +254,145 @@ it("refreshes FileVault custody on settings entry and while settings stay visibl
     vi.useRealTimers();
   }
 });
+
+it("stops shared task reads while native identity is transitioning without controlling accepted work", async () => {
+  vi.useFakeTimers();
+  const tasks = taskPort();
+  tasks.list = vi.fn(tasks.list);
+  tasks.control = vi.fn(tasks.control);
+  const w = mount(Workspace, {
+    props: {
+      ready: true,
+      busy: true,
+      page: "home",
+      host: createHostSettings(undefined),
+      selfServicePort: {
+        ...policyFixturePort,
+        execute: vi.fn(),
+        confirm: vi.fn(),
+      },
+      localPorts: {
+        tasks,
+        data: null,
+        software: null,
+        settings: null,
+        network: null,
+      },
+    },
+  });
+  try {
+    await flushPromises();
+    expect(tasks.list).not.toHaveBeenCalled();
+    await w.setProps({ busy: false });
+    await flushPromises();
+    expect(tasks.list).toHaveBeenCalledTimes(1);
+    await w.setProps({ busy: true });
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(tasks.list).toHaveBeenCalledTimes(1);
+    expect(tasks.control).not.toHaveBeenCalled();
+  } finally {
+    w.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it("loads retained Home facts on first visit and preserves them across navigation", async () => {
+  const read: import("./system-settings/controller").SettingsPort = async (
+    operation,
+  ) => {
+    if (operation.kind !== "snapshot")
+      throw Error("only retained reads expected");
+    return {
+      writeAllowed: false,
+      request: null,
+      digest: null,
+      finished: true,
+      effect: "observed",
+      keepBeforeUnixMs: null,
+      reason: null,
+      snapshot: {
+        section: operation.section,
+        revision: "a".repeat(64),
+        collectedAtUnixMs: Date.now(),
+        source: "native fixture",
+        targets: [],
+      },
+    };
+  };
+  const settings = vi.fn(read);
+  const w = mount(Workspace, {
+    props: {
+      ready: true,
+      busy: false,
+      page: "settings",
+      host: createHostSettings(undefined),
+      selfServicePort: {
+        ...policyFixturePort,
+        execute: vi.fn(),
+        confirm: vi.fn(),
+      },
+      localPorts: {
+        tasks: taskPort(),
+        data: null,
+        software: null,
+        settings,
+        network: null,
+      },
+    },
+  });
+  try {
+    await flushPromises();
+    expect(settings).not.toHaveBeenCalled();
+    await w.setProps({ page: "home" });
+    await flushPromises();
+    expect(
+      settings.mock.calls.map(([operation]) =>
+        operation.kind === "snapshot" ? operation.section : operation.kind,
+      ),
+    ).toEqual(["network", "storage", "power"]);
+    await w.setProps({ page: "settings" });
+    await w.setProps({ page: "home" });
+    await flushPromises();
+    expect(settings).toHaveBeenCalledTimes(3);
+  } finally {
+    w.unmount();
+  }
+});
+
+it("starts one shared task read for the visible software consumer and keeps device reads hidden", async () => {
+  const tasks = taskPort();
+  tasks.list = vi.fn(tasks.list);
+  const readDevice = vi.fn(async () => ({
+    attributes: { computerName: "Mac", ipAddresses: [], loginUser: null },
+    filevault: "unavailable" as const,
+  }));
+  const w = mount(Workspace, {
+    props: {
+      ready: true,
+      busy: false,
+      fixture: true,
+      page: "software-management",
+      host: createHostSettings(undefined),
+      devicePort: { read: readDevice },
+      selfServicePort: {
+        ...policyFixturePort,
+        execute: vi.fn(),
+        confirm: vi.fn(),
+      },
+      localPorts: {
+        tasks,
+        data: null,
+        software: null,
+        settings: null,
+        network: null,
+      },
+    },
+  });
+  try {
+    await flushPromises();
+    expect(tasks.list).toHaveBeenCalledTimes(1);
+    expect(readDevice).not.toHaveBeenCalled();
+  } finally {
+    w.unmount();
+  }
+});

@@ -19,6 +19,7 @@ const emit = defineEmits<{
   select: [entry: NavigationTarget];
   more: [];
   retry: [];
+  visibility: [visible: boolean];
 }>();
 const searchOpen = ref(false),
   query = ref(""),
@@ -69,6 +70,7 @@ watch(query, () => {
   active.value = 0;
 });
 watch(searchOpen, async (open) => {
+  emit("visibility", open);
   if (!open) return;
   query.value = "";
   active.value = 0;

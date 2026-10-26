@@ -3,7 +3,6 @@ import {
   computed,
   nextTick,
   onBeforeUnmount,
-  onMounted,
   ref,
   watch,
   inject,
@@ -269,11 +268,27 @@ async function act(item: InstalledSoftware, action: LocalSoftwareAction) {
   operation.value = prepared.request;
   if (action === "launch" || action === "detect") await c.submit(prepared);
 }
-onMounted(() => {
-  void c.discover();
-  void c.history();
-  if (directory && !directory.state.asOf) void directory.load();
-});
+watch(
+  [() => props.active, section],
+  async ([active, selectedSection]) => {
+    if (active === false) return;
+    if (selectedSection === "operations") {
+      if (!s.historyComplete) await c.history();
+      return;
+    }
+    if (!["installed", "updates"].includes(selectedSection)) return;
+    const visible = () =>
+      props.active !== false &&
+      ["installed", "updates"].includes(section.value);
+    if (!s.directoryComplete) await c.discover(false, visible);
+    else
+      for (const source of s.sources.filter((source) => !source.page)) {
+        if (!visible()) break;
+        await c.read(source);
+      }
+  },
+  { immediate: true },
+);
 onBeforeUnmount(() => {
   if (!props.model) c.dispose();
 });
@@ -453,6 +468,7 @@ onBeforeUnmount(() => {
     <section v-show="section === 'enterprise'">
       <PolicySelfService
         ref="enterprise"
+        :active="active !== false && section === 'enterprise'"
         :port="execution?.port ?? null"
         :records="execution?.preparations.value ?? []"
         kind="software"

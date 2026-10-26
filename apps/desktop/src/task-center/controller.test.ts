@@ -207,3 +207,20 @@ it("removes a denied original task from cached consumers and drops stale step ac
   expect(c.state.node).toBe("");
   c.dispose();
 });
+
+it("coalesces equivalent original references across IPC and provider property ordering", async () => {
+  const port = taskPort(),
+    item = taskDetail();
+  if (item.reference.kind !== "request")
+    throw Error("request fixture required");
+  port.detail = vi.fn(async () => item);
+  const c = createTaskCenter(port, null);
+  const reordered = {
+    request: item.reference.request,
+    kind: item.reference.kind,
+  };
+  await Promise.all([c.detail(item.reference), c.detail(reordered)]);
+  expect(port.detail).toHaveBeenCalledTimes(1);
+  expect(c.lookup(reordered)?.reference).toEqual(item.reference);
+  c.dispose();
+});

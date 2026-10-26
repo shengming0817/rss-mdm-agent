@@ -78,6 +78,8 @@ async function confirmPolicy(request: string) {
 
 const list = ref<HTMLElement>();
 const reasons: Record<string, string> = {
+  "execution-ended-cancel-request-only":
+    "原任务已结束；取消只记录请求，不回滚已有结果，也不改变退出及效果证据",
   "content-authorization-expired": "材料授权或期限已失效，不能恢复下载",
   "managed-background-task": "受管后台任务，普通用户不能控制",
   "owner-stage-is-not-interruptible": "当前阶段不支持中断",

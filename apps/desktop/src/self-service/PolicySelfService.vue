@@ -1,15 +1,7 @@
 <script setup lang="ts">
 import { taskCenterKey } from "../task-center/controller";
 import PolicyExecutionContext from "./PolicyExecutionContext.vue";
-import {
-  computed,
-  inject,
-  onMounted,
-  onBeforeUnmount,
-  ref,
-  watch,
-  toRaw,
-} from "vue";
+import { computed, inject, onBeforeUnmount, ref, watch, toRaw } from "vue";
 import type {
   SelfServicePort,
   SelfServiceDirectoryItem,
@@ -27,10 +19,11 @@ const props = withDefaults(
     records: BackendRequest[];
     kind?: "enrollment" | "software" | "script" | "all";
     filter?: string;
+    active?: boolean;
     allowNewRequests?: boolean;
     allowConfirm?: boolean;
   }>(),
-  { allowNewRequests: true, allowConfirm: true },
+  { active: true, allowNewRequests: true, allowConfirm: true },
 );
 const emit = defineEmits<{ changed: [] }>();
 watch(
@@ -318,9 +311,13 @@ async function cancel(id: string) {
     if (current === epoch) busy.value = false;
   }
 }
-onMounted(() => {
-  if (props.allowNewRequests !== false && !catalog.state.asOf) void refresh();
-});
+watch(
+  () => [props.active, props.allowNewRequests] as const,
+  ([active, allowed]) => {
+    if (active && allowed !== false && !catalog.state.asOf) void refresh();
+  },
+  { immediate: true },
+);
 watch(
   () => currentUser.value?.generation,
   () => {

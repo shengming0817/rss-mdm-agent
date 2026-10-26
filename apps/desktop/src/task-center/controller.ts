@@ -10,8 +10,22 @@ import type {
   BackendTask,
 } from "../self-service/types";
 
+// IPC and provider objects may order their properties differently. Identity is
+// the typed original value, including the complete sampling definition version.
 export const taskKey = (reference: TaskRef): string =>
-  JSON.stringify(reference);
+  JSON.stringify(
+    reference.kind === "request"
+      ? { kind: reference.kind, request: reference.request }
+      : reference.kind === "sampling"
+        ? {
+            kind: reference.kind,
+            query: {
+              id: reference.query.id,
+              revision: reference.query.revision,
+            },
+          }
+        : { kind: reference.kind, id: reference.id },
+  );
 export const requestRef = (request: string): TaskRef => ({
   kind: "request",
   request,

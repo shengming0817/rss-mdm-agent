@@ -702,7 +702,23 @@ def instrument_service_diagnostics(root, binary, config):
     metadata=log.stat()
     assert metadata.st_uid==0 and metadata.st_mode & 0o777==0o600 and not log.is_symlink()
     endpoint='system/com.rss-mdm.agent.execution'
+    current=subprocess.run(['/bin/launchctl','print',endpoint],check=True,capture_output=True,text=True)
+    identity=re.search(r'^\s*pid = ([1-9][0-9]*)\s*$',current.stdout,re.MULTILINE)
+    prior=int(identity[1]) if identity else None
     subprocess.run(['/bin/launchctl','bootout',endpoint],check=True,capture_output=True)
+    # launchctl bootout unregisters before the original process has necessarily
+    # released its stores. Match the production owner's stop-before-start order.
+    deadline=time.monotonic()+35
+    while True:
+        live=False
+        if prior:
+            try: os.kill(prior,0);live=True
+            except ProcessLookupError: pass
+        registration=subprocess.run(['/bin/launchctl','print',endpoint],capture_output=True,text=True)
+        if registration.returncode not in (0,113): raise RuntimeError('diagnostic registration lookup failed')
+        if not live and registration.returncode==113: break
+        if time.monotonic()>=deadline: raise TimeoutError('original diagnostic service did not stop')
+        time.sleep(.05)
     value['StandardErrorPath']=str(log)
     temporary=path.with_suffix('.diagnostics-'+str(os.getpid()))
     fd=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o644)
@@ -1344,6 +1360,45 @@ def validate_desktop_finish(finish, evidence):
     assert evidence and finish.get('request') == evidence['request'], 'completion evidence missing or mismatched'
 
 
+def wait_service_ready(binary, config, timeout=15):
+    # kickstart returns before the replacement XPC owner finishes registration.
+    # Retry only transport unavailability; authentication and diagnostic refusal
+    # must remain terminal, with the original process result retained.
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            status = json.loads(run(str(binary), '--config', str(config), '--service-status').stdout)
+        except subprocess.CalledProcessError as error:
+            if 'agent_service: Agent transport unavailable' not in (error.stderr or '').splitlines() or time.monotonic() >= deadline:
+                raise
+        else:
+            reply = status['reply']
+            if reply['kind'] == 'serviceStatus' and reply['value']['readiness']['phase'] == 'ready':
+                return status
+            if reply['kind'] != 'serviceStatus' or reply['value']['readiness']['phase'] == 'notReady' or time.monotonic() >= deadline:
+                raise RuntimeError('authenticated service readiness failed: ' + json.dumps(reply))
+        time.sleep(.2)
+
+
+def read_task_page(binary, config):
+    # Only a read may be retried after loss of its reply. Keep the complete read
+    # within the parent's 15s budget; never resend a prepare/submit/control here.
+    deadline = time.monotonic() + 12
+    while True:
+        try:
+            reply = json.loads(run(str(binary), '--config', str(config), '--query',
+                timeout=max(.01, deadline-time.monotonic())).stdout)['reply']
+        except subprocess.CalledProcessError as error:
+            if 'agent_service: Agent transport unavailable' not in (error.stderr or '').splitlines() or time.monotonic() >= deadline:
+                raise
+        else:
+            if reply['kind'] == 'task' and reply['value']['kind']=='page' and isinstance(reply['value']['value']['items'],list):
+                return reply['value']['value']
+            if reply['kind'] != 'unavailable' or time.monotonic() >= deadline:
+                raise RuntimeError('authenticated task query failed: ' + json.dumps(reply))
+        time.sleep(.2)
+
+
 def service_versions():
     root = Path(__file__).resolve().parents[2]
     # Generated from the Rust IPC owner, shared with installation consumers.
@@ -1613,19 +1668,28 @@ print(json.dumps(dict(label=label,plist=str(plist),helperGuard=result.stderr)))
                     (str(protected),str(binary),str(config),installer_source,phase))
             diagnostics=lab/'diagnostics.py'
             diagnostics.write_text("import json\nfrom pathlib import Path\nprint(json.dumps({'log':Path(%r).read_text()[-65536:]}))\n" % str(protected/'service-stderr.log'))
+        pin_cleanup = ""
+        if args.desktop:
+            pin_cleanup = """default=Path(%r)
+if default.exists():
+    actual=json.loads(default.read_text())
+    assert actual['service']['path']==%r and actual['state_root']==%r, 'refusing to remove another deployment pin'
+    default.unlink()
+""" % (str(default_config), str(binary), str(protected / 'state'))
         cleanup = lab / 'remove.py'
         cleanup.write_text(inspect.getsource(journal_proof) + """import json,sqlite3,subprocess
 from pathlib import Path
 expected=%r
 plist=Path('/Library/LaunchDaemons/com.rss-mdm.agent.execution.plist')
 if plist.exists(): subprocess.run(expected,check=True)
+%s
 journal=Path(%r)
 if journal.exists():
     proof=journal_proof(journal)
     diagnostic=journal.parent.parent/'service-stderr.log'
     if diagnostic.exists(): proof['driverDiagnostics']=diagnostic.read_text()[-32768:]
     print(json.dumps(proof))
-""" % (frozen_installer(installer_source, ['remove-lab-registration', '--scope', 'system', '--binary', str(binary), '--config', str(config)]), str(protected / 'state/execution.sqlite')))
+""" % (frozen_installer(installer_source, ['remove-lab-registration', '--scope', 'system', '--binary', str(binary), '--config', str(config)]), pin_cleanup, str(protected / 'state/execution.sqlite')))
         if args.security:
             cleanup.write_text("""import plistlib,subprocess
 from pathlib import Path
@@ -1638,13 +1702,6 @@ if plist.exists():
     else: assert result.returncode==113, 'fake registration lookup failed'
     plist.unlink()
 """ % (str(protected/'fake.plist'),str(probe_binary)) + cleanup.read_text())
-        if args.desktop:
-            cleanup.write_text(cleanup.read_text() + """default=Path(%r)
-if default.exists():
-    actual=json.loads(default.read_text())
-    assert actual['service']['path']==%r and actual['state_root']==%r, 'refusing to remove another deployment pin'
-    default.unlink()
-""" % (str(default_config), str(binary), str(protected / 'state')))
         initialize = lab/'initialize.py'
         initialize.write_text("""import json,plistlib,sqlite3,subprocess
 from pathlib import Path
@@ -1720,25 +1777,9 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         run('/usr/bin/python3', str(installer), 'status', '--scope', 'user', '--binary', str(binary), '--config', str(config))
         helper = True
         # A native PID is distinct from the asynchronous registration owner's readiness.
-        deadline=time.monotonic()+15
-        while True:
-            status=json.loads(run(str(binary),'--config',str(config),'--service-status').stdout)
-            reply=status['reply']
-            if reply['kind']=='serviceStatus' and reply['value']['readiness']['phase']=='ready': break
-            if reply['kind']!='serviceStatus' or reply['value']['readiness']['phase']=='notReady' or time.monotonic()>=deadline:
-                raise RuntimeError('authenticated service readiness failed: '+json.dumps(reply))
-            time.sleep(.2)
+        wait_service_ready(binary, config)
         def query():
-            deadline = time.monotonic() + 15
-            while True:
-                reply = json.loads(run(str(binary), '--config', str(config), '--query').stdout)['reply']
-                if reply['kind'] == 'task' and reply['value']['kind']=='page' and isinstance(reply['value']['value']['items'],list):
-                    return reply['value']['value']
-                # Read-only queries can meet a busy single owner while it validates material.
-                # Authentication rejection is terminal; only bounded Unavailable is retried.
-                if reply['kind'] != 'unavailable' or time.monotonic() >= deadline:
-                    raise RuntimeError('authenticated task query failed: ' + json.dumps(reply))
-                time.sleep(.2)
+            return read_task_page(binary, config)
         def offers():
             reply=json.loads(run(str(binary),'--config',str(config),'--offers').stdout)['reply']
             assert reply['kind']=='offers','authenticated offer discovery failed'

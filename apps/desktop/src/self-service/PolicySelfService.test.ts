@@ -605,3 +605,31 @@ test("a bounded directory window never claims the full catalog is searchable", a
     wrapper.unmount();
   }
 });
+
+test("a hidden policy consumer does not load the shared catalog until it becomes visible", async () => {
+  const policy_directory = vi.fn(async () => ({
+    items: [],
+    nextCursor: null,
+    asOf: 1000,
+  }));
+  const port = {
+    policy_directory,
+    policy_resolve: vi.fn(),
+  } as unknown as SelfServicePort;
+  const w = mount(PolicySelfService, {
+    props: { port, records: [], active: false },
+  });
+  try {
+    await flushPromises();
+    expect(policy_directory).not.toHaveBeenCalled();
+    await w.setProps({ active: true });
+    await flushPromises();
+    expect(policy_directory).toHaveBeenCalledTimes(1);
+    await w.setProps({ active: false });
+    await w.setProps({ active: true });
+    await flushPromises();
+    expect(policy_directory).toHaveBeenCalledTimes(1);
+  } finally {
+    w.unmount();
+  }
+});

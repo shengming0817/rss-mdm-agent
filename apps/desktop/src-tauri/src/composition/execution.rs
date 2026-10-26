@@ -173,42 +173,68 @@ impl ExecutionHandle {
             reply => Ok(reply),
         }
     }
+    // Runtime serializes identity transitions. Their protected native handshake
+    // must remain available when business reads fill the existing bounded queue.
+    async fn context_request(&self, request: Request) -> Result<Reply, Error> {
+        let handle = self.clone();
+        let method = if matches!(&request, Request::BindContext { .. }) {
+            "bind"
+        } else {
+            "revoke"
+        };
+        let reply = tokio::task::spawn_blocking(move || {
+            #[cfg(test)]
+            if let Some(send) = &handle.context_transport {
+                return handle.exchange(request, |request| send(request));
+            }
+            let client = ServiceClient::installed()?;
+            handle.exchange(request, |request| client.request(request))
+        })
+        .await
+        .map_err(|_| Error::OutcomeUnknown)?
+        .inspect_err(|error| {
+            eprintln!("RSS_EXECUTION_CONTEXT_FAILURE method={method} code={error:?}")
+        })?;
+        match reply {
+            Reply::Rejected => {
+                eprintln!("RSS_EXECUTION_CONTEXT_FAILURE method={method} code=Denied");
+                Err(Error::Denied)
+            }
+            Reply::Unavailable => {
+                eprintln!("RSS_EXECUTION_CONTEXT_FAILURE method={method} code=OutcomeUnknown");
+                Err(Error::OutcomeUnknown)
+            }
+            value => Ok(value),
+        }
+    }
     pub async fn revoke_context(&self) -> ui::Result<()> {
         if !self.context_possible.load(Ordering::Acquire) {
             return Ok(());
         }
-        let handle = self.clone();
-        tokio::task::spawn_blocking(move || {
-            // This control request never takes the business semaphore or transport lock.
-            #[cfg(test)]
-            let reply = match &handle.context_transport {
-                Some(send) => send(Request::RevokeContext {})?,
-                None => ServiceClient::installed()?.request(Request::RevokeContext {})?,
-            };
-            #[cfg(not(test))]
-            let reply = ServiceClient::installed()?.request(Request::RevokeContext {})?;
-            match reply {
-                Reply::ContextRevoked => {
-                    handle.context_possible.store(false, Ordering::Release);
-                    Ok(())
-                }
-                _ => Err(Error::OutcomeUnknown),
+        match self
+            .context_request(Request::RevokeContext {})
+            .await
+            .map_err(bad)?
+        {
+            Reply::ContextRevoked => {
+                self.context_possible.store(false, Ordering::Release);
+                Ok(())
             }
-        })
-        .await
-        .map_err(|_| bad(Error::OutcomeUnknown))?
-        .map_err(bad)
+            _ => Err(bad(Error::OutcomeUnknown)),
+        }
     }
     pub async fn bind_context(
         &self,
         value: execution_ipc::host::NativeContextSession,
         expected: Option<execution_contract::Id>,
     ) -> ui::Result<execution_contract::NativeContextRef> {
-        match self
-            .request(Request::BindContext { value, expected })
+        self.current().map_err(bad)?;
+        let reply = self
+            .context_request(Request::BindContext { value, expected })
             .await
-            .map_err(bad)?
-        {
+            .map_err(bad)?;
+        self.current().map_err(bad)?;
+        match reply {
             Reply::ContextBound { value } => Ok(value),
             _ => Err(bad(Error::OutcomeUnknown)),
         }
@@ -1308,5 +1334,70 @@ mod local_software_error_tests {
             }),
             Err(mcp::ServiceError::Denied)
         ));
+    }
+}
+
+#[cfg(test)]
+mod context_admission_tests {
+    use super::*;
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn identity_binding_remains_available_when_all_business_read_slots_are_occupied() {
+        let release = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+        let gate = release.clone();
+        let handle = ExecutionHandle::new().with_context_transport(move |request| match request {
+            Request::ServiceStatus {} => {
+                let (lock, wake) = &*gate;
+                let mut released = lock.lock().unwrap();
+                while !*released {
+                    released = wake.wait(released).unwrap();
+                }
+                Ok(Reply::Unavailable)
+            }
+            Request::RevokeContext {} => Ok(Reply::ContextRevoked),
+            Request::BindContext { value, .. } => Ok(Reply::ContextBound {
+                value: NativeContextRef {
+                    id: Id::new("bound-context").unwrap(),
+                    generation: value.generation,
+                },
+            }),
+            _ => Err(Error::InvalidInput),
+        });
+        let mut reads = Vec::new();
+        for _ in 0..16 {
+            let read = handle.clone();
+            reads.push(tokio::spawn(async move {
+                read.request(Request::ServiceStatus {}).await
+            }));
+        }
+        let saturated = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while handle.permits.available_permits() != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        let generation = Id::new("next-generation").unwrap();
+        let bound = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            handle.bind_context(
+                execution_ipc::host::NativeContextSession {
+                    access: execution_ipc::host::NativeAccess::Device {},
+                    generation: generation.clone(),
+                    expires_at_unix_ms: u64::MAX,
+                },
+                None,
+            ),
+        )
+        .await;
+        // Always release blocked native reads before asserting; test failures must reap owners too.
+        *release.0.lock().unwrap() = true;
+        release.1.notify_all();
+        for read in reads {
+            let _ = read.await;
+        }
+        assert!(saturated.is_ok());
+        assert_eq!(bound.unwrap().unwrap().generation, generation);
+        assert!(handle.context_possible.load(Ordering::Acquire));
+        handle.revoke_context().await.unwrap();
+        assert!(!handle.context_possible.load(Ordering::Acquire));
     }
 }

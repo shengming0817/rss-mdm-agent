@@ -17,11 +17,8 @@ fn task_history(server: &protocol::Server) -> serde_json::Value {
         .binding
         .clone()
         .expect("registered native owner");
-    let mut configuration =
-        protocol::telemetry::native_performance_configuration(server, &binding).configuration;
-    configuration.expires_at += 3600;
-    let policy = configuration.policy;
-    let signed = protocol::telemetry::sign(&server.data.lock().unwrap(), configuration);
+    let signed = protocol::telemetry::native_performance_configuration(server, &binding);
+    let policy = signed.configuration.policy;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -58,6 +55,18 @@ fn task_history(server: &protocol::Server) -> serde_json::Value {
     serde_json::json!({"policy":policy,"activity":activity.id})
 }
 
+// The producer renews the same bounded grant, preserving the original definition
+// identity while the real UI journey runs. No consumer expiry bypass is involved.
+fn renew_task_history(server: &protocol::Server, now: i64) {
+    let mut data = server.data.lock().unwrap();
+    if let Some(signed) = &data.telemetry.configuration {
+        let mut configuration = signed.configuration.clone();
+        configuration.issued_at = now;
+        configuration.expires_at = now + 300;
+        data.telemetry.configuration = Some(protocol::telemetry::sign(&data, configuration));
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let server = protocol::Server::tls().await;
@@ -78,13 +87,14 @@ async fn main() {
         }
     });
     loop {
-        server.time.set(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64,
-        );
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        server.time.set(now);
+        renew_task_history(&server, now);
         tokio::select! {
+            _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
             line = rx.recv() => {
                 let Some(line) = line else { break };
                 let command: serde_json::Value = serde_json::from_str(&line).unwrap();
@@ -179,5 +189,39 @@ async fn main() {
             }
             _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => (),
         }
+    }
+}
+
+#[cfg(test)]
+mod task_history_tests {
+    use super::*;
+    #[tokio::test]
+    async fn signed_history_renews_time_without_splitting_the_original_policy() {
+        let server = protocol::Server::new().await;
+        let root = protocol::Root::new();
+        let mut client = server.client(&root, agent_client::OpenMode::Create);
+        server.register(&mut client).await;
+        task_history(&server);
+        let before = server
+            .data
+            .lock()
+            .unwrap()
+            .telemetry
+            .configuration
+            .clone()
+            .unwrap()
+            .configuration;
+        assert!(before.signing_bytes("test").is_ok());
+        renew_task_history(&server, before.issued_at + 250);
+        let data = server.data.lock().unwrap();
+        let after = &data.telemetry.configuration.as_ref().unwrap().configuration;
+        assert_eq!(after.policy, before.policy);
+        assert_eq!(after.policy_version, before.policy_version);
+        assert_eq!(after.resource_digest, before.resource_digest);
+        assert_eq!(after.expires_at - after.issued_at, 300);
+        assert!(after.signing_bytes("test").is_ok());
+        assert!(data.management_page.as_ref().unwrap().items[0]
+            .execution
+            .is_some());
     }
 }

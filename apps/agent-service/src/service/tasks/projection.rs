@@ -155,8 +155,10 @@ impl Core {
                                 | execution_app::TaskPhase::ExecutionEnded
                                 | execution_app::TaskPhase::OutcomeUnknown
                         );
+                        // The execution owner accepts a cancellation request independently
+                        // of process/effect completion; it never promises rollback or stop.
                         let controllable =
-                            source != TaskSource::Policy && active && !v.status.cancel_requested;
+                            source != TaskSource::Policy && !v.status.cancel_requested;
                         (
                             TaskFacts::Execution(Box::new(v.clone())),
                             v.revision,
@@ -297,6 +299,9 @@ impl Core {
         }
         if controllable {
             detail.allowed_actions.push(TaskAction::Cancel);
+            if !active {
+                detail.control_reason = Some("execution-ended-cancel-request-only".into());
+            }
         } else {
             detail.control_reason = Some(
                 if source == TaskSource::Policy {
@@ -336,10 +341,11 @@ impl Core {
             };
             let content_authorized =
                 self.host.identity_ready() && self.host.clock.millis()? < until;
-            if !content_authorized && controllable && !observations.is_empty() {
+            if active && !content_authorized && controllable && !observations.is_empty() {
                 detail.control_reason = Some("content-authorization-expired".into());
             }
-            let resumable = controllable
+            let resumable = active
+                && controllable
                 && content_authorized
                 && !observations.is_empty()
                 && observations.iter().all(|v| {

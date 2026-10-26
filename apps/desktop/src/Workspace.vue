@@ -44,6 +44,7 @@ import {
   taskNavigationKey,
   requestRef,
   taskTitle,
+  taskKey,
 } from "./task-center/controller";
 import type { TaskRef } from "./self-service/types";
 import Tasks from "./task-center/TaskCenter.vue";
@@ -122,13 +123,13 @@ const taskPage = computed<PageNavigation>(() => ({
   path: controller.state.selected
     ? [
         {
-          id: JSON.stringify(controller.state.selected.reference),
+          id: taskKey(controller.state.selected.reference),
           title: taskTitle(controller.state.selected),
         },
       ]
     : [],
   searchEntries: [...controller.state.byRef.values()].map((task) => ({
-    id: JSON.stringify(task.reference),
+    id: taskKey(task.reference),
     title: taskTitle(task),
     revision: JSON.stringify(task.revision),
   })),
@@ -241,6 +242,17 @@ const searchState = computed(() => {
       .join(" · "),
   };
 });
+const searchVisible = ref(false);
+async function searchVisibility(visible: boolean) {
+  searchVisible.value = visible;
+  if (!visible || props.busy) return;
+  if (!directory.state.asOf) await directory.load();
+  if (!searchVisible.value || props.busy) return;
+  if (!software.state.directoryComplete)
+    await software.discover(false, () => searchVisible.value && !props.busy);
+  if (searchVisible.value && !props.busy && !controller.state.recentLoaded)
+    await controller.loadRecent();
+}
 async function searchMore(retry = false) {
   if (searchState.value.loading) return;
   if (retry) {
@@ -264,7 +276,8 @@ async function searchMore(retry = false) {
       const source = software.state.sources.find((source) => source.after);
       if (source) await software.read(source, true);
     }
-    if (directory.state.next) await directory.load(true);
+    if (!directory.state.asOf) await directory.load();
+    else if (directory.state.next) await directory.load(true);
     if (!controller.state.recentLoaded || controller.state.recentNext)
       await controller.loadRecent(!!controller.state.recentNext);
   }
@@ -374,9 +387,7 @@ async function returnFromTask() {
   else if (previous.reference) {
     const target = [
       ...document.querySelectorAll<HTMLElement>("[data-task-ref]"),
-    ].find(
-      (item) => item.dataset.taskRef === JSON.stringify(previous.reference),
-    );
+    ].find((item) => item.dataset.taskRef === taskKey(previous.reference));
     if (target) {
       target.focus();
       return;
@@ -490,10 +501,20 @@ provide(taskCenterKey, controller);
 provide(taskNavigationKey, { openTask, openNode: openTask });
 const directory = createDirectory(controller.port);
 provide(directoryKey, directory);
-onMounted(() => {
-  for (const section of ["network", "storage", "power"] as const)
-    void systemSettings.load(section);
-});
+let readingHome = false;
+async function loadHomeFacts() {
+  if (readingHome) return;
+  readingHome = true;
+  try {
+    for (const section of ["network", "storage", "power"] as const) {
+      if (props.busy || props.page !== "home") return;
+      if (!systemSettings.state.observations.has(section))
+        await systemSettings.load(section);
+    }
+  } finally {
+    readingHome = false;
+  }
+}
 onBeforeUnmount(() => {
   systemSettings.dispose();
   software.dispose();
@@ -509,18 +530,18 @@ const assistant = props.ready
     )
   : undefined;
 watch(
-  () => props.page,
-  (id) => {
+  () => [props.page, props.busy] as const,
+  ([id, busy]) => {
     if (id !== "settings") settingsExpanded.value = false;
     if (id !== "assistant") lastContentPage.value = id;
     navigationError.value = "";
-    if (id === "home" || id === "settings") void device.refresh();
+    if (!busy && (id === "home" || id === "settings")) void device.refresh();
+    if (!busy && id === "home") void loadHomeFacts();
     controller.setVisible(
-      ["home", "tasks", "software-management", "device-tools"].includes(id),
+      !busy &&
+        ["home", "tasks", "software-management", "device-tools"].includes(id),
       id !== "tasks",
     );
-    if (["tasks", "software-management", "device-tools"].includes(id))
-      void controller?.refresh();
     if (!historyPinned.value) historyOpen.value = false;
   },
   { immediate: true },
@@ -574,11 +595,11 @@ const homeResources = computed(() => {
       verified: summary.read && !summary.error,
     },
     ...controller.recentItems.value.slice(0, 6).map((item) => ({
-      id: JSON.stringify(item.reference),
+      id: taskKey(item.reference),
       title: taskTitle(item),
       description: item.stage,
       source: "原任务 owner",
-      revision: JSON.stringify([item.reference, item.revision]),
+      revision: JSON.stringify([taskKey(item.reference), item.revision]),
       collectedAt: item.recordedAt ?? undefined,
       verified: !controller.state.error,
     })),
@@ -714,9 +735,12 @@ watch(
   { flush: "pre" },
 );
 onMounted(() => {
-  void device.refresh();
   devicePolling = setInterval(() => {
-    if (["home", "settings"].includes(props.page) && !document.hidden)
+    if (
+      !props.busy &&
+      ["home", "settings"].includes(props.page) &&
+      !document.hidden
+    )
       void device.refresh();
   }, 30000);
   void assistant?.connect();
@@ -818,6 +842,7 @@ onBeforeUnmount(() => {
         :complete="searchState.complete"
         :has-more="searchState.hasMore"
         :error="searchState.error"
+        @visibility="searchVisibility"
         @more="searchMore()"
         @retry="searchMore(true)"
         @select="openTarget"
@@ -1016,7 +1041,7 @@ onBeforeUnmount(() => {
           v-if="ready"
           v-show="page === 'software-management'"
           :model="software"
-          :active="page === 'software-management'"
+          :active="!busy && page === 'software-management'"
           :execution="controller"
           @navigation="softwarePage = $event"
           @navigate="emit('navigate', $event)"
@@ -1024,7 +1049,7 @@ onBeforeUnmount(() => {
         <ToolsPage
           :network-port="networkCheck"
           :execution="controller"
-          :active="page === 'device-tools'"
+          :active="!busy && page === 'device-tools'"
           @task="openTask"
           @navigation="toolsPage = $event"
           v-if="ready"
@@ -1071,7 +1096,7 @@ onBeforeUnmount(() => {
           :self-service-port="controller?.port ?? selfServicePort"
           :device="device.state.value"
           :fixture="fixture"
-          :active="!ready || page === 'settings'"
+          :active="!busy && (!ready || page === 'settings')"
           :assistant="assistant"
           @assistant="emit('navigate', 'assistant')"
           @tasks="navigateMain('tasks')"

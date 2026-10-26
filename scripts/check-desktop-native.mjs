@@ -2,6 +2,7 @@
 // ref: webdriverio/desktop-mobile packages/tauri-plugin-webdriver@1.4.0;
 // webdriverio/webdriverio packages/webdriverio/src/index.ts@v9.32.0.
 import assert from "node:assert/strict";
+import { isDeepStrictEqual } from "node:util";
 import { unwrap } from "../packages/ai-contract/dist/testing/index.js";
 import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
@@ -625,15 +626,28 @@ const openNativeTask = async (detail) => {
   const filters = await browser.$$(".task-filters select");
   await filters[0].selectByAttribute("value", "");
   await filters[1].selectByAttribute("value", "");
-  await click(
-    detail.reference.kind === "activity"
-      ? "管理活动"
-      : detail.active
-        ? "正在进行"
-        : "历史记录",
-    '//*[@aria-label="任务视图"]',
-  );
-  await wait(() => taskButton(detail.reference).isDisplayed());
+  let selectedView;
+  await wait(async () => {
+    if (await taskButton(detail.reference).isDisplayed()) return true;
+    const current =
+      detail.reference.kind === "activity"
+        ? detail
+        : (await serviceCall("query")).items.find((item) =>
+            isDeepStrictEqual(item.reference, detail.reference),
+          );
+    assert.ok(current, "the authenticated owner must retain the original task");
+    const view =
+      current.reference.kind === "activity"
+        ? "管理活动"
+        : current.active
+          ? "正在进行"
+          : "历史记录";
+    if (view !== selectedView) {
+      await click(view, '//*[@aria-label="任务视图"]');
+      selectedView = view;
+    }
+    return false;
+  });
   await taskButton(detail.reference).click();
   await wait(() =>
     browser.$('.task-center-detail[aria-label="任务详情"]').isDisplayed(),
@@ -1739,10 +1753,23 @@ try {
     mark("account and saved unverified connection");
     if (await browser.$('[aria-label="登录工作空间"]').isExisting())
       await click("设置与诊断");
+    // A ready local owner opens Home. Enter settings through the visible product navigation.
+    await openAgentSettings("账号与组织");
+    mark("select the fixed native local test workspace");
     await browser.$(".account-local-workspaces > summary").click();
     await browser.$('[aria-label="测试用户名"]').setValue("Golden Alice");
     await click("进入");
-    await wait(() => browser.$('[aria-label="测试用户名"]').isEnabled());
+    await wait(() =>
+      browser.execute(() => {
+        const users = document.querySelector('[aria-label="测试用户"]');
+        const failure = users
+          ?.querySelector('[role="alert"]')
+          ?.textContent?.trim();
+        if (failure) throw Error(failure);
+        return users?.textContent?.includes("当前用户：Golden Alice");
+      }),
+    );
+    mark("open connection settings for the acknowledged local workspace");
     await navigate("设置");
     await text("个人 AI 连接（0）");
     const personalVault = await browser.$('[aria-label="个人 Passkey Vault"]');
@@ -2606,7 +2633,17 @@ try {
       await browser.$(".account-local-workspaces > summary").click();
     await browser.$('[aria-label="测试用户名"]').setValue("Golden Bob");
     await click("进入");
-    await wait(() => browser.$('[aria-label="测试用户名"]').isEnabled());
+    await wait(() =>
+      browser.execute(() => {
+        const users = document.querySelector('[aria-label="测试用户"]');
+        const failure = users
+          ?.querySelector('[role="alert"]')
+          ?.textContent?.trim();
+        if (failure) throw Error(failure);
+        return users?.textContent?.includes("当前用户：Golden Alice");
+      }),
+    );
+    mark("open connection settings for the acknowledged local workspace");
     await navigate("设置");
     await text("个人 AI 连接（0）");
     await click("稍后配置，前往 AI");
@@ -2616,7 +2653,16 @@ try {
       await browser.$(".account-local-workspaces > summary").click();
     await browser.$('[aria-label="测试用户名"]').setValue("Golden Alice");
     await click("进入");
-    await wait(() => browser.$('[aria-label="测试用户名"]').isEnabled());
+    await wait(() =>
+      browser.execute(() => {
+        const users = document.querySelector('[aria-label="测试用户"]');
+        const failure = users
+          ?.querySelector('[role="alert"]')
+          ?.textContent?.trim();
+        if (failure) throw Error(failure);
+        return users?.textContent?.includes("当前用户：Golden Alice");
+      }),
+    );
     await navigate("设置");
     await text("个人 AI 连接（1）");
     await click("删除");

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, computed, nextTick, ref, inject, onMounted } from "vue";
+import { reactive, computed, nextTick, ref, inject } from "vue";
 import {
   Activity,
   Terminal,
@@ -37,9 +37,6 @@ const emit = defineEmits<{
 const query = ref("");
 const directory = inject(directoryKey, undefined);
 const enterprise = ref<InstanceType<typeof PolicySelfService>>();
-onMounted(() => {
-  if (directory && !directory.state.asOf) void directory.load();
-});
 const sections = [
   { id: "全部", title: "全部工具" },
   { id: "连接与网络", title: "连接与网络" },
@@ -423,6 +420,7 @@ emit("navigation", navigation);
           <h3>组织发布的工具</h3>
           <PolicySelfService
             ref="enterprise"
+            :active="active && !current"
             :port="execution?.port ?? null"
             :records="execution?.preparations.value ?? []"
             kind="script"

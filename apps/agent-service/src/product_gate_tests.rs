@@ -4715,6 +4715,20 @@ async fn successful_local_software_assessment_confirms_receipts_and_releases_mat
                 execution_lifecycle::EffectAssessment::NoEffect
             })
         );
+        // Cancellation is the original owner's durable request fact, even after
+        // verified completion. It must not rewrite effect or imply redispatch.
+        c.cancel_task(&choice.request).await;
+        let cancelled = c
+            .service
+            .core
+            .app
+            .status(&c.service.core.local_caller(), &choice.request)
+            .unwrap();
+        assert!(cancelled.cancel_requested);
+        assert_eq!(cancelled.phase, execution_app::TaskPhase::Verified);
+        assert_eq!(cancelled.process, status.process);
+        assert_eq!(cancelled.assessment, status.assessment);
+        assert_eq!(cancelled.attempts, 1);
         let consumer = plan::id(RESULT_CONSUMER).unwrap();
         c.service.core.finish_local_result(&choice.request).unwrap();
         assert!(c

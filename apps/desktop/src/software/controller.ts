@@ -207,7 +207,7 @@ export function createSoftware(
       if (active && call === epoch) source.busy = false;
     }
   }
-  async function discover(append = false) {
+  async function discover(append = false, visible: () => boolean = () => true) {
     if (!active || !data || state.loading || (append && !state.directoryNext))
       return;
     state.loading = true;
@@ -264,9 +264,10 @@ export function createSoftware(
       state.directoryNext = page.next;
       state.directoryComplete = !page.next;
       state.error = "";
-      await Promise.all(
-        state.sources.filter((s) => !s.page).map((s) => read(s)),
-      );
+      for (const source of state.sources.filter((s) => !s.page)) {
+        if (!visible()) break;
+        await read(source);
+      }
     } catch {
       if (active && call === epoch)
         state.error = "软件来源读取未完成；可重试，当前结果仍保留。";

@@ -74,6 +74,9 @@ it("searches subsequent authorized pages through the same directory and opens th
   try {
     await flushPromises();
     const search = w.getComponent(WorkspaceSearch);
+    expect(directory).not.toHaveBeenCalled();
+    await w.get('button[aria-label="搜索应用、工具与设置"]').trigger("click");
+    await flushPromises();
     expect(search.props("complete")).toBe(false);
     for (let page = 0; page < 17; page++) {
       search.vm.$emit("more");

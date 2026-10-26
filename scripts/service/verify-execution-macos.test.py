@@ -34,6 +34,89 @@ def absent_execution_registration():
         yield
 
 
+class NativeReadinessTests(unittest.TestCase):
+    def test_replacement_transport_is_retried_until_authenticated_ready(self):
+        unavailable = subprocess.CalledProcessError(1, ['service'], stderr='agent_service: Agent transport unavailable\nRSS_IPC_TRANSPORT_ERROR code=4099\n')
+        ready = {'reply': {'kind': 'serviceStatus', 'value': {'readiness': {'phase': 'ready'}}}}
+        with patch.object(acceptance, 'run', side_effect=[unavailable, subprocess.CompletedProcess([], 0, json.dumps(ready))]) as call, patch.object(acceptance.time, 'sleep'):
+            self.assertEqual(acceptance.wait_service_ready('service', 'config'), ready)
+            self.assertEqual(call.call_count, 2)
+
+    def test_authorization_and_not_ready_are_terminal(self):
+        rejected = subprocess.CalledProcessError(1, ['service'], stderr='agent_service: Agent identity unavailable\n')
+        with patch.object(acceptance, 'run', side_effect=rejected) as call:
+            with self.assertRaises(subprocess.CalledProcessError): acceptance.wait_service_ready('service', 'config')
+            self.assertEqual(call.call_count, 1)
+        response = {'reply': {'kind': 'serviceStatus', 'value': {'readiness': {'phase': 'notReady'}}}}
+        with patch.object(acceptance, 'run', return_value=subprocess.CompletedProcess([], 0, json.dumps(response))) as call:
+            with self.assertRaisesRegex(RuntimeError, 'authenticated service readiness failed'): acceptance.wait_service_ready('service', 'config')
+            self.assertEqual(call.call_count, 1)
+
+    def test_transport_deadline_preserves_original_failure(self):
+        error = subprocess.CalledProcessError(1, ['service'], stderr='agent_service: Agent transport unavailable\n')
+        with patch.object(acceptance, 'run', side_effect=error), patch.object(acceptance.time, 'monotonic', side_effect=[0, 16]):
+            with self.assertRaises(subprocess.CalledProcessError) as raised: acceptance.wait_service_ready('service', 'config')
+            self.assertIs(raised.exception, error)
+
+
+class NativeDiagnosticRegistrationTests(unittest.TestCase):
+    def test_diagnostic_restart_waits_for_the_original_process_to_exit(self):
+        import plistlib
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); binary=root/'service'; config=root/'config'
+            registration=root/'job.plist'; log=root/'service-stderr.log';log.touch()
+            registration.write_bytes(plistlib.dumps({'Label':'com.rss-mdm.agent.execution','ProgramArguments':[str(binary),'--config',str(config)]}))
+            concrete=type(root); real_stat=concrete.stat
+            events=[]; alive=[True,True,False]
+            def kill(pid, signal):
+                self.assertEqual((pid,signal),(42,0))
+                events.append('probe-old')
+                if not alive.pop(0): raise ProcessLookupError()
+            def command(args, **kwargs):
+                if args[1]=='bootout':events.append('bootout')
+                if args[1]=='bootstrap':
+                    self.assertFalse(alive, 'replacement was bootstrapped before original exit')
+                    events.append('bootstrap')
+                return subprocess.CompletedProcess(args,113 if args[1]=='print' and 'bootout' in events and 'bootstrap' not in events else 0,'pid = 43\n' if 'bootstrap' in events else 'pid = 42\n')
+            def path(value):
+                return registration if str(value)=='/Library/LaunchDaemons/com.rss-mdm.agent.execution.plist' else concrete(value)
+            def metadata(value,*args,**kwargs):
+                return SimpleNamespace(st_uid=0,st_mode=0o100600) if value==log else real_stat(value,*args,**kwargs)
+            with patch('pathlib.Path',side_effect=path), patch.object(concrete,'stat',metadata), patch.object(acceptance.os,'kill',side_effect=kill), patch.object(acceptance.subprocess,'run',side_effect=command), patch.object(acceptance.time,'sleep'):
+                acceptance.instrument_service_diagnostics(root,binary,config)
+            self.assertEqual(events,['bootout','probe-old','probe-old','probe-old','bootstrap'])
+            self.assertEqual(plistlib.loads(registration.read_bytes())['StandardErrorPath'],str(log))
+
+
+class NativeTaskReadTests(unittest.TestCase):
+    def test_transient_transport_and_busy_owner_retry_only_the_same_read(self):
+        unavailable = subprocess.CalledProcessError(1, ['service'], stderr='agent_service: Agent transport unavailable\n')
+        busy = subprocess.CompletedProcess([], 0, json.dumps({'reply': {'kind': 'unavailable'}}))
+        page = {'items': [], 'complete': True}
+        ready = subprocess.CompletedProcess([], 0, json.dumps({'reply': {'kind': 'task', 'value': {'kind': 'page', 'value': page}}}))
+        with patch.object(acceptance, 'run', side_effect=[unavailable, busy, ready]) as call, patch.object(acceptance.time, 'sleep'):
+            self.assertEqual(acceptance.read_task_page('service', 'config'), page)
+            self.assertEqual(call.call_count, 3)
+            self.assertTrue(all(row.args == ('service', '--config', 'config', '--query') for row in call.call_args_list))
+
+    def test_authorization_wrong_reply_and_malformed_data_are_terminal(self):
+        denied = subprocess.CalledProcessError(1, ['service'], stderr='agent_service: Agent identity unavailable\n')
+        with patch.object(acceptance, 'run', side_effect=denied) as call:
+            with self.assertRaises(subprocess.CalledProcessError): acceptance.read_task_page('service', 'config')
+            self.assertEqual(call.call_count, 1)
+        for stdout in (json.dumps({'reply': {'kind': 'rejected'}}), '{'):
+            with self.subTest(stdout=stdout), patch.object(acceptance, 'run', return_value=subprocess.CompletedProcess([], 0, stdout)) as call:
+                with self.assertRaises((RuntimeError, ValueError)): acceptance.read_task_page('service', 'config')
+                self.assertEqual(call.call_count, 1)
+
+    def test_transport_deadline_preserves_original_failure(self):
+        error = subprocess.CalledProcessError(1, ['service'], stderr='agent_service: Agent transport unavailable\n')
+        with patch.object(acceptance, 'run', side_effect=error), patch.object(acceptance.time, 'monotonic', side_effect=[0, 0, 16]):
+            with self.assertRaises(subprocess.CalledProcessError) as raised: acceptance.read_task_page('service', 'config')
+            self.assertIs(raised.exception, error)
+
+
 class PssoPreflightTests(unittest.TestCase):
     def test_missing_candidate_blocks_without_claiming_system_acceptance(self):
         from types import SimpleNamespace
