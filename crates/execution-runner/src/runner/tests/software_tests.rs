@@ -442,8 +442,7 @@ fn main() {
     }
 }
 
-#[test]
-fn native_before_checkpoint_does_not_consume_first_dispatch_deadline() {
+fn native_receipt_fixture() -> (Fixture, FrozenExecution, Artifacts) {
     let f = fixture(
         "printf forbidden",
         vec![LaunchArg::ArtifactPath {}],
@@ -511,6 +510,12 @@ fn native_before_checkpoint_does_not_consume_first_dispatch_deadline() {
         detection: None,
         files: vec![],
     });
+    (f, plan, materials)
+}
+
+#[test]
+fn native_before_checkpoint_does_not_consume_first_dispatch_deadline() {
+    let (f, plan, materials) = native_receipt_fixture();
     let runner = NativeRunner::new(
         Id::new("mechanism-runner").unwrap(),
         [(plan.digest().as_str().into(), materials)].into(),
@@ -589,4 +594,103 @@ fn native_before_checkpoint_does_not_consume_first_dispatch_deadline() {
             ..
         }
     )));
+}
+
+#[test]
+fn resumed_sequence_keeps_prior_physical_scope_when_the_next_step_never_starts() {
+    let (_fixture, original, mut source) = native_receipt_fixture();
+    let mut input = original.spec().clone();
+    let ExecutionSpec::SoftwareProgram { program } = &mut input.execution else {
+        unreachable!()
+    };
+    let mut next = program.steps[0].clone();
+    next.package = PackageValue::new("second-package").unwrap();
+    program.steps.push(next);
+    input.budget.total_timeout_ms = 20000;
+    input.budget.total_output_bytes = 8192;
+    let plan =
+        FrozenExecution::freeze(input, &execution_sqlite::test_store_limits().input).unwrap();
+    source.program.push(source.program[0].clone());
+    let attempt = AttemptId::new("original-attempt").unwrap();
+    let runner = Id::new("mechanism-runner").unwrap();
+    // Protected prior process facts are the input to this controller projection test.
+    // No new OS execution is requested; cancellation precedes the next phase.
+    let mut process = rejected(&plan, &attempt, &runner, ProcessEnd::Exited);
+    process.scope = ProcessScope::ProcessGroup {
+        owner: 42,
+        group: 42,
+    };
+    process.exit_code = Some(0);
+    process.quiescent = true;
+    process.quality = OutputQuality::Complete;
+    let prior = SoftwareProgress {
+        attempt_id: attempt.clone(),
+        content_digest: plan.digest().clone(),
+        runner: runner.clone(),
+        elapsed_ms: 0,
+        output_bytes: 0,
+        checkpoints: vec![
+            SoftwareCheckpoint::Begin {
+                step: 0,
+                phase: SoftwarePhase::Before,
+            },
+            SoftwareCheckpoint::End {
+                step: 0,
+                phase: SoftwarePhase::Before,
+                duration_ms: 0,
+                process: None,
+                detected: Some(SoftwareState::Absent {}),
+                quiescent: true,
+            },
+            SoftwareCheckpoint::Begin {
+                step: 0,
+                phase: SoftwarePhase::Mutation,
+            },
+            SoftwareCheckpoint::End {
+                step: 0,
+                phase: SoftwarePhase::Mutation,
+                duration_ms: 0,
+                process: Some(Box::new(process.clone())),
+                detected: None,
+                quiescent: true,
+            },
+            SoftwareCheckpoint::Begin {
+                step: 0,
+                phase: SoftwarePhase::After,
+            },
+            SoftwareCheckpoint::End {
+                step: 0,
+                phase: SoftwarePhase::After,
+                duration_ms: 0,
+                process: None,
+                detected: Some(SoftwareState::Present {
+                    version: PackageValue::new("1").unwrap(),
+                }),
+                quiescent: true,
+            },
+            SoftwareCheckpoint::Complete { step: 0 },
+        ],
+    };
+    assert!(prior.resumable(&plan));
+    let capture = Arc::new(Mutex::new(None));
+    program::execute(program::ProgramRun {
+        source: Arc::new(source),
+        plan,
+        attempt,
+        runner,
+        deadline: Instant::now() + Duration::from_secs(1),
+        output_limit: 8192,
+        first_start: None,
+        cancel: Arc::new(AtomicBool::new(true)),
+        capture: capture.clone(),
+        progress: Arc::new(progress::Progress::new()),
+        previous: Some(prior),
+    });
+    let result = capture.lock().unwrap().clone().unwrap();
+    assert_eq!(result.scope, process.scope);
+    assert_eq!(
+        result.exit_code, None,
+        "a later failure must not inherit the earlier successful exit"
+    );
+    assert_ne!(result.failure_kind, ProcessFailureKind::None);
 }

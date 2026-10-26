@@ -381,6 +381,23 @@ pub(super) fn execute(input: ProgramRun) {
         Ok(())
     })();
     // Retain the physical root exit even when later detection or cleanup ends successfully.
+    // A later unstarted call cannot erase physical work from an earlier completed step.
+    if matches!(latest.scope, ProcessScope::NotStarted {}) {
+        if let Some(scope) =
+            journal
+                .checkpoints
+                .iter()
+                .rev()
+                .find_map(|checkpoint| match checkpoint {
+                    SoftwareCheckpoint::End {
+                        process: Some(p), ..
+                    } if !matches!(p.scope, ProcessScope::NotStarted {}) => Some(&p.scope),
+                    _ => None,
+                })
+        {
+            latest.scope = scope.clone();
+        }
+    }
     latest.finished = true;
     latest.total_output_bytes = journal.output_bytes;
     if result.is_ok() && latest.exit_code.is_none() {
