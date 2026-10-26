@@ -4,6 +4,9 @@ static NSArray<NSString *> *RSSRegistrationScopes(void) { return @[@"registratio
 static NSDictionary<NSString *,NSString *> *RSSPendingRetirements(NSUserDefaults *defaults) {
     return [defaults dictionaryForKey:@"retirements"] ?: @{};
 }
+static BOOL RSSObservationCurrent(NSUserDefaults *defaults,NSString *scope,NSString *metadata) {
+    return [[defaults stringForKey:scope] isEqual:metadata] && !RSSPendingRetirements(defaults)[metadata];
+}
 static void RSSQueueInflight(NSUserDefaults *defaults) {
     NSMutableDictionary *pending=[RSSPendingRetirements(defaults) mutableCopy];
     NSDictionary *inflight=[defaults dictionaryForKey:@"inflight"];

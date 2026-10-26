@@ -89,6 +89,10 @@ int main(void) { @autoreleasepool {
     assert(RSSPendingRetirements(defaults).count==1 && !RSSPendingRetirements(defaults)[@"valid-old-user"]);
     RSSCompleteRetirement(defaults,@"registration",@"new-callback-user");
     assert([[defaults stringForKey:@"registration"] isEqual:@"valid-old-user"]);
+    assert(RSSObservationCurrent(defaults,@"registration",@"valid-old-user"));
+    assert(!RSSObservationCurrent(defaults,@"registration",@"new-callback-user"));
+    RSSQueueCancelledRegistration(defaults,@"registration",@"valid-old-user");
+    assert(!RSSObservationCurrent(defaults,@"registration",@"valid-old-user"));
     [defaults removePersistentDomainForName:suite];
     CFRelease(publicKeyRef);CFRelease(key);puts("Platform SSO native ABI and signature test passed; no system registration exercised");
 } return 0; }
