@@ -214,7 +214,7 @@ export function checkSource(file, source) {
       "@rss-mdm-agent/ai-client",
       "@rss-mdm-agent/ai-ui-bridge",
       "@rss-mdm-agent/execution-bindings",
-      "@rss-mdm-agent/execution-bindings/task-details",
+      "@rss-mdm-agent/execution-bindings/tasks",
     );
   const descriptor = extname(file) === ".vue" ? parse(source).descriptor : null;
   if (descriptor) {

@@ -97,6 +97,11 @@ export function createTaskCenter(
     node: "",
     listScroll: 0,
     listFocus: "",
+    cursor: null as string | null,
+    previous: [] as (string | null)[],
+    page: 1,
+    recentError: "",
+    recentWindowed: false,
   });
   let alive = true,
     epoch = 0,
@@ -109,8 +114,9 @@ export function createTaskCenter(
 
   let listFlight: Promise<void> | undefined;
   const detailFlights = new Map<string, Promise<TaskDetail>>();
-  let pages = 1;
   const readAt = new Map<string, number>();
+  let listRevision = 0,
+    recentBrowsing = false;
   function cache(item: TaskDetail) {
     const key = taskKey(item.reference);
     state.byRef.set(key, item);
@@ -143,7 +149,12 @@ export function createTaskCenter(
     state.loaded = false;
     detailFlights.clear();
     readAt.clear();
-    pages = 1;
+    recentBrowsing = false;
+    state.cursor = null;
+    state.previous = [];
+    state.page = 1;
+    state.recentError = "";
+    state.recentWindowed = false;
     state.listScroll = 0;
     state.listFocus = "";
   }
@@ -161,40 +172,39 @@ export function createTaskCenter(
     if (listFlight) return listFlight;
     const call = epoch,
       queryVersion = listEpoch;
-    const query = { ...state.query, cursor: append ? state.next : null };
+    const query = {
+      ...state.query,
+      cursor: append ? state.next : state.cursor,
+    };
     state.loading = true;
     listFlight = (async () => {
       try {
-        const merged = new Map(
-          (append ? state.items : []).map((t) => [taskKey(t.reference), t]),
-        );
-        const seen = new Set<string>();
-        let cursor = query.cursor;
-        const count = append ? 1 : pages;
-        for (let i = 0; i < count; ++i) {
-          const page = await tasks.list({ ...query, cursor });
-          if (!alive || call !== epoch || queryVersion !== listEpoch) return;
-          acceptScope(page.scope);
-          if (page.next && (page.next === cursor || seen.has(page.next)))
-            throw Error("任务游标未推进");
-          if (page.next) seen.add(page.next);
-          for (const item of page.items) {
-            if (item.scope !== page.scope) throw Error("任务主体不一致");
-            merged.set(taskKey(item.reference), item);
-            cache(item);
-          }
-          state.remoteAvailable = page.remoteAvailable;
-          state.asOf = page.asOf;
-          state.lastSync = page.lastSync;
-          state.coverage = page.coverage;
-          state.retainedFrom = page.retainedFrom;
-          state.complete = page.complete;
-          cursor = page.next;
-          if (!cursor || merged.size >= 512) break;
+        const page = await tasks.list(query);
+        if (!alive || call !== epoch || queryVersion !== listEpoch) return;
+        acceptScope(page.scope);
+        if (page.next && page.next === query.cursor)
+          throw Error("任务游标未推进");
+        for (const item of page.items) {
+          if (item.scope !== page.scope) throw Error("任务主体不一致");
+          cache(item);
         }
-        state.items = [...merged.values()].slice(0, 512);
-        state.next = state.items.length >= 512 ? null : cursor;
-        if (append) pages++;
+        if (append) {
+          state.previous.push(state.cursor);
+          if (state.previous.length > 16) state.previous.shift();
+          state.cursor = query.cursor;
+          state.page++;
+          state.listScroll = 0;
+          state.listFocus = "";
+        }
+        state.items = page.items;
+        state.next = page.next;
+        listRevision++;
+        state.remoteAvailable = page.remoteAvailable;
+        state.asOf = page.asOf;
+        state.lastSync = page.lastSync;
+        state.coverage = page.coverage;
+        state.retainedFrom = page.retainedFrom;
+        state.complete = page.complete;
         state.loaded = true;
         if (!state.uncertain) state.error = "";
       } catch (error) {
@@ -211,6 +221,24 @@ export function createTaskCenter(
       }
     })();
     return listFlight;
+  }
+  async function previousPage() {
+    if (!state.previous.length || state.loading) return;
+    const oldCursor = state.cursor,
+      oldPrevious = [...state.previous],
+      oldPage = state.page,
+      before = listRevision,
+      call = epoch;
+    state.cursor = state.previous.pop()!;
+    state.page--;
+    state.listScroll = 0;
+    state.listFocus = "";
+    await load();
+    if (call === epoch && before === listRevision) {
+      state.cursor = oldCursor;
+      state.previous = oldPrevious;
+      state.page = oldPage;
+    }
   }
   const recentItems = computed(() =>
     state.recent.flatMap((ref) => {
@@ -230,20 +258,21 @@ export function createTaskCenter(
         if (!alive || call !== epoch) return;
         acceptScope(page.scope);
         if (page.next && page.next === cursor) throw Error("任务游标未推进");
-        const refs = new Map(
-          (append ? state.recent : []).map((ref) => [taskKey(ref), ref]),
-        );
+        const refs = new Map(state.recent.map((ref) => [taskKey(ref), ref]));
         for (const item of page.items) {
           if (item.scope !== page.scope) throw Error("任务主体不一致");
           cache(item);
           refs.set(taskKey(item.reference), item.reference);
         }
-        state.recent = [...refs.values()].slice(0, 512);
-        state.recentNext = state.recent.length >= 512 ? null : page.next;
+        state.recentWindowed ||= refs.size > 512;
+        state.recent = [...refs.values()].slice(-512);
+        if (append || !recentBrowsing) state.recentNext = page.next;
+        if (append) recentBrowsing = true;
+        state.recentError = "";
         state.recentLoaded = true;
       } catch {
         if (alive && call === epoch)
-          state.error = "最近任务读取未完成，保留事实待核实";
+          state.recentError = "最近任务读取未完成，保留事实待核实";
       } finally {
         if (alive) {
           state.recentLoading = false;
@@ -424,7 +453,9 @@ export function createTaskCenter(
     state.next = null;
     state.items = [];
     state.loaded = false;
-    pages = 1;
+    state.cursor = null;
+    state.previous = [];
+    state.page = 1;
     await listFlight;
     await load();
   }
@@ -473,6 +504,7 @@ export function createTaskCenter(
     available: !!tasks,
     interactive: !!port,
     load,
+    previousPage,
     refresh,
     detail,
     openTask,

@@ -148,11 +148,11 @@ const taskPage = computed<PageNavigation>(() => ({
     return (await openTask(item.reference)) === "ready";
   },
   search: {
-    loading: controller.state.loading,
-    complete: controller.state.loaded && !controller.state.next,
-    hasMore: !!controller.state.next,
-    error: controller.state.error,
-    loadMore: () => controller.load(true),
+    loading: controller.state.recentLoading,
+    complete: controller.state.recentLoaded && !controller.state.recentNext,
+    hasMore: !!controller.state.recentNext,
+    error: controller.state.recentError,
+    loadMore: () => controller.loadRecent(true),
   },
 }));
 const currentModule = computed(() =>
@@ -226,12 +226,14 @@ const searchEntries = computed<SearchEntry[]>(() => [
 ]);
 const navigationError = ref("");
 const searchState = computed(() => {
-  const states = [softwarePage.value?.search, toolsPage.value?.search].filter(
-    (value) => !!value,
-  );
+  const states = [
+    softwarePage.value?.search,
+    toolsPage.value?.search,
+    taskPage.value.search,
+  ].filter((value) => !!value);
   return {
     loading: states.some((value) => value!.loading),
-    complete: states.length === 2 && states.every((value) => value!.complete),
+    complete: states.length === 3 && states.every((value) => value!.complete),
     hasMore: states.some((value) => value!.hasMore),
     error: states
       .map((value) => value!.error)
@@ -253,6 +255,8 @@ async function searchMore(retry = false) {
         await software.read(source, !!source.after);
     }
     if (directory.state.error) await directory.load(!!directory.state.next);
+    if (controller.state.recentError)
+      await controller.loadRecent(!!controller.state.recentNext);
   } else {
     // Software and tools consume the same Policy owner; advance that cursor once.
     if (software.state.directoryNext) await software.discover(true);
@@ -261,6 +265,8 @@ async function searchMore(retry = false) {
       if (source) await software.read(source, true);
     }
     if (directory.state.next) await directory.load(true);
+    if (!controller.state.recentLoaded || controller.state.recentNext)
+      await controller.loadRecent(!!controller.state.recentNext);
   }
 }
 let navigationEpoch = 0;
@@ -1033,7 +1039,7 @@ onBeforeUnmount(() => {
             :presentation="pageAssistantOpen ? 'context' : 'main'"
             :header-target="headerHost"
             @settings="openConnectionSettings"
-            @tasks="emit('navigate', 'tasks')"
+            @tasks="openTask"
         /></Teleport>
         <Settings
           @navigation="settingsPage = $event"

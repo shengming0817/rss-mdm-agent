@@ -31,6 +31,7 @@ fn task_ui_error(error: Error) -> ui::ServiceError {
         }
         Error::Conflict => ("task_stale", "任务或策略版本已变化，操作未提交，请重新读取"),
         Error::InvalidInput => ("task_input", "任务请求无效，操作未提交"),
+        Error::Unsupported => ("task_denied", "原 owner 当前阶段不支持此操作"),
         _ => ("task_unknown", "控制结果未知，请查询原操作"),
     };
     ui::error(code, message)
@@ -42,6 +43,7 @@ fn mcp_error(error: Error) -> mcp::ServiceError {
         Error::NotFound => mcp::ServiceError::NotFound,
         Error::Conflict => mcp::ServiceError::Conflict,
         Error::InvalidInput => mcp::ServiceError::InvalidInput,
+        Error::Unsupported => mcp::ServiceError::Unsupported,
         Error::OutcomeUnknown => mcp::ServiceError::OutcomeUnknown,
         _ => mcp::ServiceError::Unavailable,
     }
@@ -719,6 +721,7 @@ impl ExecutionHandle {
             Reply::DataFailure { reason } => Err(match reason {
                 DataError::InvalidInput => Error::InvalidInput,
                 DataError::Conflict => Error::Conflict,
+                DataError::Unsupported => Error::Unsupported,
                 DataError::Denied | DataError::NotFound | DataError::Expired => Error::Denied,
                 _ => Error::OutcomeUnknown,
             }),
@@ -1158,8 +1161,10 @@ mod selection_tests {
         };
         let original = BackendRequest {
             retry_of: None,
+            retry_expected_revision: None,
             recorded_at_unix_ms: 1,
             cancellation_control: None,
+            cancellation_expected_revision: None,
             action: PreparedAction::Offered {
                 offer: BackendTask {
                     request: selection.request.clone(),

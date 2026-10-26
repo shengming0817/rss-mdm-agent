@@ -527,7 +527,8 @@ impl<S: IdentityProvider> DeviceService<S> {
                     if matches!(
                         command.request.as_operation(),
                         Some(
-                            Request::Data { .. }
+                            Request::Task { .. }
+                                | Request::Data { .. }
                                 | Request::LocalSoftware { .. }
                                 | Request::Settings { .. }
                                 | Request::NetworkCheck { .. }
@@ -661,7 +662,9 @@ impl<S: IdentityProvider> DeviceService<S> {
             .backend_request(&self.core.caller(), &new_request)
             .map_err(map_app_error)?
         {
-            if previous.retry_of.as_ref() != Some(original) {
+            if previous.retry_of.as_ref() != Some(original)
+                || previous.retry_expected_revision.as_ref() != Some(&control.expected_revision)
+            {
                 return Err(Error::Conflict);
             }
             return self.core.task_operation(
@@ -674,24 +677,10 @@ impl<S: IdentityProvider> DeviceService<S> {
                 origin,
             );
         }
-        let previous_control = self.core.task_operation(
-            command,
-            &TaskOperation::ControlStatus(TaskControlQuery {
-                reference: control.reference.clone(),
-                id: control.id.clone(),
-                scope: control.scope.clone(),
-            }),
-            origin,
-        )?;
-        if matches!(
-            previous_control,
-            Reply::Task {
-                value: TaskResponse::Control(TaskControlReceipt {
-                    disposition: ControlDisposition::Confirmed,
-                    ..
-                })
-            }
-        ) {
+        if self
+            .core
+            .task_control_id_used(command, &control.reference, &control.id)?
+        {
             return Err(Error::Conflict);
         }
         if detail.revision != control.expected_revision
@@ -732,7 +721,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             origin,
             &choice,
             false,
-            Some(original.clone()),
+            Some((original.clone(), control.expected_revision.clone())),
             commands,
         )
         .await?;
@@ -754,9 +743,10 @@ impl<S: IdentityProvider> DeviceService<S> {
         origin: &ClientOrigin,
         choice: &execution_contract::PolicyChoice,
         draft: bool,
-        retry_of: Option<RequestId>,
+        retry: Option<(RequestId, execution_app::tasks::TaskRevision)>,
         commands: &mut tokio::sync::mpsc::Receiver<Command>,
     ) -> Result<Reply, Error> {
+        let retry_of = retry.as_ref().map(|v| v.0.clone());
         if draft && !matches!(origin, ClientOrigin::Ai { .. }) {
             return Err(Error::Denied);
         }
@@ -852,8 +842,10 @@ impl<S: IdentityProvider> DeviceService<S> {
             };
             let record = BackendRequest {
                 retry_of: retry_of.clone(),
+                retry_expected_revision: retry.as_ref().map(|v| v.1.clone()),
                 recorded_at_unix_ms: self.core.host.clock.millis()?,
                 cancellation_control: None,
+                cancellation_expected_revision: None,
                 action: PreparedAction::Policy {
                     definition: plan::reference(
                         directory.policy_id.to_string(),
@@ -1965,8 +1957,10 @@ impl<S: IdentityProvider> DeviceService<S> {
         });
         let record = BackendRequest {
             retry_of: None,
+            retry_expected_revision: None,
             recorded_at_unix_ms: self.core.host.clock.millis()?,
             cancellation_control: None,
+            cancellation_expected_revision: None,
             action: PreparedAction::SoftwareRead {
                 choice: choice.clone(),
                 definition,

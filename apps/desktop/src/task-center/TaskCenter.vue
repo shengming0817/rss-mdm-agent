@@ -78,6 +78,7 @@ async function confirmPolicy(request: string) {
 
 const list = ref<HTMLElement>();
 const reasons: Record<string, string> = {
+  "content-authorization-expired": "材料授权或期限已失效，不能恢复下载",
   "managed-background-task": "受管后台任务，普通用户不能控制",
   "owner-stage-is-not-interruptible": "当前阶段不支持中断",
   "runner-phase-cannot-be-paused": "执行及校验阶段不支持暂停",
@@ -221,6 +222,7 @@ function time(event: Event, key: "from" | "until") {
           s.remoteAvailable ? "本次在线读取成功" : "离线缓存或当前同步未确认"
         }}
       </p>
+      <p>本次读取截至：{{ new Date(s.asOf).toLocaleString() }}</p>
       <p>
         最近同步：{{
           s.lastSync == null
@@ -263,6 +265,22 @@ function time(event: Event, key: "from" | "until") {
             new Date(item.recordedAt).toLocaleString()
           }}</time>
         </button>
+        <nav aria-label="任务分页">
+          <span>第 {{ s.page }} 页</span
+          ><button
+            v-if="s.page > 1"
+            :disabled="s.loading"
+            @click="c.setQuery({ ...s.query })"
+          >
+            返回第一页</button
+          ><button
+            v-if="s.previous.length"
+            :disabled="s.loading"
+            @click="c.previousPage()"
+          >
+            上一页
+          </button>
+        </nav>
         <button v-if="s.next" :disabled="s.loading" @click="c.load(true)">
           继续读取
         </button>

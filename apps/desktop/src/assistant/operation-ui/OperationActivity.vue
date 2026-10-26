@@ -11,7 +11,7 @@ import {
 import ExecutionDetails from "../ExecutionDetails.vue";
 import type { AssistantController } from "../controller";
 import { connectOperation } from "./host";
-import type { BackendTaskView } from "@rss-mdm-agent/execution-bindings/task-details";
+import type { TaskDetail } from "@rss-mdm-agent/execution-bindings/tasks";
 const props = defineProps<{
   controller: AssistantController;
   operationId: string;
@@ -21,10 +21,14 @@ const props = defineProps<{
   detailsOpen: boolean;
   detailsHost?: HTMLElement;
 }>();
-const emit = defineEmits<{ tasks: []; open: [id: string]; close: [] }>();
+const emit = defineEmits<{
+  tasks: [reference: TaskDetail["reference"]];
+  open: [id: string];
+  close: [];
+}>();
 const assembly = shallowRef<Awaited<ReturnType<typeof connectOperation>>>();
 const renderer = shallowRef<Component>();
-const details = shallowRef<BackendTaskView>();
+const details = shallowRef<TaskDetail>();
 const snapshot =
   shallowRef<Awaited<ReturnType<typeof connectOperation>>["snapshot"]>();
 const error = ref(""),
@@ -145,7 +149,12 @@ const key = computed(() =>
       >
         查看设备操作
       </button>
-      <button @click="emit('tasks')">前往任务处理</button>
+      <button
+        :disabled="!details"
+        @click="details && emit('tasks', details.reference)"
+      >
+        前往任务处理
+      </button>
     </div>
     <Teleport :to="detailsHost ?? 'body'" :disabled="!detailsHost">
       <section
@@ -153,8 +162,8 @@ const key = computed(() =>
         class="execution-inspector-content"
       >
         <ExecutionDetails
-          v-if="details?.kind === 'execution'"
-          :details="details.value"
+          v-if="details?.facts.kind === 'execution'"
+          :details="details.facts.value"
           :now="now"
         />
         <p v-else>原请求仍在准备阶段，目标和最终参数见操作卡片。</p>

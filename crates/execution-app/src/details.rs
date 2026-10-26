@@ -192,22 +192,6 @@ pub struct SoftwareStepSummary {
     pub run_as: RunAs,
 }
 
-/// Query result spanning preparation and actual execution without inventing a frozen plan.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
-pub enum BackendTaskView {
-    /// Only a user intent exists; there is no execution attempt or execution authorization.
-    Pending {
-        /// Original offer, caller binding and durable preparation state.
-        value: Box<execution_contract::BackendRequest>,
-    },
-    /// The original request has entered the execution journal.
-    Execution {
-        /// Real frozen input projection and lifecycle facts.
-        value: Box<ExecutionTaskDetails>,
-    },
-}
-
 /// Safe native package effect for task details.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]

@@ -144,7 +144,7 @@ pnpm check:assistant
 
 AI 文本不能覆盖设备任务事实；执行详情来自 Rust 的授权读取。普通回答与 A2UI 动作均不能签发批准。未知接纳重试保留原命令和期限，回执不等于模型终态。过期、旧 generation 和删除卡片禁止继续提交；渲染失败保留只读内容。
 
-`execution_execute` 与三个读工具在 Host 投递前不请求通用许可；`execution_cancel` 保留“允许一次 / 拒绝一次”。相同待决提案共用一次询问，已有持久投递恢复不重问。许可过期、会话/命令结束或用户切换后不能写新执行意图。取消许可仅允许 AI 发起取消请求；Rust 在实际执行前验证后台授权和按风险要求的具体动作确认。时间线的设备卡只从 Host 投递事件定位，再核对 Rust 返回的请求、会话和工具身份；模型文字不能生成可信设备卡。
+`execution_execute` 与三个读工具在 Host 投递前不请求通用许可；`execution_task_control` 保留“允许一次 / 拒绝一次”。相同待决提案共用一次询问，已有持久投递恢复不重问。许可过期、会话/命令结束或用户切换后不能写新执行意图。取消许可仅允许 AI 发起取消请求；Rust 在实际执行前验证后台授权和按风险要求的具体动作确认。时间线的设备卡只从 Host 投递事件定位，再核对 Rust 返回的请求、会话和工具身份；模型文字不能生成可信设备卡。
 
 交互参考复核基于 Codex 与 Claude 官方使用文档，未声称实机体验：
 [Codex/ChatGPT 项目与对话](https://learn.chatgpt.com/docs/projects)、[队列与 steer 设置](https://learn.chatgpt.com/docs/reference/settings)、[批准与沙箱](https://learn.chatgpt.com/docs/agent-approvals-security)、[Claude Desktop 导航](https://academy.claude.com/tutorials/navigating-the-claude-desktop-app)、[Claude 连接器](https://support.claude.com/en/articles/11176164-use-connectors-to-extend-claude-s-capabilities)。借鉴聊天入口、连接设置和动作许可分层；本产品的设备执行权威仍在 Rust。

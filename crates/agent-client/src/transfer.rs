@@ -59,6 +59,7 @@ struct Control {
     id: String,
     pause: bool,
     expected: u64,
+    owner_revision: u64,
     confirmed: bool,
 }
 struct State {
@@ -102,7 +103,7 @@ impl Transfers {
                 consumers.insert(key, value);
             }
         }
-        Ok(Self {
+        let result = Self {
             _lease: lease,
             state: Arc::new(Mutex::new(State {
                 conn,
@@ -111,6 +112,66 @@ impl Transfers {
                 limit,
             })),
             changed: Arc::new(tokio::sync::Notify::new()),
+        };
+        result.retire_orphans()?;
+        Ok(result)
+    }
+    fn retire_orphans(&self) -> Result<(), Error> {
+        let mut state = self.state.lock().map_err(|_| Error::Storage)?;
+        let mut current = BTreeMap::new();
+        {
+            let mut query = state.conn.prepare("SELECT body FROM tasks")?;
+            for row in query.query_map([], |r| r.get::<_, Vec<u8>>(0))? {
+                let signed: crate::wire::SignedTask = decode(&row?)?;
+                current.insert(signed.payload.task_id(), signed.payload.attempt_id());
+            }
+        }
+        let changed = state
+            .consumers
+            .iter()
+            .filter(|(_, v)| !v.retired && current.get(&v.task) != Some(&v.attempt))
+            .map(|(key, v)| {
+                let mut value = v.clone();
+                value.retired = true;
+                value.cancelled = true;
+                (key.clone(), value)
+            })
+            .collect::<Vec<_>>();
+        let tx = state.conn.unchecked_transaction()?;
+        for (key, value) in &changed {
+            tx.execute(
+                "UPDATE state SET body=?2 WHERE key=?1",
+                rusqlite::params![key, encode(value)?],
+            )?;
+        }
+        tx.commit()?;
+        for (key, value) in changed {
+            state.consumers.insert(key, value);
+        }
+        Ok(())
+    }
+    /// Keep consumer retirement in the same communication transaction that replaces its offer.
+    pub(crate) fn retire_attempt(
+        &self,
+        task: Uuid,
+        attempt: Uuid,
+    ) -> Result<Retirement<'_>, Error> {
+        let state = self.state.lock().map_err(|_| Error::Storage)?;
+        let values = state
+            .consumers
+            .iter()
+            .filter(|(_, v)| v.task == task && v.attempt == attempt)
+            .map(|(key, v)| {
+                let mut value = v.clone();
+                value.retired = true;
+                value.cancelled = true;
+                (key.clone(), value)
+            })
+            .collect();
+        Ok(Retirement {
+            state,
+            values,
+            changed: &self.changed,
         })
     }
     fn identity(task: Uuid, attempt: Uuid, key: &str) -> String {
@@ -214,6 +275,7 @@ impl Transfers {
         task: Uuid,
         attempt: Uuid,
         id: &str,
+        owner_revision: u64,
         revisions: &[(String, u64)],
         pause: bool,
     ) -> Result<bool, Error> {
@@ -239,7 +301,8 @@ impl Transfers {
                     .iter()
                     .find(|c| c.id == id)
                     .ok_or(Error::Conflict)?;
-                if original.pause != pause
+                if original.owner_revision != owner_revision
+                    || original.pause != pause
                     || !revisions
                         .iter()
                         .any(|(key, rev)| key == &value.key && *rev == original.expected)
@@ -261,7 +324,8 @@ impl Transfers {
         let mut confirmed = true;
         for (key, mut value) in selected {
             if let Some(original) = value.controls.iter().find(|c| c.id == id) {
-                if original.pause != pause
+                if original.owner_revision != owner_revision
+                    || original.pause != pause
                     || !revisions
                         .iter()
                         .any(|(key, rev)| key == &value.key && *rev == original.expected)
@@ -291,6 +355,7 @@ impl Transfers {
                     id: id.into(),
                     pause,
                     expected,
+                    owner_revision,
                     confirmed: accepted,
                 });
                 confirmed &= accepted;
@@ -406,5 +471,28 @@ impl State {
         self.conn.execute("INSERT INTO state(key,body) VALUES(?1,?2) ON CONFLICT(key) DO UPDATE SET body=excluded.body",rusqlite::params![key,encode(&value)?])?;
         self.consumers.insert(key.into(), value);
         Ok(())
+    }
+}
+
+pub(crate) struct Retirement<'a> {
+    state: std::sync::MutexGuard<'a, State>,
+    values: Vec<(String, Consumer)>,
+    changed: &'a tokio::sync::Notify,
+}
+impl Retirement<'_> {
+    pub(crate) fn persist(&self, tx: &rusqlite::Transaction<'_>) -> Result<(), Error> {
+        for (key, value) in &self.values {
+            tx.execute(
+                "UPDATE state SET body=?2 WHERE key=?1",
+                rusqlite::params![key, encode(value)?],
+            )?;
+        }
+        Ok(())
+    }
+    pub(crate) fn committed(mut self) {
+        for (key, value) in self.values.drain(..) {
+            self.state.consumers.insert(key, value);
+        }
+        self.changed.notify_one();
     }
 }

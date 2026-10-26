@@ -112,16 +112,25 @@ impl Store {
             return Err(Error::Conflict);
         }
         if expected.is_some_and(|p| {
-            p.recorded_at_unix_ms != next.recorded_at_unix_ms || p.retry_of != next.retry_of
+            p.recorded_at_unix_ms != next.recorded_at_unix_ms
+                || p.retry_of != next.retry_of
+                || p.retry_expected_revision != next.retry_expected_revision
         }) {
             return Err(Error::Conflict);
+        }
+        if next.retry_of.is_some() != next.retry_expected_revision.is_some()
+            || next.cancellation_control.is_some() != next.cancellation_expected_revision.is_some()
+        {
+            return Err(Error::InvalidInput);
         }
         if next.cancellation_control.is_some() && (next.state != S::Cancelled || expected.is_none())
         {
             return Err(Error::InvalidInput);
         }
         if expected.is_some_and(|p| {
-            p.cancellation_control.is_some() && p.cancellation_control != next.cancellation_control
+            p.cancellation_control.is_some()
+                && (p.cancellation_control != next.cancellation_control
+                    || p.cancellation_expected_revision != next.cancellation_expected_revision)
         }) {
             return Err(Error::Conflict);
         }

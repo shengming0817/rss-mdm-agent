@@ -210,6 +210,7 @@ export async function createFixture() {
       policyRevision: null,
       retryOf: null,
       related: [],
+      selection: null,
       missing: [],
       parameterSummary: {},
       humanConfirmation: pending && scenario === "proposed",

@@ -147,15 +147,7 @@ pub struct TaskNode {
     /// Confirmed invocation quiescence; absent does not mean terminated.
     pub quiescent: Option<bool>,
 }
-/// Exact owner revisions; transient byte counts never participate in control CAS.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct TaskRevision {
-    /// Execution or preparation owner revision.
-    pub owner: u64,
-    /// Exact artifact consumer revisions, ordered by original key.
-    pub transfers: Vec<(String, u64)>,
-}
+pub use execution_contract::TaskRevision;
 /// One authorized original task, never a second execution snapshot.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -200,6 +192,8 @@ pub struct TaskDetail {
     pub retry_of: Option<RequestId>,
     /// Independently authorized related producer identities.
     pub related: Vec<TaskRef>,
+    /// Original signed-offer coordinates when retained by the business preparation owner.
+    pub selection: Option<execution_contract::BackendSelection>,
     /// Explicit association gaps, including unconsumed related continuation.
     pub missing: Vec<String>,
     /// Parameter names and value categories only; never the original values.

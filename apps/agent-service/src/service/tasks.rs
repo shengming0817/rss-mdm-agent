@@ -157,6 +157,7 @@ impl Core {
                 task,
                 attempt,
                 c.id.as_str(),
+                c.expected_revision.owner,
                 &c.expected_revision.transfers,
                 c.action == TaskAction::Pause,
             )?;
@@ -180,7 +181,7 @@ impl Core {
             let matches = match &detail.facts {
                 TaskFacts::Preparation(v) => {
                     v.cancellation_control.as_ref() == Some(&c.id)
-                        && v.revision == c.expected_revision.owner.saturating_add(1)
+                        && v.cancellation_expected_revision.as_ref() == Some(&c.expected_revision)
                 }
                 TaskFacts::Execution(_) => {
                     let TaskRef::Request { request } = &c.reference else {
@@ -192,7 +193,7 @@ impl Core {
                             &self.request_caller(request)?,
                             request,
                             &c.id,
-                            c.expected_revision.owner,
+                            &c.expected_revision,
                         )
                         .map_err(map_app_error)?;
                     if matches!(
@@ -242,6 +243,7 @@ impl Core {
                 task,
                 attempt,
                 c.id.as_str(),
+                c.expected_revision.owner,
                 &revisions,
                 c.action == TaskAction::Pause,
             )? {
@@ -259,6 +261,7 @@ impl Core {
             next.revision += 1;
             next.state = BackendRequestState::Cancelled;
             next.cancellation_control = Some(c.id.clone());
+            next.cancellation_expected_revision = Some(c.expected_revision.clone());
             self.app
                 .record_backend_request(&self.caller(), Some(&previous), &next)
                 .map_err(map_app_error)?;
@@ -277,7 +280,7 @@ impl Core {
                     &self.request_caller(request)?,
                     request,
                     &c.id,
-                    c.expected_revision.owner,
+                    &c.expected_revision,
                 )
                 .map_err(map_app_error)?;
             let disposition = receipt_disposition(result.outcome);
@@ -298,6 +301,37 @@ impl Core {
             disposition,
             created: None,
         })
+    }
+    pub(in crate::service) fn task_control_id_used(
+        &self,
+        command: &Command,
+        reference: &TaskRef,
+        id: &execution_contract::Id,
+    ) -> Result<bool, Error> {
+        let detail = self.task_detail(command, reference)?;
+        if let Some((task, attempt)) = remote_pair(&detail.facts) {
+            if self
+                .transfers
+                .receipt(task, attempt, id.as_str())?
+                .is_some()
+            {
+                return Ok(true);
+            }
+        }
+        match &detail.facts {
+            TaskFacts::Preparation(v) => Ok(v.cancellation_control.as_ref() == Some(id)),
+            TaskFacts::Execution(_) if detail.source != TaskSource::Policy => {
+                let TaskRef::Request { request } = reference else {
+                    return Err(Error::Protocol);
+                };
+                Ok(self
+                    .app
+                    .control_receipt(&self.request_caller(request)?, request, id)
+                    .map_err(map_app_error)?
+                    .is_some())
+            }
+            _ => Ok(false),
+        }
     }
     fn task_control_status(
         &self,

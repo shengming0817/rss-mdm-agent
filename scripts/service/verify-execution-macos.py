@@ -318,6 +318,22 @@ def offer_request(offer):
         attempt=offer['attempt'], revision=offer['revision'], origin=dict(kind='desktop'))
 
 
+def task_executions(page):
+    return [item['facts']['value'] for item in page['items'] if item['facts']['kind']=='execution']
+
+
+def task_preparations(page):
+    return [item['facts']['value'] for item in page['items'] if item['facts']['kind']=='preparation']
+
+
+def native_task_page(probe):
+    response=probe.request(dict(method='task',origin=dict(kind='desktop'),input=dict(kind='list',input=dict(view='history',limit=64))))
+    assert_native_reply(response,'task')
+    value=response['envelope']['reply']['value']
+    assert value['kind']=='page'
+    return value['value']
+
+
 def native_policy_choice(probe, command, package, receipt, user=False, validity_seconds=3600):
     catalog = command('software-catalog', path=str(package), receipt=receipt,
         user=user, validitySeconds=validity_seconds)
@@ -349,7 +365,7 @@ def native_policy_offer(probe, query, command, package, receipt, user=False, val
     deadline = time.monotonic()+30
     while True:
         current = query()
-        rows = [row for row in current['preparations']
+        rows = [row for row in task_preparations(current)
             if row['action']['kind'] == 'policy' and row['action']['choice']['request'] == choice['request']]
         if rows and rows[0]['action'].get('offer'):
             assert len(rows) == 1, 'duplicate original Policy request'
@@ -361,32 +377,23 @@ def native_policy_offer(probe, query, command, package, receipt, user=False, val
 
 
 def completed_replay_offer(current, completion):
-    request = completion['request']
-    attempt = completion['record']['action']['initiator']['attempt']
-    offers = []
-    for row in current['preparations']:
-        action = row['action']
-        offer = action.get('offer')
-        if offer and offer['request'] == request and offer['attempt'] == attempt:
-            assert action['kind'] == 'policy', 'software replay requires its original Policy invocation'
-            assert action['choice']['request'] == request and action['runId'] == offer['task'], 'original policy association changed'
-            offers.append(offer)
-    assert len(offers) == 1, 'original completed offer missing or duplicated'
-    return offers[0]
+    matches=[item['selection'] for item in current['items'] if item['reference']==dict(kind='request',request=completion['request']) and item.get('selection')]
+    assert len(matches)==1, 'completed original offer coordinates were not retained'
+    return matches[0]
 
 
 def native_offer_security(probe, matrix, query, command, package, receipt, completed, effect, protected, replay_offer):
-    prior = query()['available']
+    prior = probe.request(dict(method='offers'))['envelope']['reply']['available']
     if prior:
         command('cancel')
         deadline=time.monotonic()+15
-        while query()['available']:
+        while probe.request(dict(method='offers'))['envelope']['reply']['available']:
             assert time.monotonic()<deadline, 'previous unselected catalog offer did not withdraw'
             time.sleep(.1)
     offer = replay_offer
     request = offer_request(offer)
     task=dict(task=offer['task'],attempt=offer['attempt'])
-    original=[r for r in query()['value']['items'] if r['action']['initiator'].get('attempt')==task['attempt']]
+    original=[r for r in task_executions(query()) if r['action']['initiator'].get('attempt')==task['attempt']]
     assert len(original)==1 and original[0]['status']['attempts']==1
     payload_file=protected/'package-payload/fixed.txt'
     before=dict(effect=effect(),bytes=payload_file.read_bytes(),mtime=payload_file.stat().st_mtime_ns)
@@ -411,7 +418,7 @@ def native_offer_security(probe, matrix, query, command, package, receipt, compl
     assert second.get('transport')=='reply' and second.get('peerUid')==0
     assert second.get('envelope',{}).get('reply',{}).get('kind') in ('queued','pending','status')
     remote = completed(task['attempt'], 90)
-    matching = [r for r in query()['value']['items'] if r['action']['initiator'].get('attempt') == task['attempt']]
+    matching = [r for r in task_executions(query()) if r['action']['initiator'].get('attempt') == task['attempt']]
     assert len(matching) == 1 and matching[0]['status']['attempts'] == 1
     assert remote['startRequests'] == baseline
     assert matching == original, 'replay changed the original execution facts'
@@ -423,7 +430,7 @@ def native_offer_security(probe, matrix, query, command, package, receipt, compl
     security_begin(matrix,'offer_expiry')
     offer = native_policy_offer(probe, query, command, package, receipt, validity_seconds=30)
     completed(offer['attempt'], 25)
-    original_expiry = [r for r in query()['value']['items'] if r['action']['initiator'].get('attempt') == offer['attempt']]
+    original_expiry = [r for r in task_executions(query()) if r['action']['initiator'].get('attempt') == offer['attempt']]
     request = offer_request(offer)
     assert_native_reply(probe.request(request), 'pending')
     starts = command('status')['startRequests']
@@ -434,7 +441,7 @@ def native_offer_security(probe, matrix, query, command, package, receipt, compl
     for response in replies:
         assert_native_reply(response, 'pending')
     assert command('status')['startRequests'] == starts
-    records = [r for r in query()['value']['items'] if r['action']['initiator'].get('attempt') == offer['attempt']]
+    records = [r for r in task_executions(query()) if r['action']['initiator'].get('attempt') == offer['attempt']]
     assert len(records) == 1 and records[0]['status']['attempts'] == 1
     assert records == original_expiry, 'expired replay changed the original execution facts'
     assert payload_file.read_bytes() == before['bytes'] and payload_file.stat().st_mtime_ns == before['mtime']
@@ -480,7 +487,7 @@ def native_revocation_security(probe, matrix, query, command, package, receipt, 
     assert command('status')['startRequests']==starts, 'revoked caller created another attempt'
     deadline=time.monotonic()+15
     while True:
-        records=[row for row in query()['value']['items'] if row['action']['initiator'].get('attempt')==active['attempt']]
+        records=[row for row in task_executions(query()) if row['action']['initiator'].get('attempt')==active['attempt']]
         if records and records[0]['status']['process'] and records[0]['status']['process']['finished']: break
         assert time.monotonic()<deadline, 'revoked physical process termination not recorded'
         time.sleep(.1)
@@ -582,13 +589,13 @@ def native_stale_helper_security(probe, matrix, query, command, protected, prior
     deadline=time.monotonic()+15
     while True:
         value=query()
-        records=[row for row in value['preparations'] if row['action']['offer']['attempt']==task['attempt']]
+        records=[row for row in task_preparations(value) if row['action']['offer']['attempt']==task['attempt']]
         if records and records[0]['state']=='failed':break
         assert time.monotonic()<deadline, 'stale helper denial did not settle the original selection'
         time.sleep(.1)
     assert command('status')['startRequests']==starts, 'stale helper admitted a new attempt'
     assert (payload_file.read_bytes(),payload_file.stat().st_mtime_ns)==before
-    assert not any(r['action']['initiator'].get('attempt')==task['attempt'] for r in value['value']['items'])
+    assert not any(r['action']['initiator'].get('attempt')==task['attempt'] for r in task_executions(value))
     matrix['staleHelperPending']=dict(task=task,baseline=prior,startRequests=starts,
         selection=response,record=records[0],effectUnchanged=True,logOffset=log_offset)
 
@@ -868,17 +875,17 @@ def login_security(args, frozen):
         try:
             assert probe.identity.get('guiActive') is True, 'actual foreground GUI login required'
             if args.login_phase=='prepare':
-                healthy=probe.request(dict(method='tasks',after=None));assert_native_reply(healthy,'tasks')
-                offers=healthy['envelope']['reply']['available']
+                healthy=native_task_page(probe)
+                offers=probe.request(dict(method='offers'))['envelope']['reply']['available']
                 assert len(offers)==1 and offers[0]['expiresAt']>time.time()+300, 'fresh user offer required before login switch'
                 request=offer_request(offers[0])
                 request['origin']=dict(kind='ai',config=dict(id='security-login',revision='1'),
                     conversation='security-login',toolCall='security-login')
                 proposed=probe.request(request);assert_native_reply(proposed,'pending')
                 assert proposed['envelope']['reply']['value']['failure'] == 'riskUnknown'
-                after_proposal=probe.request(dict(method='tasks',after=None));assert_native_reply(after_proposal,'tasks')
+                after_proposal=native_task_page(probe)
                 state=dict(candidateSha256=digest,identity=probe.identity,offer=offers[0],request=request,
-                    baseline=healthy,proposed=proposed,afterProposal=after_proposal['envelope']['reply'])
+                    baseline=healthy,proposed=proposed,afterProposal=after_proposal)
                 fd=os.open(args.login_state,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
                 with os.fdopen(fd,'w') as stream: json.dump(state,stream,indent=2)
                 matrix['checkpoint']=dict(phase='prepared',state=str(args.login_state),
@@ -891,10 +898,10 @@ def login_security(args, frozen):
                 def ready_and_original_offer():
                     healthy=probe.request(dict(method='serviceStatus'));assert_native_reply(healthy,'serviceStatus')
                     assert healthy['envelope']['reply']['value']['readiness']['phase']=='ready', 'unready service cannot prove a login rejection'
-                    snapshot=probe.request(dict(method='tasks',after=None));assert_native_reply(snapshot,'tasks')
-                    value=snapshot['envelope']['reply']
-                    assert state['offer'] in value['available'], 'original offer changed or disappeared'
-                    assert value['value']==state['afterProposal']['value'] and value['preparations']==state['afterProposal']['preparations'], 'login attack changed original journal facts'
+                    snapshot=native_task_page(probe)
+                    value=snapshot
+                    assert state['offer'] in probe.request(dict(method='offers'))['envelope']['reply']['available'], 'original offer changed or disappeared'
+                    assert task_executions(value)==task_executions(state['afterProposal']) and task_preparations(value)==task_preparations(state['afterProposal']), 'login attack changed original journal facts'
                     return dict(readiness=healthy,snapshot=snapshot)
                 if args.login_phase=='cross-user':
                     assert previous['uid']!=current['uid'] and current['session']!=0, 'second real login required'
@@ -1386,7 +1393,7 @@ def candidate_identity(path):
 def rejected_image_probe(image, binary, config):
     # First show the exact authorized channel is healthy, then change only the client image path.
     baseline = json.loads(run(str(binary), '--config', str(config), '--query').stdout)
-    if baseline['reply']['kind'] != 'tasks':
+    if baseline['reply']['kind'] != 'task' or baseline['reply']['value']['kind']!='page':
         raise RuntimeError('security baseline unavailable; negative probe not executed')
     rejected = subprocess.run([str(image), '--config', str(config), '--query'], capture_output=True, text=True, timeout=15)
     try: reply = json.loads(rejected.stdout)['reply']
@@ -1400,8 +1407,8 @@ def rejected_image_probe(image, binary, config):
 def unregistered_local_evidence(status, tasks):
     assert status['reply']['kind'] == 'serviceStatus', 'missing authenticated service status'
     assert status['reply']['value']['readiness'] == {'phase': 'ready'}, 'local owner is not ready'
-    assert tasks['reply']['kind'] == 'tasks', 'local task read was not accepted'
-    assert tasks['reply']['value']['items'] == [], 'fresh unregistered owner has unexpected tasks'
+    assert tasks['reply']['kind'] == 'task' and tasks['reply']['value']['kind']=='page', 'local task read was not accepted'
+    assert tasks['reply']['value']['value']['items'] == [], 'fresh unregistered owner has unexpected tasks'
     return dict(service=status, tasks=tasks)
 
 
@@ -1721,13 +1728,17 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             deadline = time.monotonic() + 15
             while True:
                 reply = json.loads(run(str(binary), '--config', str(config), '--query').stdout)['reply']
-                if reply['kind'] == 'tasks' and isinstance(reply['value']['items'], list):
-                    return reply
+                if reply['kind'] == 'task' and reply['value']['kind']=='page' and isinstance(reply['value']['value']['items'],list):
+                    return reply['value']['value']
                 # Read-only queries can meet a busy single owner while it validates material.
                 # Authentication rejection is terminal; only bounded Unavailable is retried.
                 if reply['kind'] != 'unavailable' or time.monotonic() >= deadline:
                     raise RuntimeError('authenticated task query failed: ' + json.dumps(reply))
                 time.sleep(.2)
+        def offers():
+            reply=json.loads(run(str(binary),'--config',str(config),'--offers').stdout)['reply']
+            assert reply['kind']=='offers','authenticated offer discovery failed'
+            return reply['available']
         def completed(task, seconds=30):
             deadline = time.monotonic() + seconds
             while time.monotonic() < deadline:
@@ -1797,12 +1808,12 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
                     deadline = time.monotonic() + 60
                     while True:
                         current, remote = query(), command('status')
-                        rows = [row for row in current['value']['items'] if row['status']['operationRequestId'] == request['request']]
+                        rows = [row for row in task_executions(current) if row['status']['operationRequestId'] == request['request']]
                         if rows and rows[0]['status']['process'] and rows[0]['status']['process']['finished'] and acknowledged_result(remote, rows[0]['action']['initiator']['attempt']) is not None:
                             break
                         assert time.monotonic() < deadline, 'terminal process/result deadline exceeded'
                         time.sleep(.2)
-                    completion = validate_desktop_completion(current['value']['items'], remote, effect(), request['request'])
+                    completion = validate_desktop_completion(task_executions(current), remote, effect(), request['request'])
                     if native_probe: replay_offer = completed_replay_offer(current, completion)
                     value = completion
                 elif method == 'finish':
@@ -1885,7 +1896,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         receipt['scenarios']['package_exit_and_independent_effect'] = package
         final = query()
         for attempt in [first['attempt'], second['attempt'], third['attempt']]:
-            records = [r for r in final['value']['items'] if r['action']['initiator'].get('attempt') == attempt]
+            records = [r for r in task_executions(final) if r['action']['initiator'].get('attempt') == attempt]
             assert len(records) == 1 and records[0]['status']['attempts'] == 1
         receipt['scenarios']['final_ipc'] = final
         if args.dmg_app:
@@ -1923,7 +1934,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             assert app_event['steps'][0]['after']['state'] == 'present'
             assert app_event['steps'][0]['diagnostics']['failure'] is None
             run('/usr/bin/codesign','--verify','--deep','--strict',str(installed_app))
-            app_records = [r for r in query()['value']['items'] if r['action']['initiator'].get('attempt') == app_task['attempt']]
+            app_records = [r for r in task_executions(query()) if r['action']['initiator'].get('attempt') == app_task['attempt']]
             assert len(app_records) == 1 and app_records[0]['status']['phase'] == 'verified'
             receipt['scenarios']['dmg_app_install'] = dict(backend=remote,record=app_records[0],imageSha256=hashlib.sha256(image.read_bytes()).hexdigest())
             if args.dmg_upgrade_app:
@@ -1964,7 +1975,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         deadline = time.monotonic() + 15
         while True:
             current = query()
-            records = [r for r in current['value']['items'] if r['action']['initiator'].get('attempt') == fourth['attempt']]
+            records = [r for r in task_executions(current) if r['action']['initiator'].get('attempt') == fourth['attempt']]
             if records and records[0]['status']['cancelRequested']:
                 assert records[0]['status']['attempts'] == 1
                 receipt['scenarios']['cancel'] = records[0]
@@ -1972,7 +1983,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             assert time.monotonic() < deadline, 'cancellation was not recorded'
             time.sleep(.2)
         receipt['scenarios']['cancel_delivery'] = completed(fourth['attempt'], 30)
-        cancelled = [r for r in query()['value']['items'] if r['action']['initiator'].get('attempt') == fourth['attempt']][0]
+        cancelled = [r for r in task_executions(query()) if r['action']['initiator'].get('attempt') == fourth['attempt']][0]
         assert cancelled['status']['process']['finished'] is True
         assert cancelled['status']['process']['end'] == 'cancelled'
         time.sleep(max(0, cancel_started + 21 - time.monotonic()))
@@ -2003,7 +2014,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             native_probe.close_connection(old_connection)
         time.sleep(3)
         reopened = query()
-        records = [r for r in reopened['value']['items'] if r['action']['initiator'].get('attempt') == fifth['attempt']]
+        records = [r for r in task_executions(reopened) if r['action']['initiator'].get('attempt') == fifth['attempt']]
         assert len(records) == 1 and records[0]['status']['attempts'] == 1
         assert counter.read_text() == 'x'
         assert records[0]['status']['phase'] == 'outcomeUnknown'

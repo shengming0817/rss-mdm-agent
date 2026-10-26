@@ -122,7 +122,7 @@ export const testOwners = [
   ["scripts/service/execution-windows.ps1", "agent-service"],
   ["scripts/service/verify-execution-windows.ps1", "agent-service"],
   ["packages/execution-bindings/src/tools.json", "execution-mcp"],
-  ["packages/execution-bindings/src/task-details.ts", "execution-app"],
+  ["packages/execution-bindings/src/tasks.ts", "execution-app"],
   ["tests/assistant/execution-fixtures.json", "execution-app"],
   ["tests/assistant/execution-fixtures.json", "execution-mcp"],
   ["tests/ai-contract", npm("ai-contract")],

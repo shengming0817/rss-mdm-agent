@@ -191,9 +191,11 @@
       }
     },
     "cancellationControl": null,
+    "cancellationExpectedRevision": null,
     "confirmation": null,
     "failure": "revoked",
     "recordedAtUnixMs": 1,
+    "retryExpectedRevision": null,
     "retryOf": null,
     "revision": 1,
     "risk": {
@@ -338,9 +340,11 @@
       }
     },
     "cancellationControl": null,
+    "cancellationExpectedRevision": null,
     "confirmation": null,
     "failure": null,
     "recordedAtUnixMs": 1,
+    "retryExpectedRevision": null,
     "retryOf": null,
     "revision": 1,
     "risk": {

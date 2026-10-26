@@ -19,10 +19,10 @@ import {
   type SessionPage,
 } from "@rss-mdm-agent/ai-client";
 import type {
-  BackendTaskView,
+  TaskDetail,
   BackendTask,
   ExecutionTaskDetails,
-} from "@rss-mdm-agent/execution-bindings/task-details";
+} from "@rss-mdm-agent/execution-bindings/tasks";
 
 type PermissionRequest = Parameters<
   NonNullable<ClientOptions["requestPermission"]>
@@ -40,7 +40,11 @@ export interface AssistantServices {
   taskDetails?(
     operationRequestId: string,
     signal: AbortSignal,
-  ): Promise<BackendTaskView>;
+  ): Promise<TaskDetail>;
+  /** Dedicated business preparation read for the trusted editable form; task facts remain scrubbed. */
+  preparationDetails?(
+    request: string,
+  ): Promise<import("../self-service/types").BackendRequest>;
   /** Explicit human action; models cannot invoke this native presentation callback. */
   confirmTask?(task: BackendTask): Promise<void>;
   confirmPolicy?(request: string): Promise<void>;
@@ -919,18 +923,21 @@ export function createAssistant(
       const result = await bounded(owner, () =>
         services.taskDetails!(requestId, owner.signal),
       );
+      if (
+        result.facts.kind !== "execution" &&
+        result.facts.kind !== "preparation"
+      )
+        throw new ClientError("unavailable");
       const initiator =
-        result.kind === "execution"
-          ? result.value.action.initiator
-          : result.value.trigger;
+        result.facts.kind === "execution"
+          ? result.facts.value.action.initiator
+          : result.facts.value.trigger;
       const origin =
         initiator.kind === "backend" ? initiator.trigger : initiator;
       const actualRequest =
-        result.kind === "execution"
-          ? result.value.status.operationRequestId
-          : result.value.action.kind === "offered"
-            ? result.value.action.offer.request
-            : result.value.action.choice.request;
+        result.reference.kind === "request"
+          ? result.reference.request
+          : undefined;
       if (
         current !== epoch ||
         signal.aborted ||
@@ -962,7 +969,7 @@ export function createAssistant(
       const read = services.taskDetails.bind(services);
       const result = await bounded(owner, () => read(id, owner.signal));
       if (current === taskEpoch) {
-        if (result.kind === "execution") state.task = result.value;
+        if (result.facts.kind === "execution") state.task = result.facts.value;
         else
           state.taskError = "原请求仍在准备阶段，请在设备操作卡片中查看或撤销";
       }
@@ -1057,6 +1064,10 @@ export function createAssistant(
     ) {
       if (!services?.submitOperation) throw new ClientError("unavailable");
       await services.submitOperation(input);
+    },
+    async preparationDetails(request: string) {
+      if (!services?.preparationDetails) throw new ClientError("unavailable");
+      return services.preparationDetails(request);
     },
     async reconcilePolicyPreparation(request: string) {
       await services?.reconcilePolicy?.(request);

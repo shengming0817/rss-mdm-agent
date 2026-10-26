@@ -34,6 +34,49 @@ pub struct ManagementCache {
     pub complete: bool,
 }
 impl<S: IdentityProvider, C: Clock> Client<S, C> {
+    fn save_management_cache(&self, mut cache: ManagementCache) -> Result<ManagementCache, Error> {
+        let limit = self.configuration().limits;
+        let count = limit.pending_tasks.saturating_mul(64).min(4096);
+        loop {
+            if cache.bounded_out {
+                cache.complete = false;
+                cache.coverage.retain(|v| v.source != "local-cache");
+                cache.coverage.push(ActivityCoverage {
+                    source: "local-cache".into(),
+                    complete: false,
+                    reasons: vec!["local-retention-budget".into()],
+                });
+            }
+            if cache.items.len() <= count
+                && cache.details.len() <= 64
+                && encode(&cache)?.len() <= limit.response_bytes
+            {
+                break;
+            }
+            cache.bounded_out = true;
+            if let Some(key) = cache.details.keys().next().cloned() {
+                cache.details.remove(&key);
+                continue;
+            }
+            if let Some(key) = cache
+                .items
+                .values()
+                .min_by_key(|v| (v.recorded_at, &v.id))
+                .map(|v| v.id.clone())
+            {
+                cache.items.remove(&key);
+                continue;
+            }
+            if cache.coverage.len() > 1 {
+                cache.coverage.clear();
+                continue;
+            }
+            return Err(Error::Capacity);
+        }
+        self.store.put("management-cache", &cache)?;
+        Ok(cache)
+    }
+
     /// Read an already authorized device cache without HTTP or execution.
     pub fn management_cache(&self, scope: &str) -> Result<ManagementCache, Error> {
         Ok(self
@@ -81,12 +124,13 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 cache.sync = None;
                 cache.anchor = None;
                 cache.complete = false;
+                cache.coverage.retain(|v| v.source != "continuation");
                 cache.coverage.push(ActivityCoverage {
                     source: "continuation".into(),
                     complete: false,
                     reasons: vec!["snapshot-restart-required".into()],
                 });
-                self.store.put("management-cache", &cache)?;
+                self.save_management_cache(cache)?;
                 return Err(Error::Conflict);
             }
             Err(error) => return Err(error),
@@ -119,26 +163,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         if let Some(from) = cache.retained_from {
             cache.items.retain(|_, v| v.recorded_at >= from);
         }
-        let limit = self
-            .configuration()
-            .limits
-            .pending_tasks
-            .saturating_mul(64)
-            .min(4096);
-        let mut truncated = false;
-        while cache.items.len() > limit {
-            let oldest = cache
-                .items
-                .values()
-                .min_by_key(|v| (v.recorded_at, &v.id))
-                .map(|v| v.id.clone())
-                .ok_or(Error::Storage)?;
-            cache.items.remove(&oldest);
-            truncated = true;
-        }
         cache.as_of = Some(page.as_of);
         cache.coverage = page.coverage;
-        cache.bounded_out |= truncated;
         if cache.bounded_out {
             cache.coverage.push(ActivityCoverage {
                 source: "local-cache".into(),
@@ -154,7 +180,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         cache.complete =
             cache.next.is_none() && !cache.bounded_out && cache.coverage.iter().all(|v| v.complete);
         // One state record is the original communication owner's atomic cache/checkpoint commit.
-        self.store.put("management-cache", &cache)?;
+        cache = self.save_management_cache(cache)?;
         cache.scope = scope.into();
         Ok(cache)
     }
@@ -197,23 +223,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             cache.details.remove(&old);
         }
         cache.details.insert(id.into(), value);
-        let limit = self
-            .configuration()
-            .limits
-            .pending_tasks
-            .saturating_mul(64)
-            .min(4096);
-        while cache.items.len() > limit {
-            let old = cache
-                .items
-                .values()
-                .filter(|v| v.id != id)
-                .min_by_key(|v| v.recorded_at)
-                .map(|v| v.id.clone())
-                .ok_or(Error::Capacity)?;
-            cache.items.remove(&old);
-        }
-        self.store.put("management-cache", &cache)?;
+        cache = self.save_management_cache(cache)?;
         cache.scope = scope.into();
         Ok(cache)
     }

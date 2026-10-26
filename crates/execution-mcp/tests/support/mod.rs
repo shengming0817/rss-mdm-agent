@@ -34,6 +34,7 @@ pub struct TestStore {
     accepted: HashMap<(TestNamespace, RequestId), OperationStatus>,
     inputs: HashMap<(TestNamespace, RequestId), BackendSelection>,
     cancellations: HashSet<(TestNamespace, RequestId)>,
+    controls: HashMap<(TestNamespace, Id), execution_app::tasks::TaskControl>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TestNamespace {
@@ -164,6 +165,14 @@ impl ExecutionServicePort for TestService {
                 if input.scope != "test-scope" || input.action != TaskAction::Cancel {
                     return Err(ServiceError::Denied);
                 }
+                let control_key = (self.namespace.clone(), input.id.clone());
+                if let Some(previous) = self.store.lock().unwrap().controls.get(&control_key) {
+                    if serde_json::to_value(previous).unwrap()
+                        != serde_json::to_value(&input).unwrap()
+                    {
+                        return Err(ServiceError::Conflict);
+                    }
+                }
                 let query = self
                     .store
                     .lock()
@@ -190,6 +199,11 @@ impl ExecutionServicePort for TestService {
                     )
                     .await?;
                 }
+                self.store
+                    .lock()
+                    .unwrap()
+                    .controls
+                    .insert(control_key, input.clone());
                 Ok(TaskResponse::Control(TaskControlReceipt {
                     id: input.id,
                     disposition: ControlDisposition::Confirmed,
@@ -202,8 +216,16 @@ impl ExecutionServicePort for TestService {
                     return Err(ServiceError::Denied);
                 };
                 let store = self.store.lock().unwrap();
-                let confirmed = store.cancellations.contains(&self.key(&request))
-                    || store.query_cancellations.contains(&self.key(&request));
+                let confirmed = store
+                    .controls
+                    .get(&(self.namespace.clone(), input.id.clone()))
+                    .is_some_and(|c| {
+                        c.reference
+                            == TaskRef::Request {
+                                request: request.clone(),
+                            }
+                            && c.scope == input.scope
+                    });
                 Ok(TaskResponse::Control(TaskControlReceipt {
                     id: input.id,
                     disposition: if confirmed {
@@ -547,6 +569,7 @@ impl TestService {
             policy_revision: None,
             retry_of: None,
             related: vec![],
+            selection: None,
             missing: vec![],
             parameter_summary: Default::default(),
             human_confirmation: false,
@@ -577,22 +600,16 @@ impl TestService {
         &self,
         request: OperationRequest,
         _: CancellationToken,
-    ) -> Result<CancelResult, ServiceError> {
+    ) -> Result<(), ServiceError> {
         let id = request.operation_request_id.clone();
         let operation = self.status(request, CancellationToken::new()).await?;
-        let disposition = if operation.phase == OperationPhase::Verified {
-            CancelDisposition::AlreadyTerminal
-        } else {
+        if operation.phase != OperationPhase::Verified {
             self.store
                 .lock()
                 .unwrap()
                 .cancellations
                 .insert(self.key(&id));
-            CancelDisposition::Requested
-        };
-        Ok(CancelResult {
-            disposition,
-            operation,
-        })
+        }
+        Ok(())
     }
 }

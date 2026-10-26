@@ -1043,15 +1043,25 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         caller: &RequestContext,
         request: &RequestId,
         id: &Id,
-        expected_revision: u64,
+        expected_revision: &execution_contract::TaskRevision,
     ) -> Result<Receipt, Error> {
         let execution = self.load(Some(caller), request, ExecutionAccess::Execute)?;
         let op = OperationRequestId::new(key(execution.input(), "task-control", id.as_str())?)
             .map_err(|_| Error::InvalidInput)?;
         let scope = Scope::from_input(execution.input());
         let event = CommandEvent {
-            id: EventId::new(op.as_str()).map_err(|_| Error::InvalidInput)?,
-            expected_revision,
+            id: EventId::new(key(
+                execution.input(),
+                "task-control-event",
+                &format!(
+                    "{:x}",
+                    Sha256::digest(
+                        serde_json::to_vec(expected_revision).map_err(|_| Error::InvalidInput)?
+                    )
+                ),
+            )?)
+            .map_err(|_| Error::InvalidInput)?,
+            expected_revision: expected_revision.owner,
             command: Command::Cancel,
         };
         let host = Host::new(&self.host, &self.binding, &self.config, Some(caller));

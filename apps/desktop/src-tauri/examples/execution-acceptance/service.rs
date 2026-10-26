@@ -106,6 +106,7 @@ impl ExecutionServicePort for FixtureService {
                 policy_revision: None,
                 retry_of: None,
                 related: vec![],
+                selection: None,
                 missing: vec![],
                 parameter_summary: Default::default(),
                 human_confirmation: false,
@@ -154,7 +155,7 @@ impl ExecutionServicePort for FixtureService {
                     return Err(ServiceError::Denied);
                 }
                 let value = app
-                    .cancel_control(&self.caller, &request, &c.id, c.expected_revision.owner)
+                    .cancel_control(&self.caller, &request, &c.id, &c.expected_revision)
                     .map_err(failure)?;
                 Ok(receipt(c.id, Some(value)))
             }

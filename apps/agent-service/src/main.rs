@@ -160,6 +160,7 @@ fn run() -> Result<(), Error> {
             }),
             origin: execution_ipc::host::ClientOrigin::Desktop {},
         }),
+        [arg] if arg == "--offers" => Some(Request::Offers {}),
         [arg] if arg == "--service-status" => Some(Request::ServiceStatus {}),
         [] => None,
         _ => return Err(Error::Configuration),

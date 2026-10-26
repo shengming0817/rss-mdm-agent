@@ -1516,7 +1516,7 @@ async fn streamed_pause_is_durable_and_resume_uses_the_original_validated_range(
                     let current=transfers.observations(task,attempt).unwrap();
                     if !paused&&current.iter().any(|v|v.bytes>=1024&&v.stage=="downloading") {
                         let versions=current.iter().map(|v|(v.key.clone(),v.revision)).collect::<Vec<_>>();
-                        assert!(!transfers.control(task,attempt,"pause-original",&versions,true).unwrap());
+                        assert!(!transfers.control(task,attempt,"pause-original", 0, &versions,true).unwrap());
                         paused=true;
                     }
                 }
@@ -1548,7 +1548,7 @@ async fn streamed_pause_is_durable_and_resume_uses_the_original_validated_range(
         .map(|v| (v.key.clone(), v.revision))
         .collect::<Vec<_>>();
     assert!(transfers
-        .control(task, attempt, "resume-original", &versions, false)
+        .control(task, attempt, "resume-original", 0, &versions, false)
         .unwrap());
     assert_eq!(
         transfers.receipt(task, attempt, "pause-original").unwrap(),
@@ -1574,7 +1574,7 @@ async fn streamed_pause_is_durable_and_resume_uses_the_original_validated_range(
         .map(|(key, revision)| (key.clone(), revision - 1))
         .collect::<Vec<_>>();
     assert!(transfers
-        .control(task, attempt, "pause-original", &original, true)
+        .control(task, attempt, "pause-original", 0, &original, true)
         .unwrap());
     assert!(
         transfers
@@ -1585,7 +1585,11 @@ async fn streamed_pause_is_durable_and_resume_uses_the_original_validated_range(
         "replaying a pause receipt cannot create a new pause intent"
     );
     assert!(matches!(
-        transfers.control(task, attempt, "pause-original", &original, false),
+        transfers.control(task, attempt, "pause-original", 0, &original, false),
+        Err(Error::Conflict)
+    ));
+    assert!(matches!(
+        transfers.control(task, attempt, "pause-original", 1, &original, true),
         Err(Error::Conflict)
     ));
 }
@@ -1620,12 +1624,12 @@ async fn shared_content_consumer_pause_and_cancel_preserve_the_other_original_pa
                     let first=transfers.observations(a.task_id(),a.attempt_id()).unwrap();
                     if !stopped&&first.iter().any(|v|v.bytes>=1024) {
                         let versions=first.iter().map(|v|(v.key.clone(),v.revision)).collect::<Vec<_>>();
-                        assert!(transfers.control(a.task_id(),a.attempt_id(),"a-pause",&versions,true).unwrap());
+                        assert!(transfers.control(a.task_id(),a.attempt_id(),"a-pause", 0, &versions,true).unwrap());
                         assert!(transfers.observations(a.task_id(),a.attempt_id()).unwrap()[0].shared_active);
                         transfers.detach(a.task_id(),a.attempt_id()).unwrap();
                         let second=transfers.observations(b.task_id(),b.attempt_id()).unwrap();
                         let versions=second.iter().map(|v|(v.key.clone(),v.revision)).collect::<Vec<_>>();
-                        assert!(!transfers.control(b.task_id(),b.attempt_id(),"b-pause",&versions,true).unwrap());
+                        assert!(!transfers.control(b.task_id(),b.attempt_id(),"b-pause", 0, &versions,true).unwrap());
                         stopped=true;
                     }
                 }
@@ -1645,7 +1649,7 @@ async fn shared_content_consumer_pause_and_cancel_preserve_the_other_original_pa
         .map(|v| (v.key.clone(), v.revision))
         .collect::<Vec<_>>();
     transfers
-        .control(b.task_id(), b.attempt_id(), "b-resume", &versions, false)
+        .control(b.task_id(), b.attempt_id(), "b-resume", 0, &versions, false)
         .unwrap();
     gate.add_permits(10000);
     let materials = client.prepare(&b).await.unwrap();
@@ -1744,4 +1748,112 @@ async fn management_snapshot_checkpoint_scope_and_exact_detail_survive_restart_w
         .unwrap()
         .items
         .is_empty());
+}
+
+#[tokio::test]
+async fn replacing_an_expired_offer_retires_only_its_old_attempt_consumers_atomically() {
+    let _budget = crate::scenario_budget::enter();
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    server.data.lock().unwrap().script();
+    let original = client.claim().await.unwrap().offer.unwrap();
+    drop(client.prepare(&original).await.unwrap());
+    let read_retired = || {
+        let sql = rusqlite::Connection::open(root.path.join("communication.sqlite")).unwrap();
+        let body: Vec<u8> = sql
+            .query_row(
+                "SELECT body FROM state WHERE key LIKE ?1 LIMIT 1",
+                [format!(
+                    "transfer/{}/{}/%",
+                    original.task_id(),
+                    original.attempt_id()
+                )],
+                |r| r.get(0),
+            )
+            .unwrap();
+        serde_json::from_slice::<serde_json::Value>(&body).unwrap()["retired"]
+            .as_bool()
+            .unwrap()
+    };
+    server.data.lock().unwrap().script();
+    assert!(matches!(client.claim().await, Err(Error::Conflict)));
+    assert!(
+        !read_retired(),
+        "failed replacement cannot retire the current attempt"
+    );
+    server.time.set(original.payload().expires_at() + 120);
+    server.data.lock().unwrap().script();
+    let next = client.claim().await.unwrap().offer.unwrap();
+    assert_eq!(next.task_id(), original.task_id());
+    assert_ne!(next.attempt_id(), original.attempt_id());
+    assert!(read_retired());
+    drop(client);
+    let client = server.client(&root, OpenMode::Existing);
+    assert_eq!(
+        client.offer(next.task_id()).unwrap().attempt_id(),
+        next.attempt_id()
+    );
+    assert!(read_retired());
+}
+
+#[tokio::test]
+async fn management_byte_retention_does_not_pin_the_original_sync_checkpoint() {
+    let _budget = crate::scenario_budget::enter();
+    use rss_mdm_agent_wire::activities::*;
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut cfg = server.config();
+    cfg.limits.response_bytes = 16 * 1024;
+    let mut client = Client::open(
+        &root.path,
+        cfg,
+        OpenMode::Create,
+        server.secrets.clone(),
+        server.time.clone(),
+    )
+    .unwrap();
+    server.register(&mut client).await;
+    let binding = client.registration().unwrap();
+    let activity:ManagementActivity=serde_json::from_value(serde_json::json!({"id":"execution:original","source":"execution","kind":"execution","phase":"received","recordedAt":1000,"observedAt":1000,"origin":"policy","target":{"device":"device-1","registration":binding.registration_id,"generation":binding.generation},"links":{"steps":[],"operations":[]},"delivery":"received","execution":"running","effect":"unknown","reporting":null,"decision":null,"auditOutcome":"recorded"})).unwrap();
+    for page in 0..3 {
+        let mut items = Vec::new();
+        for index in 0..12 {
+            let mut value = activity.clone();
+            value.id = format!("execution:{page:02}-{index:02}-{}", "x".repeat(450));
+            items.push(value);
+        }
+        server.data.lock().unwrap().management_page = Some(ManagementActivityPage {
+            items,
+            next_cursor: (page < 2).then(|| format!("next-{page}")),
+            sync_cursor: "anchor".into(),
+            as_of: 1000,
+            coverage: vec![ActivityCoverage {
+                source: "execution".into(),
+                complete: true,
+                reasons: vec![],
+            }],
+            retained_from: Some(900),
+        });
+        let cache = client.sync_management("current-native").await.unwrap();
+        let sql = rusqlite::Connection::open(root.path.join("communication.sqlite")).unwrap();
+        let bytes: usize = sql
+            .query_row(
+                "SELECT length(body) FROM state WHERE key='management-cache'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(bytes <= 16 * 1024);
+        if page == 2 {
+            assert_eq!(cache.sync.as_deref(), Some("anchor"));
+            assert!(cache.next.is_none());
+            assert!(!cache.complete);
+            assert!(cache
+                .coverage
+                .iter()
+                .any(|v| v.source == "local-cache" && !v.complete));
+        }
+    }
 }

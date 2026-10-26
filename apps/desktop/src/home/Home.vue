@@ -26,7 +26,7 @@ const emit = defineEmits<{
   navigate: [page: string, section?: string];
   "update:draft": [text: string];
   open: [target: import("../workspace/page-navigation").NavigationTarget];
-  task: [request: string];
+  task: [reference: import("../self-service/types").TaskRef];
 }>();
 const activity = inject(taskCenterKey, undefined);
 const summary = inject(softwareSummaryKey, undefined);
@@ -200,11 +200,7 @@ const addressesOpen = ref(false);
           <button
             v-for="item in activity?.recentItems.value ?? []"
             :key="taskKey(item.reference)"
-            @click="
-              item.reference.kind === 'request'
-                ? emit('task', item.reference.request)
-                : emit('navigate', 'tasks')
-            "
+            @click="emit('task', item.reference)"
             class="activity-row"
           >
             <span

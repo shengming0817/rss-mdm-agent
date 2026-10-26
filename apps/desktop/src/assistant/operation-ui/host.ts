@@ -6,7 +6,7 @@ import {
   type OperationSnapshot,
 } from "@rss-mdm-agent/ai-contract/operations";
 import { operationOrigin, operationProjection, requestId } from "./projection";
-import type { BackendTaskView } from "@rss-mdm-agent/execution-bindings/task-details";
+import type { TaskDetail } from "@rss-mdm-agent/execution-bindings/tasks";
 
 // View ordering survives renderer remounts and wall-clock corrections; it is not a journal revision.
 let projectionRevision = 0;
@@ -30,9 +30,36 @@ export async function connectOperation(
     target: origin.osSession.device,
     instance: requestId(raw),
   };
+  async function preparationFor(task: TaskDetail) {
+    if (
+      task.facts.kind !== "preparation" ||
+      task.facts.value.action.kind !== "policy"
+    )
+      return undefined;
+    const record = await c.preparationDetails(requestId(task));
+    if (
+      record.revision !== task.revision.owner ||
+      JSON.stringify(record.trigger) !==
+        JSON.stringify(task.facts.value.trigger)
+    )
+      throw Error("准备版本已变化，请重新读取");
+    if (
+      record.action.kind !== "policy" ||
+      record.action.choice.request !== requestId(task)
+    )
+      throw Error("准备引用不匹配");
+    return record;
+  }
+  let preparation = await preparationFor(raw);
   let revision = ++projectionRevision;
   const listeners = new Set<Parameters<OperationHostPort["observe"]>[1]>();
-  const initial = operationProjection(raw, scope, revision);
+  const initial = operationProjection(
+    raw,
+    scope,
+    revision,
+    Date.now(),
+    preparation,
+  );
   let latest = operationSnapshot(initial.snapshot);
   let pending: Promise<OperationSnapshot> | undefined;
   let mutationEpoch = 0,
@@ -50,7 +77,7 @@ export async function connectOperation(
     )
       throw Error("操作上下文已切换");
   };
-  const accept = (next: BackendTaskView) => {
+  const accept = async (next: TaskDetail) => {
     valid();
     const actual = operationOrigin(next);
     if (
@@ -60,10 +87,14 @@ export async function connectOperation(
       JSON.stringify(actual) !== JSON.stringify(origin)
     )
       throw Error("操作绑定已变化");
+    const nextPreparation = await preparationFor(next);
+    valid();
     raw = next;
+    preparation = nextPreparation;
     revision = ++projectionRevision;
     latest = operationSnapshot(
-      operationProjection(raw, scope, revision).snapshot,
+      operationProjection(raw, scope, revision, Date.now(), preparation)
+        .snapshot,
     );
     queriedEpoch = mutationEpoch;
     for (const listener of listeners)
@@ -77,9 +108,9 @@ export async function connectOperation(
       const duringMutation = mutating;
       pending = (async () => {
         if (
-          raw.kind === "pending" &&
-          raw.value.action.kind === "policy" &&
-          raw.value.state !== "draft"
+          raw.facts.kind === "preparation" &&
+          raw.facts.value.action.kind === "policy" &&
+          raw.facts.value.state !== "draft"
         )
           await c.reconcilePolicyPreparation?.(scope.instance).catch(() => {
             // Reconciliation may need the backend. The authenticated local record
@@ -141,12 +172,12 @@ export async function connectOperation(
       try {
         if (event.kind === "submit") {
           if (
-            raw.kind !== "pending" ||
+            raw.facts.kind !== "preparation" ||
             (latest.expiresAtMs !== undefined &&
               Date.now() >= latest.expiresAtMs)
           )
             throw Error("原准备已失效");
-          const record = raw.value,
+          const record = preparation ?? raw.facts.value,
             action = record.action;
           if (action.kind === "policy" && record.state === "draft") {
             const parameters = { ...action.choice.parameters };

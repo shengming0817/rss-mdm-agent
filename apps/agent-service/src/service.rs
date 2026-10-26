@@ -1649,8 +1649,10 @@ impl Core {
         };
         let next = BackendRequest {
             retry_of: None,
+            retry_expected_revision: None,
             recorded_at_unix_ms: self.host.clock.millis()?,
             cancellation_control: None,
+            cancellation_expected_revision: None,
             action: PreparedAction::Offered {
                 offer: offer.clone(),
             },

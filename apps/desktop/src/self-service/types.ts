@@ -2589,6 +2589,10 @@ export interface TaskDetail {
    */
   related: TaskRef[];
   /**
+   * Original signed-offer coordinates when retained by the business preparation owner.
+   */
+  selection: BackendSelection | null;
+  /**
    * Explicit association gaps, including unconsumed related continuation.
    */
   missing: string[];
@@ -3068,6 +3072,10 @@ export interface BackendRequest {
    */
   retryOf: RequestId | null;
   /**
+   * Complete original control revision, retained with an explicit retry's immutable association.
+   */
+  retryExpectedRevision: TaskRevision | null;
+  /**
    * Trusted original request acceptance time in UTC milliseconds.
    */
   recordedAtUnixMs: number;
@@ -3075,6 +3083,10 @@ export interface BackendRequest {
    * Original explicit cancellation control, absent for owner-driven retirement.
    */
   cancellationControl: Id | null;
+  /**
+   * Original complete revision fingerprint for the retained cancellation receipt.
+   */
+  cancellationExpectedRevision: TaskRevision | null;
   /**
    * The sole choice, frozen on submission, and appended backend association.
    */

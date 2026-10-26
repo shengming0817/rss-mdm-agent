@@ -76,9 +76,11 @@ export function policyRecord(
   request = "original-policy",
 ): import("../../apps/desktop/src/self-service/types").BackendRequest {
   return {
+    cancellationExpectedRevision: null,
     recordedAtUnixMs: 1000,
     cancellationControl: null,
     retryOf: null,
+    retryExpectedRevision: null,
     action: {
       kind: "policy",
       definition: { id: "policy", revision: "version" },
@@ -182,6 +184,7 @@ export function taskDetail(
     policyRevision: null,
     retryOf: null,
     related: [],
+    selection: null,
     missing: [],
     parameterSummary: {},
     humanConfirmation: false,
@@ -220,4 +223,30 @@ export function taskPort(): import("../../apps/desktop/src/self-service/types").
       created: null,
     }),
   };
+}
+
+export function taskFromFacts<
+  F extends
+    import("../../apps/desktop/src/self-service/types").TaskDetail["facts"],
+>(
+  facts: F,
+): import("../../apps/desktop/src/self-service/types").TaskDetail & {
+  facts: F;
+} {
+  if (facts.kind !== "execution" && facts.kind !== "preparation")
+    throw Error("fixture original request");
+  const request =
+    facts.kind === "execution"
+      ? facts.value.status.operationRequestId
+      : facts.value.action.kind === "offered"
+        ? facts.value.action.offer.request
+        : facts.value.action.choice.request;
+  const result = taskDetail(request);
+  result.revision.owner = facts.value.revision;
+  result.stage =
+    facts.kind === "execution" ? facts.value.status.phase : facts.value.state;
+  result.humanConfirmation =
+    facts.kind === "preparation" &&
+    facts.value.state === "awaitingConfirmation";
+  return { ...result, facts };
 }

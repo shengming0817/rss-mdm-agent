@@ -79,11 +79,7 @@ export function createFixturePorts() {
         import("../../apps/desktop/src/self-service/types").TaskDetail
       >("task-detail", { kind: "request", request: operationRequestId });
       if (signal.aborted) throw Error("fixture aborted");
-      if (result.facts.kind === "execution")
-        return { kind: "execution", value: result.facts.value };
-      if (result.facts.kind === "preparation")
-        return { kind: "pending", value: result.facts.value };
-      throw Error("fixture owner mismatch");
+      return result;
     },
   };
 

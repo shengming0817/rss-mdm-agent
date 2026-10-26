@@ -304,7 +304,7 @@ fn newer_schema_retains_read_only_startup_diagnostic() {
     };
     assert_eq!(
         format!("{error:?}"),
-        "UnsupportedSchema { found: 999, supported: 3 }"
+        "UnsupportedSchema { found: 999, supported: 4 }"
     );
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
     assert_eq!(runner.dispatch_count(), 0);
@@ -2347,8 +2347,10 @@ fn backend_preparation_is_durable_bound_and_never_dispatches_without_start() {
     };
     let original = BackendRequest {
         retry_of: None,
+        retry_expected_revision: None,
         recorded_at_unix_ms: 1,
         cancellation_control: None,
+        cancellation_expected_revision: None,
         action: PreparedAction::Offered {
             offer: BackendTask {
                 request: request("backend-intent"),
@@ -2885,13 +2887,41 @@ fn task_control_receipts_survive_restart_and_do_not_cancel_a_newer_owner_revisio
     app.request_execution(&caller, &input).unwrap();
     let details = app.task_details(&caller, request).unwrap();
     let first = app
-        .cancel_control(&caller, request, &id("explicit-cancel"), details.revision)
+        .cancel_control(
+            &caller,
+            request,
+            &id("explicit-cancel"),
+            &TaskRevision {
+                owner: details.revision,
+                transfers: vec![],
+            },
+        )
         .unwrap();
     let replay = app
-        .cancel_control(&caller, request, &id("explicit-cancel"), details.revision)
+        .cancel_control(
+            &caller,
+            request,
+            &id("explicit-cancel"),
+            &TaskRevision {
+                owner: details.revision,
+                transfers: vec![],
+            },
+        )
         .unwrap();
     assert_eq!(first.operation_id, replay.operation_id);
     assert_eq!(first.revision, replay.revision);
+    assert!(matches!(
+        app.cancel_control(
+            &caller,
+            request,
+            &id("explicit-cancel"),
+            &TaskRevision {
+                owner: details.revision,
+                transfers: vec![("changed".into(), 0)]
+            }
+        ),
+        Err(Error::Conflict)
+    ));
     assert!(
         app.task_details(&caller, request)
             .unwrap()
@@ -2899,7 +2929,15 @@ fn task_control_receipts_survive_restart_and_do_not_cancel_a_newer_owner_revisio
             .cancel_requested
     );
     let stale = app
-        .cancel_control(&caller, request, &id("stale-cancel"), details.revision)
+        .cancel_control(
+            &caller,
+            request,
+            &id("stale-cancel"),
+            &TaskRevision {
+                owner: details.revision,
+                transfers: vec![],
+            },
+        )
         .unwrap();
     assert_eq!(stale.outcome, Outcome::Stale);
     drop(app);

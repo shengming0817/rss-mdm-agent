@@ -1,4 +1,3 @@
-import { nativeTaskPort } from "../self-service/native";
 import { userGeneration } from "../test-users";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import {
@@ -9,11 +8,10 @@ import {
 import type { AssistantServices } from "./controller";
 /** IPC carries bounded ACP frames. Credentials, sockets and providers stay outside the WebView. */
 export function nativeAssistant(
-  taskCenter?: import("../task-center/controller").Controller,
+  taskCenter: import("../task-center/controller").Controller,
 ): AssistantServices | undefined {
   if (!isTauri()) return undefined;
   const generation = userGeneration();
-  const tasks = nativeTaskPort()!;
   return {
     async connect(options, signal) {
       const connectionId = await invoke<string>("ai_connect", { generation });
@@ -89,35 +87,38 @@ export function nativeAssistant(
         throw new ClientError("request_failed");
     },
     async cancelTask(requestId) {
-      const reference = { kind: "request" as const, request: requestId };
-      if (taskCenter) {
-        await taskCenter.cancel(requestId);
-        return;
-      }
-      const detail = await tasks.detail(reference);
-      const input = {
-        reference,
-        id: crypto.randomUUID(),
-        scope: detail.scope,
-        expectedRevision: detail.revision,
-        action: "cancel" as const,
-      };
-      const receipt = await tasks.control(input);
-      if (receipt.disposition !== "confirmed")
+      const detail = await taskCenter.detail(
+        { kind: "request", request: requestId },
+        true,
+      );
+      if (!detail.allowedActions.includes("cancel"))
         throw new ClientError("request_failed");
+      await taskCenter.control(detail, "cancel");
+      if (
+        taskCenter.state.pendingControl ||
+        taskCenter.state.uncertain ||
+        taskCenter.state.error
+      )
+        throw new ClientError("request_failed");
+    },
+    async preparationDetails(request) {
+      const result = await invoke<import("../self-service/types").PolicyStatus>(
+        "self_service_policy_status",
+        { generation, input: { requestId: request } },
+      );
+      if (generation !== userGeneration() || result.kind !== "preparation")
+        throw new ClientError("request_failed");
+      return result.value;
     },
     async taskDetails(requestId, signal) {
       if (signal.aborted) throw new ClientError("request_failed");
-      const result = taskCenter
-        ? await taskCenter.detail({ kind: "request", request: requestId })
-        : await tasks.detail({ kind: "request", request: requestId });
+      const result = await taskCenter.detail({
+        kind: "request",
+        request: requestId,
+      });
       if (generation !== userGeneration() || signal.aborted)
         throw new ClientError("request_failed");
-      if (result.facts.kind === "execution")
-        return { kind: "execution", value: result.facts.value };
-      if (result.facts.kind === "preparation")
-        return { kind: "pending", value: result.facts.value };
-      throw new ClientError("request_failed");
+      return result;
     },
   };
 }

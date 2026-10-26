@@ -152,3 +152,31 @@ it("fences a late detail response after a native scope change and drops old acti
   expect(c.state.pendingControl).toBeNull();
   c.dispose();
 });
+it("keeps paging beyond the cache budget and preserves the current page across detail navigation", async () => {
+  const port = taskPort();
+  port.list = vi.fn(async (query) => {
+    const index = Number(query.cursor ?? 0);
+    return {
+      ...taskPage(
+        Array.from({ length: 32 }, (_, n) => taskDetail(`page-${index}-${n}`)),
+      ),
+      next: index < 18 ? String(index + 1) : null,
+    };
+  });
+  const c = createTaskCenter(port, null);
+  await c.load();
+  for (let i = 0; i < 17; i++) await c.load(true);
+  expect(c.state.page).toBe(18);
+  expect(c.state.items).toHaveLength(32);
+  expect(c.state.items[0].reference).toEqual({
+    kind: "request",
+    request: "page-17-0",
+  });
+  expect(c.state.next).toBe("18");
+  expect(c.state.byRef.size).toBeLessThanOrEqual(512);
+  await c.openTask(c.state.items[0].reference);
+  await c.previousPage();
+  expect(c.state.page).toBe(17);
+  expect(c.state.next).toBe("17");
+  c.dispose();
+});

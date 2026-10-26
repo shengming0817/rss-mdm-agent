@@ -491,9 +491,17 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             if old.is_none() && count >= self.store.cfg.limits.pending_tasks as u64 {
                 return Err(Error::Capacity);
             }
+            let old = old.as_deref().map(decode::<wire::SignedTask>).transpose()?;
+            let retirement = old
+                .as_ref()
+                .filter(|old| old.payload.attempt_id() != signed.payload.attempt_id())
+                .map(|old| {
+                    self.transfers
+                        .retire_attempt(old.payload.task_id(), old.payload.attempt_id())
+                })
+                .transpose()?;
             let tx = self.store.conn.unchecked_transaction()?;
             if let Some(old) = old {
-                let old: wire::SignedTask = decode(&old)?;
                 if old.payload.attempt_id() != signed.payload.attempt_id() {
                     // A new signed Offer retires only expired Received requests. Any Start,
                     // source event or other settlement request may still need exact replay.
@@ -506,6 +514,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                     }
                     tx.execute("DELETE FROM requests WHERE task=?1 AND key LIKE 'received/%' AND source IS NULL", [&task])?;
                     tx.execute("DELETE FROM cache_refs WHERE task=?1", [&task])?;
+                    retirement.as_ref().ok_or(Error::Storage)?.persist(&tx)?;
                 } else if old != signed {
                     return Err(Error::Conflict);
                 }
@@ -516,6 +525,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             )?;
             tx.execute("DELETE FROM state WHERE key='claim'", [])?;
             tx.commit()?;
+            if let Some(retirement) = retirement {
+                retirement.committed();
+            }
             Some(Offer { signed })
         } else {
             self.store

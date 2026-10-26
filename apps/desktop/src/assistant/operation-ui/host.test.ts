@@ -1,3 +1,4 @@
+import { taskFromFacts } from "../../../../../tests/self-service/support";
 import { directoryItem } from "../../../../../tests/self-service/support";
 import { describe, it, expect, vi } from "vitest";
 import { shallowRef } from "vue";
@@ -8,8 +9,8 @@ import {
 import type {
   ExecutionTaskDetails,
   BackendRequest,
-  BackendTaskView,
-} from "@rss-mdm-agent/execution-bindings/task-details";
+  TaskDetail,
+} from "@rss-mdm-agent/execution-bindings/tasks";
 import { operationSnapshot } from "@rss-mdm-agent/ai-contract/operations";
 import type { AssistantController } from "../controller";
 import fixtures from "../../../../../tests/assistant/execution-fixtures.json";
@@ -64,7 +65,7 @@ function fixture() {
       expiresAtUnixMs: Date.now() + 60_000,
     },
   };
-  const raw: BackendTaskView = { kind: "pending", value: record };
+  const raw: TaskDetail = taskFromFacts({ kind: "preparation", value: record });
   let requests = 0,
     loseReply = false,
     rejection = "";
@@ -79,6 +80,7 @@ function fixture() {
       },
     }),
     executionDetails: async () => structuredClone(raw),
+    preparationDetails: async () => structuredClone(record),
     submitOperation: async (input: any) => {
       if (rejection) throw { code: rejection };
       requests++;
@@ -256,20 +258,22 @@ describe("production operation adapter", () => {
       target: "d",
       instance: "i",
     };
-    const raw: Extract<BackendTaskView, { kind: "execution" }> = {
+    const raw: TaskDetail & {
+      facts: Extract<TaskDetail["facts"], { kind: "execution" }>;
+    } = taskFromFacts({
       kind: "execution",
       value: structuredClone(fixtures.running) as ExecutionTaskDetails,
-    };
-    raw.value.status.phase = "executionEnded";
+    });
+    raw.facts.value.status.phase = "executionEnded";
     expect(
       operationSnapshot(
-        operationProjection(raw as BackendTaskView, scope, 1).snapshot,
+        operationProjection(raw as TaskDetail, scope, 1).snapshot,
       ).phase,
     ).toBe("execution_ended");
-    raw.value.status.phase = "verified";
-    raw.value.status.assessment = "unknown";
+    raw.facts.value.status.phase = "verified";
+    raw.facts.value.status.assessment = "unknown";
     expect(
-      operationProjection(raw as BackendTaskView, scope, 2).snapshot.phase,
+      operationProjection(raw as TaskDetail, scope, 2).snapshot.phase,
     ).toBe("unknown");
   });
   it("separates software effect target from enterprise admission and execution identity", async () => {
@@ -369,7 +373,7 @@ describe("production operation adapter", () => {
       new OperationDrafts(),
     );
     const read = f.controller.executionDetails;
-    let finish!: (value: BackendTaskView) => void;
+    let finish!: (value: TaskDetail) => void;
     f.controller.executionDetails = () =>
       new Promise((resolve) => {
         finish = resolve;

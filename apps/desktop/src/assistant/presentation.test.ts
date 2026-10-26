@@ -7,7 +7,7 @@ import Assistant from "./Assistant.vue";
 import SessionDiagnostics from "../settings/SessionDiagnostics.vue";
 import { createAssistant } from "./controller";
 import fixtures from "../../../../tests/assistant/execution-fixtures.json";
-import type { ExecutionTaskDetails } from "@rss-mdm-agent/execution-bindings/task-details";
+import type { ExecutionTaskDetails } from "@rss-mdm-agent/execution-bindings/tasks";
 import type { InteractionView, SessionView } from "@rss-mdm-agent/ai-client";
 import { fixtureSession } from "@rss-mdm-agent/ai-contract/testing";
 it("renders permission scope from kind even when provider names contradict it", () => {

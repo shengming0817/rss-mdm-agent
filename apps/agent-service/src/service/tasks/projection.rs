@@ -194,6 +194,7 @@ impl Core {
             policy_revision: None,
             retry_of: None,
             related: Vec::new(),
+            selection: None,
             missing: Vec::new(),
             parameter_summary: Default::default(),
             human_confirmation: false,
@@ -268,6 +269,14 @@ impl Core {
                 .backend_request(&self.caller(), request)
                 .map_err(map_app_error)?
             {
+                if let Some(offer) = record.action.offer() {
+                    detail.selection = Some(execution_contract::BackendSelection {
+                        request: offer.request.clone(),
+                        task: offer.task.clone(),
+                        attempt: offer.attempt.clone(),
+                        revision: offer.revision.clone(),
+                    });
+                }
                 detail.retry_of = record.retry_of;
                 if let PreparedAction::Policy {
                     definition,
@@ -320,7 +329,18 @@ impl Core {
                 .iter()
                 .map(|v| (v.key.clone(), v.revision))
                 .collect();
+            let until = match &detail.facts {
+                TaskFacts::Preparation(v) => v.action.expires_at_unix_ms(),
+                TaskFacts::Execution(v) => v.action.validity.expires_at_unix_ms,
+                _ => 0,
+            };
+            let content_authorized =
+                self.host.identity_ready() && self.host.clock.millis()? < until;
+            if !content_authorized && controllable && !observations.is_empty() {
+                detail.control_reason = Some("content-authorization-expired".into());
+            }
             let resumable = controllable
+                && content_authorized
                 && !observations.is_empty()
                 && observations.iter().all(|v| {
                     v.resumable

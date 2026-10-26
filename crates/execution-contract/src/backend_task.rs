@@ -401,10 +401,14 @@ pub enum BackendRequestFailure {
 pub struct BackendRequest {
     /// Original failed request when this explicit retry was independently admitted.
     pub retry_of: Option<RequestId>,
+    /// Complete original control revision, retained with an explicit retry's immutable association.
+    pub retry_expected_revision: Option<TaskRevision>,
     /// Trusted original request acceptance time in UTC milliseconds.
     pub recorded_at_unix_ms: u64,
     /// Original explicit cancellation control, absent for owner-driven retirement.
     pub cancellation_control: Option<Id>,
+    /// Original complete revision fingerprint for the retained cancellation receipt.
+    pub cancellation_expected_revision: Option<TaskRevision>,
     /// The sole choice, frozen on submission, and appended backend association.
     pub action: PreparedAction,
     /// OS-authenticated original trigger; never accepted from an IPC request body.
@@ -562,4 +566,14 @@ pub struct SoftwareObservation {
     pub expected_version: String,
     /// Native receipt or product observation; unknown remains explicit.
     pub state: crate::SoftwareState,
+}
+
+/// Exact owner revisions; transient byte counts never participate in control CAS.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TaskRevision {
+    /// Execution or preparation owner revision.
+    pub owner: u64,
+    /// Exact artifact consumer revisions, ordered by original key.
+    pub transfers: Vec<(String, u64)>,
 }

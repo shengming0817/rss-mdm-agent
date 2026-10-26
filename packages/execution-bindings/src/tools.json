@@ -5535,6 +5535,10 @@
               "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
               "description": "Original explicit cancellation control, absent for owner-driven retirement."
             },
+            "cancellationExpectedRevision": {
+              "anyOf": [{ "$ref": "#/$defs/TaskRevision" }, { "type": "null" }],
+              "description": "Original complete revision fingerprint for the retained cancellation receipt."
+            },
             "confirmation": {
               "anyOf": [
                 { "$ref": "#/$defs/BackendConfirmation" },
@@ -5554,6 +5558,10 @@
               "format": "uint64",
               "minimum": 0,
               "type": "integer"
+            },
+            "retryExpectedRevision": {
+              "anyOf": [{ "$ref": "#/$defs/TaskRevision" }, { "type": "null" }],
+              "description": "Complete original control revision, retained with an explicit retry's immutable association."
             },
             "retryOf": {
               "anyOf": [{ "$ref": "#/$defs/RequestId" }, { "type": "null" }],
@@ -6689,6 +6697,33 @@
             }
           },
           "required": ["id", "version", "variant"],
+          "type": "object"
+        },
+        "TaskRevision": {
+          "additionalProperties": false,
+          "description": "Exact owner revisions; transient byte counts never participate in control CAS.",
+          "properties": {
+            "owner": {
+              "description": "Execution or preparation owner revision.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "transfers": {
+              "description": "Exact artifact consumer revisions, ordered by original key.",
+              "items": {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  { "type": "string" },
+                  { "format": "uint64", "minimum": 0, "type": "integer" }
+                ],
+                "type": "array"
+              },
+              "type": "array"
+            }
+          },
+          "required": ["owner", "transfers"],
           "type": "object"
         },
         "VersionedRef": {
@@ -6999,6 +7034,10 @@
               "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
               "description": "Original explicit cancellation control, absent for owner-driven retirement."
             },
+            "cancellationExpectedRevision": {
+              "anyOf": [{ "$ref": "#/$defs/TaskRevision" }, { "type": "null" }],
+              "description": "Original complete revision fingerprint for the retained cancellation receipt."
+            },
             "confirmation": {
               "anyOf": [
                 { "$ref": "#/$defs/BackendConfirmation" },
@@ -7018,6 +7057,10 @@
               "format": "uint64",
               "minimum": 0,
               "type": "integer"
+            },
+            "retryExpectedRevision": {
+              "anyOf": [{ "$ref": "#/$defs/TaskRevision" }, { "type": "null" }],
+              "description": "Complete original control revision, retained with an explicit retry's immutable association."
             },
             "retryOf": {
               "anyOf": [{ "$ref": "#/$defs/RequestId" }, { "type": "null" }],
@@ -8153,6 +8196,33 @@
             }
           },
           "required": ["id", "version", "variant"],
+          "type": "object"
+        },
+        "TaskRevision": {
+          "additionalProperties": false,
+          "description": "Exact owner revisions; transient byte counts never participate in control CAS.",
+          "properties": {
+            "owner": {
+              "description": "Execution or preparation owner revision.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "transfers": {
+              "description": "Exact artifact consumer revisions, ordered by original key.",
+              "items": {
+                "maxItems": 2,
+                "minItems": 2,
+                "prefixItems": [
+                  { "type": "string" },
+                  { "format": "uint64", "minimum": 0, "type": "integer" }
+                ],
+                "type": "array"
+              },
+              "type": "array"
+            }
+          },
+          "required": ["owner", "transfers"],
           "type": "object"
         },
         "VersionedRef": {
@@ -9213,6 +9283,10 @@
               "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
               "description": "Original explicit cancellation control, absent for owner-driven retirement."
             },
+            "cancellationExpectedRevision": {
+              "anyOf": [{ "$ref": "#/$defs/TaskRevision" }, { "type": "null" }],
+              "description": "Original complete revision fingerprint for the retained cancellation receipt."
+            },
             "confirmation": {
               "anyOf": [
                 { "$ref": "#/$defs/BackendConfirmation" },
@@ -9232,6 +9306,10 @@
               "format": "uint64",
               "minimum": 0,
               "type": "integer"
+            },
+            "retryExpectedRevision": {
+              "anyOf": [{ "$ref": "#/$defs/TaskRevision" }, { "type": "null" }],
+              "description": "Complete original control revision, retained with an explicit retry's immutable association."
             },
             "retryOf": {
               "anyOf": [{ "$ref": "#/$defs/RequestId" }, { "type": "null" }],
@@ -11910,6 +11988,13 @@
             "scope": {
               "description": "Current service/native identity stamp, required by controls.",
               "type": "string"
+            },
+            "selection": {
+              "anyOf": [
+                { "$ref": "#/$defs/BackendSelection" },
+                { "type": "null" }
+              ],
+              "description": "Original signed-offer coordinates when retained by the business preparation owner."
             },
             "softwareState": {
               "anyOf": [
@@ -12991,6 +13076,10 @@
               "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
               "description": "Original explicit cancellation control, absent for owner-driven retirement."
             },
+            "cancellationExpectedRevision": {
+              "anyOf": [{ "$ref": "#/$defs/TaskRevision" }, { "type": "null" }],
+              "description": "Original complete revision fingerprint for the retained cancellation receipt."
+            },
             "confirmation": {
               "anyOf": [
                 { "$ref": "#/$defs/BackendConfirmation" },
@@ -13010,6 +13099,10 @@
               "format": "uint64",
               "minimum": 0,
               "type": "integer"
+            },
+            "retryExpectedRevision": {
+              "anyOf": [{ "$ref": "#/$defs/TaskRevision" }, { "type": "null" }],
+              "description": "Complete original control revision, retained with an explicit retry's immutable association."
             },
             "retryOf": {
               "anyOf": [{ "$ref": "#/$defs/RequestId" }, { "type": "null" }],
@@ -15688,6 +15781,13 @@
             "scope": {
               "description": "Current service/native identity stamp, required by controls.",
               "type": "string"
+            },
+            "selection": {
+              "anyOf": [
+                { "$ref": "#/$defs/BackendSelection" },
+                { "type": "null" }
+              ],
+              "description": "Original signed-offer coordinates when retained by the business preparation owner."
             },
             "softwareState": {
               "anyOf": [

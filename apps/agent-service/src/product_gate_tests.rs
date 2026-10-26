@@ -188,8 +188,10 @@ impl Case {
     fn selection(&self, human: bool) -> Selection {
         let mut selection = Selection::from_record(&BackendRequest {
             retry_of: None,
+            retry_expected_revision: None,
             recorded_at_unix_ms: 1,
             cancellation_control: None,
+            cancellation_expected_revision: None,
             action: execution_contract::PreparedAction::Offered {
                 offer: offered(&self.offer).unwrap(),
             },
@@ -2039,8 +2041,10 @@ async fn settled_software_observation_replays_the_original_fact_and_never_create
         let now = c.service.core.host.clock.millis().unwrap();
         let record = BackendRequest {
             retry_of: None,
+            retry_expected_revision: None,
             recorded_at_unix_ms: 1,
             cancellation_control: None,
+            cancellation_expected_revision: None,
             action: PreparedAction::SoftwareRead {
                 choice: choice.clone(),
                 definition: definition.clone(),
@@ -5127,8 +5131,10 @@ async fn installation_owner_exists_before_registration_and_preserves_both_scopes
     let prepared_id = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
     let record = BackendRequest {
         retry_of: None,
+        retry_expected_revision: None,
         recorded_at_unix_ms: 1,
         cancellation_control: None,
+        cancellation_expected_revision: None,
         action: PreparedAction::Offered {
             offer: BackendTask {
                 request: prepared_id.clone(),
@@ -5892,4 +5898,87 @@ async fn unified_preparation_pages_bind_owner_watermarks_filters_and_session_aut
         }
     ));
     assert!(c._server.data.lock().unwrap().start_ops.is_empty());
+}
+
+#[tokio::test]
+async fn retry_control_replay_preserves_the_original_complete_revision_without_a_second_invocation()
+{
+    let _budget = crate::scenario_budget::enter();
+    use execution_app::tasks::*;
+    use execution_ipc::host::Request;
+    let mut c = Case::new(Some(RiskLevel::Two)).await;
+    let (original, _offer) = c.accepted_policy_offer(true).await;
+    let original_request = original.action.request().clone();
+    let id = plan::id(uuid::Uuid::new_v4().to_string()).unwrap();
+    let reference = TaskRef::Request {
+        request: original_request.clone(),
+    };
+    let Reply::Task {
+        value: TaskResponse::Detail(detail),
+    } = c
+        .policy_call(Request::Task {
+            input: TaskOperation::Detail(reference.clone()),
+            origin: ClientOrigin::Desktop {},
+        })
+        .await
+    else {
+        panic!("original detail")
+    };
+    let mut retry = original.clone();
+    let PreparedAction::Policy {
+        choice,
+        run_id,
+        offer,
+        ..
+    } = &mut retry.action
+    else {
+        panic!("policy")
+    };
+    choice.request = RequestId::new(id.as_str()).unwrap();
+    *run_id = None;
+    *offer = None;
+    retry.state = BackendRequestState::AwaitingConfirmation;
+    retry.confirmation = None;
+    retry.revision = 1;
+    retry.retry_of = Some(original_request);
+    retry.retry_expected_revision = Some(detail.revision.clone());
+    c.service
+        .core
+        .app
+        .record_backend_request(&c.service.core.caller(), None, &retry)
+        .unwrap();
+    let calls = c._server.data.lock().unwrap().invocations.len();
+    let mut control = TaskControl {
+        reference,
+        id,
+        scope: detail.scope,
+        expected_revision: detail.revision,
+        action: TaskAction::Retry,
+    };
+    assert!(matches!(
+        c.policy_call(Request::Task {
+            input: TaskOperation::Control(control.clone()),
+            origin: ClientOrigin::Desktop {}
+        })
+        .await,
+        Reply::Task {
+            value: TaskResponse::Control(TaskControlReceipt {
+                disposition: ControlDisposition::Confirmed,
+                created: Some(_),
+                ..
+            })
+        }
+    ));
+    control.expected_revision.owner += 1;
+    assert!(matches!(
+        c.policy_call(Request::Task {
+            input: TaskOperation::Control(control),
+            origin: ClientOrigin::Desktop {}
+        })
+        .await,
+        Reply::DataFailure {
+            reason: DataError::Conflict
+        }
+    ));
+    assert_eq!(c._server.data.lock().unwrap().invocations.len(), calls);
 }

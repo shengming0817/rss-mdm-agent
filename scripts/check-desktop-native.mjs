@@ -614,8 +614,8 @@ const originalRequest = (row) =>
     : row.action.offer.request;
 const originalRequests = (reply) =>
   new Set([
-    ...reply.value.items.map((row) => row.action.requestId),
-    ...reply.preparations.map(originalRequest),
+    ...taskExecutions(reply).map((row) => row.action.requestId),
+    ...taskPreparations(reply).map(originalRequest),
   ]);
 const openPageAssistant = async () => {
   await browser
@@ -626,14 +626,22 @@ const openPageAssistant = async () => {
   );
   await wait(() => browser.$(".resource-context").isDisplayed());
 };
+const taskExecutions = (page) =>
+  page.items
+    .filter((item) => item.facts.kind === "execution")
+    .map((item) => item.facts.value);
+const taskPreparations = (page) =>
+  page.items
+    .filter((item) => item.facts.kind === "preparation")
+    .map((item) => item.facts.value);
 const task = async () => {
   const reply = await serviceCall("query");
   const request = fixture.facts.request;
-  const existing = reply.value.items.find(
+  const existing = taskExecutions(reply).find(
     (row) => row.status.operationRequestId === request,
   );
   if (existing) return { plan: existing.action, snapshot: existing.status };
-  const pending = reply.preparations.find(
+  const pending = taskPreparations(reply).find(
     (row) => originalRequest(row) === request,
   );
   return (
@@ -1834,12 +1842,12 @@ try {
     await click("核对执行参数", '//*[contains(@class,"software-production")]');
     await click("确认并执行", '//*[contains(@class,"software-production")]');
     await wait(async () =>
-      (await serviceCall("query")).value.items.some(
+      taskExecutions(await serviceCall("query")).some(
         (row) => row.status.attempts === 1,
       ),
     );
     await navigate("AI 助手");
-    fixture.facts.request = (await serviceCall("query")).value.items.find(
+    fixture.facts.request = taskExecutions(await serviceCall("query")).find(
       (row) => row.status.attempts === 1,
     ).action.requestId;
     mark(
@@ -2072,7 +2080,7 @@ try {
     const afterReview = await serviceCall("query");
     assert.equal(originalRequests(afterReview).size, 2);
     assert.equal((await task()).snapshot.attempts, 1);
-    const pendingReview = afterReview.preparations.find(
+    const pendingReview = taskPreparations(afterReview).find(
       (row) => originalRequest(row) === fixture.facts.reviewRequest,
     );
     assert.equal(pendingReview?.state, "awaitingConfirmation");
