@@ -463,7 +463,7 @@ async function submit() {
           <dt>{{ labels[field.key] ?? field.key }}</dt>
           <dd>
             {{ display(field.value)
-            }}<small v-if="field.quality !== 'complete'">
+            }}<small v-if="field.reason || field.quality !== 'complete'">
               · {{ field.reason ?? field.quality }}</small
             >
           </dd>

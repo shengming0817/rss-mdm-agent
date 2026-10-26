@@ -179,18 +179,62 @@ it("recovers a lost prepare acknowledgement by the same request and never prepar
   expect(port.submit).not.toHaveBeenCalled();
   c.dispose();
 });
-it("an installer exit or unknown effect never removes an installed record; independent absence does", async () => {
+it("keeps current inventory authoritative across uninstall, reinstall and historical absence reloads", async () => {
   const { data, port } = ports();
   const c = createSoftware(data, port);
-  await c.discover();
-  const result = original("request");
-  result.execution.phase = "executionEnded";
-  result.execution.attempts = 1;
-  c.accept(result);
-  expect(c.installed.value).toHaveLength(1);
-  c.accept({ ...result, detected: { kind: "absent" } });
-  expect(c.installed.value).toHaveLength(0);
-  c.dispose();
+  let reopened: ReturnType<typeof createSoftware> | undefined;
+  try {
+    await c.discover();
+    const result = original("request");
+    result.execution.phase = "executionEnded";
+    result.execution.attempts = 1;
+    c.accept(result);
+    expect(c.installed.value).toHaveLength(1);
+    const absent: LocalSoftwareStatus = {
+      ...result,
+      detected: { kind: "absent" },
+    };
+    c.accept(absent);
+    expect(c.state.operations.get("request")?.detected).toEqual({
+      kind: "absent",
+    });
+    expect(c.installed.value).toHaveLength(1);
+
+    vi.mocked(port.read).mockResolvedValue({
+      ...page,
+      collectedAt: page.collectedAt! + 1,
+      items: [],
+    });
+    await c.read(c.state.sources[0]);
+    expect(c.installed.value).toHaveLength(0);
+
+    const reinstalled = { ...item, version: "2.0.0" };
+    vi.mocked(port.read).mockResolvedValue({
+      ...page,
+      collectedAt: page.collectedAt! + 2,
+      items: [reinstalled],
+    });
+    await c.read(c.state.sources[0]);
+    expect(c.installed.value).toEqual([reinstalled]);
+    vi.mocked(port.history).mockResolvedValue({ items: [absent], next: null });
+    vi.mocked(port.status).mockResolvedValue(absent);
+    await c.history();
+    await c.query("request");
+    expect(c.installed.value).toEqual([reinstalled]);
+    expect(c.state.operations.get("request")?.detected).toEqual({
+      kind: "absent",
+    });
+
+    reopened = createSoftware(data, port);
+    await reopened.history();
+    await reopened.discover();
+    expect(reopened.installed.value).toEqual([reinstalled]);
+    expect(port.submit).not.toHaveBeenCalled();
+    expect(data.query_submit).not.toHaveBeenCalled();
+  } finally {
+    reopened?.dispose();
+    c.dispose();
+  }
 });
 it("late data from a retired user generation cannot repopulate the software projection", async () => {
   const { data, port } = ports();

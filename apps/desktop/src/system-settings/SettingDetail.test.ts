@@ -32,10 +32,13 @@ it("submits only writable proxy edits and offers draft adoption after unrelated 
           fields: [
             ...["http", "https", "socks"].map((key) => ({
               key,
-              value: null,
+              value:
+                key === "http" ? { enabled: false, host: "", port: 0 } : null,
               writable: false,
-              quality: "unknown" as const,
-              reason: "unparsed endpoint",
+              quality:
+                key === "http" ? ("complete" as const) : ("unknown" as const),
+              reason:
+                key === "http" ? "该字段由组织策略限制" : "unparsed endpoint",
             })),
             {
               key: "bypass",
@@ -73,6 +76,7 @@ it("submits only writable proxy edits and offers draft adoption after unrelated 
         .findAll("input")
         .every((input) => input.attributes("disabled") !== undefined),
     ).toBe(true);
+    expect(wrapper.text()).toContain("该字段由组织策略限制");
     await wrapper.get("textarea").setValue("intranet.example");
     response.snapshot!.revision = "b".repeat(64);
     response.snapshot!.targets[0].name = "Renamed service";

@@ -124,16 +124,9 @@ export function createSoftware(
       for (const item of source.items)
         if (observations.value.get(item.coverage) === source)
           rows.set(installationKey(item), item);
-    return [...rows.values()].filter(
-      (item) =>
-        ![...state.operations.values()].some(
-          (result) =>
-            JSON.stringify(result.prepared.choice.software) ===
-              referenceKey(item) &&
-            ended(result) &&
-            result.detected?.kind === "absent",
-        ),
-    );
+    // The inventory projection is replaced by its collection owner. Historical task
+    // detections describe that task; their stable object references are not observation versions.
+    return [...rows.values()];
   });
   const summary = computed(() => ({
     items: installed.value,
