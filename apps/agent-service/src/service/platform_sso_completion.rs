@@ -308,7 +308,7 @@ async fn native_observation_refresh_settles_original_journal_after_restart_and_a
         },
         |_| panic!("changed binding must be rejected before native facts are published"),
     );
-    assert_eq!(changed_during_sample, Err(Error::Identity));
+    assert_eq!(changed_during_sample, Err(agent_client::Error::Identity));
     {
         let _lock = state::lock(&access_root).unwrap();
         state::write(

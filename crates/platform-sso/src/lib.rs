@@ -274,7 +274,7 @@ pub fn public_key(point: &[u8]) -> Result<w::PublicKey, Error> {
 }
 
 /// Root-owned desired account integration, written only from an admitted signed task.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LocalBinding {
     pub installation: Uuid,
