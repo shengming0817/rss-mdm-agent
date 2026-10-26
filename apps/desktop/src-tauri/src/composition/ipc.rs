@@ -38,9 +38,15 @@ macro_rules! commands {
     ($($name:ident($input:ty) -> $output:ty = $method:ident),+ $(,)?) => {
         $(#[tauri::command]
         pub async fn $name(state: State<'_, DesktopRuntime>, generation: String, input: serde_json::Value) -> Result<$output> {
-            let handle = state.execution_for(&generation).await?;
-            let output = handle.$method(decode::<$input>(input)?).await;
-            state.current(&generation)?;
+            let output: Result<$output> = async {
+                let handle = state.execution_for(&generation).await?;
+                let output = handle.$method(decode::<$input>(input)?).await;
+                state.current(&generation)?;
+                output
+            }.await;
+            if let Err(error) = &output {
+                eprintln!("RSS_NATIVE_COMMAND_FAILURE command={} code={}", stringify!($name), error.code);
+            }
             output
         })+
         pub fn wire_schema() -> schemars::Schema {
@@ -507,13 +513,38 @@ mod tests {
         ));
         platform_private_storage::directory(&root).unwrap();
         let root = root.canonicalize().unwrap();
-        let runtime = tauri::async_runtime::block_on(DesktopRuntime::start(
+        let mut runtime = tauri::async_runtime::block_on(DesktopRuntime::start(
             &root,
             &root.join("missing-artifact"),
             ai_session_contract::HostStatusSource::DevelopmentOverride,
         ))
         .unwrap();
         tauri::async_runtime::block_on(runtime.select_user("Alice")).unwrap();
+        runtime.execution = runtime.execution.clone().with_context_transport(|request| {
+            use execution_app::tasks::{TaskOperation, TaskPage, TaskResponse};
+            match request {
+                execution_ipc::host::Request::Task {
+                    input: TaskOperation::List(query),
+                    ..
+                } => {
+                    assert_eq!(query.limit, 32);
+                    Ok(execution_ipc::host::Reply::Task {
+                        value: TaskResponse::Page(TaskPage {
+                            items: vec![],
+                            next: None,
+                            scope: "original-owner".into(),
+                            as_of: 0,
+                            last_sync: None,
+                            remote_available: false,
+                            coverage: vec![],
+                            retained_from: None,
+                            complete: true,
+                        }),
+                    })
+                }
+                _ => Err(execution_app::Error::Unavailable),
+            }
+        });
         let app = register(mock_builder())
             .manage(runtime)
             .build(tauri::generate_context!())
@@ -524,6 +555,12 @@ mod tests {
         let other = tauri::WebviewWindowBuilder::new(&app, "other", Default::default())
             .build()
             .unwrap();
+        let page = call(
+            &main, "task_list", "tauri://localhost",
+            serde_json::json!({"input":execution_app::tasks::TaskQuery { limit:32, ..Default::default() }}),
+        ).unwrap().deserialize::<execution_app::tasks::TaskPage>().unwrap();
+        assert_eq!(page.scope, "original-owner");
+        assert!(page.items.is_empty());
         // Production has no private S1 catalog or journal fallback. The installed service
         // may be absent in this ACL test; either response must retain that boundary.
         match call(
@@ -579,6 +616,9 @@ mod tests {
             "network_check",
             "software_submit",
             "software_status",
+            "task_list",
+            "task_detail",
+            "task_control_status",
             "task_control",
             "self_service_policy_directory",
             "self_service_policy_resolve",

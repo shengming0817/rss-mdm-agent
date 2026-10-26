@@ -57,6 +57,23 @@ const host = createHostSettings(
 );
 const appearance = createAppearance();
 let polling: ReturnType<typeof setInterval> | undefined;
+let readingAccount = false;
+async function pollAccount() {
+  if (
+    props.environment ||
+    loading.value ||
+    !selectedUser.value ||
+    document.hidden ||
+    readingAccount
+  )
+    return;
+  readingAccount = true;
+  try {
+    await refreshAccount();
+  } finally {
+    readingAccount = false;
+  }
+}
 async function refresh() {
   try {
     users.value = (await loadTestUsers()).users;
@@ -166,8 +183,7 @@ onMounted(() => {
     if (!document.hidden) void appearance.refresh();
     if (!document.hidden && page.value === "settings" && host.available)
       void host.refresh();
-    if (!props.environment && !loading.value && !!selectedUser.value)
-      void refreshAccount();
+    void pollAccount();
   }, 2000);
 });
 onBeforeUnmount(() => {

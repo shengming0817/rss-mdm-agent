@@ -627,8 +627,21 @@ const openNativeTask = async (detail) => {
   await filters[0].selectByAttribute("value", "");
   await filters[1].selectByAttribute("value", "");
   let selectedView;
+  let readRetried = false;
   await wait(async () => {
     if (await taskButton(detail.reference).isDisplayed()) return true;
+    const alert = await browser.$('.task-center [role="alert"]');
+    const refresh = await browser.$(".task-center > header button");
+    if (
+      selectedView &&
+      (await alert.isExisting()) &&
+      (await refresh.isEnabled())
+    ) {
+      if (readRetried)
+        throw Error(`original task read failed: ${await alert.getText()}`);
+      readRetried = true;
+      await refresh.click(); // Explicit read recovery; never resubmit the retained request.
+    }
     const current =
       detail.reference.kind === "activity"
         ? detail
@@ -1769,6 +1782,31 @@ try {
         return users?.textContent?.includes("当前用户：Golden Alice");
       }),
     );
+    await wait(() =>
+      browser.execute(
+        () => document.querySelector(".shell")?.hasAttribute("inert") === false,
+      ),
+    );
+    mark("native task port reads before model setup or any execution");
+    await navigate("请求与任务");
+    let taskReadRetried = false;
+    await wait(async () => {
+      const alert = await browser.$('.task-center [role="alert"]');
+      if (await alert.isExisting()) {
+        const reason = await alert.getText();
+        if (taskReadRetried)
+          throw Error(`native task list rejected: ${reason}`);
+        taskReadRetried = true;
+        await click("刷新原记录", '//*[@aria-label="任务中心"]');
+      }
+      return (
+        (await browser.$$(".task-center-list [data-task]")).length > 0 ||
+        (await browser.$(".task-center-list").getText()).includes(
+          "没有匹配的保留记录",
+        )
+      );
+    });
+    result.checks.push("native-task-read-before-model-or-execution");
     mark("open connection settings for the acknowledged local workspace");
     await navigate("设置");
     await text("个人 AI 连接（0）");
