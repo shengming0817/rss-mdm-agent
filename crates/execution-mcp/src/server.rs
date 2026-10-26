@@ -135,7 +135,7 @@ impl ToolKind {
             Self::QueryCancel => ("execution_query_cancel", "Request cancellation of the original query; acknowledgement does not prove termination.", Effect::MayPersist),
             Self::SoftwareRead => ("execution_software_observe", "Collect a fresh bounded native software fact from one current signed definition step. No installation or script execution.", Effect::ReadOnly),
             Self::PrepareOperation => ("execution_operation_prepare", "Show an editable operation card for a current policy tool. Use for requests to display or edit settings. Suggestions do not execute: the user saves the final parameters in the desktop. Only registered scenes are accepted.", Effect::MayPersist),
-            Self::InvokePolicy => ("execution_policy_invoke", "Invoke one exact tool discovered through execution_policy_tools, including later pages. Supply the original locator and Resource inputs. Current publication and permissions are revalidated.", Effect::MayPersist),
+            Self::InvokePolicy => ("execution_policy_invoke", "Invoke one authorized Policy directly by formal ID, tool name or alias. Supply Resource inputs. Current configuration and entry permissions are resolved by the product owner.", Effect::MayPersist),
             Self::PolicyTools => ("execution_policy_tools", "Currently authorized self-service software, scripts and enrollment entries. Publication, allowAi and risk are verified for this AI origin.", Effect::ReadOnly),
             Self::PolicyStatus => ("execution_policy_status", "Read structured status and result for the original Policy request. Unknown never permits another invocation.", Effect::ReadOnly),
             Self::Tasks => ("execution_tasks", "Verified backend tasks. Select the exact task, attempt and revision; presence never authorizes execution.", Effect::ReadOnly),
@@ -268,7 +268,19 @@ impl<S: ExecutionServicePort> Handler<S> {
                 return Err(ErrorData::invalid_params("unknown tool", None));
             }
             return result(
-                async { Ok(self.service.invoke_policy(name, decode(raw)?, wait).await?) }.await,
+                async {
+                    Ok(self
+                        .service
+                        .invoke_policy(
+                            rss_mdm_agent_wire::runtime::CapabilitySelector::ToolName {
+                                name: name.to_owned(),
+                            },
+                            decode(raw)?,
+                            wait,
+                        )
+                        .await?)
+                }
+                .await,
                 max,
             );
         };
@@ -329,9 +341,8 @@ impl<S: ExecutionServicePort> Handler<S> {
                     let value = self
                         .service
                         .invoke_policy(
-                            &input.tool,
+                            input.selector,
                             PolicyToolInput {
-                                locator: input.locator,
                                 parameters: input.parameters,
                             },
                             wait,

@@ -88,8 +88,10 @@ pub struct PublishedQuery {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct QueryDirectory {
-    /// Explicitly refresh one authorized Policy page; null reads only local definitions.
-    pub policy_page: Option<crate::PolicyLocator>,
+    /// Explicitly discover a page of currently authorized Policies.
+    pub refresh_policies: bool,
+    /// Opaque Policy discovery cursor; null starts the first page.
+    pub policy_cursor: Option<String>,
     /// Exclusive stable query cursor.
     pub after: Option<Id>,
     /// Requested page size, from one through 128.
@@ -100,7 +102,7 @@ pub struct QueryDirectory {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct QueryPage {
     /// Next Policy discovery page; separate from local definition pagination.
-    pub policy_next: Option<crate::PolicyLocator>,
+    pub policy_next: Option<String>,
     /// Visible queries.
     pub items: Vec<QueryDescriptor>,
     /// Exclusive continuation.

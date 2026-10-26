@@ -8,7 +8,7 @@ fn config_replace_is_atomic_audited_and_fail_closed() {
     let actor = ActorId::new("test-admin").unwrap();
     let mut changes = Vec::<ConfigChange>::new();
     let mut next = AppConfig::test_defaults(2);
-    next.max_rules = 0;
+    next.max_timeout_ms = 0;
     assert_eq!(
         state.replace(next, &actor, |_| Ok(())),
         Err(Error::Configuration)

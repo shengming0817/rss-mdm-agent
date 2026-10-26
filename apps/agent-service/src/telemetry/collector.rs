@@ -242,7 +242,7 @@ impl Collector {
                         p,
                         (deadline / 1000) as i64,
                     )?,
-                    finish_by_unix_ms: deadline,
+
                     image_sha256: image.artifact.sha256.clone(),
                     run_as: run_as.clone(),
                     session: session.clone(),

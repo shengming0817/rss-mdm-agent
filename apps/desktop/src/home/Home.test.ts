@@ -95,10 +95,11 @@ it("shows device values as plain text and exposes all addresses without an unava
 
 it("distinguishes missing data, a complete empty software observation and partial loaded counts", async () => {
   const ports = fixtureLocalPorts();
+  const collectedAt = Math.floor(Date.now() / 1000);
   const read = vi.fn(async () => ({
     query: { id: "software.installations", revision: "1".repeat(64) },
     coverage: ["4".repeat(64)],
-    collectedAt: Math.floor(Date.now() / 1000),
+    collectedAt,
     quality: "complete" as const,
     enumerationComplete: true,
     stale: false,

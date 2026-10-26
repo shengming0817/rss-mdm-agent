@@ -154,7 +154,7 @@ fn invalid_production_inputs_leave_existing_journal_untouched() {
     let original = std::fs::read(&db.path).unwrap();
     for startup in [ProductionStartup::Create, ProductionStartup::Open] {
         let mut config = AppConfig::test_defaults(1);
-        config.max_rules = 0;
+        config.max_capability_entries = 0;
         assert!(matches!(
             assemble_journal(
                 &db.path,

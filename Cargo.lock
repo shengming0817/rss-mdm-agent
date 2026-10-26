@@ -94,9 +94,7 @@ dependencies = [
  "data-encoding",
  "der 0.7.10",
  "device-access",
- "execution-admission",
  "execution-app",
- "execution-approval",
  "execution-capability",
  "execution-contract",
  "execution-interaction",
@@ -1487,20 +1485,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "execution-admission"
-version = "0.1.0"
-dependencies = [
- "execution-contract",
- "serde_json",
- "thiserror 2.0.20",
-]
-
-[[package]]
 name = "execution-app"
 version = "0.1.0"
 dependencies = [
- "execution-admission",
- "execution-approval",
  "execution-capability",
  "execution-contract",
  "execution-interaction",
@@ -1514,16 +1501,6 @@ dependencies = [
  "serde_json_canonicalizer",
  "sha2 0.10.9",
  "thiserror 2.0.20",
-]
-
-[[package]]
-name = "execution-approval"
-version = "0.1.0"
-dependencies = [
- "execution-admission",
- "execution-contract",
- "execution-lifecycle",
- "serde_json",
 ]
 
 [[package]]
@@ -1618,9 +1595,7 @@ version = "0.1.0"
 dependencies = [
  "agent-client",
  "cc",
- "execution-admission",
  "execution-app",
- "execution-approval",
  "execution-capability",
  "execution-contract",
  "execution-ipc",
@@ -1651,9 +1626,7 @@ dependencies = [
 name = "execution-sqlite"
 version = "0.1.0"
 dependencies = [
- "execution-admission",
  "execution-app",
- "execution-approval",
  "execution-contract",
  "execution-interaction",
  "execution-lifecycle",
@@ -1663,7 +1636,6 @@ dependencies = [
  "schemars 1.2.2",
  "serde",
  "serde_json",
- "serde_json_canonicalizer",
  "sha2 0.10.9",
  "thiserror 2.0.20",
 ]
@@ -4672,9 +4644,7 @@ dependencies = [
  "ai-session-contract",
  "cc",
  "constant_time_eq",
- "execution-admission",
  "execution-app",
- "execution-approval",
  "execution-capability",
  "execution-contract",
  "execution-interaction",
@@ -5967,7 +5937,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

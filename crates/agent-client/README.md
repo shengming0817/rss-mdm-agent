@@ -16,7 +16,7 @@
 4. backend 消费当前 Start，通过既有 ExecutionApp 的本地准入和唯一 journal 派发；client 只持久保存精确关联，网络许可不代替本地执行身份校验。
 5. 执行 owner 独立驱动 reconcile；backend 准备 journal 结果，client 冻结并发送 HTTP，在通信事务提交后返回不可伪造的 ACK 回执；backend 据此逐事件确认本地结果，再释放关联和无引用缓存。HTTP 等待不持有应用借用。
 
-Offer 最长 60 秒，Received 不续租；Start 最长 15 秒。下载中断保留部分文件；过期后重新 claim，只有新签名仍声明同样的长度和摘要时复用。已经提交的 Start 请求使用原身份重放，但不能延长原许可。进程重启后使用 recover_start，从冻结请求和完整缓存恢复包装，不对过期 Offer 开放首次 Start 或下载。未知本地执行先核实，不重复派发。换 attempt 时原子退休过期 Received 请求及旧缓存关联；任何不确定 Start 或结果结算仍保留并阻断换代。
+Offer 短期限只约束首次领取接收。Received 持久 ACK 后，准备和续传沿用原任务 deadline，下载仍受既有传输预算约束。Start 使用原 Run deadline，不另设 15 秒窗口，也不从运行预算反推首启期限。重启或响应丢失时重放原请求、复用原 attempt 和完整缓存；已接纳或派发不明的任务先核实，不重复取得首次派发权。当前格式恢复不延长任务 deadline，撤销、取消、身份和材料边界仍生效。
 
 软件载荷完整保留步骤、检测、精确变体和产物。服务内部 backend 支持绑定为一个冻结本地 program 的有序多步骤，以及独立 detect intent；尚未实现的软件格式、发布源、检测机制或缺失宿主能力会明确拒绝，平台执行仍由原 owner 持有。未进入本地 journal 的 Offer 可由 backend 验证 journal 无执行后，通过 client 的冻结取消与持久回执精确结算，服务端确认后再释放关联；已有本地执行或未知效果继续由 journal 处理。自选软件的 start_user_initiated 只能由已验证的本地交互入口调用，不暴露为普通 UI/AI 透传操作。
 

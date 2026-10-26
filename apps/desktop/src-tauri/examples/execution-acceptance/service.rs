@@ -46,15 +46,14 @@ impl FixtureService {
     }
     pub fn policy_descriptor(&self) -> serde_json::Value {
         let item: rss_mdm_agent_wire::runtime::SelfServiceDirectoryItem = serde_json::from_value(serde_json::json!({
-            "policyId":"00000000-0000-4000-a000-000000000001","policyRevision":3,"policyVersion":"00000000-0000-4000-a000-000000000002",
+            "capability":{"id":"00000000-0000-4000-a000-000000000001","objectType":"policy","toolName":"policy_0000000000004000a000000000000001","alias":null,"scope":"00000000-0000-4000-a000-000000000003","instance":"fixture","tenant":"00000000-0000-4000-a000-000000000004","revision":3,"version":"00000000-0000-4000-a000-000000000002","operations":["invoke"],"inputSchema":{"type":"object","properties":{"name":{"type":"string","maxLength":32}},"required":["name"],"additionalProperties":false},"outputSchema":{}},"policyId":"00000000-0000-4000-a000-000000000001","policyRevision":3,"policyVersion":"00000000-0000-4000-a000-000000000002",
             "subject":{"kind":"device"},
             "selfService":{"published": true, "allowAi": true, "riskLevel": 2, "presentation": {"displayName": "Explicit protocol fixture", "description": "Registration proof only", "prerequisites": "Test assembly", "sideEffects": "No execution", "category": "Test", "keywords": ["test"]}},
             "task":{"kind":"script","runAs":"system","resource":{"id":"fixture-resource","version":"v1","variant":"default"},
             "parameterSources":{"name":{"kind":"input"},"path":{"kind":"fixed","value":"/Applications"}},
             "parameterSchema":{"type":"object","properties":{"name":{"type":"string","maxLength":32},"path":{"type":"string"}},"required":["name","path"],"additionalProperties":false}}
         })).unwrap();
-        execution_mcp::policy_tool(&item, &execution_contract::PolicyLocator { after: None })
-            .unwrap()
+        execution_mcp::policy_tool(&item).unwrap()
     }
     pub fn selection(&self) -> BackendSelection {
         BackendSelection {
@@ -110,11 +109,11 @@ impl ExecutionServicePort for FixtureService {
     }
     async fn invoke_policy(
         &self,
-        name: &str,
+        selector: rss_mdm_agent_wire::runtime::CapabilitySelector,
         arguments: execution_mcp::PolicyToolInput,
         _: CancellationToken,
     ) -> Result<BackendRequest, ServiceError> {
-        if name != self.policy_descriptor()["name"].as_str().unwrap()
+        if !matches!(selector, rss_mdm_agent_wire::runtime::CapabilitySelector::ToolName { ref name } if name == self.policy_descriptor()["name"].as_str().unwrap())
             || arguments.parameters
                 != serde_json::json!({"name":"Acme"})
                     .as_object()

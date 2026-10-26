@@ -128,11 +128,7 @@ async function openResource(id: string, revision: string) {
     (item) =>
       item.task.kind === "software" &&
       `policy:${item.policyId}` === id &&
-      JSON.stringify([
-        item.policyId,
-        item.policyRevision,
-        item.policyVersion,
-      ]) === revision,
+      item.policyId === revision,
   );
   if (!policy) return false;
   section.value = "enterprise";
@@ -196,11 +192,7 @@ function navigation(): PageNavigation {
             typeof item.selfService.presentation.displayName === "string"
               ? item.selfService.presentation.displayName
               : item.policyId,
-          revision: JSON.stringify([
-            item.policyId,
-            item.policyRevision,
-            item.policyVersion,
-          ]),
+          revision: item.policyId,
         })) ?? []),
     ],
     openResource,

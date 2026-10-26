@@ -210,9 +210,9 @@ impl Data {
             tenant_id: self.tenant,
             publication: [1; 32],
             target_digest: [2; 32],
-            resource: "fixture".into(),
-            resource_version: "1".into(),
-            resource_digest: [3; 32],
+            resource: step.definition.resource.clone(),
+            resource_version: step.definition.version.clone(),
+            resource_digest: step.definition.digest,
             definition_digest: [4; 32],
             document_sha256: if brew {
                 rss_mdm_agent_wire::runtime::brew_documents_digest([(

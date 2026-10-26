@@ -233,7 +233,7 @@ async fn replacement_freezes_every_old_batch_with_original_binding() {
     for _ in 0..3 {
         let p = spool.pending(at / 1_000_000, false).unwrap().unwrap();
         let batch: w::TelemetryUpload = serde_json::from_slice(p.body()).unwrap();
-        assert_eq!(batch.binding, c.payload().binding);
+        assert_eq!(batch.configuration().binding, c.payload().binding);
         assert_eq!(batch.observations.len(), 1);
         spool.reject(&p, GapReason::Rejected).unwrap();
     }

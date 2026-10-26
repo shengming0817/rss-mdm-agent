@@ -144,7 +144,6 @@ const resolved = computed(() =>
 const nextCursor = computed(() => catalog.state.next);
 const directoryComplete = computed(() => catalog.state.complete);
 const directoryWindowed = computed(() => catalog.state.windowed);
-const locators = catalog.locators;
 async function refresh() {
   await catalog.load();
 }
@@ -160,9 +159,11 @@ const resource = computed(() =>
 );
 defineExpose({
   resource,
-  openPolicy(id: string) {
+  async openPolicy(id: string) {
     if (request.value || props.allowNewRequests === false) return false;
-    const item = directory.value.find((item) => item.policyId === id);
+    const item =
+      directory.value.find((item) => item.policyId === id) ??
+      (await catalog.resolve(id));
     if (!item) return false;
     select(item);
     return true;
@@ -228,8 +229,6 @@ function preview() {
     choice.value = {
       request: crypto.randomUUID(),
       policyId: selected.value.policyId,
-      policyRevision: selected.value.policyRevision,
-      policyVersion: selected.value.policyVersion,
       parameters: Object.fromEntries(parameters),
     };
     error.value = "";
@@ -272,7 +271,6 @@ async function invoke() {
   try {
     const value = await props.port.policy_invoke({
       choice: choice.value,
-      locator: { after: locators.get(choice.value.policyId) ?? null },
     });
     if (current !== epoch) return;
     status.value = { kind: "preparation", value };
@@ -393,8 +391,7 @@ function presentationText(value: unknown, fallback = "未提供"): string {
           !directory.length &&
           !records.some(
             (r) =>
-              r.action.kind === 'policy' &&
-              r.action.directory.task.kind === 'enrollment',
+              r.action.kind === 'policy' && r.action.task.kind === 'enrollment',
           )
         "
       >
@@ -541,10 +538,7 @@ function presentationText(value: unknown, fallback = "未提供"): string {
             presentationText(selected?.selfService.presentation.sideEffects)
           }}
         </p>
-        <p>
-          策略 {{ choice.policyId }} / revision {{ choice.policyRevision }} /
-          执行版本 {{ choice.policyVersion }}
-        </p>
+        <p>策略 {{ choice.policyId }}</p>
         <p v-if="selected && selected.task.kind !== 'enrollment'">
           资源 {{ selected.task.resource.id }} /
           {{ selected.task.resource.version }} /
@@ -639,8 +633,8 @@ function presentationText(value: unknown, fallback = "未提供"): string {
           r.action.kind === 'policy' &&
           r.action.choice.request !== request &&
           (kind
-            ? kind === 'all' || r.action.directory.task.kind === kind
-            : r.action.directory.task.kind !== 'enrollment'),
+            ? kind === 'all' || r.action.task.kind === kind
+            : r.action.task.kind !== 'enrollment'),
       )"
       :key="record.action.kind === 'policy' ? record.action.choice.request : ''"
       :record="record"

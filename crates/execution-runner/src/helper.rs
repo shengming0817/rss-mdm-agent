@@ -128,7 +128,16 @@ impl Helper {
                     return Err(Error::Clock);
                 }
                 self.clock_watermark = now;
-                if cleanup_sequence == 0 && now >= plan.spec().validity.expires_at_unix_ms {
+                let latest_finish = plan
+                    .spec()
+                    .validity
+                    .expires_at_unix_ms
+                    .saturating_add(plan.spec().budget.total_timeout_ms);
+                if cleanup_sequence == 0
+                    && (now >= latest_finish
+                        || (first_start.is_some()
+                            && now >= plan.spec().validity.expires_at_unix_ms))
+                {
                     return Err(Error::Clock);
                 }
                 // An expired invocation can never be accepted again, even after its tombstone
@@ -245,7 +254,10 @@ impl Helper {
                         key.clone(),
                         (
                             owner.digest.clone(),
-                            plan.spec().validity.expires_at_unix_ms,
+                            plan.spec()
+                                .validity
+                                .expires_at_unix_ms
+                                .saturating_add(plan.spec().budget.total_timeout_ms),
                         ),
                     );
                     self.physical.remove(&key);

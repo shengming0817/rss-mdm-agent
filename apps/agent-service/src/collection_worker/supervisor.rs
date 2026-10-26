@@ -13,11 +13,7 @@ pub(super) fn query(
     remaining: Duration,
 ) -> Result<w::NativeQueryResult, Error> {
     let began = Instant::now();
-    let allowance = remaining
-        .min(Duration::from_secs(u64::from(q.budget.timeout_seconds)))
-        .min(Duration::from_secs(
-            u64::try_from(input.read.deadline.saturating_sub(now()?)).unwrap_or(0),
-        ));
+    let allowance = remaining.min(Duration::from_secs(u64::from(q.budget.timeout_seconds)));
     if allowance <= Duration::from_millis(100) {
         return Ok(failure(q, w::NativeQueryStatus::Timeout, now()?));
     }

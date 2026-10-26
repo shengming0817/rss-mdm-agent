@@ -4,6 +4,8 @@ apps/agent-service 是唯一生产系统组合根，持有设备身份、执行 
 
 installation-security 持有管理员固定映像、摘要/代码身份、受保护配置与目录检查。系统 IPC 继续使用真实 OS 对等身份及专属操作认证；本机 IPC 使用[当前版本](../guides/local-service-lab.md)，拒绝旧格式，不协商或回退。远程 Agent wire 和 helper 协议由各自原 owner 持有。
 
+企业能力通过正式 resolve 按 ID、稳定工具名或别名精确读取；目录分页只用于发现。新调用读取当前配置，已受理 Run 保持原材料和结果关联。Received 持久 ACK 后材料准备沿原任务继续；Start 只限制首次派发，后台恢复复用原请求与 journal，不重新批准或盲目重跑。
+
 可信配置/pins 通过后，同一个监听器装配就绪执行 owner 或只读未就绪诊断。只有能证明从未初始化才报告待注册；损坏、身份冲突或未知残留不触发初始化、重置或重新注册。状态连接成功不表示任务获准或效果已发生。
 
 开发 fixture 在启动前选择，复用 tests/assistant、Rust 生成投影和产品 App。debug-only 的 dev-fixture 主程序只注册外观及装配标识，不启动生产账户、AI Host、钥匙串、服务 IPC 或 journal。App 显式消费该 owner 提供的身份、Host、状态及执行 ports，缺失任一项即拒绝启动；确认与撤销进入原请求及 revision。浏览器、原生人工开发和视觉验收使用同一个 fixture owner；正式构建禁止该装配，连接错误不会切换模式。

@@ -5,7 +5,7 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBe
 use serde::{de::DeserializeOwned, Serialize};
 
 pub(crate) fn encode(value: &impl Serialize, max: usize) -> Result<Vec<u8>, Error> {
-    let bytes = serde_json_canonicalizer::to_vec(value).map_err(|_| Error::Corrupt)?;
+    let bytes = serde_json::to_vec(value).map_err(|_| Error::Corrupt)?;
     if bytes.len() > max {
         return Err(Error::Capacity);
     }
@@ -129,7 +129,7 @@ impl Store {
         let observed_at_unix_ms = snapshot.updated_at_unix_ms;
         let input = std::sync::Arc::new(input);
         let process = process.map(std::sync::Arc::new);
-        let sql = format!("SELECT {} FROM receipts r WHERE r.scope=?1 AND r.kind!='trust'
+        let sql = format!("SELECT {} FROM receipts r WHERE r.scope=?1
             AND NOT EXISTS(SELECT 1 FROM confirmations c WHERE c.scope=r.scope AND c.consumer=?2 AND c.sequence=r.sequence)
             ORDER BY r.sequence LIMIT ?3", bounded_blob("r.body", self.limits.max_record_bytes));
         let mut statement = tx.prepare(&sql)?;
@@ -232,7 +232,7 @@ impl Store {
         // A retained active input cannot become less protected during this pass. A new
         // input, or a receipt on a possibly terminal input, can weaken deletion proof.
         // Confirmations only strengthen it; trust receipts are not delivered results.
-        if kind != OperationKind::Trust {
+        {
             let bytes: Option<Vec<u8>> = tx
                 .query_row(
                     &format!(
@@ -319,7 +319,7 @@ impl Store {
             return Err(Error::InvalidInput);
         }
         let mut statement = tx.prepare(
-            &format!("SELECT {} FROM receipts r WHERE r.scope=?1 AND r.kind!='trust'
+            &format!("SELECT {} FROM receipts r WHERE r.scope=?1
              AND NOT EXISTS(SELECT 1 FROM confirmations c WHERE c.scope=r.scope AND c.consumer=?2 AND c.sequence=r.sequence)
              ORDER BY r.sequence LIMIT ?3", bounded_blob("r.body", self.limits.max_record_bytes)))?;
         let rows = statement.query_map(
@@ -349,7 +349,7 @@ impl Store {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         crate::database::ensure_current(&tx, &self.authority, self.limits)?;
         let sequence: i64 = tx.query_row(
-            "SELECT sequence FROM receipts WHERE scope=?1 AND event_id=?2 AND kind!='trust'",
+            "SELECT sequence FROM receipts WHERE scope=?1 AND event_id=?2",
             params![scope.interaction_subject().as_str(), event.as_str()],
             |r| r.get(0),
         )?;
@@ -422,37 +422,15 @@ impl Write<'_> {
         self.ensure_capacity()?;
         let event_id = EventId::new(hash(&(self.op.as_str(), &self.fingerprint))?)
             .map_err(|_| Error::Corrupt)?;
-        let admission = if audit.admission.is_some()
-            || audit.reason == AuditReason::TrustUnavailable
-        {
-            match outcome {
-                Outcome::Changed => Some(AdmissionStatus::Admitted),
-                Outcome::Rejected => Some(
-                    if matches!(audit.reason, AuditReason::CommitGateRejected)
-                        && audit.admission.as_ref().is_some_and(|a| {
-                            matches!(
-                                a.outcome,
-                                execution_admission::DecisionOutcome::ApprovalRequired { .. }
-                            )
-                        })
-                        && audit.approval.as_ref().is_some_and(|a| {
-                            matches!(a.outcome, execution_approval::ApprovalOutcome::Rejected(_))
-                        })
-                    {
-                        AdmissionStatus::ApprovalRequired
-                    } else {
-                        AdmissionStatus::Denied
-                    },
-                ),
-                _ => None,
+        let admission = audit.admission.map(|allowed| {
+            if allowed && outcome == Outcome::Changed {
+                AdmissionStatus::Admitted
+            } else {
+                AdmissionStatus::Denied
             }
-        } else {
-            None
-        };
+        });
         let kind = if admission.is_some() {
             "admission"
-        } else if self.kind == OperationKind::Trust {
-            "trust"
         } else {
             "result"
         };
@@ -515,12 +493,7 @@ pub(crate) fn empty_audit(reason: AuditReason) -> AuditRecord {
         event: None,
         attempt_id: None,
         reason,
-        trust: None,
         admission: None,
-        approval: None,
-        submitted_approvals: Vec::new(),
-        protected_approvals: Vec::new(),
-        consumptions: Vec::new(),
     }
 }
 pub(crate) fn load_plan(

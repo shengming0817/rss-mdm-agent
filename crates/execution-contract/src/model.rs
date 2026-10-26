@@ -313,13 +313,13 @@ pub struct ExecutionBudget {
     /// Maximum attempts for the whole plan; retries never multiply time/output budgets.
     pub max_attempts: u32,
 }
-/// UTC Unix milliseconds. The host separately validates current time and revocation freshness.
+/// Attempt admission window in UTC Unix milliseconds, independent of the runtime budget.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ValidityWindow {
     /// Earliest validity instant as UTC Unix milliseconds; no system clock is consulted here.
     pub not_before_unix_ms: u64,
-    /// Exclusive validity deadline as UTC Unix milliseconds, strictly after the start.
+    /// Exclusive deadline for admitting and first dispatching an attempt.
     pub expires_at_unix_ms: u64,
 }
 

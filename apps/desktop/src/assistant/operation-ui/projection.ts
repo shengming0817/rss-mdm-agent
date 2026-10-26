@@ -28,8 +28,6 @@ function unsafeSchema(input: unknown): boolean {
   if (Array.isArray(input)) return input.some(unsafeSchema);
   if (!plain(input)) return false;
   return (
-    "$ref" in input ||
-    "$dynamicRef" in input ||
     input.writeOnly === true ||
     input.format === "password" ||
     Object.values(input).some(unsafeSchema)
@@ -51,7 +49,7 @@ function policyFields(action: Policy, editable: boolean) {
     bindings: FieldBinding[] = [];
   let specialized = editable,
     blocked = false;
-  const task = action.directory.task;
+  const task = action.task;
   if (task.kind !== "script")
     return { fields, bindings, specialized: false, blocked };
   const schema = plain(task.parameterSchema) ? task.parameterSchema : {};
@@ -191,10 +189,7 @@ export function operationProjection(
                     : status.phase === "failedBeforeDispatch"
                       ? "failed"
                       : "waiting";
-    snapshot.approval.enterprise =
-      status.phase === "approvalRequired"
-        ? "等待企业批准"
-        : "准入状态见可信执行详情";
+    snapshot.approval.enterprise = "准入状态见可信执行详情";
     snapshot.approval.user =
       status.phase === "confirmationRequired"
         ? "执行服务要求确认，请前往任务处理"
@@ -252,39 +247,46 @@ export function operationProjection(
         form.fields,
       );
       snapshot.presentation.title = presentationText(
-        action.directory.selfService.presentation.displayName,
-        `策略 ${action.directory.policyId}`,
+        action.presentation.displayName,
+        `策略 ${action.choice.policyId}`,
       );
-      snapshot.presentation.source = `登记策略 ${action.choice.policyId} / ${action.choice.policyRevision}`;
+      snapshot.presentation.source = `登记策略 ${action.choice.policyId}`;
       snapshot.presentation.impact = presentationText(
-        action.directory.selfService.presentation.sideEffects,
+        action.presentation.sideEffects,
       );
       snapshot.reason ??= "当前系统设置未由此策略读取；建议不是当前状态。";
       snapshot.approval.elevation =
-        action.directory.task.kind !== "enrollment" &&
-        action.directory.task.runAs === "system"
+        action.task.kind !== "enrollment" && action.task.runAs === "system"
           ? "系统执行身份；OS 条件由服务复核"
           : "本机登录用户执行";
-      const task = action.directory.task;
+      const task = action.task;
       snapshot.presentation.targetLabel =
         task.kind === "software" && task.target.kind === "user"
           ? `${scope.target} · 目标 OS 用户 ${task.target.identity} / 登录会话 ${task.target.sessionId}`
           : `${scope.target} · 本机设备`;
-      const subject = action.directory.subject;
       snapshot.approval.enterprise =
-        subject.kind === "device"
-          ? "设备准入主体；企业批准仍由执行服务核验"
-          : `企业准入主体 ${subject.user.tenantId} / ${subject.user.instanceId} / ${subject.user.principalId}；企业批准仍由执行服务核验`;
+        action.access.kind === "device" ? "设备准入" : "企业用户准入";
       for (const binding of bindings)
         if (binding.value !== undefined)
           snapshot.proposal[binding.id] = value(binding.value);
       snapshot.logs = [
-        `执行版本：${action.choice.policyVersion}`,
-        action.directory.task.kind === "enrollment"
-          ? `原生 MDM 注册：${action.directory.task.organization}`
-          : `资源：${action.directory.task.resource.id} / ${action.directory.task.resource.version}`,
-        `前置条件：${presentationText(action.directory.selfService.presentation.prerequisites)}`,
+        action.task.kind === "enrollment"
+          ? `原生 MDM 注册：${action.task.organization}`
+          : `资源：${action.task.resource.id} / ${action.task.resource.version}`,
+        `前置条件：${presentationText(action.presentation.prerequisites)}`,
       ];
+      if (action.runId) {
+        snapshot.presentation.source = `已受理策略 ${action.choice.policyId}`;
+        snapshot.approval.elevation = "实际执行身份以已受理任务及执行详情为准";
+        snapshot.presentation.targetLabel = scope.target;
+        snapshot.logs = ["提交前配置快照：", ...snapshot.logs];
+        if (action.offer) {
+          snapshot.presentation.title = action.offer.presentation.title;
+          snapshot.logs.unshift(
+            `已受理执行摘要：${JSON.stringify(action.offer.presentation.summary)}`,
+          );
+        }
+      }
       if (form.blocked) {
         snapshot.allowed = snapshot.allowed.filter((a) => a !== "submit");
         snapshot.reason = "秘密输入接缝不可用，禁止提交。";

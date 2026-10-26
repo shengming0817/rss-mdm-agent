@@ -178,10 +178,10 @@ pub struct Data {
     pub psso_status_override: Option<StatusCode>,
     pub employee_calls: Vec<(String, Value)>,
     pub employee_credentials: Vec<bool>,
-    pub self_service_directory: Option<SelfServiceDirectoryResponse>,
+    pub self_service_directory: Option<Directory>,
     pub self_service_software: Option<self_service_software::Template>,
     pub self_service_offers: BTreeMap<Uuid, (SignedTask, i64)>,
-    pub self_service_pages: BTreeMap<Option<Uuid>, SelfServiceDirectoryResponse>,
+    pub self_service_pages: BTreeMap<Option<String>, Directory>,
     pub invocations: BTreeMap<Uuid, (Value, SelfServiceAccepted)>,
     pub invocation_reply_lost: bool,
     pub invocation_unaccepted: bool,
@@ -242,7 +242,7 @@ pub struct Data {
     pub start_ops: Vec<String>,
     pub forged_start: bool,
     pub start_permit: Option<SignedTask>,
-    pub start_validity_seconds: i64,
+    pub task_deadline: i64,
     pub result_calls: usize,
     pub chunks: BTreeMap<u16, OutputChunk>,
     pub chunk_calls: Vec<Value>,
@@ -530,33 +530,43 @@ impl Data {
             },
         };
         let steps: Vec<_> = (0..steps)
-            .map(|i| SoftwareTaskStep {
-                action: SoftwareTaskAction {
-                    package: format!("fixture-{i}"),
-                    version: "1.0".into(),
-                    behavior: SoftwareTaskBehavior::Pkg(SoftwareTaskNative {
-                        installer: "package".into(),
-                        scope: SoftwareTaskScope::System,
-                        install: command.clone(),
-                        upgrade_invocation: command.clone(),
-                        upgrade: SoftwareTaskUpgrade::InPlace,
-                        uninstall: None,
-                        detect: SoftwareTaskDetection::PkgReceipt {
-                            receipt: format!("fixture-{i}"),
-                            version: "1.0".into(),
-                        },
-                    }),
-                    signatures: vec![],
-                    reboot: SoftwareTaskReboot::Report,
-                    downgrade: SoftwareTaskDowngrade::Deny,
-                },
-                artifacts: vec![SoftwareTaskArtifact {
-                    key: format!("{i}/package"),
-                    length: self.bytes.len() as u64,
-                    sha256: Sha256::digest(&self.bytes).into(),
-                }],
-                export: SoftwareTaskExport::Direct,
-                target: SoftwareExecutionTarget::Device,
+            .map(|i| {
+                let definition = SoftwareStepDefinition {
+                    resource: format!("fixture-{i}"),
+                    version: "v1".into(),
+                    variant: "default".into(),
+                    digest: [3; 32],
+                };
+                SoftwareTaskStep {
+                    step_id: definition.step_id().unwrap(),
+                    definition,
+                    action: SoftwareTaskAction {
+                        package: format!("fixture-{i}"),
+                        version: "1.0".into(),
+                        behavior: SoftwareTaskBehavior::Pkg(SoftwareTaskNative {
+                            installer: "package".into(),
+                            scope: SoftwareTaskScope::System,
+                            install: command.clone(),
+                            upgrade_invocation: command.clone(),
+                            upgrade: SoftwareTaskUpgrade::InPlace,
+                            uninstall: None,
+                            detect: SoftwareTaskDetection::PkgReceipt {
+                                receipt: format!("fixture-{i}"),
+                                version: "1.0".into(),
+                            },
+                        }),
+                        signatures: vec![],
+                        reboot: SoftwareTaskReboot::Report,
+                        downgrade: SoftwareTaskDowngrade::Deny,
+                    },
+                    artifacts: vec![SoftwareTaskArtifact {
+                        key: format!("{i}/package"),
+                        length: self.bytes.len() as u64,
+                        sha256: Sha256::digest(&self.bytes).into(),
+                    }],
+                    export: SoftwareTaskExport::Direct,
+                    target: SoftwareExecutionTarget::Device,
+                }
             })
             .collect();
         let spec = SoftwareTaskSpec {
@@ -593,11 +603,6 @@ impl Data {
             definition_digest: Sha256::digest(serde_json::to_vec(&steps).unwrap()).into(),
             steps,
             intent: SoftwareTaskIntent::Install,
-            start_mode: if user {
-                SoftwareStartMode::UserInitiated
-            } else {
-                SoftwareStartMode::Automatic
-            },
         };
         self.offer = Some(self.signed(TaskPayload::try_from(spec).unwrap()));
     }
@@ -605,6 +610,7 @@ impl Data {
         self.started = false;
         self.received = false;
         self.start_permit = None;
+        self.task_deadline = self.time.now().unwrap() + 300;
         self.chunks.clear();
     }
 }
@@ -741,7 +747,7 @@ impl Server {
             start_ops: vec![],
             forged_start: false,
             start_permit: None,
-            start_validity_seconds: 15,
+            task_deadline: 300,
             result_calls: 0,
             chunks: BTreeMap::new(),
             chunk_calls: vec![],
@@ -1752,7 +1758,14 @@ fn start_event(d: &mut Data, operation: String) -> Response {
     d.start_ops.push(operation);
     if d.start_permit.is_none() {
         let mut payload = d.offer.as_ref().unwrap().payload.clone();
-        let expiry = d.time.now().unwrap() + d.start_validity_seconds;
+        let expiry = match &payload {
+            TaskPayload::DeviceAccess(v) => v.deadline,
+            TaskPayload::Unmanage(v) => v.deadline,
+            TaskPayload::Credential(v) => v.deadline,
+            TaskPayload::Collection(v) => v.deadline,
+            TaskPayload::Script(v) => v.deadline,
+            TaskPayload::Software(_) | TaskPayload::Enrollment(_) => d.task_deadline,
+        };
         match &mut payload {
             TaskPayload::DeviceAccess(v) => {
                 v.permit = TaskPermit::Start;
@@ -1912,10 +1925,21 @@ impl axum::extract::connect_info::Connected<axum::serve::IncomingStream<'_, TlsL
     }
 }
 
+/// Full-interface test server state; the HTTP client consumes the actual wire projection.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Directory {
+    pub items: Vec<SelfServiceDirectoryItem>,
+    pub next_cursor: Option<String>,
+    pub as_of: i64,
+}
 /// Explicit protocol fixture, never production Policy authority.
 pub fn policy_directory_fixture(tenant: Uuid) -> SelfServiceDirectoryItem {
+    let id = Uuid::new_v4();
+    let version = Uuid::new_v4();
     serde_json::from_value(json!({
-        "policyId": Uuid::new_v4(), "policyRevision": 2, "policyVersion": Uuid::new_v4(),
+        "capability": {"id":id,"objectType":"policy","toolName":policy_tool_name(id),"alias":"repair.app","scope":Uuid::new_v4(),"instance":SERVICE_ID.to_string(),"tenant":tenant,"revision":2,"version":version,"operations":["invoke"],"inputSchema":{"type":"object","properties":{"name":{"type":"string","maxLength":32}},"required":["name"],"additionalProperties":false},"outputSchema":{}},
+        "policyId": id, "policyRevision": 2, "policyVersion": version,
         "subject":{"kind":"user","user":{"tenantId":tenant,"instanceId":SERVICE_ID,"principalId":Uuid::from_u128(3)}},
         "selfService":{"published": true, "allowAi": true, "riskLevel": 2, "presentation": {"displayName": "Repair", "description": "Test repair", "prerequisites": "Employee session", "sideEffects": "Restarts a fixture", "category": "Support", "keywords": ["repair"]}},
         "task":{"kind":"script","runAs":"system","resource":{"id":Uuid::new_v4().to_string(),"version":"v1","variant":"default"},
@@ -1942,17 +1966,45 @@ fn self_service_response(d: &mut Data, uri: &Uri, headers: &HeaderMap, value: Va
             return axum::Json(body.clone()).into_response();
         }
     }
+    if path.ends_with("/self-service/resolve") {
+        let Ok(input) = serde_json::from_value::<SelfServiceResolve>(value) else {
+            return StatusCode::BAD_REQUEST.into_response();
+        };
+        let found = d
+            .self_service_directory
+            .iter()
+            .chain(d.self_service_pages.values())
+            .flat_map(|page| &page.items)
+            .find(|item| {
+                let visible = matches!(item.subject, SelfServiceSubject::Device {})
+                    || headers.contains_key("x-rss-user-session");
+                visible
+                    && item.self_service.published
+                    && (input.source != SelfServiceCaller::Ai || item.self_service.allow_ai)
+                    && match &input.selector {
+                        CapabilitySelector::Id { id } => item.policy_id == *id,
+                        CapabilitySelector::ToolName { name } => item.capability.tool_name == *name,
+                        CapabilitySelector::Alias { alias } => {
+                            item.capability.alias.as_ref() == Some(alias)
+                        }
+                    }
+            });
+        return found.map_or_else(
+            || runtime_error(StatusCode::NOT_FOUND, ErrorCode::TaskNotFound),
+            |item| axum::Json(item.clone()).into_response(),
+        );
+    }
     if path.ends_with("/self-service") {
         let after = uri
             .query()
-            .and_then(|q| q.split('&').find_map(|part| part.strip_prefix("after=")))
-            .and_then(|id| Uuid::parse_str(id).ok());
+            .and_then(|q| q.split('&').find_map(|part| part.strip_prefix("cursor=")))
+            .map(|id| id.to_owned());
         let mut directory = d
             .self_service_pages
             .get(&after)
             .cloned()
             .or_else(|| d.self_service_directory.clone())
-            .unwrap_or(SelfServiceDirectoryResponse {
+            .unwrap_or(Directory {
                 items: vec![],
                 next_cursor: None,
                 as_of: d.time.now().unwrap(),
@@ -1984,8 +2036,16 @@ fn self_service_response(d: &mut Data, uri: &Uri, headers: &HeaderMap, value: Va
                 request_id: input.operation_id,
                 run_id: Uuid::new_v4(),
                 policy_id: input.policy_id,
-                policy_revision: input.policy_revision,
-                policy_version: input.policy_version,
+                policy_revision: d
+                    .self_service_directory
+                    .as_ref()
+                    .and_then(|p| p.items.iter().find(|v| v.policy_id == input.policy_id))
+                    .map_or(1, |v| v.policy_revision),
+                policy_version: d
+                    .self_service_directory
+                    .as_ref()
+                    .and_then(|p| p.items.iter().find(|v| v.policy_id == input.policy_id))
+                    .map_or(input.policy_id, |v| v.policy_version),
             };
             match self_service_software::offer(d, &input, &accepted) {
                 Err(status) => return status.into_response(),

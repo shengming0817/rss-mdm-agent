@@ -1,7 +1,4 @@
-use execution_admission::Rule;
-use execution_admission::*;
 use execution_app::*;
-use execution_approval::{evaluate, ApprovalLimits, ApprovalVerifier, ProfileApproval};
 use execution_contract::*;
 use execution_lifecycle::{
     self as lifecycle, Observation, ObservationError, ObservationFacts, ObservationVerifier,
@@ -44,7 +41,6 @@ pub fn limits() -> Limits {
             max_snapshot_bytes: 16_384,
             max_lifetime_ms: 60_000,
         },
-        max_approvals: 16,
         max_record_bytes: 131_072,
         max_receipts: 10_000,
         max_database_pages: 32_768,
@@ -127,9 +123,7 @@ pub struct TestHost {
     pub plan: FrozenExecution,
     pub now: Cell<u64>,
     pub calls: Cell<u32>,
-    pub entries: Vec<TrustedApproval>,
-    pub authorization: VersionedRef,
-    pub approval: VersionedRef,
+
     pub read: bool,
     pub denied: Vec<Access>,
     pub consumer: Option<Id>,
@@ -137,33 +131,18 @@ pub struct TestHost {
     pub write: bool,
     pub audit: bool,
     pub expire_during_admission: bool,
-    pub snapshot_clock: Option<u64>,
+    pub admission_error: Option<JournalError>,
+
     pub answer_clock: Option<u64>,
 }
 impl TestHost {
-    pub fn new(records: usize) -> Self {
+    pub fn new() -> Self {
         let plan = plan();
-        let entries = (0..records)
-            .map(|n| TrustedApproval {
-                state: ApprovalState::Active,
-                definition: ApprovalDefinition {
-                    reference: reference(&format!("approval-{n}")),
-                    approver: ActorId::new(format!("approver-{n}")).unwrap(),
-                    request_id: plan.spec().request.request_id.clone(),
-                    content_digest: plan.digest().clone(),
-                    profiles: vec![reference(&format!("profile-{n}"))],
-                    validity: plan.spec().validity,
-                    max_uses: 1,
-                },
-            })
-            .collect();
         Self {
             plan,
             now: Cell::new(1000),
             calls: Cell::new(0),
-            entries,
-            authorization: reference("authority-epoch"),
-            approval: reference("approval-epoch"),
+
             read: true,
             denied: vec![],
             consumer: None,
@@ -171,28 +150,16 @@ impl TestHost {
             write: true,
             audit: true,
             expire_during_admission: false,
-            snapshot_clock: None,
+            admission_error: None,
+
             answer_clock: None,
         }
     }
     pub fn scope(&self) -> Scope {
         Scope::from_input(&self.plan)
     }
-    pub fn bindings(&self) -> Vec<ProfileApproval> {
-        self.entries
-            .iter()
-            .flat_map(|e| {
-                e.definition.profiles.iter().map(|p| ProfileApproval {
-                    profile: p.clone(),
-                    record: e.definition.reference.clone(),
-                })
-            })
-            .collect()
-    }
+
     pub fn prepare(&self, store: &mut Store) {
-        store
-            .refresh_trust(&operation("trust"), &self.scope(), None, self)
-            .unwrap();
         store
             .open_execution(&operation("open"), &self.plan, self)
             .unwrap();
@@ -201,7 +168,6 @@ impl TestHost {
                 &operation("prepare"),
                 &self.scope(),
                 &event("prepare", 0, lifecycle::Command::Prepare),
-                &[],
                 self,
             )
             .unwrap();
@@ -247,11 +213,7 @@ impl JournalHost for TestHost {
         match request.access {
             Access::ReadResult | Access::Deliver if !self.read => Err(JournalError::Denied),
             Access::ReadAudit if !self.audit => Err(JournalError::Denied),
-            Access::Create
-            | Access::Execute
-            | Access::RunnerFact
-            | Access::Interact
-            | Access::ManageTrust
+            Access::Create | Access::Execute | Access::RunnerFact | Access::Interact
                 if !self.write =>
             {
                 Err(JournalError::Denied)
@@ -262,94 +224,26 @@ impl JournalHost for TestHost {
     fn reliable_now(&self) -> Result<u64, JournalError> {
         Ok(self.now.get())
     }
-    fn trusted_snapshot(&self, _: &Scope) -> Result<TrustSnapshot, JournalError> {
-        if let Some(now) = self.snapshot_clock {
-            self.now.set(now);
-        }
-        Ok(TrustSnapshot {
-            authorization_revision: self.authorization.clone(),
-            approval_revision: self.approval.clone(),
-            fresh_until_unix_ms: 2000,
-            approvals: self.entries.clone(),
-        })
-    }
     fn admit(
         &self,
         plan: &FrozenExecution,
-        attempt: &AttemptId,
-        bindings: &[ProfileApproval],
-        approvals: &dyn ApprovalVerifier,
+        _attempt: &AttemptId,
         _: u64,
     ) -> Result<AdmissionGate, JournalError> {
         self.calls.set(self.calls.get() + 1);
-        let admission = decide(plan, attempt, self, AdmissionLimits { max_rules: 32 });
-        let approval = evaluate(
-            plan,
-            &admission,
-            bindings,
-            approvals,
-            ApprovalLimits {
-                max_profiles: 16,
-                max_records: 16,
-            },
-        );
         if self.expire_during_admission {
             self.now.set(2000);
         }
+        if let Some(error) = self.admission_error {
+            return Err(error);
+        }
         Ok(AdmissionGate {
-            admission,
-            approval,
+            execution_gate: ExecutionGate::Direct,
+            valid_until_unix_ms: 2000.min(plan.spec().validity.expires_at_unix_ms),
         })
     }
 }
-impl AuthorityVerifier for TestHost {
-    fn verify(
-        &self,
-        _: &FrozenExecution,
-        _: &AttemptId,
-    ) -> Result<AuthorityFacts, VerificationError> {
-        let p = self.plan.spec();
-        let rules = if self.entries.is_empty() {
-            vec![Rule {
-                id: id("allow-rule"),
-                template: self.plan.clone(),
-                effect: RuleEffect::Allow,
-            }]
-        } else {
-            self.entries
-                .iter()
-                .flat_map(|e| {
-                    e.definition.profiles.iter().map(|profile| Rule {
-                        id: profile.id.clone(),
-                        template: self.plan.clone(),
-                        effect: RuleEffect::ApprovalRequired {
-                            profile: profile.clone(),
-                        },
-                    })
-                })
-                .collect()
-        };
-        Ok(AuthorityFacts {
-            verified_origin: p.request.initiator.clone(),
-            risk: Some(execution_contract::RiskLevel::One),
-            subject: SubjectFacts {
-                authority: p.request.authority.clone(),
-                actor: p.request.actor.clone(),
-                validity: p.validity,
-                budget: p.budget,
-            },
-            delegation: p.request.delegation.as_ref().map(|r| DelegationFacts {
-                reference: r.clone(),
-                scope: self.plan.clone(),
-            }),
-            policy: p.policy.clone(),
-            rules,
-            now_unix_ms: self.now.get(),
-            verification_revision: self.authorization.clone(),
-            fresh_until_unix_ms: 2000,
-        })
-    }
-}
+
 pub struct TestEvidence {
     pub observation: Observation,
     pub calls: Cell<u32>,

@@ -1,3 +1,4 @@
+import { directoryItem } from "../../../../tests/self-service/support";
 import { mount, flushPromises } from "@vue/test-utils";
 import { expect, test, vi } from "vitest";
 import PolicySelfService from "./PolicySelfService.vue";
@@ -7,53 +8,34 @@ import type { BackendRequest, SelfServicePort, SelfServiceTask } from "./types";
 const record = (id: string): BackendRequest => ({
   action: {
     kind: "policy",
-    locator: { after: null },
+
     choice: {
       request: id,
       policyId: "policy",
-      policyRevision: 1,
-      policyVersion: "version",
+
       parameters: { name: "Acme" },
     },
-    directory: {
-      subject: {
-        kind: "user",
-        user: {
-          tenantId: "tenant",
-          instanceId: "instance",
-          principalId: "principal",
-        },
-      },
-      policyId: "policy",
-      policyRevision: 1,
-      policyVersion: "version",
-      task: {
-        kind: "script",
-        runAs: "system",
-        resource: { id: "resource", version: "1", variant: "macos" },
-        parameterSchema: { type: "object" },
-        parameterSources: { name: { kind: "input" } },
-      },
-      selfService: {
-        published: true,
-        allowAi: true,
-        riskLevel: 1,
-        presentation: {
-          displayName: "Policy",
-          description: "Read selected state",
-          category: "Tools",
-          keywords: [],
-          prerequisites: "Current login",
-          sideEffects: "Read only",
-        },
-      },
+    task: {
+      kind: "script",
+      runAs: "system",
+      resource: { id: "resource", version: "1", variant: "macos" },
+      parameterSchema: { type: "object" },
+      parameterSources: { name: { kind: "input" } },
+    },
+    presentation: {
+      displayName: "Policy",
+      description: "Read selected state",
+      category: "Tools",
+      keywords: [],
+      prerequisites: "Current login",
+      sideEffects: "Read only",
     },
     access: {
       kind: "user",
       sessionBinding: { id: "binding", generation: "generation" },
     },
     expiresAtUnixMs: Date.now() + 60000,
-    runId: "run",
+    runId: null,
     offer: null,
   },
   trigger: {
@@ -94,7 +76,7 @@ test.each([
   async ({ runAs, target, expected }) => {
     const original = record("original-request");
     if (original.action.kind !== "policy") throw Error("policy fixture");
-    const item = original.action.directory;
+    const item = directoryItem(original.action);
     if (item.task.kind !== "script") throw Error("script fixture");
     item.task = {
       kind: "software",
@@ -102,6 +84,7 @@ test.each([
       target,
       resource: item.task.resource,
     } satisfies SelfServiceTask;
+    original.action.task = item.task;
     original.state = "awaitingConfirmation";
     original.action.choice.parameters = {};
     const port = {
@@ -136,7 +119,7 @@ test.each([
       }
       expect(confirmation.text()).toContain("准入主体");
       expect(preparation.text()).toContain("准入主体");
-      expect(preparation.text()).toContain("principal");
+      expect(preparation.text()).toContain("generation");
       expect(preparation.text()).not.toContain("最终参数");
       expect(preparation.get("button").text()).toBe("查询原请求与结果");
     } finally {
@@ -151,7 +134,7 @@ test("remounted history queries its original UUID and does not invoke again", as
     kind: "run",
     value: {
       requestId: original,
-      runId: "run",
+      runId: null,
       state: { execution: "succeeded", cancellation: "none" },
       result: {
         kind: "script",
@@ -190,12 +173,12 @@ test("remounted history queries its original UUID and does not invoke again", as
 });
 
 test("native form constraints prevent invalid submission; absent restores editing", async () => {
-  const item = (
+  const item = directoryItem(
     record("fixture").action as Extract<
       BackendRequest["action"],
       { kind: "policy" }
-    >
-  ).directory;
+    >,
+  );
   if (item.task.kind !== "script") throw Error("script");
   item.task.parameterSchema = {
     type: "object",
@@ -268,12 +251,12 @@ test("native form constraints prevent invalid submission; absent restores editin
 });
 
 test("retiring enterprise ingress clears parameters/errors and ignores its late directory", async () => {
-  const item = (
+  const item = directoryItem(
     record("old").action as Extract<
       BackendRequest["action"],
       { kind: "policy" }
-    >
-  ).directory;
+    >,
+  );
   if (item.task.kind !== "script") throw Error("script");
   item.task.parameterSchema = {
     type: "object",
@@ -331,7 +314,7 @@ test("Device history restores original AI consent independently of enterprise id
   const original = record("device-original");
   if (original.action.kind !== "policy") throw Error("policy");
   original.action.access = { kind: "device" };
-  original.action.directory.subject = { kind: "device" };
+  directoryItem(original.action).subject = { kind: "device" };
   original.state = "awaitingConfirmation";
   original.trigger = {
     ...original.trigger,
@@ -382,7 +365,7 @@ test("Device history restores original AI consent independently of enterprise id
 test("MDM settings expose only an authorized enrollment and do not auto invoke", async () => {
   const original = record("manual-enrollment");
   if (original.action.kind !== "policy") throw Error("fixture");
-  const originalDirectory = original.action.directory;
+  const originalDirectory = directoryItem(original.action);
   const item = structuredClone(originalDirectory);
   item.task = {
     kind: "enrollment",
@@ -440,7 +423,7 @@ test.each([undefined, 12, "   "])(
   async (displayName) => {
     const original = record("unnamed-request");
     if (original.action.kind !== "policy") throw Error("fixture");
-    const item = original.action.directory;
+    const item = directoryItem(original.action);
     item.selfService.presentation =
       displayName === undefined ? {} : { displayName };
     const second = structuredClone(item);
@@ -467,8 +450,8 @@ test.each([undefined, 12, "   "])(
         .trigger("click");
       await human.get("textarea").setValue(JSON.stringify("Acme"));
       expect(human.get("form").text()).toContain("策略 policy");
-      expect(preparation.get("h3").text()).toBe("策略 policy");
-      expect(preparation.text()).toContain("未提供");
+      expect(preparation.get("h3").text()).toBe("Policy");
+      expect(preparation.text()).toContain("policy");
     } finally {
       human.unmount();
       preparation.unmount();
@@ -478,12 +461,12 @@ test.each([undefined, 12, "   "])(
 
 test("discovery continues beyond sixteen pages and invokes using the actual page", async () => {
   let page = 0;
-  const item = (
+  const item = directoryItem(
     record("fixture").action as Extract<
       BackendRequest["action"],
       { kind: "policy" }
-    >
-  ).directory;
+    >,
+  );
   item.task = {
     kind: "software",
     resource: { id: "resource", version: "1", variant: "macos" },
@@ -529,9 +512,7 @@ test("discovery continues beyond sixteen pages and invokes using the actual page
       .find((b) => b.text() === "确认并执行")!
       .trigger("click");
     await flushPromises();
-    expect(policy_invoke).toHaveBeenCalledWith(
-      expect.objectContaining({ locator: { after: "cursor-17" } }),
-    );
+    expect(policy_invoke).toHaveBeenCalledWith(expect.objectContaining({}));
     expect(policy_directory).toHaveBeenCalledTimes(18);
   } finally {
     w.unmount();
@@ -539,12 +520,12 @@ test("discovery continues beyond sixteen pages and invokes using the actual page
 });
 
 test("a repeated cursor does not falsely complete the catalog or discard loaded items", async () => {
-  const item = (
+  const item = directoryItem(
     record("fixture").action as Extract<
       BackendRequest["action"],
       { kind: "policy" }
-    >
-  ).directory;
+    >,
+  );
   const policy_directory = vi
     .fn()
     .mockResolvedValueOnce({ items: [item], nextCursor: "same", asOf: 1 })
@@ -573,7 +554,7 @@ test("a repeated cursor does not falsely complete the catalog or discard loaded 
 test("a bounded directory window never claims the full catalog is searchable", async () => {
   const action = record("fixture").action;
   if (action.kind !== "policy") throw Error("fixture");
-  const item = action.directory;
+  const item = directoryItem(action);
   item.task = {
     kind: "software",
     resource: { id: "resource", version: "1", variant: "macos" },

@@ -1,6 +1,4 @@
-use crate::{AccessRequest, ConfigChange, Error, TrustSnapshot};
-use execution_admission::AuthorityVerifier;
-use execution_approval::ProfileApproval;
+use crate::{AccessRequest, AdmissionGate, ConfigChange, Error};
 use execution_capability::EnvironmentSnapshot;
 use execution_contract::{ActorId, AttemptId, Authority, DeviceId, FrozenExecution, Id};
 use execution_lifecycle::{DispatchAction, ExecutionMode, ObservationFacts};
@@ -30,8 +28,8 @@ pub struct CapabilitySnapshot {
 }
 /// The host is trusted product code, never a model DTO decoder. Methods invoked within SQLite
 /// transactions must be bounded, non-reentrant and use independently verified local snapshots.
-/// C07's verifier must authenticate origin/delegation and never echo submitted plans as allow rules.
-pub trait AppHost: AuthorityVerifier {
+/// Product permit verification is the only execution authorization seam.
+pub trait AppHost {
     /// Establish/recheck the device authority; production failure cannot select Test identity.
     fn service_binding(&self) -> Result<ServiceBinding, Error>;
     /// Resolve an independently retained execution namespace under this physical owner.
@@ -64,13 +62,14 @@ pub trait AppHost: AuthorityVerifier {
     fn reliable_now(&self) -> Result<u64, crate::JournalError>;
     /// Verified capability inventory for the bound plan, never a preview cache.
     fn capabilities(&self, plan: &FrozenExecution) -> Result<CapabilitySnapshot, Error>;
-    /// Independently verified approval definitions, current policy and revocation identity.
-    fn trusted_snapshot(
+    /// Validate the configured product permit for this exact new attempt.
+    /// Called synchronously inside the journal write transaction; no network or persistence.
+    fn admit(
         &self,
         plan: &FrozenExecution,
-    ) -> Result<TrustSnapshot, crate::JournalError>;
-    /// References selected by the trusted approval authority. C08 still validates every profile.
-    fn approval_bindings(&self, plan: &FrozenExecution) -> Result<Vec<ProfileApproval>, Error>;
+        attempt: &AttemptId,
+        now: u64,
+    ) -> Result<AdmissionGate, crate::JournalError>;
     /// Authenticate administrative rights and durably record a configuration activation.
     /// Failure must leave the previous configuration usable; no UI/AI approval boolean is accepted.
     fn configuration_change(&self, change: &ConfigChange) -> Result<(), Error>;

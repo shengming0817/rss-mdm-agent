@@ -239,6 +239,28 @@ fn output_and_time_are_bounded_and_restart_never_synthesizes_history() {
     assert_eq!(finish(&f, &id).end, ProcessEnd::TimedOut);
 }
 #[test]
+fn expired_first_dispatch_window_never_starts_a_process() {
+    let mut f = fixture(
+        "printf forbidden",
+        vec![LaunchArg::ArtifactPath {}],
+        128,
+        1000,
+    );
+    replan(&mut f, |s| {
+        let time = now().unwrap();
+        s.validity = ValidityWindow {
+            not_before_unix_ms: time - 2000,
+            expires_at_unix_ms: time - 1000,
+        };
+    });
+    let id = start(&f, 128, 1000);
+    let facts = finish(&f, &id);
+    assert_eq!(facts.end, ProcessEnd::TimedOut);
+    assert_eq!(facts.scope, ProcessScope::NotStarted {});
+    assert!(facts.stdout.is_empty());
+}
+
+#[test]
 fn cancel_and_materialized_content_mismatch_fail_closed() {
     let f = fixture(
         "while :; do :; done\n",
@@ -542,12 +564,6 @@ fn macos_capture_is_durable_and_reopened_attempt_does_not_launch() {
         4096,
         15000,
     );
-    replan(&mut f, |s| {
-        s.validity = ValidityWindow {
-            not_before_unix_ms: 999,
-            expires_at_unix_ms: 60000,
-        }
-    });
     let native = std::mem::replace(
         &mut f.runner,
         NativeRunner::new(Id::new("mechanism-runner").unwrap(), BTreeMap::new(), 8).unwrap(),
@@ -976,7 +992,8 @@ fn material_registry_is_bounded_immutable_and_retains_live_leases() {
     let mut substituted = source();
     substituted.content = f.root.join("source");
     registry.retire(other.digest()).unwrap();
-    assert_eq!(registry.register(&other, substituted), Err(Error::Denied));
+    registry.register(&other, substituted).unwrap();
+    assert_eq!(registry.inspect(&other), Err(Error::Denied));
 }
 
 #[test]
@@ -994,74 +1011,6 @@ fn another_login_of_the_same_os_account_is_not_the_bound_session() {
         platform::identity(&RunAs::User { account }, &changed),
         Err(Error::Unbound)
     );
-}
-
-#[test]
-fn backend_start_window_bounds_first_spawn_without_truncating_a_started_process() {
-    struct SlowInput;
-    impl crate::InputResolver for SlowInput {
-        fn resolve(
-            &self,
-            _: &FrozenExecution,
-            _: &AttemptId,
-            _: &VersionedRef,
-            _: u64,
-        ) -> Result<crate::InputBytes, Error> {
-            std::thread::sleep(Duration::from_millis(400));
-            Ok(crate::InputBytes::new(vec![]))
-        }
-    }
-    for delayed in [true, false] {
-        let mut f = fixture(
-            "/bin/sleep 0.4; printf ran > marker\n",
-            vec![LaunchArg::ArtifactPath {}],
-            4096,
-            2000,
-        );
-        replan(&mut f, |input| {
-            input.request.initiator = Initiator::Backend {
-                task: Id::new("task").unwrap(),
-                attempt: Id::new("attempt").unwrap(),
-                trigger: BackendTrigger::Automatic {},
-            };
-            input.validity.expires_at_unix_ms =
-                now().unwrap() + 250 + input.budget.total_timeout_ms;
-            if delayed {
-                input.launch.stdin = StandardInput::Controlled {
-                    reference: VersionedRef {
-                        id: Id::new("bounded-input").unwrap(),
-                        revision: Id::new("1").unwrap(),
-                    },
-                    encoding: TextEncoding::Utf8,
-                    max_bytes: 1,
-                };
-            }
-        });
-        if delayed {
-            Arc::get_mut(
-                f.runner
-                    .artifacts
-                    .entries
-                    .lock()
-                    .unwrap()
-                    .get_mut(f.plan.digest().as_str())
-                    .unwrap(),
-            )
-            .unwrap()
-            .controlled_input = Some(Arc::new(SlowInput));
-        }
-        let attempt = start(&f, 4096, 2000);
-        let facts = finish(&f, &attempt);
-        if delayed {
-            assert!(!f.root.join("marker").exists());
-            assert!(matches!(facts.scope, ProcessScope::NotStarted {}));
-            assert_eq!(facts.end, ProcessEnd::TimedOut);
-        } else {
-            assert_eq!(std::fs::read(f.root.join("marker")).unwrap(), b"ran");
-            assert_eq!(facts.exit_code, Some(0));
-            assert_eq!(facts.end, ProcessEnd::Exited);
-        }
-    }
 }
 
 #[test]

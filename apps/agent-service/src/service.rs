@@ -5,7 +5,7 @@ use crate::{
     backend::{self, host::EnterpriseHost, offered, plan, ExecutionBridge},
     DeviceSecrets, Interpreter, SystemClock,
 };
-use agent_client::{Client, CredentialRedactor, Error, IdentityProvider, Materials, Offer};
+use agent_client::{Client, Clock, CredentialRedactor, Error, IdentityProvider, Materials, Offer};
 use execution_app::{AppConfig, ExecutionApp, RequestContext};
 use execution_contract::{
     BackendRequest, BackendRequestFailure, BackendRequestState, BackendTrigger, PreparedAction,
@@ -606,238 +606,45 @@ impl<S: IdentityProvider> DeviceService<S> {
             return Ok(());
         }
         let caller = self.core.caller();
-        if self.waiting.as_ref().is_some_and(|(offer, _)| {
-            self.core
-                .host
-                .clock
-                .millis()
-                .is_ok_and(|now| now / 1000 >= offer.payload().expires_at() as u64)
-        }) {
-            if let Some((offer, _)) = &self.waiting {
-                self.core.transition(
-                    &backend::request_id(offer)?,
-                    BackendRequestState::Failed,
-                    Some(BackendRequestFailure::Expired),
-                )?;
-            }
-            self.release_waiting();
-        }
         let pending = self
             .client
             .pending_tasks(self.client.configuration().limits.pending_tasks)?;
         for task in pending {
-            while let Ok(command) = commands.try_recv() {
-                self.core.handle(command);
+            if let Err(mut error) = self.resume_task(task, commands).await {
+                if error == Error::Expired && self.client.bound_request(task)?.is_none() {
+                    if self
+                        .waiting
+                        .as_ref()
+                        .is_some_and(|(offer, _)| offer.task_id() == task)
+                    {
+                        self.release_waiting();
+                    }
+                    let request = backend::request_id(&self.client.retained_offer(task)?)?;
+                    self.core.transition(
+                        &request,
+                        BackendRequestState::Failed,
+                        Some(BackendRequestFailure::Expired),
+                    )?;
+                    match self.abandon(task, commands).await {
+                        Ok(()) => {
+                            if self.core.stopping {
+                                return Ok(());
+                            }
+                            continue;
+                        }
+                        Err(failure) => error = failure,
+                    }
+                }
+                if matches!(
+                    error,
+                    Error::CredentialRevoked | Error::CertificateExpired | Error::CredentialRetired
+                ) {
+                    return Err(error);
+                }
+                eprintln!("agent_task_recovery: task={task} code={error:?}");
             }
             if self.core.stopping {
                 return Ok(());
-            }
-            let retained = self.client.retained_offer(task)?;
-            if matches!(retained.payload(), wire::TaskPayload::Unmanage(_)) {
-                self.accept_retirement(&retained, commands).await?;
-                return Ok(());
-            }
-            if self.client.bound_request(task)?.is_some() {
-                if !self
-                    .bridge
-                    .recover_binding(&mut self.client, task, &self.core.app)?
-                {
-                    self.abandon(task, commands).await?;
-                    continue;
-                }
-                let retained = self.client.retained_offer(task)?;
-                if let wire::TaskPayload::Credential(spec) = retained.payload() {
-                    let root = crate::credential_worker::root(&self.core.config);
-                    if let Some(escrow) = crate::credential_worker::pending(&root, spec)? {
-                        let receipts = network(
-                            self.client.escrow_credentials(task, escrow.clone()),
-                            &mut self.core,
-                            commands,
-                        )
-                        .await?;
-                        crate::credential_worker::acknowledge(&root, spec, &escrow, &receipts)?;
-                    }
-                }
-                if let wire::TaskPayload::DeviceAccess(spec) = retained.payload() {
-                    let root = crate::access_worker::root(&self.core.config);
-                    #[cfg(target_os = "macos")]
-                    if spec.platform == wire::TaskPlatform::Macos {
-                        let observed_root = root.clone();
-                        let observed_task = (**spec).clone();
-                        let installation = self.core.access.installation;
-                        let refresh = async move {
-                            tokio::task::spawn_blocking(move || {
-                                crate::access_worker::macos::refresh(
-                                    &observed_root,
-                                    installation,
-                                    &observed_task,
-                                )
-                            })
-                            .await
-                            .map_err(|_| Error::Unavailable)?
-                        };
-                        if matches!(
-                            background(refresh, &mut self.core, commands).await,
-                            Ok(None)
-                        ) {
-                            return Ok(());
-                        }
-                    }
-                    #[cfg(windows)]
-                    if matches!(spec.windows, Some(wire::AccessWindowsPlan::Whfb { .. })) {
-                        // The read-only refresh is bounded and cannot launch policy mutations.
-                        let _ = crate::access_worker::hello::refresh(
-                            &root,
-                            self.core.access.installation,
-                            spec,
-                        );
-                    }
-                    if spec.platform == wire::TaskPlatform::Macos
-                        || matches!(spec.windows, Some(wire::AccessWindowsPlan::Whfb { .. }))
-                    {
-                        if let Some(result) = crate::access_worker::stored_result(&root, spec)? {
-                            network(
-                                self.client.access_observation(task, result),
-                                &mut self.core,
-                                commands,
-                            )
-                            .await?;
-                        }
-                    }
-                    if let Some(prepared) = crate::access_worker::prepared(&root, spec)? {
-                        network(
-                            self.client.access_prepared(task, prepared),
-                            &mut self.core,
-                            commands,
-                        )
-                        .await?;
-                        if let Some(escrow) = crate::access_worker::pending(&root, spec)? {
-                            let receipts = network(
-                                self.client.escrow_credentials(task, escrow.clone()),
-                                &mut self.core,
-                                commands,
-                            )
-                            .await?;
-                            crate::access_worker::acknowledge(&root, spec, &escrow, receipts)?;
-                        }
-                    }
-                }
-                if let Some(mut pending) =
-                    self.bridge
-                        .prepare_delivery(&mut self.client, task, &mut self.core.app, 64)?
-                {
-                    network(
-                        self.bridge.send_delivery(&mut self.client, &mut pending),
-                        &mut self.core,
-                        commands,
-                    )
-                    .await?;
-                    self.bridge
-                        .finish_delivery(&mut self.client, pending, &mut self.core.app)?;
-                }
-                let request = self.client.bound_request(task)?.ok_or(Error::Conflict)?;
-                if let Err(error) = self.core.capture_data(&request) {
-                    eprintln!("agent_collected_data: {error}");
-                }
-                let input = self
-                    .core
-                    .app
-                    .frozen_input(&caller, &request)
-                    .map_err(crate::error::app_error)?;
-                match self
-                    .bridge
-                    .finish(&mut self.client, task, &self.core.app, &caller)
-                {
-                    Ok(()) => {
-                        self.core.access.retire(task);
-                        match self.core.host.materials.retire(input.digest()) {
-                            Ok(()) | Err(execution_app::Error::Conflict) => (),
-                            Err(error) => return Err(map_app_error(error)),
-                        }
-                    }
-                    Err(Error::Conflict) => {
-                        // Only unresolved original work needs recovery material. Settled tasks
-                        // must release first, without rebuilding every native phase after ACK.
-                        if !self
-                            .core
-                            .host
-                            .materials
-                            .registered(&input)
-                            .map_err(crate::error::app_error)?
-                        {
-                            if let Ok(materials) = crate::recovery::materials(
-                                &input,
-                                &self.core.config,
-                                &self.core.helpers,
-                            ) {
-                                self.core
-                                    .host
-                                    .materials
-                                    .register(&input, materials)
-                                    .map_err(crate::error::app_error)?;
-                            }
-                        }
-                    }
-                    Err(error) => return Err(error),
-                }
-            } else if self.recovering
-                || self
-                    .waiting
-                    .as_ref()
-                    .is_none_or(|(offer, _)| offer.task_id() != task)
-            {
-                let offer = self.client.retained_offer(task)?;
-                if let Some(record) = self.policy_intent(&offer)? {
-                    let now = self.core.host.clock.millis()?;
-                    if now >= record.action.expires_at_unix_ms()
-                        || now / 1000 >= offer.payload().expires_at() as u64
-                    {
-                        self.core.transition(
-                            record.action.request(),
-                            BackendRequestState::Failed,
-                            Some(BackendRequestFailure::Expired),
-                        )?;
-                        self.abandon(task, commands).await?;
-                        continue;
-                    }
-                    if let Err(error) = self.core.current_policy_access(&record) {
-                        if retryable_submission(error) {
-                            return Err(error);
-                        }
-                        self.core.transition(
-                            record.action.request(),
-                            BackendRequestState::Failed,
-                            Some(if error == Error::Expired {
-                                BackendRequestFailure::Expired
-                            } else {
-                                BackendRequestFailure::Revoked
-                            }),
-                        )?;
-                        self.abandon(task, commands).await?;
-                        continue;
-                    }
-                    if self.waiting.is_some() {
-                        // Capacity delays this original intent; it never revokes consent.
-                        continue;
-                    }
-                    // Recover only the already recorded consent and verified original offer.
-                    // Binding and Start still recheck the original OS session and current device.
-                    let materials =
-                        network(self.client.prepare(&offer), &mut self.core, commands).await?;
-                    self.core.available_risk = backend::gate::TrustedRisk::from_offer(&offer);
-                    self.core.available_start = backend::gate::TrustedStart::from_offer(&offer);
-                    self.core.available = Some(offered(&offer)?);
-                    self.waiting = Some((offer, materials));
-                } else if matches!(offer.payload(), wire::TaskPayload::DeviceAccess(_)) {
-                    if self.waiting.is_none() {
-                        let materials =
-                            network(self.client.prepare(&offer), &mut self.core, commands).await?;
-                        self.waiting = Some((offer, materials));
-                    }
-                } else {
-                    // No original resumable local intent means no execution may have started.
-                    self.abandon(task, commands).await?;
-                }
             }
         }
         self.recovering = false;
@@ -931,10 +738,22 @@ impl<S: IdentityProvider> DeviceService<S> {
             if self.client.bound_request(cancel.task_id())?.is_some() {
                 self.bridge
                     .cancel(&self.client, &cancel, &mut self.core.app, &caller)?;
-            } else if self.waiting.as_ref().is_some_and(|(offer, _)| {
-                offer.task_id() == cancel.task_id() && offer.attempt_id() == cancel.attempt_id()
-            }) {
-                self.release_waiting();
+            } else if self
+                .client
+                .pending_tasks(self.client.configuration().limits.pending_tasks)?
+                .contains(&cancel.task_id())
+            {
+                let held = self.client.retained_offer(cancel.task_id())?;
+                if held.attempt_id() != cancel.attempt_id() {
+                    continue;
+                }
+                if self
+                    .waiting
+                    .as_ref()
+                    .is_some_and(|(offer, _)| offer.task_id() == cancel.task_id())
+                {
+                    self.release_waiting();
+                }
                 // Withdrawal has no execution effect; the original request remains queryable.
                 let pending = self.bridge.prepare_abandonment(
                     &mut self.client,
@@ -980,16 +799,270 @@ impl<S: IdentityProvider> DeviceService<S> {
                 // The next owner iteration resumes automatically from the original consent.
                 return Ok(());
             }
-            if matches!(offer.payload(),wire::TaskPayload::Software(p) if p.start_mode==wire::SoftwareStartMode::UserInitiated)
-            {
-                self.waiting = Some((offer, materials));
-                return Ok(());
-            }
             backend::submit(self, offer, materials, None, commands).await?;
             self.core.available = None;
             self.core.available_risk = None;
             self.core.available_start = None;
         }
+        Ok(())
+    }
+    async fn resume_task(
+        &mut self,
+        task: uuid::Uuid,
+        commands: &mut tokio::sync::mpsc::Receiver<Command>,
+    ) -> Result<(), Error> {
+        let caller = self.core.caller();
+        while let Ok(command) = commands.try_recv() {
+            self.core.handle(command);
+        }
+        if self.core.stopping {
+            return Ok(());
+        }
+        let retained = self.client.retained_offer(task)?;
+        let now = self.core.host.clock.now()?;
+        let expired = retained
+            .preparation_deadline()
+            .is_some_and(|deadline| now >= deadline);
+        let terminal = self
+            .core
+            .app
+            .backend_request(&caller, &backend::request_id(&retained)?)
+            .map_err(map_app_error)?
+            .is_some_and(|r| {
+                matches!(
+                    r.state,
+                    BackendRequestState::Failed | BackendRequestState::Cancelled
+                )
+            });
+        if (expired || terminal) && self.client.bound_request(task)?.is_none() {
+            if self
+                .waiting
+                .as_ref()
+                .is_some_and(|(offer, _)| offer.task_id() == task)
+            {
+                self.release_waiting();
+            }
+            if expired && !terminal {
+                self.core.transition(
+                    &backend::request_id(&retained)?,
+                    BackendRequestState::Failed,
+                    Some(BackendRequestFailure::Expired),
+                )?;
+            }
+            return self.abandon(task, commands).await;
+        }
+        if matches!(retained.payload(), wire::TaskPayload::Unmanage(_)) {
+            self.accept_retirement(&retained, commands).await?;
+            return Ok(());
+        }
+        if self.client.bound_request(task)?.is_some() {
+            let recovered = self
+                .bridge
+                .recover_binding(&mut self.client, task, &self.core.app)?;
+            let binding = self.client.association(task)?.ok_or(Error::Conflict)?;
+            let status = if recovered {
+                Some(
+                    self.core
+                        .app
+                        .status(&self.core.caller(), binding.request())
+                        .map_err(map_app_error)?,
+                )
+            } else {
+                None
+            };
+            if status.as_ref().is_none_or(|s| {
+                s.attempt_id.is_none() && s.admission.is_none() && !s.cancel_requested
+            }) {
+                if expired {
+                    if !recovered {
+                        return self.abandon(task, commands).await;
+                    }
+                    self.core
+                        .app
+                        .cancel(&caller, binding.request())
+                        .map_err(map_app_error)?;
+                } else {
+                    let selection = if is_policy_offer(&retained) {
+                        Some(self.bind_policy_offer(&retained)?)
+                    } else {
+                        None
+                    };
+                    let materials =
+                        network(self.client.prepare(&retained), &mut self.core, commands).await?;
+                    backend::submit(self, retained, materials, selection, commands).await?;
+                    return Ok(());
+                }
+            }
+            let retained = self.client.retained_offer(task)?;
+            if let wire::TaskPayload::Credential(spec) = retained.payload() {
+                let root = crate::credential_worker::root(&self.core.config);
+                if let Some(escrow) = crate::credential_worker::pending(&root, spec)? {
+                    let receipts = network(
+                        self.client.escrow_credentials(task, escrow.clone()),
+                        &mut self.core,
+                        commands,
+                    )
+                    .await?;
+                    crate::credential_worker::acknowledge(&root, spec, &escrow, &receipts)?;
+                }
+            }
+            if let wire::TaskPayload::DeviceAccess(spec) = retained.payload() {
+                let root = crate::access_worker::root(&self.core.config);
+                #[cfg(target_os = "macos")]
+                if spec.platform == wire::TaskPlatform::Macos {
+                    let observed_root = root.clone();
+                    let observed_task = (**spec).clone();
+                    let installation = self.core.access.installation;
+                    let refresh = async move {
+                        tokio::task::spawn_blocking(move || {
+                            crate::access_worker::macos::refresh(
+                                &observed_root,
+                                installation,
+                                &observed_task,
+                            )
+                        })
+                        .await
+                        .map_err(|_| Error::Unavailable)?
+                    };
+                    if matches!(
+                        background(refresh, &mut self.core, commands).await,
+                        Ok(None)
+                    ) {
+                        return Ok(());
+                    }
+                }
+                #[cfg(windows)]
+                if matches!(spec.windows, Some(wire::AccessWindowsPlan::Whfb { .. })) {
+                    // The read-only refresh is bounded and cannot launch policy mutations.
+                    let _ = crate::access_worker::hello::refresh(
+                        &root,
+                        self.core.access.installation,
+                        spec,
+                    );
+                }
+                if spec.platform == wire::TaskPlatform::Macos
+                    || matches!(spec.windows, Some(wire::AccessWindowsPlan::Whfb { .. }))
+                {
+                    if let Some(result) = crate::access_worker::stored_result(&root, spec)? {
+                        network(
+                            self.client.access_observation(task, result),
+                            &mut self.core,
+                            commands,
+                        )
+                        .await?;
+                    }
+                }
+                if let Some(prepared) = crate::access_worker::prepared(&root, spec)? {
+                    network(
+                        self.client.access_prepared(task, prepared),
+                        &mut self.core,
+                        commands,
+                    )
+                    .await?;
+                    if let Some(escrow) = crate::access_worker::pending(&root, spec)? {
+                        let receipts = network(
+                            self.client.escrow_credentials(task, escrow.clone()),
+                            &mut self.core,
+                            commands,
+                        )
+                        .await?;
+                        crate::access_worker::acknowledge(&root, spec, &escrow, receipts)?;
+                    }
+                }
+            }
+            if let Some(mut pending) =
+                self.bridge
+                    .prepare_delivery(&mut self.client, task, &mut self.core.app, 64)?
+            {
+                network(
+                    self.bridge.send_delivery(&mut self.client, &mut pending),
+                    &mut self.core,
+                    commands,
+                )
+                .await?;
+                self.bridge
+                    .finish_delivery(&mut self.client, pending, &mut self.core.app)?;
+            }
+            let request = self.client.bound_request(task)?.ok_or(Error::Conflict)?;
+            if let Err(error) = self.core.capture_data(&request) {
+                eprintln!("agent_collected_data: {error}");
+            }
+            let input = self
+                .core
+                .app
+                .frozen_input(&caller, &request)
+                .map_err(crate::error::app_error)?;
+            match self
+                .bridge
+                .finish(&mut self.client, task, &self.core.app, &caller)
+            {
+                Ok(()) => {
+                    self.core.access.retire(task);
+                    match self.core.host.materials.retire(input.digest()) {
+                        Ok(()) | Err(execution_app::Error::Conflict) => (),
+                        Err(error) => return Err(map_app_error(error)),
+                    }
+                }
+                Err(Error::Conflict) => {
+                    // Only unresolved original work needs recovery material. Settled tasks
+                    // must release first, without rebuilding every native phase after ACK.
+                    if !self
+                        .core
+                        .host
+                        .materials
+                        .registered(&input)
+                        .map_err(crate::error::app_error)?
+                    {
+                        if let Ok(materials) = crate::recovery::materials(
+                            &input,
+                            &self.core.config,
+                            &self.core.helpers,
+                        ) {
+                            self.core
+                                .host
+                                .materials
+                                .register(&input, materials)
+                                .map_err(crate::error::app_error)?;
+                        }
+                    }
+                }
+                Err(error) => return Err(error),
+            }
+        } else if self.recovering
+            || self
+                .waiting
+                .as_ref()
+                .is_none_or(|(offer, _)| offer.task_id() != task)
+        {
+            let offer = self.client.retained_offer(task)?;
+            if self.policy_intent(&offer)?.is_some() {
+                if self.waiting.is_some() {
+                    // Capacity delays this original intent; it never revokes consent.
+                    return Ok(());
+                }
+                // Recover only the already recorded consent and verified original offer.
+                // Binding and Start still recheck the original OS session and current device.
+                network(self.client.received(&offer), &mut self.core, commands).await?;
+                let materials =
+                    network(self.client.prepare(&offer), &mut self.core, commands).await?;
+                self.core.available_risk = backend::gate::TrustedRisk::from_offer(&offer);
+                self.core.available_start = backend::gate::TrustedStart::from_offer(&offer);
+                self.core.available = Some(offered(&offer)?);
+                self.waiting = Some((offer, materials));
+            } else {
+                network(self.client.received(&offer), &mut self.core, commands).await?;
+                let materials =
+                    network(self.client.prepare(&offer), &mut self.core, commands).await?;
+                if matches!(offer.payload(), wire::TaskPayload::DeviceAccess(_)) {
+                    if self.waiting.is_none() {
+                        self.waiting = Some((offer, materials));
+                    }
+                } else {
+                    backend::submit(self, offer, materials, None, commands).await?;
+                }
+            }
+        }
+
         Ok(())
     }
     async fn accept_retirement(
@@ -1108,7 +1181,9 @@ impl<S: IdentityProvider> DeviceService<S> {
         )
         .await?;
         self.bridge
-            .finish_abandonment(&mut self.client, pending, &self.core.app)
+            .finish_abandonment(&mut self.client, pending, &self.core.app)?;
+        self.core.access.retire(task);
+        Ok(())
     }
     /// Start the single service owner; native callbacks never access SQLite or network directly.
     pub fn spawn(
@@ -1772,6 +1847,7 @@ impl Core {
                     | Request::RetireEnterpriseContext { .. }
                     | execution_ipc::host::Request::ObserveSoftware { .. }
                     | execution_ipc::host::Request::PolicyDirectory { .. }
+                    | execution_ipc::host::Request::ResolvePolicy { .. }
                     | execution_ipc::host::Request::InvokePolicy { .. }
                     | execution_ipc::host::Request::PreparePolicy { .. }
                     | execution_ipc::host::Request::SubmitPolicy { .. }
@@ -1801,6 +1877,7 @@ impl Core {
                     | Request::RetireEnterpriseContext { .. }
                     | Request::ObserveSoftware { .. }
                     | Request::PolicyDirectory { .. }
+                    | Request::ResolvePolicy { .. }
                     | Request::InvokePolicy { .. }
                     | Request::PreparePolicy { .. }
                     | Request::SubmitPolicy { .. }
@@ -2439,8 +2516,7 @@ pub(crate) fn app_config() -> AppConfig {
     let bounds = plan::storage_limits().input;
     AppConfig {
         revision: 1,
-        max_rules: 1,
-        max_profiles: 1,
+
         max_capability_entries: 32,
         max_timeout_ms: bounds.max_timeout_ms,
         max_output_bytes: bounds.max_output_bytes,

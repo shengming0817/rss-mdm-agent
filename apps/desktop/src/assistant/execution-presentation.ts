@@ -11,7 +11,6 @@ export function executionPhase(value: TaskPhase): string {
       return "执行准入被拒绝";
     case "confirmationRequired":
       return "等待用户确认本次动作";
-    case "approvalRequired":
       return "执行服务记录：需要管理员批准";
     case "accepted":
       return "执行意图已记录，尚未确认派发";
@@ -72,7 +71,6 @@ export function taskPresentation(details: ExecutionTaskDetails) {
     attention:
       [
         "confirmationRequired",
-        "approvalRequired",
         "outcomeUnknown",
         "admissionDenied",
         "failedBeforeDispatch",

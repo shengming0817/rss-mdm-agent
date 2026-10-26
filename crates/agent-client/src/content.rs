@@ -293,10 +293,15 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                     .map(|b| format!("{b:02x}"))
                     .collect::<String>()
             );
-            let remaining = std::time::Duration::from_secs(
-                u64::try_from(offer.payload().expires_at() - self.now()?)
-                    .map_err(|_| Error::Expired)?,
-            );
+            let remaining = offer
+                .preparation_deadline()
+                .map(|until| {
+                    u64::try_from(until - self.now()?)
+                        .map(std::time::Duration::from_secs)
+                        .map_err(|_| Error::Expired)
+                })
+                .transpose()?
+                .unwrap_or(self.store.cfg.limits.transfer_timeout);
             if remaining.is_zero() {
                 return Err(Error::Expired);
             }

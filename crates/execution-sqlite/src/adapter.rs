@@ -1,6 +1,5 @@
 use crate::*;
 use execution_app::*;
-use execution_approval::ProfileApproval;
 use execution_contract::*;
 use execution_interaction::{Interaction, Reference, Spec};
 use execution_lifecycle::{CommandEvent, ObservationEvent, ObservationVerifier};
@@ -204,10 +203,9 @@ impl JournalPort for Store {
         op: &OperationRequestId,
         scope: &Scope,
         event: &CommandEvent,
-        bindings: &[ProfileApproval],
         host: &impl JournalHost,
     ) -> Result<CommitOutcome, JournalError> {
-        self.sql_apply_command(op, scope, event, bindings, host)
+        self.sql_apply_command(op, scope, event, host)
             .map_err(Into::into)
     }
     fn apply_observation(
@@ -277,23 +275,7 @@ impl JournalPort for Store {
     ) -> Result<Interaction, JournalError> {
         self.sql_interaction(scope, id, host).map_err(Into::into)
     }
-    fn trust_revision(
-        &self,
-        scope: &Scope,
-        host: &impl JournalHost,
-    ) -> Result<Option<u64>, JournalError> {
-        self.sql_trust_revision(scope, host).map_err(Into::into)
-    }
-    fn refresh_trust(
-        &mut self,
-        op: &OperationRequestId,
-        scope: &Scope,
-        expected: Option<u64>,
-        host: &impl JournalHost,
-    ) -> Result<CommitOutcome, JournalError> {
-        self.sql_refresh_trust(op, scope, expected, host)
-            .map_err(Into::into)
-    }
+
     fn record_process(
         &mut self,
         scope: &Scope,

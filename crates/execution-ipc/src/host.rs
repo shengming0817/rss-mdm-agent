@@ -2,9 +2,9 @@
 use execution_contract::{Digest, Id, RequestId, VersionedRef};
 use serde::{Deserialize, Serialize};
 /// Current desktop/system IPC. No negotiation or legacy parser exists.
-pub const IPC_VERSION: u8 = 5;
+pub const IPC_VERSION: u8 = 6;
 /// Current protected installation document format.
-pub const DEPLOYMENT_VERSION: u32 = 5;
+pub const DEPLOYMENT_VERSION: u32 = 6;
 
 /// Read-only native state, independent from Agent identity and policy authorization.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
@@ -802,9 +802,18 @@ pub enum Request {
     PolicyDirectory {
         /// Exact current native context binding.
         context: execution_contract::NativeContextRef,
-        /// Backend page cursor.
-        after: Option<Id>,
+        /// Opaque backend page cursor.
+        after: Option<String>,
         /// Trusted native origin.
+        origin: ClientOrigin,
+    },
+    /// Resolve an exact authorized capability independently of directory pagination.
+    ResolvePolicy {
+        /// Current native context.
+        context: execution_contract::NativeContextRef,
+        /// Server-owned exact address.
+        selector: rss_mdm_agent_wire::runtime::CapabilitySelector,
+        /// Authenticated caller classification.
         origin: ClientOrigin,
     },
     /// Freeze a Policy choice in the unique journal; neither source nor confirmation is a model field.
@@ -814,7 +823,7 @@ pub enum Request {
         /// Exact directory choice and Input values.
         choice: execution_contract::PolicyChoice,
         /// Actual discovery page, never an authorization claim.
-        locator: execution_contract::PolicyLocator,
+
         /// Trusted native origin.
         origin: ClientOrigin,
     },
@@ -825,7 +834,7 @@ pub enum Request {
         /// Policy identity and non-authoritative initial suggestions.
         choice: execution_contract::PolicyChoice,
         /// Actual discovery page, re-fetched before freezing the draft.
-        locator: execution_contract::PolicyLocator,
+
         /// Attested AI origin; never renderer supplied.
         origin: ClientOrigin,
     },
@@ -1015,6 +1024,12 @@ pub enum Reply {
     /// Retirement acknowledged by the independent control lane.
     ContextRevoked,
     /// Formal authorized Policy directory, not an execution permit.
+    /// Exact current authorized interface.
+    PolicyResolved {
+        /// Server-owned capability descriptor and invocation interface.
+        value: Box<rss_mdm_agent_wire::runtime::SelfServiceDirectoryItem>,
+    },
+    /// Current authorized discovery page.
     PolicyDirectory {
         /// Current server projection.
         value: rss_mdm_agent_wire::runtime::SelfServiceDirectoryResponse,

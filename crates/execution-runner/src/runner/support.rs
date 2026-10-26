@@ -1,10 +1,6 @@
 //! Runner-owned test assembly. No fixture authority is compiled into production.
 use super::*;
-use execution_admission::{
-    AuthorityFacts, AuthorityVerifier, DelegationFacts, Rule, RuleEffect, SubjectFacts,
-    VerificationError,
-};
-use execution_app::{AccessRequest, TrustSnapshot};
+use execution_app::{AccessRequest, AdmissionGate, ExecutionGate};
 use execution_app::{
     AppConfig, AppHost, CapabilitySnapshot, ExecutionApp, RequestContext, ServiceBinding,
 };
@@ -53,42 +49,7 @@ impl TestHost {
             .max(1000)
     }
 }
-impl AuthorityVerifier for TestHost {
-    fn verify(
-        &self,
-        _: &FrozenExecution,
-        _: &AttemptId,
-    ) -> Result<AuthorityFacts, VerificationError> {
-        let p = self.template.spec();
-        Ok(AuthorityFacts {
-            verified_origin: p.request.initiator.clone(),
-            risk: Some(execution_contract::RiskLevel::One),
-            subject: SubjectFacts {
-                authority: p.request.authority.clone(),
-                actor: p.request.actor.clone(),
-                validity: p.validity,
-                budget: p.budget,
-            },
-            delegation: p
-                .request
-                .delegation
-                .clone()
-                .map(|reference| DelegationFacts {
-                    reference,
-                    scope: self.template.clone(),
-                }),
-            policy: p.policy.clone(),
-            rules: vec![Rule {
-                id: id("runner-test-rule"),
-                template: self.template.clone(),
-                effect: RuleEffect::Allow,
-            }],
-            now_unix_ms: self.now(),
-            verification_revision: reference("runner-policy"),
-            fresh_until_unix_ms: self.now() + 60000,
-        })
-    }
-}
+
 fn inventory<T>(items: Vec<T>) -> Inventory<T> {
     Inventory {
         complete: true,
@@ -169,22 +130,19 @@ impl AppHost for TestHost {
             },
         })
     }
-    fn trusted_snapshot(
+    fn admit(
         &self,
-        _: &FrozenExecution,
-    ) -> Result<TrustSnapshot, execution_app::JournalError> {
-        Ok(TrustSnapshot {
-            authorization_revision: reference("runner-policy"),
-            approval_revision: reference("runner-approval"),
-            fresh_until_unix_ms: self.now() + 60000,
-            approvals: vec![],
+        plan: &FrozenExecution,
+        _: &AttemptId,
+        _now: u64,
+    ) -> Result<execution_app::AdmissionGate, execution_app::JournalError> {
+        if plan.digest() != self.template.digest() {
+            return Err(execution_app::JournalError::Denied);
+        }
+        Ok(AdmissionGate {
+            execution_gate: ExecutionGate::Direct,
+            valid_until_unix_ms: plan.spec().validity.expires_at_unix_ms,
         })
-    }
-    fn approval_bindings(
-        &self,
-        _: &FrozenExecution,
-    ) -> Result<Vec<execution_approval::ProfileApproval>, Error> {
-        Ok(vec![])
     }
     fn configuration_change(&self, _: &execution_app::ConfigChange) -> Result<(), Error> {
         Ok(())

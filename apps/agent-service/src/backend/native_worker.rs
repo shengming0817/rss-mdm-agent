@@ -12,7 +12,6 @@ pub(super) struct Worker {
     pub root_key: &'static str,
     pub root: std::path::PathBuf,
     pub deadline: i64,
-    pub expires_at: i64,
     pub definition_digest: [u8; 32],
     pub output: u64,
     pub stdin: StandardInput,
@@ -32,19 +31,8 @@ pub(super) fn compile(
     let work_root = config.work_root.clone();
     let state_root = worker.root.clone();
 
-    // The runner derives Start expiry as validity end minus execution budget.
-    let seconds =
-        3600u64.min(u64::try_from(worker.deadline - worker.expires_at).map_err(|_| Error::Clock)?);
-    if seconds == 0 {
-        return Err(Error::Expired);
-    }
-    let compiled_at_ms = u64::try_from(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|_| Error::Clock)?
-            .as_millis(),
-    )
-    .map_err(|_| Error::Clock)?;
+    let seconds = 3600u64;
+    let compiled_at_ms = 0;
     let image = plan::pin(&std::env::current_exe()?)?;
     let bytes = encode_input(
         image.artifact.sha256.clone(),
@@ -132,10 +120,9 @@ pub(super) fn compile(
             },
             validity: ValidityWindow {
                 not_before_unix_ms: compiled_at_ms,
-                expires_at_unix_ms: u64::try_from(worker.expires_at)
+                expires_at_unix_ms: u64::try_from(worker.deadline)
                     .map_err(|_| Error::Clock)?
-                    .checked_add(seconds)
-                    .and_then(|s| s.checked_mul(1000))
+                    .checked_mul(1000)
                     .ok_or(Error::Clock)?,
             },
             policy: reference(

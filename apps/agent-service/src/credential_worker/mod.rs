@@ -81,14 +81,12 @@ pub fn run(path: &Path) -> Result<i32, Error> {
         .map_err(crate::error::app_error)?;
     let input: Input = serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)?;
     input.task.validate()?;
-    if input.task.permit != w::TaskPermit::Start
-        || !matches!(
-            input.run_as,
-            RunAs::System {
-                platform: execution_contract::Platform::Windows
-            }
-        )
-        || !matches!(input.session, SessionRequirement::NotRequired {})
+    if !matches!(
+        input.run_as,
+        RunAs::System {
+            platform: execution_contract::Platform::Windows
+        }
+    ) || !matches!(input.session, SessionRequirement::NotRequired {})
     {
         return Err(Error::Denied);
     }

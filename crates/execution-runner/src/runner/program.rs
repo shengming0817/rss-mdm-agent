@@ -112,6 +112,11 @@ pub(super) fn execute(input: ProgramRun) {
                     {
                         return Err(Error::OutcomeUnknown);
                     }
+                    if first.is_some_and(|before| {
+                        execution_ipc::host::monotonic_millis().map_or(true, |now| now >= before)
+                    }) {
+                        return Err(Error::Clock);
+                    }
                     journal.checkpoints.push(SoftwareCheckpoint::Begin {
                         step: index as u32,
                         phase,
@@ -123,11 +128,6 @@ pub(super) fn execute(input: ProgramRun) {
                         deadline,
                         &cancel,
                     )?;
-                    if first.is_some_and(|before| {
-                        execution_ipc::host::monotonic_millis().map_or(true, |now| now >= before)
-                    }) {
-                        return Err(Error::Clock);
-                    }
                     if let Some(command) = command {
                         let material = if !phase.is_observation() {
                             sources
@@ -203,7 +203,7 @@ pub(super) fn execute(input: ProgramRun) {
                             (&plan, &attempt, &runner),
                             command,
                             (index as u32, phase, 0),
-                            (invocation_deadline, cap, first.take()),
+                            (invocation_deadline, cap, first),
                             (cancel.clone(), before.clone()),
                         )?;
                         let detection = if !phase.is_observation() {
@@ -241,7 +241,6 @@ pub(super) fn execute(input: ProgramRun) {
                         {
                             return Err(Error::Clock);
                         }
-                        first = None;
                         (
                             None,
                             Some(crate::software::native_detection(
@@ -255,6 +254,9 @@ pub(super) fn execute(input: ProgramRun) {
                     }
                 };
                 if let Some(facts) = &facts {
+                    if !matches!(facts.scope, ProcessScope::NotStarted {}) {
+                        first = None;
+                    }
                     if !replayed {
                         journal.output_bytes = journal
                             .output_bytes
@@ -379,6 +381,23 @@ pub(super) fn execute(input: ProgramRun) {
         Ok(())
     })();
     // Retain the physical root exit even when later detection or cleanup ends successfully.
+    // A later unstarted call cannot erase physical work from an earlier completed step.
+    if matches!(latest.scope, ProcessScope::NotStarted {}) {
+        if let Some(scope) =
+            journal
+                .checkpoints
+                .iter()
+                .rev()
+                .find_map(|checkpoint| match checkpoint {
+                    SoftwareCheckpoint::End {
+                        process: Some(p), ..
+                    } if !matches!(p.scope, ProcessScope::NotStarted {}) => Some(&p.scope),
+                    _ => None,
+                })
+        {
+            latest.scope = scope.clone();
+        }
+    }
     latest.finished = true;
     latest.total_output_bytes = journal.output_bytes;
     if result.is_ok() && latest.exit_code.is_none() {

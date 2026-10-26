@@ -45,26 +45,47 @@ pub(crate) async fn submit<S: IdentityProvider>(
             .iter()
             .any(|step| matches!(step.target, wire::SoftwareExecutionTarget::User { .. })),
     };
-    let login = if needs_user || selection.is_some() {
+    let login = if needs_user {
         Some(service.core.helpers.connect(selection.as_ref())?)
     } else {
         None
     };
     let delegate = if needs_user { login.clone() } else { None };
-    let (preview, artifacts) = compile(
-        &mut service.core,
-        &offer,
-        &materials,
-        offer.payload(),
-        delegate.clone(),
-        super::enrollment::NativeMaterials::default(),
-    )?;
-    if let Err(error) = service.core.remember_data(&preview) {
-        eprintln!("agent_collected_data: {error}");
-    }
-    artifacts
-        .inspect(&preview)
-        .map_err(crate::error::app_error)?;
+    let request = super::request_id(&offer)?;
+    let retained = if service.client.association(offer.task_id())?.is_some()
+        && service
+            .core
+            .app
+            .has_service_execution(&request, &service.core.host.binding.device)
+            .map_err(crate::error::app_error)?
+    {
+        let input = service
+            .core
+            .app
+            .frozen_input(&service.core.caller(), &request)
+            .map_err(crate::error::app_error)?;
+        let artifacts =
+            crate::recovery::materials(&input, &service.core.config, &service.core.helpers)?;
+        Some((input, artifacts))
+    } else {
+        None
+    };
+    let compiled = if retained.is_some() {
+        retained
+    } else if matches!(offer.payload(), wire::TaskPayload::Enrollment(_)) {
+        None
+    } else {
+        let value = compile(
+            &mut service.core,
+            &offer,
+            &materials,
+            offer.payload(),
+            delegate.clone(),
+            super::enrollment::NativeMaterials::default(),
+        )?;
+        value.1.inspect(&value.0).map_err(crate::error::app_error)?;
+        Some(value)
+    };
     if let Some(selection) = &selection {
         let record = service
             .core
@@ -138,50 +159,10 @@ pub(crate) async fn submit<S: IdentityProvider>(
     } else {
         None
     };
-    dispatch_with_material(
-        service,
-        offer,
-        materials,
-        selection,
-        start,
-        delegate,
-        super::enrollment::NativeMaterials {
-            material,
-            profile_bytes: profile,
-        },
-    )
-}
-
-// Single synchronous delivery boundary after HTTP Start and native helper verification.
-// Explicit gate fixtures may exercise this boundary without claiming native OS authentication.
-#[cfg(test)]
-pub(crate) fn dispatch_started<S: IdentityProvider>(
-    service: &mut DeviceService<S>,
-    offer: Offer,
-    materials: Materials,
-    selection: Option<Selection>,
-    start: agent_client::Start,
-    delegate: Option<Arc<execution_ipc::helper::Connection>>,
-) -> Result<ExecutionStatus, Error> {
-    dispatch_with_material(
-        service,
-        offer,
-        materials,
-        selection,
-        start,
-        delegate,
-        super::enrollment::NativeMaterials::default(),
-    )
-}
-fn dispatch_with_material<S: IdentityProvider>(
-    service: &mut DeviceService<S>,
-    offer: Offer,
-    materials: Materials,
-    selection: Option<Selection>,
-    start: agent_client::Start,
-    delegate: Option<Arc<execution_ipc::helper::Connection>>,
-    native: super::enrollment::NativeMaterials,
-) -> Result<ExecutionStatus, Error> {
+    let native = super::enrollment::NativeMaterials {
+        material,
+        profile_bytes: profile,
+    };
     if service
         .core
         .host
@@ -208,14 +189,28 @@ fn dispatch_with_material<S: IdentityProvider>(
     } else {
         None
     };
-    let (mut plan, artifacts) = compile(
-        &mut service.core,
-        &offer,
-        &materials,
-        start.payload(),
-        delegate,
-        native,
-    )?;
+    let (plan, artifacts) = match compiled {
+        Some(value) => value,
+        None => compile(
+            &mut service.core,
+            &offer,
+            &materials,
+            start.payload(),
+            delegate,
+            native,
+        )?,
+    };
+    let mut input = plan.spec().clone();
+    input.validity.expires_at_unix_ms = u64::try_from(start.payload().expires_at())
+        .map_err(|_| Error::Clock)?
+        .checked_mul(1000)
+        .ok_or(Error::Clock)?;
+    let mut plan =
+        execution_contract::FrozenExecution::freeze(input, &plan::storage_limits().input)
+            .map_err(|_| Error::Untrusted)?;
+    if let Err(error) = service.core.remember_data(&plan) {
+        eprintln!("agent_collected_data: {error}");
+    }
     if let Some(selection) = selection {
         let mut input = plan.spec().clone();
         let execution_contract::Initiator::Backend { trigger, .. } = &mut input.request.initiator
@@ -255,7 +250,6 @@ fn dispatch_with_material<S: IdentityProvider>(
         &start,
         &plan,
         record.as_ref(),
-        service.core.available_risk.as_ref(),
         service.core.host.clock.millis()?,
     )?;
     // Linearize revocation with the sole owner's irreversible runner delivery.
@@ -269,12 +263,20 @@ fn dispatch_with_material<S: IdentityProvider>(
         .as_ref()
         .map(|(fences, subject, epoch)| fences.admit(subject, *epoch))
         .transpose()?;
-    service
+    if !service
         .core
         .host
         .materials
-        .register(&plan, artifacts)
-        .map_err(crate::error::app_error)?;
+        .registered(&plan)
+        .map_err(crate::error::app_error)?
+    {
+        service
+            .core
+            .host
+            .materials
+            .register(&plan, artifacts)
+            .map_err(crate::error::app_error)?;
+    }
     *service
         .core
         .host

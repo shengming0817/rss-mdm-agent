@@ -229,13 +229,23 @@ fn mapping_uses_exact_closed_recipes_and_never_promotes_receipts_or_arbitrary_wm
 }
 
 fn published_item() -> w::SelfServiceDirectoryItem {
-    serde_json::from_value(json!({
+    let mut value = json!({
         "policyId":"00000000-0000-4000-a000-000000000001","policyRevision":1,"policyVersion":"00000000-0000-4000-a000-000000000002",
         "subject":{"kind":"device"},"selfService":{"published":true,"allowAi":true,"riskLevel":1,"presentation":{"displayName":"Published fixture","description":"Safe inputs"}},
         "task":{"kind":"script","runAs":"system","resource":{"id":"resource","version":"1","variant":"default"},
         "parameterSources":{"name":{"kind":"input"},"fixed":{"kind":"fixed","value":"hidden"}},
         "parameterSchema":{"type":"object","properties":{"name":{"type":"string"},"fixed":{"type":"string"}},"required":["name","fixed"],"additionalProperties":false}}
-    })).unwrap()
+    });
+    let mut capability =
+        crate::protocol_test_support::policy_directory_fixture(uuid::Uuid::from_u128(1)).capability;
+    capability.id = uuid::Uuid::parse_str(value["policyId"].as_str().unwrap()).unwrap();
+    capability.tool_name = w::policy_tool_name(capability.id);
+    capability.scope = uuid::Uuid::from_u128(3);
+    capability.version = uuid::Uuid::from_u128(2);
+    capability.revision = 1;
+    capability.input_schema = json!({"type":"object","properties":{"name":{"type":"string"}},"required":["name"],"additionalProperties":false});
+    value["capability"] = serde_json::to_value(capability).unwrap();
+    serde_json::from_value(value).unwrap()
 }
 #[tokio::test]
 async fn metadata_is_bounded_titles_survive_capture_and_published_inputs_remain_usable() {
@@ -303,13 +313,7 @@ async fn metadata_is_bounded_titles_survive_capture_and_published_inputs_remain_
             generation: id(&format!("generation-{n}")),
         };
         let descriptor = data
-            .publish(
-                published_item(),
-                PolicyLocator { after: None },
-                "501",
-                &session,
-                &context,
-            )
+            .publish(published_item(), "501", &session, &context)
             .unwrap();
         assert_eq!(descriptor.title, "Published fixture");
         assert!(descriptor.input_schema["properties"].get("name").is_some());
@@ -524,14 +528,7 @@ async fn minimum_record_quota_reclaims_metadata_and_reserves_new_query_capacity(
             .unwrap();
         let mut item = published_item();
         item.policy_id = uuid::Uuid::from_u128(n + 1);
-        data.publish(
-            item,
-            PolicyLocator { after: None },
-            "501",
-            &session,
-            &context,
-        )
-        .unwrap();
+        data.publish(item, "501", &session, &context).unwrap();
     }
     data.maintain(&contexts, &Default::default(), &Default::default())
         .unwrap();
@@ -676,13 +673,7 @@ async fn authorized_policy_data_survives_context_retirement_and_reopen_without_e
         generation: id("old"),
     };
     let query = data
-        .publish(
-            published_item(),
-            PolicyLocator { after: None },
-            &subject,
-            &old_session,
-            &old_context,
-        )
+        .publish(published_item(), &subject, &old_session, &old_context)
         .unwrap()
         .reference;
     let request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
@@ -769,13 +760,7 @@ async fn authorized_policy_data_survives_context_retirement_and_reopen_without_e
             .is_err());
     }
     let republished = data
-        .publish(
-            published_item(),
-            PolicyLocator { after: None },
-            &subject,
-            &session,
-            &context,
-        )
+        .publish(published_item(), &subject, &session, &context)
         .unwrap();
     assert_eq!(republished.reference, query);
     // A stale or reused account cannot consume a persisted read projection.
@@ -1223,13 +1208,7 @@ async fn frozen_script_projection_retains_typed_results_and_requires_the_origina
     };
     let item = published_item();
     let query = data
-        .publish(
-            item.clone(),
-            PolicyLocator { after: None },
-            &subject,
-            &session,
-            &context,
-        )
+        .publish(item.clone(), &subject, &session, &context)
         .unwrap()
         .reference;
     let request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();

@@ -38,7 +38,6 @@ const phaseLabels: Record<string, string> = {
   cancelled: "已取消",
   admissionDenied: "准入被拒绝",
   failedBeforeDispatch: "启动前失败",
-  approvalRequired: "等待授权",
 };
 const canSubmit = computed(
   () =>

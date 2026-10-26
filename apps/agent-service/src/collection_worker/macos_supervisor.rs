@@ -240,11 +240,7 @@ pub(super) fn query(
     remaining: Duration,
     raw_allowance: usize,
 ) -> Result<w::NativeQueryResult, Error> {
-    let allowance = remaining
-        .min(Duration::from_secs(q.budget.timeout_seconds.into()))
-        .min(Duration::from_secs(
-            u64::try_from(input.read.deadline.saturating_sub(now()?)).unwrap_or(0),
-        ));
+    let allowance = remaining.min(Duration::from_secs(q.budget.timeout_seconds.into()));
     if allowance <= CLEANUP {
         return Ok(failure(q, w::NativeQueryStatus::Timeout, now()?));
     }

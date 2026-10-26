@@ -60,7 +60,7 @@ test("native model oracle requires the original software request to await human 
                   name: "exact-discovered-tool",
                   inputSchema: {
                     properties: {
-                      locator: { properties: { after: { type: "null" } } },
+                      parameters: { type: "object" },
                     },
                   },
                 },

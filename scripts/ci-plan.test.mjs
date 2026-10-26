@@ -110,6 +110,7 @@ test("affected Cargo packages replace workspace and JS build includes producer c
     "-p",
     "script-plan",
     "--locked",
+    "--no-fail-fast",
   ]);
   assert.deepEqual(plan.find((s) => s.name === "workspace build inputs").args, [
     "--filter",

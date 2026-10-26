@@ -1185,7 +1185,7 @@ it("later-page Policy cards read the original native request and keep conversati
       name: "execution_policy_invoke",
       arguments: {
         tool: "policy_later",
-        locator: { after: "page-17" },
+
         parameters: { request: "model-suggested-id" },
       },
     },

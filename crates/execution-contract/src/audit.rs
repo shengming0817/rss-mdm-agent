@@ -70,8 +70,6 @@ pub enum Decision {
     Proposed {},
     /// Permission/admission denied; no execution proof is implied.
     Denied {},
-    /// A separate approval is needed before admission.
-    ApprovalRequired {},
     /// Recorded admission decision, not an executable permit.
     Admitted {},
     /// Observation with a mandatory attempt identity and nonempty evidence references.
@@ -101,8 +99,6 @@ pub struct AuditEvent {
     pub actor: ActorId,
     /// Origin and account provenance only; authority must be independently verified.
     pub initiator: Initiator,
-    /// Referenced approving product actor, if applicable; not a trusted approval by itself.
-    pub approver: Option<ActorId>,
     /// Action and exact resource reference whose permission must be decided by the owner.
     pub operation: Operation,
     /// Explicit device/platform/user target; it is independent from the originating account.
@@ -115,8 +111,6 @@ pub struct AuditEvent {
     pub delegation: Option<VersionedRef>,
     /// Exact policy revision associated with this request or audit decision.
     pub policy: VersionedRef,
-    /// Exact approval-record reference, if applicable; validity/consumption are checked externally.
-    pub approval: Option<VersionedRef>,
     /// Recorded event instant as UTC Unix milliseconds; supplied by the owner clock.
     pub occurred_at_unix_ms: u64,
 }

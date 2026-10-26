@@ -18,8 +18,6 @@ pub(crate) mod software;
 #[cfg(test)]
 pub(crate) use bridge::settled;
 pub(crate) use bridge::ExecutionBridge;
-#[cfg(test)]
-pub(crate) use dispatch::dispatch_started;
 pub(crate) use dispatch::submit;
 pub(crate) use offer::offered;
 

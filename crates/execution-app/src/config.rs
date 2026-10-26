@@ -6,10 +6,7 @@ use execution_contract::{ActorId, ExecutionLimits};
 pub struct AppConfig {
     /// Monotonically increasing trusted configuration revision.
     pub revision: u64,
-    /// Maximum C07 rules (hard ceiling 1024).
-    pub max_rules: usize,
-    /// Maximum approval profiles and records (hard ceiling 128).
-    pub max_profiles: usize,
+
     /// Maximum total environment inventory entries (hard ceiling 4096).
     pub max_capability_entries: usize,
     /// Current maximum total plan timeout, at most the selected storage bound.
@@ -23,8 +20,7 @@ impl AppConfig {
     pub fn test_defaults(revision: u64) -> Self {
         Self {
             revision,
-            max_rules: 32,
-            max_profiles: 16,
+
             max_capability_entries: 128,
             max_timeout_ms: 60_000,
             max_output_bytes: 65_536,
@@ -32,10 +28,6 @@ impl AppConfig {
     }
     fn validate(self, bounds: ExecutionLimits) -> Result<(), Error> {
         if self.revision == 0
-            || self.max_rules == 0
-            || self.max_rules > 1024
-            || self.max_profiles == 0
-            || self.max_profiles > 128
             || self.max_capability_entries == 0
             || self.max_capability_entries > 4096
             || self.max_timeout_ms == 0

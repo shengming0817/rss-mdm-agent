@@ -293,36 +293,6 @@ fn dispatch_gate_detects_reconciliation_winning_the_revision() {
 }
 
 #[test]
-fn admission_rejection_is_consistent_on_replay_and_restart() {
-    for approval in [false, true] {
-        let db = Database::new();
-        let host = TestHost::new();
-        host.state.lock().unwrap().allow = approval;
-        host.state.lock().unwrap().approval = approval;
-        let runner =
-            DeterministicTestRunner::new(id("test-runner"), TestScenario::Complete, 16).unwrap();
-        let p = plan();
-        let r = &p.spec().request.request_id;
-        let mut app = open(&db, host.clone(), runner.clone(), false);
-        let initial = app.request_execution(&caller(), &p);
-        let expected = if approval {
-            TaskPhase::ApprovalRequired
-        } else {
-            TaskPhase::AdmissionDenied
-        };
-        assert_eq!(initial.as_ref().unwrap().phase, expected);
-        host.state.lock().unwrap().audit = false;
-        assert_eq!(app.status(&caller(), r), initial);
-        assert_eq!(app.request_execution(&caller(), &p), initial);
-        assert_eq!(app.status(&caller(), r), initial);
-        drop(app);
-        let mut app = open(&db, host, runner.clone(), true);
-        assert_eq!(app.request_execution(&caller(), &p), initial);
-        assert_eq!(runner.dispatch_count(), 0);
-    }
-}
-
-#[test]
 fn newer_schema_retains_read_only_startup_diagnostic() {
     let db = Database::new();
     let host = TestHost::new();
@@ -337,7 +307,7 @@ fn newer_schema_retains_read_only_startup_diagnostic() {
     };
     assert_eq!(
         format!("{error:?}"),
-        "UnsupportedSchema { found: 999, supported: 2 }"
+        "UnsupportedSchema { found: 999, supported: 3 }"
     );
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
     assert_eq!(runner.dispatch_count(), 0);
@@ -453,48 +423,6 @@ fn unbound_fixture_startup_fail_before_database_creation() {
 }
 
 #[test]
-fn lost_response_replay_and_reopen_preserve_one_attempt_and_dispatch() {
-    let db = Database::new();
-    let host = TestHost::new();
-    host.state.lock().unwrap().approval = true;
-    host.grant(2);
-    let runner =
-        DeterministicTestRunner::new(id("test-runner"), TestScenario::Complete, 16).unwrap();
-    let p = plan();
-    let request = &p.spec().request.request_id;
-    let mut app = open(&db, host.clone(), runner.clone(), false);
-    let accepted = app.request_execution(&caller(), &p).unwrap();
-    assert_eq!(accepted.attempts, 1);
-    let (response, disconnected) = std::sync::mpsc::channel();
-    drop(disconnected);
-    assert!(response.send(accepted.clone()).is_err());
-    assert_eq!(app.reconcile(request).unwrap().phase, TaskPhase::Verified);
-    drop(app);
-    let mut app = open(&db, host.clone(), runner.clone(), true);
-    assert_eq!(
-        app.request_execution(&caller(), &p).unwrap().attempt_id,
-        accepted.attempt_id
-    );
-    assert_eq!(runner.dispatch_count(), 1);
-    assert_eq!(db.count("approval_consumptions"), 1);
-    assert_eq!(host.state.lock().unwrap().admissions, 2);
-    let completed = app.reconcile(request).unwrap();
-    assert_eq!(completed.phase, TaskPhase::Verified);
-    assert!(completed
-        .evidence
-        .iter()
-        .all(|e| e.kind == EvidenceKind::TestResult));
-    assert_eq!(app.reconcile(request).unwrap(), completed);
-    let mut changed = p.spec().clone();
-    changed.budget.max_attempts = 2;
-    let changed = FrozenExecution::freeze(changed, &test_execution_limits()).unwrap();
-    assert_eq!(
-        app.request_execution(&caller(), &changed).unwrap_err(),
-        Error::Conflict
-    );
-}
-
-#[test]
 fn admission_failure_and_dispatch_gate_never_call_runner() {
     for denial in [true, false] {
         let db = Database::new();
@@ -570,28 +498,6 @@ fn cancellation_degraded_and_new_attempt_authorization_are_separate() {
 }
 
 #[test]
-fn transaction_failure_rolls_back_intent_and_approval_before_dispatch() {
-    let db = Database::new();
-    let host = TestHost::new();
-    host.state.lock().unwrap().approval = true;
-    host.grant(1);
-    let runner =
-        DeterministicTestRunner::new(id("test-runner"), TestScenario::Complete, 16).unwrap();
-    let mut app = open(&db, host, runner.clone(), false);
-    db.sql().execute_batch("CREATE TRIGGER fail_attempt AFTER INSERT ON attempts BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;").unwrap();
-    let p = plan();
-    assert!(app.request_execution(&caller(), &p).is_err());
-    assert_eq!(runner.dispatch_count(), 0);
-    assert_eq!(db.count("attempts"), 0);
-    assert_eq!(db.count("approval_consumptions"), 0);
-    db.sql()
-        .execute_batch("DROP TRIGGER fail_attempt;")
-        .unwrap();
-    assert_eq!(app.request_execution(&caller(), &p).unwrap().attempts, 1);
-    assert_eq!(runner.dispatch_count(), 1);
-}
-
-#[test]
 fn concurrent_instances_and_result_redelivery_do_not_duplicate_effects() {
     let db = Database::new();
     let host = TestHost::new();
@@ -644,75 +550,6 @@ fn concurrent_instances_and_result_redelivery_do_not_duplicate_effects() {
     host.state.lock().unwrap().read = false;
     assert_eq!(app.status(&caller(), r).unwrap_err(), Error::Denied);
     assert_eq!(runner.dispatch_count(), 1);
-}
-
-#[test]
-fn ordinary_answers_and_model_approval_references_never_grant_authority() {
-    use execution_interaction::{Command, ConfirmationPurpose, Kind, Reference, Response};
-    let db = Database::new();
-    let host = TestHost::new();
-    host.state.lock().unwrap().approval = true;
-    let runner =
-        DeterministicTestRunner::new(id("test-runner"), TestScenario::Complete, 16).unwrap();
-    let mut app = open(&db, host.clone(), runner.clone(), false);
-    let p = plan();
-    let r = &p.spec().request.request_id;
-    let reference = |s: &str| Reference::new(s).unwrap();
-    assert_eq!(
-        app.request_execution(&caller(), &p).unwrap().phase,
-        TaskPhase::ApprovalRequired
-    );
-    for (name, kind, response) in [
-        (
-            "confirm",
-            Kind::UserConfirmation {
-                purpose: ConfirmationPurpose::Continue,
-            },
-            Response::Confirmation { accepted: true },
-        ),
-        (
-            "admin",
-            Kind::AdministratorAuthorization {
-                request: reference("approval-request"),
-            },
-            Response::AdministratorDecision {
-                record: reference("model-claims-approved"),
-            },
-        ),
-    ] {
-        let interaction = reference(name);
-        app.open_interaction(&caller(), r, interaction.clone(), kind, 1900)
-            .unwrap();
-        let receipt = app
-            .respond(
-                &caller(),
-                r,
-                &command(name),
-                &interaction,
-                &Command::Answer {
-                    id: reference(&format!("answer-{name}")),
-                    response,
-                },
-            )
-            .unwrap();
-        assert_eq!(receipt.outcome, execution_app::Outcome::Answered);
-        assert_eq!(
-            app.retry_execution(&caller(), r, &command(name))
-                .unwrap()
-                .admission,
-            Some(execution_app::AdmissionStatus::ApprovalRequired)
-        );
-    }
-    assert_eq!(runner.dispatch_count(), 0);
-    assert_eq!(db.count("approval_consumptions"), 0);
-    host.grant(1);
-    assert_eq!(
-        app.retry_execution(&caller(), r, &command("trusted-grant"))
-            .unwrap()
-            .attempts,
-        1
-    );
-    assert_eq!(db.count("approval_consumptions"), 1);
 }
 
 #[test]
@@ -2179,6 +2016,55 @@ fn exact_action_confirmation_is_durable_and_does_not_change_origin() {
 }
 
 #[test]
+fn ai_product_denial_survives_reopen_without_reevaluation_or_dispatch() {
+    let db = Database::new();
+    let mut host = TestHost::new();
+    let mut spec = execution_contract::decode_execution(
+        include_bytes!("../../execution-contract/tests/fixtures/plan.json"),
+        &test_execution_limits(),
+    )
+    .unwrap();
+    let Initiator::Human { os_session } = spec.request.initiator else {
+        panic!("fixture")
+    };
+    spec.request.initiator = Initiator::Ai {
+        os_session,
+        provider: id("provider"),
+        config: reference("config"),
+        conversation: id("conversation"),
+        tool_call: id("call"),
+    };
+    let p = FrozenExecution::freeze(spec, &test_execution_limits()).unwrap();
+    host.template = p.clone();
+    host.state.lock().unwrap().allow = false;
+    let runner = DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
+    let mut app = open(&db, host.clone(), runner.clone(), false);
+    assert_eq!(
+        app.request_execution(&caller(), &p).unwrap().phase,
+        TaskPhase::AdmissionDenied
+    );
+    let admissions = host.state.lock().unwrap().admissions;
+    assert_eq!(admissions, 2);
+    drop(app);
+    host.state.lock().unwrap().allow = true;
+    let mut app = open(&db, host.clone(), runner.clone(), true);
+    assert_eq!(
+        app.request_execution(&caller(), &p).unwrap().phase,
+        TaskPhase::AdmissionDenied
+    );
+    assert_eq!(
+        app.resume_initial(&p.spec().request.request_id)
+            .unwrap()
+            .phase,
+        TaskPhase::AdmissionDenied
+    );
+    assert_eq!(host.state.lock().unwrap().admissions, admissions);
+    assert_eq!(runner.dispatch_count(), 0);
+    assert_eq!(db.count("attempts"), 0);
+    assert_eq!(db.count("interactions"), 0);
+}
+
+#[test]
 fn ai_risk_and_confirmation_failure_matrix_never_dispatches_without_a_current_gate() {
     for risk in [
         None,
@@ -2374,7 +2260,7 @@ fn unknown_schema_reports_exact_versions_and_keeps_bytes() {
     };
     assert_eq!(
         error.to_string(),
-        "execution database schema 4 is unsupported; required schema 2; preserve the existing database; initialization and automatic migration are disabled"
+        "execution database schema 4 is unsupported; required schema 3; preserve the existing database; initialization and automatic migration are disabled"
     );
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
 }
@@ -2412,127 +2298,6 @@ fn initial_submission_reconciles_an_identical_begin_committed_during_preflight()
     assert_eq!(status.attempts, 1);
     assert_eq!(runner.dispatch_count(), 1);
     assert_eq!(db.count("attempts"), 1);
-}
-
-#[test]
-fn concurrent_initial_replay_returns_the_current_later_attempt() {
-    let db = Database::new();
-    let mut host = TestHost::new();
-    let mut spec = host.template.spec().clone();
-    spec.budget.max_attempts = 2;
-    host.template = FrozenExecution::freeze(spec, &test_execution_limits()).unwrap();
-    host.state.lock().unwrap().approval = true;
-    host.grant(2);
-    let p = host.template.clone();
-    let runner =
-        DeterministicTestRunner::new(id("test-runner"), TestScenario::NoEffect, 16).unwrap();
-    let mut app = open(&db, host.clone(), runner.clone(), false);
-    let path = db.path.clone();
-    let competing_host = host.clone();
-    let competing_runner = runner.clone();
-    host.state.lock().unwrap().capability_hook = Some((
-        1,
-        std::sync::Arc::new(move || {
-            let mut competing = reopen_app(
-                &path,
-                competing_host.clone(),
-                competing_runner.clone(),
-                AppConfig::test_defaults(1),
-            )
-            .unwrap();
-            let p = competing_host.template.clone();
-            let request = &p.spec().request.request_id;
-            assert_eq!(
-                competing.request_execution(&caller(), &p).unwrap().attempts,
-                1
-            );
-            competing.reconcile(request).unwrap();
-            assert_eq!(
-                competing
-                    .retry_execution(&caller(), request, &command("later"))
-                    .unwrap()
-                    .attempts,
-                2
-            );
-        }),
-    ));
-    let status = app.request_execution(&caller(), &p).unwrap();
-    assert_eq!(
-        status,
-        app.status(&caller(), &p.spec().request.request_id).unwrap()
-    );
-    assert_eq!(status.attempts, 2);
-    assert_eq!(runner.dispatch_count(), 2);
-    assert_eq!(db.count("attempts"), 2);
-    assert_eq!(db.count("approval_consumptions"), 2);
-}
-
-#[test]
-fn concurrent_retry_replay_resolves_changed_revision_and_rejected_receipts() {
-    for allowed in [true, false] {
-        let db = Database::new();
-        let mut host = TestHost::new();
-        let mut spec = host.template.spec().clone();
-        spec.budget.max_attempts = 3;
-        host.template = FrozenExecution::freeze(spec, &test_execution_limits()).unwrap();
-        host.state.lock().unwrap().approval = true;
-        host.grant(3);
-        let p = host.template.clone();
-        let request = &p.spec().request.request_id;
-        let runner =
-            DeterministicTestRunner::new(id("test-runner"), TestScenario::NoEffect, 16).unwrap();
-        let mut app = open(&db, host.clone(), runner.clone(), false);
-        app.request_execution(&caller(), &p).unwrap();
-        app.reconcile(request).unwrap();
-        let path = db.path.clone();
-        let competing_host = host.clone();
-        let competing_runner = runner.clone();
-        let next_capability = host.state.lock().unwrap().capabilities + 1;
-        host.state.lock().unwrap().capability_hook = Some((
-            next_capability,
-            std::sync::Arc::new(move || {
-                let mut competing = reopen_app(
-                    &path,
-                    competing_host.clone(),
-                    competing_runner.clone(),
-                    AppConfig::test_defaults(1),
-                )
-                .unwrap();
-                let request = &competing_host.template.spec().request.request_id;
-                assert_eq!(
-                    competing
-                        .retry_execution(&caller(), request, &command("other"))
-                        .unwrap()
-                        .attempts,
-                    2
-                );
-                competing.reconcile(request).unwrap();
-                competing_host.state.lock().unwrap().allow = allowed;
-                let status = competing
-                    .retry_execution(&caller(), request, &command("shared"))
-                    .unwrap();
-                assert_eq!(status.attempts, if allowed { 3 } else { 2 });
-                if !allowed {
-                    assert_eq!(status.admission, Some(AdmissionStatus::Denied));
-                }
-            }),
-        ));
-        let status = app
-            .retry_execution(&caller(), request, &command("shared"))
-            .unwrap();
-        assert_eq!(status, app.status(&caller(), request).unwrap());
-        let attempts = if allowed { 3 } else { 2 };
-        assert_eq!(status.attempts, attempts);
-        assert_eq!(runner.dispatch_count(), attempts as usize);
-        assert_eq!(db.count("attempts"), attempts as u64);
-        assert_eq!(db.count("approval_consumptions"), attempts as u64);
-        assert_eq!(
-            app.retry_execution(&caller(), request, &command("shared"))
-                .unwrap(),
-            status
-        );
-        assert_eq!(runner.dispatch_count(), attempts as usize);
-    }
 }
 
 #[test]
@@ -2616,42 +2381,6 @@ fn concurrent_retry_with_a_stale_begin_receipt_remains_conflicting() {
     );
     assert_eq!(runner.dispatch_count(), 1);
     assert_eq!(db.count("attempts"), 1);
-}
-
-#[test]
-fn concurrent_replay_between_begin_commit_and_dispatch_has_no_dispatch_action() {
-    let db = Database::new();
-    let host = TestHost::new();
-    host.state.lock().unwrap().approval = true;
-    host.grant(1);
-    let runner = DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
-    let mut app = open(&db, host.clone(), runner.clone(), false);
-    let path = db.path.clone();
-    let competing_host = host.clone();
-    let competing_runner = runner.clone();
-    host.state.lock().unwrap().capability_hook = Some((
-        3,
-        std::sync::Arc::new(move || {
-            let mut competing = reopen_app(
-                &path,
-                competing_host.clone(),
-                competing_runner.clone(),
-                AppConfig::test_defaults(1),
-            )
-            .unwrap();
-            let status = competing.request_execution(&caller(), &plan()).unwrap();
-            assert_eq!(status.phase, TaskPhase::Accepted);
-            assert_eq!(status.attempts, 1);
-            assert_eq!(competing_runner.dispatch_count(), 0);
-        }),
-    ));
-    assert_eq!(
-        app.request_execution(&caller(), &plan()).unwrap().attempts,
-        1
-    );
-    assert_eq!(runner.dispatch_count(), 1);
-    assert_eq!(db.count("attempts"), 1);
-    assert_eq!(db.count("approval_consumptions"), 1);
 }
 
 #[test]

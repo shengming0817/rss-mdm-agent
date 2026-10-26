@@ -104,7 +104,7 @@ pub struct NativeContextRef {
 pub enum PolicyAccess {
     /// Device requests do not depend on enterprise login generation.
     Device {},
-    /// User requests require this exact live native employee session.
+    /// Unaccepted user requests bind this native employee session; accepted work belongs to its Run.
     User {
         /// Owner-issued reference; never a credential or another identity authority.
         session_binding: NativeContextRef,
@@ -134,19 +134,8 @@ pub struct PolicyChoice {
     pub request: RequestId,
     /// Policy from the current authorized directory.
     pub policy_id: Id,
-    /// Exact current configuration revision.
-    pub policy_revision: u64,
-    /// Immutable execution version.
-    pub policy_version: Id,
     /// Only Resource fields whose Policy source is Input.
     pub parameters: std::collections::BTreeMap<String, serde_json::Value>,
-}
-/// The actual page on which a Policy was discovered. This is a position, never permission.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct PolicyLocator {
-    /// Cursor sent when discovering the selected page; null identifies the first page.
-    pub after: Option<Id>,
 }
 /// Local invocation envelope. Navigation is separate from the immutable business choice.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -154,8 +143,6 @@ pub struct PolicyLocator {
 pub struct PolicyInvocation {
     /// Original request identity and exact user input.
     pub choice: PolicyChoice,
-    /// Non-authoritative position, revalidated against the authenticated backend.
-    pub locator: PolicyLocator,
 }
 /// Definite rejection before submission; transport and storage ambiguity are never this type.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
@@ -212,10 +199,10 @@ pub enum PreparedAction {
     Policy {
         /// Immutable employee choice.
         choice: PolicyChoice,
-        /// Frozen discovery position, used only to re-fetch current authorization.
-        locator: PolicyLocator,
-        /// Formal backend directory DTO, including the Resource-owned schema.
-        directory: Box<rss_mdm_agent_wire::runtime::SelfServiceDirectoryItem>,
+        /// Prepared operation interface for display and input editing, never authorization.
+        task: Box<rss_mdm_agent_wire::runtime::SelfServiceTask>,
+        /// Administrator-provided presentation, never executable content.
+        presentation: serde_json::Map<String, serde_json::Value>,
         /// Backend Run returned for the original request, absent until acceptance is known.
         run_id: Option<Id>,
         /// Eventual signed Offer; no task/attempt is invented before this exists.
@@ -320,7 +307,7 @@ pub struct BackendConfirmation {
     pub os_session: OsSessionRef,
     /// Trusted service time at the user's explicit response.
     pub confirmed_at_unix_ms: u64,
-    /// Exclusive deadline, bounded by the offer, policy and one-minute interaction limit.
+    /// Exclusive confirmation deadline before acceptance; it does not revoke an accepted Run.
     pub expires_at_unix_ms: u64,
 }
 /// Safe preview bound to the complete signed offer revision.
@@ -426,8 +413,12 @@ pub struct BackendRequest {
 
 impl BackendRequest {
     /// The only parameter-changing transition: atomically freeze an unsubmitted draft.
-    pub fn finalizes_draft(&self, next: &Self) -> bool {
-        if self.state != BackendRequestState::Draft || next.state != BackendRequestState::Ready {
+    pub fn prepares_call(&self, next: &Self) -> bool {
+        if !matches!(
+            self.state,
+            BackendRequestState::Draft | BackendRequestState::AwaitingConfirmation
+        ) || next.state != BackendRequestState::Ready
+        {
             return false;
         }
         let mut frozen = self.action.clone();
@@ -435,18 +426,29 @@ impl BackendRequest {
             (
                 PreparedAction::Policy {
                     choice,
+                    task,
+                    presentation,
                     run_id: None,
                     offer: None,
                     ..
                 },
                 PreparedAction::Policy {
                     choice: final_choice,
+                    task: current_task,
+                    presentation: current_presentation,
                     run_id: None,
                     offer: None,
                     ..
                 },
             ) => {
+                if self.state != BackendRequestState::Draft
+                    && choice.parameters != final_choice.parameters
+                {
+                    return false;
+                }
                 choice.parameters = final_choice.parameters.clone();
+                *task = current_task.clone();
+                *presentation = current_presentation.clone();
                 frozen.same_choice(&next.action)
             }
             _ => false,
@@ -465,23 +467,6 @@ impl BackendRequest {
     /// Check stored product-gate shape. DTO validity alone never authenticates risk or consent.
     pub fn valid_product_gate(&self) -> bool {
         use BackendRequestState as S;
-        if let PreparedAction::Policy {
-            directory, access, ..
-        } = &self.action
-        {
-            if !matches!(
-                (&directory.subject, access),
-                (
-                    rss_mdm_agent_wire::runtime::SelfServiceSubject::Device {},
-                    PolicyAccess::Device {}
-                ) | (
-                    rss_mdm_agent_wire::runtime::SelfServiceSubject::User { .. },
-                    PolicyAccess::User { .. }
-                )
-            ) {
-                return false;
-            }
-        }
         if self.state == S::Draft {
             return matches!(
                 &self.action,

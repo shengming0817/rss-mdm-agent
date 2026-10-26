@@ -900,11 +900,6 @@ try {
     .getByLabel("可信执行详情", { exact: true })
     .getByText("设备效果未知，需要可信核对", { exact: true })
     .waitFor();
-  fixture.setExecution("approvalRequired");
-  await page.getByRole("button", { name: "读取执行详情" }).click();
-  await page
-    .getByText("执行服务记录：需要管理员批准", { exact: true })
-    .waitFor();
   for (const [ms, note] of [
     [500, "动作尚未生效"],
     [1000, "动作在有效期内"],
@@ -964,7 +959,6 @@ try {
   await activity
     .getByRole("button", { name: "查询原任务", exact: true })
     .click();
-  fixture.setExecution("approvalRequired");
   const formatted = page
     .locator(".markdown-message")
     .filter({ hasText: "格式检查" });

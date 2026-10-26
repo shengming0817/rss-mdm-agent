@@ -13,6 +13,10 @@ export type BackendTaskView =
       value: ExecutionTaskDetails;
     };
 /**
+ * Opaque local reference identifier; syntax validity is not authenticity.
+ */
+export type Id = string;
+/**
  * Public source of one Resource-declared parameter.
  */
 export type ScriptParameterSource =
@@ -26,10 +30,6 @@ export type ScriptParameterSource =
   | {
       kind: "input";
     };
-/**
- * Opaque local reference identifier; syntax validity is not authenticity.
- */
-export type Id = string;
 /**
  * Closed preparation diagnosis without backend bodies or local paths.
  */
@@ -47,7 +47,7 @@ export type SoftwareDeploymentSummary = "targetUser" | "futureUsers";
 /**
  * Value-only admission result; policy/rule/approver details remain in privileged audit.
  */
-export type AdmissionStatus = "admitted" | "denied" | "approvalRequired";
+export type AdmissionStatus = "admitted" | "denied";
 /**
  * Verified assessment of the whole controlled attempt, not text from tool output.
  */
@@ -146,21 +146,98 @@ export interface BackendRequest {
               sessionBinding: NativeContextRef;
             };
         choice: PolicyChoice;
-        directory: SelfServiceDirectoryItem;
         /**
          * Bounded validity of the original preparation.
          */
         expiresAtUnixMs: number;
         kind: "policy";
-        locator: PolicyLocator;
         /**
          * Eventual signed Offer; no task/attempt is invented before this exists.
          */
         offer: BackendTask1 | null;
         /**
+         * Administrator-provided presentation, never executable content.
+         */
+        presentation: {
+          [k: string]: unknown;
+        };
+        /**
          * Backend Run returned for the original request, absent until acceptance is known.
          */
         runId: Id | null;
+        /**
+         * Prepared operation interface for display and input editing, never authorization.
+         */
+        task:
+          | {
+              /**
+               * Fixed OS enrollment entry.
+               */
+              entry:
+                | {
+                    kind: "windows";
+                    /**
+                     * Organization's discovery server.
+                     */
+                    server: string;
+                  }
+                | {
+                    kind: "macos";
+                    /**
+                     * Organization's managed enrollment entry.
+                     */
+                    url: string;
+                  };
+              kind: "enrollment";
+              /**
+               * Organization selected by Policy.
+               */
+              organization: string;
+            }
+          | {
+              kind: "script";
+              /**
+               * Full resolved parameter constraints owned by Resource.
+               */
+              parameterSchema: unknown;
+              /**
+               * Complete sources for script parameters.
+               */
+              parameterSources: {
+                [k: string]: ScriptParameterSource;
+              };
+              resource: TaskResource;
+              /**
+               * Required operating-system identity.
+               */
+              runAs: "system" | "logged_in_user";
+            }
+          | {
+              kind: "software";
+              resource: TaskResource1;
+              /**
+               * Required operating-system identity of the root operation.
+               */
+              runAs: "system" | "logged_in_user";
+              /**
+               * Exact effect target, distinct from enterprise login.
+               */
+              target:
+                | {
+                    kind: "device";
+                  }
+                | {
+                    /**
+                     * Exact SID/UID.
+                     */
+                    identity: string;
+                    kind: "user";
+                    /**
+                     * Exact login generation.
+                     */
+                    sessionId: string;
+                  };
+            };
       };
   /**
    * Explicit risk-two response; readiness alone never proves confirmation.
@@ -417,159 +494,39 @@ export interface PolicyChoice {
    */
   policyId: string;
   /**
-   * Exact current configuration revision.
-   */
-  policyRevision: number;
-  /**
-   * Immutable execution version.
-   */
-  policyVersion: string;
-  /**
    * Stable request allocated before submission, reused after response loss.
    */
   request: string;
 }
 /**
- * Formal backend directory DTO, including the Resource-owned schema.
+ * Exact displayed backend offer, without executable input or authorization claims.
  */
-export interface SelfServiceDirectoryItem {
+export interface BackendTask1 {
   /**
-   * Logical Policy identity.
+   * Backend attempt identity; reconnect never allocates a new attempt.
    */
-  policyId: string;
+  attempt: string;
   /**
-   * Current configuration CAS revision.
+   * Exclusive UTC Unix expiry in seconds.
    */
-  policyRevision: number;
+  expiresAt: number;
+  presentation: BackendPresentation;
   /**
-   * Immutable execution version.
+   * Deterministic original execution request used for status after response loss.
    */
-  policyVersion: string;
-  selfService: SelfServiceMetadata;
+  request: string;
   /**
-   * Current qualified subject, rechecked when invoking and before execution.
+   * Full signed offer revision.
    */
-  subject:
-    | {
-        kind: "device";
-      }
-    | {
-        kind: "user";
-        user: SelfServiceUser;
-      };
+  revision: string;
   /**
-   * Closed task kind and the exact invocation interface.
+   * Backend task identity.
    */
-  task:
-    | {
-        /**
-         * Fixed OS enrollment entry.
-         */
-        entry:
-          | {
-              kind: "windows";
-              /**
-               * Organization's discovery server.
-               */
-              server: string;
-            }
-          | {
-              kind: "macos";
-              /**
-               * Organization's managed enrollment entry.
-               */
-              url: string;
-            };
-        kind: "enrollment";
-        /**
-         * Organization selected by Policy.
-         */
-        organization: string;
-      }
-    | {
-        kind: "script";
-        /**
-         * Full resolved parameter constraints owned by Resource.
-         */
-        parameterSchema: unknown;
-        /**
-         * Complete sources for script parameters.
-         */
-        parameterSources: {
-          [k: string]: ScriptParameterSource;
-        };
-        resource: TaskResource;
-        /**
-         * Required operating-system identity.
-         */
-        runAs: "system" | "logged_in_user";
-      }
-    | {
-        kind: "software";
-        resource: TaskResource1;
-        /**
-         * Required operating-system identity of the root operation.
-         */
-        runAs: "system" | "logged_in_user";
-        /**
-         * Exact effect target, distinct from enterprise login.
-         */
-        target:
-          | {
-              kind: "device";
-            }
-          | {
-              /**
-               * Exact SID/UID.
-               */
-              identity: string;
-              kind: "user";
-              /**
-               * Exact login generation.
-               */
-              sessionId: string;
-            };
-      };
-}
-/**
- * Normalized presentation and invocation settings.
- */
-export interface SelfServiceMetadata {
+  task: string;
   /**
-   * Effective administrator AI switch.
+   * Requires an explicit local user action before requesting Start.
    */
-  allowAi: boolean;
-  /**
-   * Open directory presentation; never used as authorization or executable input.
-   */
-  presentation: {
-    [k: string]: unknown;
-  };
-  /**
-   * Whether this script is published for self service.
-   */
-  published: boolean;
-  /**
-   * Effective risk level, one or two.
-   */
-  riskLevel: 1 | 2;
-}
-/**
- * Authenticated enterprise coordinates, without a credential.
- */
-export interface SelfServiceUser {
-  /**
-   * Identity instance.
-   */
-  instanceId: string;
-  /**
-   * Authenticated principal.
-   */
-  principalId: string;
-  /**
-   * Product tenant.
-   */
-  tenantId: string;
+  userInitiated: boolean;
 }
 /**
  * Exact Resource selection.
@@ -606,45 +563,6 @@ export interface TaskResource1 {
   version: string;
 }
 /**
- * Frozen discovery position, used only to re-fetch current authorization.
- */
-export interface PolicyLocator {
-  /**
-   * Cursor sent when discovering the selected page; null identifies the first page.
-   */
-  after: Id | null;
-}
-/**
- * Exact displayed backend offer, without executable input or authorization claims.
- */
-export interface BackendTask1 {
-  /**
-   * Backend attempt identity; reconnect never allocates a new attempt.
-   */
-  attempt: string;
-  /**
-   * Exclusive UTC Unix expiry in seconds.
-   */
-  expiresAt: number;
-  presentation: BackendPresentation;
-  /**
-   * Deterministic original execution request used for status after response loss.
-   */
-  request: string;
-  /**
-   * Full signed offer revision.
-   */
-  revision: string;
-  /**
-   * Backend task identity.
-   */
-  task: string;
-  /**
-   * Requires an explicit local user action before requesting Start.
-   */
-  userInitiated: boolean;
-}
-/**
  * Sole product confirmation, persisted together with the original AI request.
  */
 export interface BackendConfirmation {
@@ -653,7 +571,7 @@ export interface BackendConfirmation {
    */
   confirmedAtUnixMs: number;
   /**
-   * Exclusive deadline, bounded by the offer, policy and one-minute interaction limit.
+   * Exclusive confirmation deadline before acceptance; it does not revoke an accepted Run.
    */
   expiresAtUnixMs: number;
   osSession: OsSessionRef;
@@ -1266,7 +1184,7 @@ export interface OsAccountRef3 {
  */
 export interface ValidityWindow {
   /**
-   * Exclusive validity deadline as UTC Unix milliseconds, strictly after the start.
+   * Exclusive deadline for admitting and first dispatching an attempt.
    */
   expiresAtUnixMs: number;
   /**
@@ -1324,7 +1242,6 @@ export interface ExecutionStatus {
   phase:
     | "waiting"
     | "admissionDenied"
-    | "approvalRequired"
     | "confirmationRequired"
     | "accepted"
     | "running"

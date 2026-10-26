@@ -141,7 +141,6 @@ pub(crate) fn compile(
             expires_at_unix_ms: u64::try_from(payload.expires_at)
                 .map_err(|_| Error::Clock)?
                 .checked_mul(1000)
-                .and_then(|v| v.checked_add(timeout))
                 .ok_or(Error::Clock)?,
         },
         policy: reference(
