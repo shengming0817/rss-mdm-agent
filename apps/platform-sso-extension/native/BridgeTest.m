@@ -81,6 +81,14 @@ int main(void) { @autoreleasepool {
     assert(RSSPendingRetirements(defaults).count==1);
     RSSCompleteRetirement(defaults,@"deviceRegistration",@"device-v2");
     assert(!RSSPendingRetirements(defaults).count && ![defaults dictionaryForKey:@"inflight"]);
+    // Cancelling repair before publishing new metadata must leave the old registration alone.
+    [defaults setObject:@"valid-old-user" forKey:@"registration"];
+    assert(!RSSQueueCancelledRegistration(defaults,@"registration",nil));
+    assert(!RSSPendingRetirements(defaults).count);
+    assert(RSSQueueCancelledRegistration(defaults,@"registration",@"new-callback-user"));
+    assert(RSSPendingRetirements(defaults).count==1 && !RSSPendingRetirements(defaults)[@"valid-old-user"]);
+    RSSCompleteRetirement(defaults,@"registration",@"new-callback-user");
+    assert([[defaults stringForKey:@"registration"] isEqual:@"valid-old-user"]);
     [defaults removePersistentDomainForName:suite];
     CFRelease(publicKeyRef);CFRelease(key);puts("Platform SSO native ABI and signature test passed; no system registration exercised");
 } return 0; }

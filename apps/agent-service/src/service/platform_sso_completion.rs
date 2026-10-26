@@ -198,20 +198,25 @@ async fn native_observation_refresh_settles_original_journal_after_restart_and_a
     )
     .unwrap();
     let facts = |role| {
-        let native = native_facts_in_session(&access_root, &local_binding, |_| true).unwrap();
+        let _lock = state::lock(&access_root).expect("slow sampling must not hold the owner lock");
         (
             role,
             r::AccessMacFacts {
-                platform_sso: native,
+                platform_sso: None,
                 secure_token: r::AccessObservation::Present,
                 volume_owner: r::AccessObservation::Unknown,
                 filevault_unlock: r::AccessObservation::Unknown,
             },
         )
     };
-    crate::access_worker::macos::refresh_with(&access_root, installation, &task, 1, |_| {
-        Ok(facts(r::AccessRole::Standard))
-    })
+    crate::access_worker::macos::refresh_with(
+        &access_root,
+        installation,
+        &task,
+        || Ok(1),
+        |_| Ok(facts(r::AccessRole::Standard)),
+        |binding| native_facts_in_session(&access_root, binding, |_| true),
+    )
     .unwrap();
     assert!(!crate::access_worker::complete(
         &task,
@@ -262,9 +267,14 @@ async fn native_observation_refresh_settles_original_journal_after_restart_and_a
     assert!(native_facts_in_session(&access_root, &changed, |_| true)
         .unwrap()
         .is_none());
-    crate::access_worker::macos::refresh_with(&access_root, installation, &task, 1, |_| {
-        Ok(facts(r::AccessRole::Administrator))
-    })
+    crate::access_worker::macos::refresh_with(
+        &access_root,
+        installation,
+        &task,
+        || Ok(1),
+        |_| Ok(facts(r::AccessRole::Administrator)),
+        |binding| native_facts_in_session(&access_root, binding, |_| true),
+    )
     .unwrap();
     assert!(
         !crate::access_worker::complete(
@@ -276,6 +286,38 @@ async fn native_observation_refresh_settles_original_journal_after_restart_and_a
         ),
         "wrong role cannot complete"
     );
+
+    // A newer binding published during the unlocked OS sample cannot be overwritten.
+    let changed_during_sample = crate::access_worker::macos::refresh_with(
+        &access_root,
+        installation,
+        &task,
+        || Ok(1),
+        |_| {
+            let mut replacement = local_binding.clone();
+            replacement.revision += 1;
+            {
+                let _lock = state::lock(&access_root)?;
+                state::write(
+                    &access_root,
+                    &binding_name(&account.to_string())?,
+                    &replacement,
+                )?;
+            }
+            Ok(facts(r::AccessRole::Standard))
+        },
+        |_| panic!("changed binding must be rejected before native facts are published"),
+    );
+    assert_eq!(changed_during_sample, Err(Error::Identity));
+    {
+        let _lock = state::lock(&access_root).unwrap();
+        state::write(
+            &access_root,
+            &binding_name(&account.to_string()).unwrap(),
+            &local_binding,
+        )
+        .unwrap();
+    }
 
     let mut spec = adapted_plan(false, "device-1", &offer).spec().clone();
     spec.constraints = IsolationPolicy::OsIdentity {};
@@ -360,9 +402,14 @@ async fn native_observation_refresh_settles_original_journal_after_restart_and_a
         bridge.finish(&mut client, task.task_id, &app, &caller),
         Err(agent_client::Error::Conflict)
     );
-    crate::access_worker::macos::refresh_with(&access_root, installation, &task, 1, |_| {
-        Ok(facts(r::AccessRole::Standard))
-    })
+    crate::access_worker::macos::refresh_with(
+        &access_root,
+        installation,
+        &task,
+        || Ok(1),
+        |_| Ok(facts(r::AccessRole::Standard)),
+        |binding| native_facts_in_session(&access_root, binding, |_| true),
+    )
     .unwrap();
     server.data.lock().unwrap().result_failure = true;
     assert!(bridge

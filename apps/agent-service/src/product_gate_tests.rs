@@ -5622,3 +5622,46 @@ async fn collected_software_physical_view_reaches_the_authenticated_software_rea
         .items
         .is_empty());
 }
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn slow_access_refresh_services_psso_callbacks_and_joins_before_returning() {
+    let _budget = crate::scenario_budget::enter();
+    let mut c = Case::new(None).await;
+    let (reply, receive) = tokio::sync::oneshot::channel();
+    c.service.core.psso.commands.push_back(Command {
+        fence_epoch: 0,
+        subject: c.selection.subject.clone(),
+        session: c.selection.session,
+        binding: Some(c.selection.binding.clone()),
+        reply,
+        request: LocalRequest::operation(execution_ipc::host::Request::PlatformSso {
+            input: execution_ipc::platform_sso::Operation::Bootstrap {
+                callback_generation: 0,
+                authentication: rss_mdm_agent_wire::platform_sso::AuthenticationMode::Password,
+                scope: rss_mdm_agent_wire::platform_sso::Kind::Device,
+            },
+        }),
+    });
+    let (release, blocked) = std::sync::mpsc::channel();
+    let joined = Arc::new(AtomicBool::new(false));
+    let finished = joined.clone();
+    let job = tokio::task::spawn_blocking(move || {
+        blocked
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .map_err(|_| Error::Unavailable)?;
+        finished.store(true, Ordering::Release);
+        Ok(())
+    });
+    let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
+    let responder = async {
+        // This callback must be answered before the native sample is allowed to finish.
+        let result = tokio::time::timeout(std::time::Duration::from_secs(1), receive).await;
+        release.send(()).unwrap();
+        assert!(matches!(result, Ok(Ok(Reply::Rejected))));
+    };
+    let (result, ()) = tokio::join!(c.service.wait_access_refresh(job, &mut commands), responder);
+    result.unwrap();
+    assert!(joined.load(Ordering::Acquire));
+    assert!(c.service.core.psso.commands.is_empty());
+}

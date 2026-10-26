@@ -35,6 +35,7 @@ static NSString *nativeConfiguration(ASAuthorizationProviderExtensionLoginManage
 @property(strong) NSHTTPURLResponse *response;
 @property NSUInteger generation;
 @property(copy) NSString *registrationScope;
+@property(copy) NSString *registrationMetadata;
 @end
 @implementation RSSPlatformSSO
 - (ASAuthorizationProviderExtensionPlatformSSOProtocolVersion)protocolVersion { return ASAuthorizationProviderExtensionPlatformSSOProtocolVersion1_0; }
@@ -67,7 +68,7 @@ static NSString *nativeConfiguration(ASAuthorizationProviderExtensionLoginManage
     if (options & ~supported) { completion(ASAuthorizationProviderExtensionRegistrationResultFailedNoRetry);return; }
     if ((options & ASAuthorizationProviderExtensionRequestOptionsUserKeyInvalid) && !user) { completion(ASAuthorizationProviderExtensionRegistrationResultFailedNoRetry);return; }
     if (user && method==ASAuthorizationProviderExtensionAuthenticationMethodUserSecureEnclaveKey && (options & ASAuthorizationProviderExtensionRequestOptionsUserKeyInvalid)) [manager resetUserSecureEnclaveKey];
-    self.manager=manager;self.registrationScope=user?@"registration":@"deviceRegistration";self.registrationCompletion=completion;NSUInteger generation=++self.generation;
+    self.registrationMetadata=nil;self.manager=manager;self.registrationScope=user?@"registration":@"deviceRegistration";self.registrationCompletion=completion;NSUInteger generation=++self.generation;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,30*NSEC_PER_SEC),dispatch_get_main_queue(), ^{
         [self finishRegistration:generation result:ASAuthorizationProviderExtensionRegistrationResultFailed];
     });
@@ -82,7 +83,9 @@ static NSString *nativeConfiguration(ASAuthorizationProviderExtensionLoginManage
         __block BOOL submit=NO;
         dispatch_sync(dispatch_get_main_queue(), ^{
             if(handle && generation==self.generation && self.registrationCompletion) {
-                submit=RSSSetInflight(NSUserDefaults.standardUserDefaults,user?@"registration":@"deviceRegistration",field(handle,RSSMetadata));
+                NSString *metadata=field(handle,RSSMetadata);
+                submit=RSSSetInflight(NSUserDefaults.standardUserDefaults,user?@"registration":@"deviceRegistration",metadata);
+                if(submit)self.registrationMetadata=metadata;
             }
         });
         int result=submit?rss_psso_register(handle,signMessage,(void *)signing):-1;CFRelease(signing);
@@ -118,15 +121,9 @@ static NSString *nativeConfiguration(ASAuthorizationProviderExtensionLoginManage
 }
 - (void)registrationDidCancel {
     NSUInteger generation=self.generation;[self finishRegistration:generation result:ASAuthorizationProviderExtensionRegistrationResultFailed];self.generation++;self.manager=nil;
-    NSUserDefaults *defaults=NSUserDefaults.standardUserDefaults;
-    NSMutableDictionary *pending=[RSSPendingRetirements(defaults) mutableCopy];
-    if(self.registrationScope) {
-        NSString *saved=[defaults stringForKey:self.registrationScope],*inflight=[defaults dictionaryForKey:@"inflight"][self.registrationScope];
-        if(saved)pending[saved]=self.registrationScope;
-        if(inflight)pending[inflight]=self.registrationScope;
-    }
-    if(pending.count)[defaults setObject:pending forKey:@"retirements"];
-    for(NSString *metadata in pending)dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0), ^{rss_psso_unregister(metadata.UTF8String);});
+    NSString *metadata=self.registrationMetadata;self.registrationMetadata=nil;
+    if(RSSQueueCancelledRegistration(NSUserDefaults.standardUserDefaults,self.registrationScope,metadata))
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0), ^{rss_psso_unregister(metadata.UTF8String);});
 }
 - (void)observeUsing:(ASAuthorizationProviderExtensionLoginManager *)manager {
     if(!manager)return;
@@ -137,7 +134,7 @@ static NSString *nativeConfiguration(ASAuthorizationProviderExtensionLoginManage
         if(metadata)dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0), ^{rss_psso_observe(metadata.UTF8String,actual.UTF8String,device,user);});
     }
 }
-- (void)registrationDidComplete { [self observeUsing:self.manager];self.manager=nil; }
+- (void)registrationDidComplete { [self observeUsing:self.manager];self.manager=nil;self.registrationMetadata=nil; }
 - (void)retireUsing:(ASAuthorizationProviderExtensionLoginManager *)manager completion:(void (^)(BOOL))completion {
     NSDictionary<NSString *,NSString *> *pending=RSSPendingRetirements(NSUserDefaults.standardUserDefaults);
     if(!pending.count){completion(YES);return;}

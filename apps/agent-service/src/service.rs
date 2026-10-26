@@ -806,6 +806,44 @@ impl<S: IdentityProvider> DeviceService<S> {
         }
         Ok(())
     }
+    // ref: Tokio task/blocking.rs: a running blocking job cannot be aborted.
+    // Retain and join it while the same owner continues servicing native callback queues.
+    #[cfg(target_os = "macos")]
+    async fn wait_access_refresh(
+        &mut self,
+        mut job: tokio::task::JoinHandle<Result<(), Error>>,
+        commands: &mut tokio::sync::mpsc::Receiver<Command>,
+    ) -> Result<(), Error> {
+        let mut failure = None;
+        let mut closed = false;
+        let mut tick = tokio::time::interval(std::time::Duration::from_millis(50));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            if !self.core.psso.commands.is_empty() {
+                if let Err(error) = self.drive_platform_sso(commands).await {
+                    failure.get_or_insert(error);
+                }
+            }
+            if !self.core.policy_commands.is_empty() {
+                if let Err(error) = self.drive_policy(commands).await {
+                    failure.get_or_insert(error);
+                }
+            }
+            tokio::select! {
+                result = &mut job => {
+                    let result = result.map_err(|_| Error::Unavailable)?;
+                    return failure.map_or(result, Err);
+                }
+                command = commands.recv(), if !closed => match command {
+                    Some(command) => self.core.handle(command),
+                    None => { closed = true; self.core.stopping = true; }
+                },
+                _ = tick.tick() => {
+                    if let Err(error) = self.core.reconcile() { failure.get_or_insert(error); }
+                }
+            }
+        }
+    }
     async fn resume_task(
         &mut self,
         task: uuid::Uuid,
@@ -913,21 +951,15 @@ impl<S: IdentityProvider> DeviceService<S> {
                     let observed_root = root.clone();
                     let observed_task = (**spec).clone();
                     let installation = self.core.access.installation;
-                    let refresh = async move {
-                        tokio::task::spawn_blocking(move || {
-                            crate::access_worker::macos::refresh(
-                                &observed_root,
-                                installation,
-                                &observed_task,
-                            )
-                        })
-                        .await
-                        .map_err(|_| Error::Unavailable)?
-                    };
-                    if matches!(
-                        background(refresh, &mut self.core, commands).await,
-                        Ok(None)
-                    ) {
+                    let refresh = tokio::task::spawn_blocking(move || {
+                        crate::access_worker::macos::refresh(
+                            &observed_root,
+                            installation,
+                            &observed_task,
+                        )
+                    });
+                    self.wait_access_refresh(refresh, commands).await?;
+                    if self.core.stopping {
                         return Ok(());
                     }
                 }

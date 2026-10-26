@@ -494,7 +494,7 @@ pub(crate) fn refresh(
         root,
         installation,
         task,
-        (crate::wall()? / 1000) as i64,
+        || Ok((crate::wall()? / 1000) as i64),
         |id| {
             let account = inspect(&id.to_string(), false)?;
             Ok((
@@ -503,45 +503,51 @@ pub(crate) fn refresh(
                 } else {
                     w::AccessRole::Standard
                 },
-                observed_facts(root, &account)?,
+                facts(&account),
             ))
         },
+        |binding| crate::service::platform_sso::native_facts(root, binding),
     )
 }
 pub(crate) fn refresh_with(
     root: &std::path::Path,
     installation: uuid::Uuid,
     task: &w::AccessTaskSpec,
-    now: i64,
+    now: impl Fn() -> Result<i64, Error>,
     observe: impl FnOnce(uuid::Uuid) -> Result<(w::AccessRole, w::AccessMacFacts), Error>,
+    native: impl FnOnce(
+        &platform_sso::LocalBinding,
+    ) -> Result<Option<w::AccessMacPlatformSsoFacts>, Error>,
 ) -> Result<(), Error> {
-    // The worker publishes its result only after native mutation has finished. Do not wait
-    // for its state lock while it may still be showing an authorization prompt.
-    if stored_result(root, task)?.is_none() {
-        return Ok(());
-    }
+    // Capture the original prepared account and binding under a short owner lock.
+    let (generated_uid, previous) = {
+        let _lock = state::lock(root)?;
+        let Some(id) = refresh_account(root, task, now()?)? else {
+            return Ok(());
+        };
+        let binding = state::read_optional::<platform_sso::LocalBinding>(
+            root,
+            &crate::service::platform_sso::binding_name(&id.to_string())?,
+        )?;
+        (id, binding)
+    };
+    // fdesetup/diskutil may take seconds. Native callback publication must remain available.
+    let sampled = if matches!(task.action, Action::Apply { .. } | Action::Create { .. }) {
+        Some(observe(generated_uid)?)
+    } else {
+        None
+    };
     let _lock = state::lock(root)?;
-    if task.platform != w::TaskPlatform::Macos || task.deadline <= now {
-        return Ok(());
-    }
-    if stored_result(root, task)?
-        .is_some_and(|r| complete(task, &r.effect) || matches!(r.effect, Effect::Failed { .. }))
-    {
-        return Ok(());
-    }
-    let Some(prepared) = super::prepared(root, task)? else {
+    let Some(current) = refresh_account(root, task, now()?)? else {
         return Ok(());
     };
-    if prepared.binding_id != task.binding_id
-        || prepared.binding_generation != task.binding_generation
-        || prepared.revision != task.revision
-        || prepared.definition_digest != task.definition_digest
-    {
+    let binding = state::read_optional::<platform_sso::LocalBinding>(
+        root,
+        &crate::service::platform_sso::binding_name(&current.to_string())?,
+    )?;
+    if current != generated_uid || binding != previous {
         return Err(Error::Identity);
     }
-    let Account::Macos { generated_uid } = prepared.account else {
-        return Err(Error::Identity);
-    };
     let effect = match &task.action {
         Action::Apply { configuration, .. } | Action::Create { configuration, .. } => {
             if let Action::Apply { account, .. } = &task.action {
@@ -562,7 +568,9 @@ pub(crate) fn refresh_with(
                 configuration: configuration.mac.clone().ok_or(Error::Unsupported)?,
             };
             crate::service::platform_sso::save_binding(root, &next)?;
-            let (role, facts) = observe(generated_uid)?;
+            let (role, mut facts) = sampled.ok_or(Error::Protocol)?;
+            // Read the latest callback only after sampling and identity/configuration revalidation.
+            facts.platform_sso = native(&next)?;
             Effect::Applied {
                 account: Account::Macos { generated_uid },
                 role,
@@ -599,4 +607,34 @@ pub(crate) fn refresh_with(
         }
     };
     state::write(root, &name(task, "result"), &report(task, effect))
+}
+
+fn refresh_account(
+    root: &std::path::Path,
+    task: &w::AccessTaskSpec,
+    now: i64,
+) -> Result<Option<uuid::Uuid>, Error> {
+    if task.platform != w::TaskPlatform::Macos || task.deadline <= now {
+        return Ok(None);
+    }
+    let Some(result) = stored_result(root, task)? else {
+        return Ok(None);
+    };
+    if complete(task, &result.effect) || matches!(result.effect, Effect::Failed { .. }) {
+        return Ok(None);
+    }
+    let Some(prepared) = super::prepared(root, task)? else {
+        return Ok(None);
+    };
+    if prepared.binding_id != task.binding_id
+        || prepared.binding_generation != task.binding_generation
+        || prepared.revision != task.revision
+        || prepared.definition_digest != task.definition_digest
+    {
+        return Err(Error::Identity);
+    }
+    match prepared.account {
+        Account::Macos { generated_uid } => Ok(Some(generated_uid)),
+        _ => Err(Error::Identity),
+    }
 }

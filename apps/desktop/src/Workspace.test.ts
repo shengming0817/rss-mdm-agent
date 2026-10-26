@@ -208,3 +208,52 @@ it("keeps navigation and account access after login failure without displaying a
     w.unmount();
   }
 });
+
+it("refreshes FileVault custody on settings entry and while settings stay visible", async () => {
+  vi.useFakeTimers();
+  const read = vi.fn().mockResolvedValue({
+    attributes: {
+      computerName: "Fixture Mac",
+      ipAddresses: [],
+      loginUser: null,
+    },
+    filevault: "pending",
+  });
+  const w = mount(Workspace, {
+    props: {
+      ready: false,
+      busy: false,
+      page: "home",
+      fixture: true,
+      host: createHostSettings(undefined),
+      devicePort: { read },
+    },
+  });
+  try {
+    await flushPromises();
+    const initial = read.mock.calls.length;
+    await w.setProps({ page: "settings" });
+    await flushPromises();
+    expect(read.mock.calls.length).toBeGreaterThan(initial);
+    expect(w.text()).toContain("上传待确认");
+    read.mockResolvedValue({
+      attributes: {
+        computerName: "Fixture Mac",
+        ipAddresses: [],
+        loginUser: null,
+      },
+      filevault: "escrowedUnverified",
+    });
+    await vi.advanceTimersByTimeAsync(30000);
+    await flushPromises();
+    expect(w.text()).toContain("已托管，恢复有效性尚未验证");
+    const visible = read.mock.calls.length;
+    vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(read.mock.calls.length).toBe(visible);
+  } finally {
+    w.unmount();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  }
+});

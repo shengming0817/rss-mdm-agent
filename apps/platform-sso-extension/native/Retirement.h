@@ -10,6 +10,13 @@ static void RSSQueueInflight(NSUserDefaults *defaults) {
     for(NSString *scope in RSSRegistrationScopes())if(inflight[scope])pending[inflight[scope]]=scope;
     if(pending.count)[defaults setObject:pending forKey:@"retirements"];
 }
+// Cancellation belongs to one callback's published registration, not its previously saved scope.
+static BOOL RSSQueueCancelledRegistration(NSUserDefaults *defaults,NSString *scope,NSString *metadata) {
+    if(!scope || !metadata)return NO;
+    NSMutableDictionary *pending=[RSSPendingRetirements(defaults) mutableCopy];
+    pending[metadata]=scope;[defaults setObject:pending forKey:@"retirements"];
+    return [defaults synchronize];
+}
 static void RSSQueueRetirements(NSUserDefaults *defaults) {
     NSMutableDictionary *pending=[RSSPendingRetirements(defaults) mutableCopy];
     NSDictionary *inflight=[defaults dictionaryForKey:@"inflight"];
