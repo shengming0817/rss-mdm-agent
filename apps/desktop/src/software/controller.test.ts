@@ -190,20 +190,6 @@ it("an installer exit or unknown effect never removes an installed record; indep
   expect(c.installed.value).toHaveLength(1);
   c.accept({ ...result, detected: { kind: "absent" } });
   expect(c.installed.value).toHaveLength(0);
-  c.accept({
-    ...result,
-    prepared: {
-      ...result.prepared,
-      choice: {
-        ...result.prepared.choice,
-        software: {
-          ...item.reference,
-        },
-      },
-    },
-    detected: { kind: "absent" },
-  });
-  expect(c.installed.value).toHaveLength(1);
   c.dispose();
 });
 it("late data from a retired user generation cannot repopulate the software projection", async () => {
@@ -298,8 +284,6 @@ it("accepts a complete enterprise alternative to an uncollected local inventory,
     { stale: true },
     { quality: "partial" as const },
     { enumerationComplete: false },
-    { collectedAt: Math.floor(Date.now() / 1000) - 301 },
-    { collectedAt: Math.floor(Date.now() / 1000) + 10 },
   ]) {
     const saved = { ...alternative.page! };
     Object.assign(alternative.page!, update);

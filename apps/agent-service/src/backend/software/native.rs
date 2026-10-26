@@ -1168,7 +1168,11 @@ mod gc_tests {
                 serde_json::from_slice::<WorkerRequest>(&std::fs::read(path).unwrap())
                     .is_ok_and(|r| r.operation == O::Upgrade)
             });
-            assert_eq!(has_upgrade, policy == wire::SoftwareTaskUpgrade::InPlace);
+            assert_eq!(
+                has_upgrade,
+                intent == SoftwareOperation::Install
+                    && policy == wire::SoftwareTaskUpgrade::InPlace
+            );
             let pending = app
                 .service_delivery(&input.spec().request.request_id, &consumer, 64)
                 .unwrap();

@@ -50,8 +50,6 @@ pub enum SoftwareBlock {
     RuleDisabled,
     /// Native identity, source or installation context cannot be established.
     IdentityUnknown,
-    /// Data is missing, stale, incomplete or changed since selection.
-    ObservationUnavailable,
     /// No allowed fixed update candidate is known.
     UpdateUnknown,
     /// The record is not a launchable GUI application.

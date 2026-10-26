@@ -504,11 +504,6 @@
               "type": "string"
             },
             {
-              "const": "observationUnavailable",
-              "description": "Data is missing, stale, incomplete or changed since selection.",
-              "type": "string"
-            },
-            {
               "const": "updateUnknown",
               "description": "No allowed fixed update candidate is known.",
               "type": "string"

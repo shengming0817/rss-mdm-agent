@@ -425,7 +425,20 @@ pub(super) fn cleanup(
             .ok_or(Error::Unbound)?;
         let started = Instant::now();
         let elapsed = journal.elapsed_ms;
-        let deadline = started + Duration::from_millis(timeout_ms);
+        // The durable grant debits the original reserve; physical execution also obeys the
+        // attempt's current remaining envelope. Checkpoint wait time cannot refill either.
+        let remaining_time =
+            timeout_ms.min(plan.spec().budget.total_timeout_ms.saturating_sub(elapsed));
+        let remaining_output = output_bytes.min(
+            plan.spec()
+                .budget
+                .total_output_bytes
+                .saturating_sub(journal.output_bytes),
+        );
+        if remaining_time == 0 || remaining_output == 0 {
+            return Err(Error::Capacity);
+        }
+        let deadline = started + Duration::from_millis(remaining_time);
         let cancel = Arc::new(AtomicBool::new(false));
         journal.checkpoints.push(SoftwareCheckpoint::CleanupBegin {
             step,
@@ -450,7 +463,7 @@ pub(super) fn cleanup(
             (&plan, &journal.attempt_id, &runner),
             command,
             (step, SoftwarePhase::Cleanup, sequence),
-            (deadline, output_bytes, None),
+            (deadline, remaining_output, None),
             (cancel.clone(), None),
         )?;
         let resources_closed = facts.quiescent

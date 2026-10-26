@@ -572,7 +572,7 @@ async fn every_tool_advertises_and_times_out_according_to_its_effects() {
         ),
         (
             "execution_software_prepare",
-            json!({"software":{"query":{"id":"native:test","revision":"a".repeat(64)},"cursor":{"snapshot":"b".repeat(64),"offset":0},"installation":"test-app"},"action":"uninstall"}),
+            json!({"software":{"query":{"id":"native:test","revision":"a".repeat(64)},"installation":"test-app"},"action":"uninstall"}),
             false,
             "outcomeUnknown",
         ),
@@ -878,7 +878,7 @@ async fn local_software_status_preserves_verified_state_in_the_real_mcp_response
     let request = RequestId::new("local-detection").unwrap();
     let prepared: LocalSoftwarePrepared = serde_json::from_value(json!({
         "request":request,"digest":"a".repeat(64),
-        "choice":{"request":request,"software":{"query":{"id":"native:apps","revision":"b".repeat(64)},"cursor":{"snapshot":"c".repeat(64),"offset":0},"installation":"app"},"action":"detect"},
+        "choice":{"request":request,"software":{"query":{"id":"native:apps","revision":"b".repeat(64)},"installation":"app"},"action":"detect"},
         "name":"App","initiator":{"kind":"human","osSession":{"device":"device","account":{"platform":"macos","subject":"uid:501"},"session":"login"}},
         "identity":"system","targetVersion":null,"startBeforeUnixMs":1000
     })).unwrap();

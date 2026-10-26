@@ -1272,7 +1272,6 @@ export type SoftwareBlock =
   | "protected"
   | "ruleDisabled"
   | "identityUnknown"
-  | "observationUnavailable"
   | "updateUnknown"
   | "noGui"
   | "unsupported";

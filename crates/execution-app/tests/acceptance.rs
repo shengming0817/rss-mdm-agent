@@ -2284,7 +2284,7 @@ fn concurrent_retry_with_a_stale_begin_receipt_remains_conflicting() {
     let competing_host = host.clone();
     let competing_runner = runner.clone();
     host.state.lock().unwrap().read_hook_access = Some(Access::Execute);
-    host.state.lock().unwrap().read_hook = Some(std::sync::Arc::new(move || {
+    let cancel = std::sync::Arc::new(move || {
         let mut competing = reopen_app(
             &path,
             competing_host.clone(),
@@ -2298,6 +2298,17 @@ fn concurrent_retry_with_a_stale_begin_receipt_remains_conflicting() {
                 &competing_host.template.spec().request.request_id,
             )
             .unwrap();
+    });
+    // retry checks status, loads the revision, then looks up its original command receipt.
+    // Re-arm across the first two existing Execute reads; cancel before receipt lookup.
+    let arm_host = host.clone();
+    let next_host = host.clone();
+    host.state.lock().unwrap().read_hook = Some(std::sync::Arc::new(move || {
+        let cancel = cancel.clone();
+        let next_host = next_host.clone();
+        arm_host.state.lock().unwrap().read_hook = Some(std::sync::Arc::new(move || {
+            next_host.state.lock().unwrap().read_hook = Some(cancel.clone());
+        }));
     }));
     let retry = command("stale");
     assert_eq!(
@@ -2821,7 +2832,16 @@ fn dispatch_gate_clock_and_authority_failures_remain_distinct_after_restart() {
             DeterministicTestRunner::new(id("test-runner"), TestScenario::Complete, 16).unwrap();
         let input = plan();
         let mut app = open(&db, host.clone(), runner.clone(), false);
-        let status = app.request_execution(&caller(), &input).unwrap();
+        let result = app.request_execution(&caller(), &input);
+        if clock {
+            result.unwrap();
+        } else {
+            assert_eq!(result.unwrap_err(), Error::Denied);
+        }
+        host.state.lock().unwrap().accesses = None;
+        let status = app
+            .status(&caller(), &input.spec().request.request_id)
+            .unwrap();
         assert_eq!(
             status.dispatch_cause,
             Some(if clock {

@@ -179,9 +179,18 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
         )
         .unwrap(),
     }));
+    host.current
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .gate
+        .verify(&frozen, host.clock.millis().unwrap())
+        .unwrap();
+    // Signed Start proves business authority; this non-root fixture has no registered OS materials.
     assert!(host
         .admit(&frozen, &attempt, host.clock.millis().unwrap())
-        .is_ok());
+        .is_err());
     let original_grant = host.current.lock().unwrap().take().unwrap();
     assert!(host
         .admit(&frozen, &attempt, host.clock.millis().unwrap())

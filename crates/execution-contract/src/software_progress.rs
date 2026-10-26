@@ -421,18 +421,13 @@ impl SoftwareProgress {
         if sequence >= 3 || self.closed(plan) || self.complete(plan) {
             return None;
         }
-        let time = command.timeout_ms.saturating_sub(elapsed).min(
-            plan.spec()
-                .budget
-                .total_timeout_ms
-                .saturating_sub(self.elapsed_ms),
-        );
-        let bytes = command.output_bytes.saturating_sub(output).min(
-            plan.spec()
-                .budget
-                .total_output_bytes
-                .saturating_sub(self.output_bytes),
-        );
+        if self.elapsed_ms >= plan.spec().budget.total_timeout_ms
+            || self.output_bytes >= plan.spec().budget.total_output_bytes
+        {
+            return None;
+        }
+        let time = command.timeout_ms.saturating_sub(elapsed);
+        let bytes = command.output_bytes.saturating_sub(output);
         (time > 0 && bytes > 0).then_some((step, sequence + 1, time, bytes))
     }
     /// Only ended business operations can be released after resource-only recovery.

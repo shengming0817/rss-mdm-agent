@@ -2262,7 +2262,13 @@ fn committed_steps_preserve_reboot_facts_and_claims_when_detection_changes() {
     let mut input = host.plan.spec().clone();
     if let ExecutionSpec::SoftwareProgram { program } = &mut input.execution {
         program.steps[0].allow_reboot = true;
-        program.steps[0].install.exit_codes.reboot.insert(3010);
+        program.steps[0]
+            .invocations
+            .get_mut(&SoftwarePhase::Mutation)
+            .unwrap()
+            .exit_codes
+            .reboot
+            .insert(3010);
         program.steps.push(program.steps[0].clone());
     }
     host.plan = FrozenExecution::freeze(input, &limits().input).unwrap();
@@ -2394,14 +2400,31 @@ fn exe_uninstall_present_before_and_unknown_native_end_are_not_desired_or_cleanu
     step.format = SoftwareFormat::Exe {
         layout: [("installer.exe".into(), step.payload.clone())].into(),
     };
-    step.install.run_as = RunAs::System {
+    step.invocations
+        .get_mut(&SoftwarePhase::Mutation)
+        .unwrap()
+        .run_as = RunAs::System {
         platform: Platform::Windows,
     };
-    step.install.launch.cwd = r"C:\workspace".into();
-    step.install.launch.interpreter.profile.id = id("native-software-worker");
-    step.uninstall = Some(step.install.clone());
+    step.invocations
+        .get_mut(&SoftwarePhase::Mutation)
+        .unwrap()
+        .launch
+        .cwd = r"C:\workspace".into();
+    step.invocations
+        .get_mut(&SoftwarePhase::Mutation)
+        .unwrap()
+        .launch
+        .interpreter
+        .profile
+        .id = id("native-software-worker");
+    step.invocations.remove(&SoftwarePhase::Upgrade);
     step.upgrade = SoftwareUpgrade::Deny {};
     step.detection = SoftwareDetector::MsiProduct {
+        run_as: RunAs::System {
+            platform: Platform::Windows,
+        },
+        session_requirement: SessionRequirement::NotRequired {},
         product_code: "{12345678-1234-1234-1234-123456789abc}".into(),
         version: step.version.clone(),
     };
@@ -2532,16 +2555,19 @@ fn resource_closure_host(mode: u8) -> TestHost {
             }
         };
         if ordinary_uninstall {
-            step.uninstall = Some(step.install.clone());
+            step.invocations.remove(&SoftwarePhase::Upgrade);
+            step.upgrade = SoftwareUpgrade::Deny {};
             program.intent = SoftwareOperation::Uninstall;
             input.request.operation.action = id("software.uninstall");
         } else {
-            step.auxiliary
-                .insert(SoftwarePhase::Attach, step.install.clone());
+            step.invocations.insert(
+                SoftwarePhase::Attach,
+                step.invocations[&SoftwarePhase::Mutation].clone(),
+            );
         }
-        let mut cleanup = step.install.clone();
+        let mut cleanup = step.invocations[&SoftwarePhase::Mutation].clone();
         cleanup.launch.interpreter.profile.id = id("native-software-worker");
-        step.auxiliary.insert(SoftwarePhase::Cleanup, cleanup);
+        step.invocations.insert(SoftwarePhase::Cleanup, cleanup);
         host.plan = FrozenExecution::freeze(input, &limits().input).unwrap();
     }
     host
@@ -2556,13 +2582,17 @@ fn ordinary_dmg_uninstall_requires_cleanup_and_rejects_install_image_phases() {
     };
     let step = &mut program.steps[0];
     assert_eq!(
-        step.auxiliary.keys().copied().collect::<Vec<_>>(),
-        [SoftwarePhase::Cleanup]
+        step.invocations.keys().copied().collect::<Vec<_>>(),
+        [SoftwarePhase::Mutation, SoftwarePhase::Cleanup]
     );
-    step.auxiliary
-        .insert(SoftwarePhase::Attach, step.install.clone());
-    step.auxiliary
-        .insert(SoftwarePhase::Stage, step.install.clone());
+    step.invocations.insert(
+        SoftwarePhase::Attach,
+        step.invocations[&SoftwarePhase::Mutation].clone(),
+    );
+    step.invocations.insert(
+        SoftwarePhase::Stage,
+        step.invocations[&SoftwarePhase::Mutation].clone(),
+    );
     assert!(FrozenExecution::freeze(input, &limits().input).is_err());
 }
 
@@ -2580,8 +2610,13 @@ fn standalone_image_detection_and_pkg_removal_have_no_image_resource_phases() {
         };
         program.intent = intent;
         let step = &mut program.steps[0];
-        step.uninstall = Some(step.install.clone());
-        step.auxiliary.clear();
+        let invocation = step.invocations[&SoftwarePhase::Mutation].clone();
+        step.invocations.clear();
+        step.upgrade = SoftwareUpgrade::Deny {};
+        if intent == SoftwareOperation::Uninstall {
+            step.invocations
+                .insert(SoftwarePhase::Mutation, invocation.clone());
+        }
         input.request.operation.action = id(if intent == SoftwareOperation::Uninstall {
             "software.uninstall"
         } else {
@@ -2593,10 +2628,10 @@ fn standalone_image_detection_and_pkg_removal_have_no_image_resource_phases() {
             unreachable!()
         };
         let step = &mut program.steps[0];
-        step.auxiliary
-            .insert(SoftwarePhase::Attach, step.install.clone());
-        step.auxiliary
-            .insert(SoftwarePhase::Cleanup, step.install.clone());
+        step.invocations
+            .insert(SoftwarePhase::Attach, invocation.clone());
+        step.invocations
+            .insert(SoftwarePhase::Cleanup, invocation.clone());
         assert!(FrozenExecution::freeze(old, &limits().input).is_err());
     }
 }
@@ -2802,6 +2837,7 @@ fn failed_resource_claims_require_resource_closure_even_after_reopen() {
                 .record_software_progress(&host.scope(), &progress, &host)
                 .unwrap();
             assert_eq!(db.count("resource_claims"), 1);
+            progress.elapsed_ms += 5;
             progress.checkpoints.push(SoftwareCheckpoint::CleanupEnd {
                 step,
                 sequence,
@@ -2890,7 +2926,8 @@ fn current_satisfied_targets_complete_without_inventing_mutation_facts_in_sqlite
         program.steps.truncate(1);
         if uninstall {
             program.intent = SoftwareOperation::Uninstall;
-            program.steps[0].uninstall = Some(program.steps[0].install.clone());
+            program.steps[0].invocations.remove(&SoftwarePhase::Upgrade);
+            program.steps[0].upgrade = SoftwareUpgrade::Deny {};
             input.request.operation.action = id("software.uninstall");
         }
         let observed = if uninstall {

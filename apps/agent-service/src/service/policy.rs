@@ -335,27 +335,26 @@ impl Core {
                 .app
                 .service_frozen_input(request)
                 .map_err(map_app_error)?;
-            if frozen.spec().request.authority == self.host.root.authority {
-                if [
+            if frozen.spec().request.authority == self.host.root.authority
+                && [
                     "local-software-choice",
                     "local-settings-action",
                     "network-check-target",
                 ]
                 .iter()
                 .any(|key| frozen.spec().request.parameters.contains_key(*key))
-                {
-                    crate::account_identity::verify_local_owner(&frozen, &self.host.root, subject)?;
-                    return Ok(self.contexts.values().any(|current| {
-                        current.scope.subject == subject
-                            && Some(&current.scope.binding) == binding
-                            && self.fences.current(&current.scope).ok() == Some(current.epoch)
-                            && self
-                                .host
-                                .clock
-                                .millis()
-                                .is_ok_and(|now| now < current.expires_at_unix_ms)
-                    }));
-                }
+            {
+                crate::account_identity::verify_local_owner(&frozen, &self.host.root, subject)?;
+                return Ok(self.contexts.values().any(|current| {
+                    current.scope.subject == subject
+                        && Some(&current.scope.binding) == binding
+                        && self.fences.current(&current.scope).ok() == Some(current.epoch)
+                        && self
+                            .host
+                            .clock
+                            .millis()
+                            .is_ok_and(|now| now < current.expires_at_unix_ms)
+                }));
             }
 
             return Ok(true);

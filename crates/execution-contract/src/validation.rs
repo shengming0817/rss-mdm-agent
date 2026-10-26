@@ -585,6 +585,9 @@ fn software(p: &ExecutionInput, limits: &ExecutionLimits) -> Result<(), Contract
                 (RunAs::System { platform }, crate::SessionRequirement::NotRequired {}) => {
                     *platform != p.request.target.platform
                 }
+                (RunAs::User { account }, crate::SessionRequirement::NotRequired {}) => {
+                    account.platform != p.request.target.platform
+                }
                 (
                     RunAs::User { account },
                     crate::SessionRequirement::ActiveUser { account: bound, .. },
