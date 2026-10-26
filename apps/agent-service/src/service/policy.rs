@@ -774,12 +774,10 @@ impl<S: IdentityProvider> DeviceService<S> {
             }
             self.core.policy_context(&previous)?;
             Reply::PolicyRequest {
-                value: Box::new(self.send_policy(previous, &bound, commands).await?),
+                value: Box::new(self.send_policy(previous, bound, commands).await?),
             }
         } else {
-            let directory = self
-                .current_policy(&bound, origin, choice, commands)
-                .await?;
+            let directory = self.current_policy(bound, origin, choice, commands).await?;
             if !directory.self_service.published
                 || (source(origin) == wire::SelfServiceCaller::Ai
                     && !directory.self_service.allow_ai)
@@ -882,7 +880,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 .record_backend_request(&caller, None, &record)
                 .map_err(map_app_error)?;
             Reply::PolicyRequest {
-                value: Box::new(self.send_policy(record, &bound, commands).await?),
+                value: Box::new(self.send_policy(record, bound, commands).await?),
             }
         };
         Ok(result)

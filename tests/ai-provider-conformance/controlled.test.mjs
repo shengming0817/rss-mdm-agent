@@ -197,6 +197,36 @@ for (const provider of engines) {
           ["deny-cancel", "reject_once"],
           ["allow-cancel", "allow_once"],
         ]) {
+          let detail;
+          if (choice !== "execute") {
+            const readId = `read-${commandId}`;
+            f.model.tool(
+              "execution_task_detail",
+              {
+                reference: {
+                  kind: "request",
+                  request: result.result[0].request,
+                },
+              },
+              readId,
+            );
+            f.model.text("original task read");
+            await peer.client.submit(command(id, readId));
+            await until(
+              () =>
+                peer.client.getSession(id)?.commands[readId]?.state ===
+                "terminal",
+              readId,
+            );
+            const read = Object.values(peer.client.getSession(id).tools).find(
+              (tool) =>
+                tool.toolCallId === readId ||
+                (tool.commandId === readId &&
+                  tool.name === "execution_task_detail"),
+            );
+            assert.equal(read.result.disposition, "returned");
+            detail = JSON.parse(read.result.text).result;
+          }
           permissionKind = choice;
           const method =
             choice === "execute"
@@ -217,8 +247,8 @@ for (const provider of engines) {
                     request: result.result[0].request,
                   },
                   id: `control-${commandId}`,
-                  scope: "explicit-s1-task",
-                  expectedRevision: { owner: 0, transfers: [] },
+                  scope: detail.scope,
+                  expectedRevision: detail.revision,
                   action: "cancel",
                 },
             commandId,

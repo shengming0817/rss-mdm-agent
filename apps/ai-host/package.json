@@ -22,6 +22,7 @@
     "build": "node ../../scripts/check-execution-bindings.mjs && node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@cfworker/json-schema": "4.1.1",
     "@modelcontextprotocol/sdk": "1.30.0",
     "@rss-mdm-agent/ai-access": "workspace:*",
     "@rss-mdm-agent/ai-adapter-claude": "workspace:*",
@@ -30,9 +31,9 @@
     "@rss-mdm-agent/ai-contract": "workspace:*",
     "@rss-mdm-agent/ai-host": "workspace:*",
     "@rss-mdm-agent/ai-store-sqlite": "workspace:*",
-    "yaml": "2.9.1",
     "@rss-mdm-agent/execution-bindings": "workspace:*",
-    "@rss-mdm-agent/platform-private-storage": "workspace:*"
+    "@rss-mdm-agent/platform-private-storage": "workspace:*",
+    "yaml": "2.9.1"
   },
   "engines": {
     "node": "24.14.1"

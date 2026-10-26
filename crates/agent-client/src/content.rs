@@ -271,20 +271,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         sha256: [u8; 32],
     ) -> Result<ContentFile, Error> {
         let path = root.join(format!("{name}.blob"));
-        if path.try_exists()? {
-            let file = open(&path, false)?;
-            FileExt::try_lock_shared(&file).map_err(|_| Error::Storage)?;
-            if file.metadata()?.len() == length && digest(file.try_clone()?)? == sha256 {
-                self.transfers.publish(name, length, "complete")?;
-                return Ok(ContentFile {
-                    file,
-                    path,
-                    length,
-                    digest: sha256,
-                    key,
-                });
-            }
-            return Err(Error::Untrusted);
+        if let Some(content) = cached_content(&path, length, sha256, &key)? {
+            self.transfers.publish(name, length, "complete")?;
+            return Ok(content);
         }
         let partial = root.join(format!("{name}.partial"));
         let mut file = if partial.try_exists()? {
@@ -359,7 +348,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                     .header("range", format!("bytes={offset}-"))
                     .header("if-range", &etag);
             }
-            let mut response = self.agent_send(request).await?;
+            let mut response = self
+                .content_response(request, &mut file, name, offset)
+                .await?;
             if response.status() == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
                 return Err(Error::Protocol);
             }
@@ -393,37 +384,10 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 file.set_len(0)?;
             }
             file.seek(SeekFrom::Start(start))?;
-            let mut count = start;
-            self.transfers.publish(name, count, "downloading")?;
-            loop {
-                if !self.transfers.active(name)? {
-                    file.sync_all()?;
-                    drop(response);
-                    FileExt::unlock(&file)?;
-                    self.transfers.publish(name, count, "paused")?;
-                    return Err(Error::TransferPaused);
-                }
-                let chunk = tokio::select! {
-                    biased;
-                    _ = self.transfers.changed() => continue,
-                    chunk = response.chunk() => chunk.map_err(crate::client::transport_error).map_err(|error| self.handle_transport_error(error))?,
-                };
-                let Some(chunk) = chunk else { break };
-
-                count = count
-                    .checked_add(chunk.len() as u64)
-                    .ok_or(Error::Capacity)?;
-                if count > length {
-                    return Err(Error::Untrusted);
-                }
-                file.write_all(&chunk)?;
-                self.transfers.publish(name, count, "downloading")?;
-            }
-            file.sync_all()?;
-            if count != length {
-                return Err(Error::Untrusted);
-            }
+            self.stream_content(response, &mut file, name, start, length)
+                .await?;
         }
+
         self.transfers.publish(name, length, "verifying")?;
         if digest_handle(&file)? != sha256 {
             self.transfers.publish(name, 0, "failed")?;
@@ -445,6 +409,67 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             digest: sha256,
             key,
         })
+    }
+    async fn content_response(
+        &self,
+        request: reqwest::RequestBuilder,
+        file: &mut File,
+        name: &str,
+        offset: u64,
+    ) -> Result<reqwest::Response, Error> {
+        let mut pending = Box::pin(self.agent_send(request));
+        loop {
+            if !self.transfers.active(name)? {
+                drop(pending);
+                file.sync_all()?;
+                FileExt::unlock(&*file)?;
+                self.transfers.publish(name, offset, "paused")?;
+                return Err(Error::TransferPaused);
+            }
+            tokio::select! {biased;
+                _=self.transfers.changed()=>{},
+                response=&mut pending=>return response,
+            }
+        }
+    }
+    async fn stream_content(
+        &self,
+        mut response: reqwest::Response,
+        file: &mut File,
+        name: &str,
+        mut count: u64,
+        length: u64,
+    ) -> Result<(), Error> {
+        self.transfers.publish(name, count, "downloading")?;
+        loop {
+            if !self.transfers.active(name)? {
+                file.sync_all()?;
+                drop(response);
+                FileExt::unlock(&*file)?;
+                self.transfers.publish(name, count, "paused")?;
+                return Err(Error::TransferPaused);
+            }
+            let chunk = tokio::select! {
+                biased;
+                _ = self.transfers.changed() => continue,
+                chunk = response.chunk() => chunk.map_err(crate::client::transport_error).map_err(|error| self.handle_transport_error(error))?,
+            };
+            let Some(chunk) = chunk else { break };
+
+            count = count
+                .checked_add(chunk.len() as u64)
+                .ok_or(Error::Capacity)?;
+            if count > length {
+                return Err(Error::Untrusted);
+            }
+            file.write_all(&chunk)?;
+            self.transfers.publish(name, count, "downloading")?;
+        }
+        file.sync_all()?;
+        if count != length {
+            return Err(Error::Untrusted);
+        }
+        Ok(())
     }
     /// Bounded garbage collection. Referenced or leased content is never removed.
     pub fn cleanup(&mut self, limit: usize) -> Result<usize, Error> {
@@ -524,4 +549,53 @@ fn artifacts(payload: &wire::TaskPayload) -> Result<Vec<(String, u64, [u8; 32])>
             })
             .collect(),
     })
+}
+
+fn cached_content(
+    path: &Path,
+    length: u64,
+    sha256: [u8; 32],
+    key: &str,
+) -> Result<Option<ContentFile>, Error> {
+    if !path.try_exists()? {
+        return Ok(None);
+    }
+    let file = open(path, false)?;
+    FileExt::try_lock_shared(&file).map_err(|_| Error::Storage)?;
+    if file.metadata()?.len() != length || digest(file.try_clone()?)? != sha256 {
+        return Err(Error::Untrusted);
+    }
+    Ok(Some(ContentFile {
+        file,
+        path: path.to_owned(),
+        length,
+        digest: sha256,
+        key: key.into(),
+    }))
+}
+
+/// The original partial-file lease distinguishes an idle/future artifact from its active writer.
+pub(crate) fn pause_ready(root: &Path, name: &str) -> Result<Option<u64>, Error> {
+    if name.len() != 64 || !name.bytes().all(|v| v.is_ascii_hexdigit()) {
+        return Err(Error::Storage);
+    }
+    let path = root.join("content").join(format!("{name}.partial"));
+    if !path.try_exists()? {
+        return Ok(Some(0));
+    }
+    let file = open(&path, true)?;
+    match FileExt::try_lock_exclusive(&file) {
+        Ok(()) => {
+            let bytes = file.metadata()?.len();
+            file.sync_all()?;
+            Ok(Some(bytes))
+        }
+        Err(error)
+            if error.kind() == std::io::ErrorKind::WouldBlock
+                || error.raw_os_error() == fs2::lock_contended_error().raw_os_error() =>
+        {
+            Ok(None)
+        }
+        Err(_) => Err(Error::Storage),
+    }
 }

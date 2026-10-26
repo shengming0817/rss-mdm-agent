@@ -68,6 +68,11 @@ it("lost submission receipts preserve the UUID and cancellation uses it", async 
       .request;
     await w
       .findAll("button")
+      .find((b) => b.text() === "查询原请求")!
+      .trigger("click");
+    await flushPromises();
+    await w
+      .findAll("button")
       .find((b) => b.text() === "取消检查")!
       .trigger("click");
     await flushPromises();

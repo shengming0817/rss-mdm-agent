@@ -1,5 +1,6 @@
 import { operationRequestId, tools } from "@rss-mdm-agent/execution-bindings";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 import {
   ReadBuffer,
   serializeMessage,
@@ -110,33 +111,78 @@ export async function connectExecution(
     contextBinding: string;
   }>,
 ) {
-  const client = new Client({ name: "rss-ai-host", version: "0.1.0" });
+  const client = new Client(
+    { name: "rss-ai-host", version: "0.1.0" },
+    { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
+  );
   const transport = new ParentTransport(input, output);
-  try {
-    await client.connect(transport, { timeout: 10000 });
-    const found = new Set<string>(),
+  let outputValidators = new Map<
+    string,
+    ReturnType<CfWorkerJsonSchemaValidator["getValidator"]>
+  >();
+  async function catalog(b?: Budget) {
+    const schemas = new CfWorkerJsonSchemaValidator(),
+      validators = new Map<
+        string,
+        ReturnType<CfWorkerJsonSchemaValidator["getValidator"]>
+      >();
+    const result: Awaited<ReturnType<Client["listTools"]>>["tools"] = [],
+      found = new Set<string>(),
       seen = new Set<string>();
-    let cursor: string | undefined;
+    const deadline = Date.now() + Math.min(10000, b?.timeoutMs ?? 10000);
+    let cursor: string | undefined,
+      complete = false;
     for (let page = 0; page < methods.size; page++) {
-      const catalog = await client.listTools(cursor ? { cursor } : {}, {
-        timeout: 10000,
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw Error("execution catalog timeout");
+      const response = await client.listTools(cursor ? { cursor } : {}, {
+        timeout: remaining,
+        ...(b ? { signal: b.signal } : {}),
       });
-      for (const tool of catalog.tools) {
+      for (const tool of response.tools) {
         if (!methods.has(tool.name) || found.has(tool.name))
           throw Error("execution tools mismatch");
+        if (tool.outputSchema)
+          validators.set(tool.name, schemas.getValidator(tool.outputSchema));
         found.add(tool.name);
+        result.push(tool);
       }
-      if (!catalog.nextCursor) break;
-      if (seen.has(catalog.nextCursor))
+      if (!response.nextCursor) {
+        complete = true;
+        break;
+      }
+      if (seen.has(response.nextCursor))
         throw Error("execution catalog did not advance");
-      seen.add(catalog.nextCursor);
-      cursor = catalog.nextCursor;
+      seen.add(response.nextCursor);
+      cursor = response.nextCursor;
     }
-    if (found.size !== methods.size) throw Error("execution tools mismatch");
+    if (!complete || found.size !== methods.size)
+      throw Error("execution tools mismatch");
+    outputValidators = validators;
+    return result;
+  }
+  // The SDK retains only the latest listTools page. Keep validation for the
+  // complete bounded catalog, using its public validator and Rust schemas.
+  async function callTool(
+    params: Parameters<Client["callTool"]>[0],
+    options: Parameters<Client["callTool"]>[2],
+  ) {
+    const reply = await client.callTool(params, undefined, options);
+    boundedJson(reply, defaultLimits);
+    const validate = outputValidators.get(params.name);
+    if (validate && (!reply.isError || reply.structuredContent)) {
+      if (!reply.structuredContent || !validate(reply.structuredContent).valid)
+        throw Error("invalid execution structured output");
+    }
+    return reply;
+  }
+  try {
+    await client.connect(transport, { timeout: 10000 });
+    await catalog();
   } catch {
     await client.close();
     await transport.close();
-    throw new Error("execution connection unavailable");
+    throw Error("execution connection unavailable");
   }
   const call = async (
     request: DeliveryRequest,
@@ -162,7 +208,7 @@ export async function connectExecution(
       provider: binding.provider as ExecutionOrigin["provider"],
       config: binding.config,
     };
-    const reply = await client.callTool(
+    const reply = await callTool(
       {
         name,
         arguments: args,
@@ -170,7 +216,6 @@ export async function connectExecution(
           "com.rss-mdm/ai-origin": origin,
         },
       },
-      undefined,
       { signal: b.signal, timeout: b.timeoutMs, maxTotalTimeout: b.timeoutMs },
     );
     boundedJson(reply, defaultLimits);
@@ -215,13 +260,12 @@ export async function connectExecution(
           config: binding.config,
         };
         stage = "policy-tools";
-        const value = await client.callTool(
+        const value = await callTool(
           {
             name: "execution_policy_tools",
             arguments: { after: null },
             _meta: { "com.rss-mdm/ai-origin": origin },
           },
-          undefined,
           { signal: b.signal, timeout: b.timeoutMs },
         );
         stage = "projection";
@@ -232,14 +276,11 @@ export async function connectExecution(
           return fail("unavailable");
         }
         stage = "catalog";
-        const catalog = await client.listTools(
-          {},
-          { signal: b.signal, timeout: b.timeoutMs },
-        );
+        const staticTools = await catalog(b);
         // Providers consume invocation interfaces. MCP retains its result validators;
         // duplicating output schemas in every worker catalog exceeds transport budgets.
         return ok(
-          [...catalog.tools, ...body.result.tools].map(
+          [...staticTools, ...body.result.tools].map(
             ({ name, description, inputSchema, annotations }) => ({
               name,
               description,
@@ -376,7 +417,12 @@ export async function connectExecution(
         const status = await call(
           request,
           "execution_task_detail",
-          { kind: "request", request: operationRequestId(name, args) },
+          {
+            reference: {
+              kind: "request",
+              request: operationRequestId(name, args),
+            },
+          },
           b,
         );
         if (status.status === "error")

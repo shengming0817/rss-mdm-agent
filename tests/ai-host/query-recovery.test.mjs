@@ -39,7 +39,8 @@ test("query response loss reconciles the Host-owned original ID and never replay
     { capabilities: { tools: {} } },
   );
   const calls = [];
-  let cancelled = false;
+  let cancelled = false,
+    malformed = false;
   peer.setRequestHandler(ListToolsRequestSchema, async ({ params }) => {
     const start = Number(params?.cursor ?? 0),
       end = Math.min(start + 3, tools.length);
@@ -78,6 +79,8 @@ test("query response loss reconciles the Host-owned original ID and never replay
               },
             },
           };
+    if (malformed && params.name === "execution_query_status")
+      delete value.result.value.query;
     return { content: [], structuredContent: value, isError: failure };
   });
   await peer.connect(new ParentTransport(incoming, outgoing));
@@ -122,6 +125,18 @@ test("query response loss reconciles the Host-owned original ID and never replay
     calls.filter((c) => c.name === "execution_query_submit").length,
     1,
   );
+  // Query status is on an earlier catalog page. A malformed original response
+  // must remain Unknown even after subsequent pages replace the SDK cache.
+  malformed = true;
+  assert.equal(
+    (await connection.router.reconcile(request, budget())).value.state,
+    "unknown",
+  );
+  assert.equal(
+    calls.filter((c) => c.name === "execution_query_submit").length,
+    1,
+  );
+  malformed = false;
   const cancelProposal = {
     name: "execution_task_control",
     arguments: {

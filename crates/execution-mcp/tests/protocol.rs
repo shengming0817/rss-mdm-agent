@@ -195,7 +195,7 @@ async fn trusted_context_cannot_be_forged_and_query_authorization_is_rechecked()
         let args = if name == "execution_task_control" {
             control_args("owned")
         } else if name == "execution_task_detail" {
-            json!({"kind":"request","request":"owned"})
+            json!({"reference":{"kind":"request","request":"owned"}})
         } else {
             json!({})
         };
@@ -224,7 +224,7 @@ async fn accepted_response_loss_reconnect_and_concurrent_retry_preserve_one_atte
         .call(
             2,
             "execution_task_detail",
-            json!({"kind":"request","request":"retry"}),
+            json!({"reference":{"kind":"request","request":"retry"}}),
         )
         .await;
     assert_eq!(value(&status)["phase"], "accepted");
@@ -271,7 +271,7 @@ async fn bound_namespace_prevents_cross_actor_tenant_device_and_delegation_repla
                     .call(
                         2,
                         "execution_task_detail",
-                        json!({"kind":"request","request":"same-id"})
+                        json!({"reference":{"kind":"request","request":"same-id"}})
                     )
                     .await
             )["code"],
@@ -308,7 +308,7 @@ async fn protocol_cancellation_releases_wait_and_does_not_cancel_business_operat
         .call(
             21,
             "execution_task_detail",
-            json!({"kind":"request","request":"cancel-wait"}),
+            json!({"reference":{"kind":"request","request":"cancel-wait"}}),
         )
         .await;
     assert_eq!(value(&status)["phase"], "accepted");
@@ -482,7 +482,7 @@ async fn stale_catalog_and_terminal_test_evidence_remain_distinct() {
         .call(
             22,
             "execution_task_detail",
-            json!({"kind":"request","request":"terminal"}),
+            json!({"reference":{"kind":"request","request":"terminal"}}),
         )
         .await;
     assert_eq!(value(&original)["phase"], "verified");
@@ -691,7 +691,7 @@ async fn every_tool_advertises_and_times_out_according_to_its_effects() {
         ("execution_capabilities", json!({}), true, "unavailable"),
         (
             "execution_task_detail",
-            json!({"kind":"request","request":"original-id"}),
+            json!({"reference":{"kind":"request","request":"original-id"}}),
             true,
             "unavailable",
         ),

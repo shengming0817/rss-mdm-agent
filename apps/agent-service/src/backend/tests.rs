@@ -1857,3 +1857,47 @@ async fn management_byte_retention_does_not_pin_the_original_sync_checkpoint() {
         }
     }
 }
+
+#[tokio::test]
+async fn pause_closes_a_request_waiting_for_headers_and_confirms_the_original_control() {
+    let _budget = crate::scenario_budget::enter();
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    server.data.lock().unwrap().script();
+    let pause = std::sync::Arc::new(tokio::sync::Notify::new());
+    server.data.lock().unwrap().content_header_pause = Some(pause.clone());
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    let owner = client.transfers();
+    let task = offer.task_id();
+    let attempt = offer.attempt_id();
+    {
+        let prepare = client.prepare(&offer);
+        tokio::pin!(prepare);
+        let mut requested = false;
+        let outcome=tokio::time::timeout(std::time::Duration::from_secs(5),async {
+            loop {tokio::select! {
+                result=&mut prepare=>break result,
+                _=tokio::time::sleep(std::time::Duration::from_millis(10))=>{
+                    if !requested && server.data.lock().unwrap().content_header_waiting {
+                        let versions=owner.observations(task,attempt).unwrap().into_iter().map(|v|(v.key,v.revision)).collect::<Vec<_>>();
+                        assert!(!owner.control(task,attempt,"header-pause",0,&versions,true).unwrap());requested=true;
+                    }
+                }
+            }}
+        }).await.unwrap();
+        assert!(matches!(outcome, Err(Error::TransferPaused)));
+    }
+    assert_eq!(
+        owner.receipt(task, attempt, "header-pause").unwrap(),
+        Some(true)
+    );
+    assert!(owner
+        .observations(task, attempt)
+        .unwrap()
+        .iter()
+        .all(|v| v.paused && v.bytes == 0));
+    server.data.lock().unwrap().content_header_pause = None;
+    pause.notify_waiters();
+}

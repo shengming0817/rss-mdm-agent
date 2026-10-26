@@ -43,7 +43,7 @@ const files = [
 ];
 for (const [name, type, file] of [
   ["execution_execute", "BackendSelection", "execute"],
-  ["execution_task_detail", "TaskRef", "task-ref"],
+  ["execution_task_detail", "TaskDetailQuery", "task-detail-input"],
   ["execution_task_control", "TaskControl", "task-control"],
   ["execution_task_control_status", "TaskControlQuery", "task-control-status"],
 ]) {

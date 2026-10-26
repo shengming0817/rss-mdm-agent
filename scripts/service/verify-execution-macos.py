@@ -1504,6 +1504,7 @@ def main():
                           execution=dict(local_permissions=dict(policyFile=str(protected / 'local-permissions.json')), work_root=str(protected / 'work'), material_root=str(protected / 'materials'),
                                          interpreters=[], managers=[], processes=8))
         setup = lab / 'install.py'
+        desktop_source = (args.desktop or args.binary).resolve()
         setup.write_text(inspect.getsource(copy_candidate) + inspect.getsource(instrument_service_diagnostics) + '''import hashlib,json,os,re,shutil,subprocess
 from pathlib import Path
 root=Path(%r)
@@ -1513,19 +1514,24 @@ root.mkdir(mode=0o755)
 binary=root/'rss-execution-service'
 copy_candidate(%r,binary,%r)
 subprocess.run(['/usr/bin/codesign','--verify','--strict',str(binary)],check=True)
+# Service-only acceptance uses the same fixed CLI as its registration client.
+# Native desktop acceptance copies the actual desktop candidate to this identity.
+desktop=root/'rss-mdm-desktop'
+copy_candidate(%r,desktop,%r)
+subprocess.run(['/usr/bin/codesign','--verify','--strict',str(desktop)],check=True)
 def artifact(path):
     identity=subprocess.run(['/usr/bin/codesign','-d','--verbose=4',str(path)],capture_output=True,text=True,check=True).stderr
     return dict(path=str(path),sha256=hashlib.sha256(Path(path).read_bytes()).hexdigest(),cdhash=re.search(r'CDHash=([0-9a-f]+)',identity)[1])
 config=%r
 config['service']=artifact(binary)
 config['clients']=dict(images=[config['service']],subjects=[%r],interactive=True)
-config['registration_clients']=dict(images=[config['service']],subjects=[%r],interactive=True)
+config['registration_clients']=dict(images=[artifact(desktop)],subjects=[%r],interactive=True)
 config['execution']['interpreters']=[dict(profile='posix_sh',image=artifact('/bin/sh'))]
 config['execution']['managers']=[dict(executor='package_installer',image=artifact('/usr/sbin/installer'))]
 (root/'ca.pem').write_bytes(%r); os.chmod(root/'ca.pem',0o644)
 grant=json.loads(%r)
-candidate=dict(version=1,format='macos_pkg',product_version='controlled',target='macos-arm64',
-    root=str(root),service=config['service'],desktop=config['service'],runtime_root=str(root/'runtime'),runtime_sha256='0'*64,
+candidate=dict(version=2,format='macos_pkg',product_version='controlled',target='macos-arm64',
+    root=str(root),service=config['service'],desktop=artifact(desktop),runtime_root=str(root/'runtime'),runtime_sha256='0'*64,
     service_id=config['service_id'],connections=config['connections'],tenant=config['tenant'],signing_keys=config['signing_keys'],ca_pem=%r,signing_mode='development')
 manifest=(json.dumps(candidate,sort_keys=True)+'\\n').encode();(root/'candidate.json').write_bytes(manifest);os.chmod(root/'candidate.json',0o644)
 config['installation_artifact']=hashlib.sha256(manifest).hexdigest()
@@ -1534,16 +1540,11 @@ path=root/'execution.json';path.write_text(json.dumps(config));os.chmod(path,0o6
 subprocess.run([str(binary),'--installation','import','--config',str(path),'--configuration',str(root/'grant.json')],text=True,check=True)
 subprocess.run(%r,check=True)
 instrument_service_diagnostics(root,binary,path)
-''' % (str(protected), str(args.binary.resolve()), hashlib.sha256(args.binary.read_bytes()).hexdigest(), deployment, str(os.geteuid()), str(os.geteuid()), (lab / 'tls.pem').read_bytes(), json.dumps(grant), info['caPem'], frozen_installer(system_installer_source, ['install','--scope','system','--binary',str(binary),'--config',str(config)])))
+''' % (str(protected), str(args.binary.resolve()), hashlib.sha256(args.binary.read_bytes()).hexdigest(), str(desktop_source), hashlib.sha256(desktop_source.read_bytes()).hexdigest(), deployment, str(os.geteuid()), str(os.geteuid()), (lab / 'tls.pem').read_bytes(), json.dumps(grant), info['caPem'], frozen_installer(system_installer_source, ['install','--scope','system','--binary',str(binary),'--config',str(config)])))
         if args.desktop:
             # Extend this same installation owner, retaining its protected binary/config checks.
             contents = setup.read_text()
-            insertion = """desktop=root/'rss-mdm-desktop'
-copy_candidate(%r,desktop,%r)
-subprocess.run(['/usr/bin/codesign','--verify','--strict',str(desktop)],check=True)
-config['clients']['images'].append(artifact(desktop))
-config['registration_clients']['images']=[artifact(desktop)]
-""" % (str(args.desktop.resolve()), hashlib.sha256(args.desktop.read_bytes()).hexdigest())
+            insertion = "config['clients']['images'].append(artifact(desktop))\n"
             contents = contents.replace("path=root/'execution.json'", insertion + "path=root/'execution.json'")
             # Default pin creation is exclusive. The desktop never selects an arbitrary config.
             contents += """default=Path(%r)
@@ -1765,6 +1766,8 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             finally: rejected_probe.close()
             native_worker_security(native_probe,receipt['security'],frozen,lab,untrusted_binary,config)
         if args.desktop:
+            history = command('task-history')
+            receipt['scenarios']['task_history_fixture'] = history
             payload = lab / 'payload'; payload.mkdir()
             (payload / 'fixed.txt').write_text('controlled package payload\n')
             pkg = lab / 'fixed.pkg'
@@ -1775,7 +1778,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             desktop_ready = True
             desktop_cleanup = False
             print(json.dumps({'kind': 'desktopService', 'desktop': str(protected / 'rss-mdm-desktop'),
-                'service': receipt['artifact'], 'config': str(default_config), 'catalog': catalog, 'journalOwner': 'agent-service'}), flush=True)
+                'service': receipt['artifact'], 'config': str(default_config), 'catalog': catalog, 'history': history, 'journalOwner': 'agent-service'}), flush=True)
             def effect():
                 detected = subprocess.run(['/usr/sbin/pkgutil', '--pkg-info-plist', package_receipt], capture_output=True, text=True)
                 target_file = protected / 'package-payload/fixed.txt'

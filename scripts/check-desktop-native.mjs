@@ -613,10 +613,39 @@ const originalRequest = (row) =>
     ? row.action.choice.request
     : row.action.offer.request;
 const originalRequests = (reply) =>
-  new Set([
-    ...taskExecutions(reply).map((row) => row.action.requestId),
-    ...taskPreparations(reply).map(originalRequest),
-  ]);
+  new Set(
+    reply.items
+      .filter((item) => item.reference.kind === "request")
+      .map((item) => item.reference.request),
+  );
+const taskButton = (reference) =>
+  browser.$(`//button[@data-task='${JSON.stringify(reference)}']`);
+const openNativeTask = async (detail) => {
+  await navigate("请求与任务");
+  const filters = await browser.$$(".task-filters select");
+  await filters[0].selectByAttribute("value", "");
+  await filters[1].selectByAttribute("value", "");
+  await click(
+    detail.reference.kind === "activity"
+      ? "管理活动"
+      : detail.active
+        ? "正在进行"
+        : "历史记录",
+    '//*[@aria-label="任务视图"]',
+  );
+  await wait(() => taskButton(detail.reference).isDisplayed());
+  await taskButton(detail.reference).click();
+  await wait(() =>
+    browser.$('.task-center-detail[aria-label="任务详情"]').isDisplayed(),
+  );
+  assert.ok(
+    (await browser.$(".task-center-detail").getText()).includes(
+      detail.reference.request ??
+        detail.reference.id ??
+        detail.reference.query.id,
+    ),
+  );
+};
 const openPageAssistant = async () => {
   await browser
     .$('.workspace-assistant-entry[aria-label="打开电脑助手"]')
@@ -1846,10 +1875,46 @@ try {
         (row) => row.status.attempts === 1,
       ),
     );
-    await navigate("AI 助手");
     fixture.facts.request = taskExecutions(await serviceCall("query")).find(
       (row) => row.status.attempts === 1,
     ).action.requestId;
+    mark(
+      "human task is visible without an AI conversation, with stable return focus",
+    );
+    const humanTask = (await serviceCall("query")).items.find(
+      (item) =>
+        item.reference.kind === "request" &&
+        item.reference.request === fixture.facts.request,
+    );
+    assert.equal(humanTask.source, "human");
+    await openNativeTask(humanTask);
+    assert.ok(
+      (await browser.$$("[aria-label='父子步骤'] [data-node]")).length > 0,
+    );
+    await click("返回任务列表", '//*[@aria-label="任务详情"]');
+    await wait(() =>
+      browser.execute(
+        (reference) =>
+          document.activeElement?.getAttribute("data-task") ===
+          JSON.stringify(reference),
+        humanTask.reference,
+      ),
+    );
+    await browser.setWindowSize(480, 400);
+    assert.equal(
+      await browser.execute(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+      true,
+    );
+    await browser.setWindowSize(1100, 760);
+    assert.equal(originalRequests(await serviceCall("query")).size, 1);
+    result.checks.push(
+      "human-task-without-ai",
+      "task-list-native-return-focus",
+      "task-center-narrow",
+    );
+    await navigate("AI 助手");
     mark(
       "first send and read the original human task without a generic permission",
     );
@@ -1880,17 +1945,11 @@ try {
     mark("read the original executed task through its product card");
     await prompt("GOLDEN_READ 读取状态");
     await text("完成 READ");
-    await navigate("请求与任务");
-    await wait(() =>
-      browser.$(".task-center-list button[data-task]").isDisplayed(),
-    );
-    await browser.$(".task-center-list button[data-task]").click();
-    await wait(() =>
-      browser.$('.task-center-detail[aria-label="任务详情"]').isDisplayed(),
-    );
-    assert.ok(
-      (await browser.$(".task-center-detail").getText()).includes(
-        fixture.facts.request,
+    await openNativeTask(
+      (await serviceCall("query")).items.find(
+        (item) =>
+          item.reference.kind === "request" &&
+          item.reference.request === fixture.facts.request,
       ),
     );
     assert.equal(originalRequests(await serviceCall("query")).size, 1);
@@ -2194,6 +2253,93 @@ try {
       "page-context-same-session",
       "page-context-provider-payload",
       "page-context-three-sizes",
+    );
+    mark(
+      "explicit local collection and background history share the native task center",
+    );
+    const beforeCollection = originalRequests(await serviceCall("query"));
+    const proposalsBeforeCollection = fixture.facts.proposals.length;
+    await navigate("软件管理");
+    await click("已安装", '//*[@aria-label="软件视图"]');
+    await browser.$(".software-sources summary").click();
+    const collect = browser.$(
+      '//button[normalize-space(.)="采集最新结果" and not(@disabled)]',
+    );
+    await wait(() => collect.isDisplayed());
+    await collect.click();
+    const collected = await wait(async () =>
+      (await serviceCall("query")).items.find(
+        (item) =>
+          item.taskKind === "query" &&
+          item.reference.kind === "request" &&
+          !beforeCollection.has(item.reference.request),
+      ),
+    );
+    await openNativeTask(collected);
+    await navigate("首页");
+    const recent = browser.$(
+      `//button[@data-task-ref='${JSON.stringify(collected.reference)}']`,
+    );
+    await wait(() => recent.isDisplayed());
+    await recent.click();
+    await wait(() =>
+      browser.$('.task-center-detail[aria-label="任务详情"]').isDisplayed(),
+    );
+    await click("返回任务列表", '//*[@aria-label="任务详情"]');
+    await wait(() =>
+      browser.execute(
+        (reference) =>
+          document.activeElement?.getAttribute("data-task-ref") ===
+          JSON.stringify(reference),
+        collected.reference,
+      ),
+    );
+    const sampling = await wait(
+      async () =>
+        (await serviceCall("query")).items.find(
+          (item) =>
+            item.reference.kind === "sampling" &&
+            item.facts.latest?.collectedAt != null,
+        ),
+      90000,
+    );
+    assert.equal(sampling.source, "policy");
+    assert.deepEqual(sampling.allowedActions, []);
+    await openNativeTask(sampling);
+    assert.equal((await browser.$$(".task-actions button")).length, 0);
+    await navigate("请求与任务");
+    await click("管理活动", '//*[@aria-label="任务视图"]');
+    const managementRef = {
+      kind: "activity",
+      id: serviceReady.history.activity,
+    };
+    await wait(() => taskButton(managementRef).isDisplayed());
+    await taskButton(managementRef).click();
+    await wait(() =>
+      browser.$('.task-center-detail[aria-label="任务详情"]').isDisplayed(),
+    );
+    assert.ok(
+      (await browser.$('[aria-label="同步覆盖"]').getText()).includes("部分"),
+    );
+    assert.ok(
+      (await browser.$(".task-center-detail").getText()).includes(
+        "effect-not-observed",
+      ),
+    );
+    assert.equal((await browser.$$(".task-actions button")).length, 0);
+    const retainedRequests = originalRequests(await serviceCall("query"));
+    await navigate("AI 助手");
+    assert.deepEqual(
+      originalRequests(await serviceCall("query")),
+      retainedRequests,
+    );
+    assert.equal(fixture.facts.proposals.length, proposalsBeforeCollection);
+    result.checks.push(
+      "native-explicit-query-original-task",
+      "native-home-task-focus",
+      "native-background-sampling-read-only",
+      "native-management-coverage-read-only",
+      "task-navigation-without-ai-or-resubmit",
     );
     const readAppearance = () =>
       browser.execute(() => ({

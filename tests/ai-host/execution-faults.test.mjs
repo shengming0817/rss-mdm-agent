@@ -323,7 +323,9 @@ test("lost submit receipt recovers the same Rust attempt and keeps process exit 
             ...request.body,
             proposal: {
               name: "execution_task_detail",
-              arguments: { kind: "request", request: "ai-unknown" },
+              arguments: {
+                reference: { kind: "request", request: "ai-unknown" },
+              },
             },
           },
         },
@@ -372,7 +374,7 @@ test("lost submit receipt recovers the same Rust attempt and keeps process exit 
             ...request.body,
             proposal: {
               name: "execution_task_detail",
-              arguments: current.reference,
+              arguments: { reference: current.reference },
             },
           },
         },

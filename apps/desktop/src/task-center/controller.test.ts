@@ -180,3 +180,30 @@ it("keeps paging beyond the cache budget and preserves the current page across d
   expect(c.state.next).toBe("17");
   c.dispose();
 });
+it("removes a denied original task from cached consumers and drops stale step actions when its owner advances", async () => {
+  const port = taskPort(),
+    item = taskDetail(),
+    c = createTaskCenter(port, null);
+  port.list = vi.fn(async () => taskPage([item]));
+  await c.load();
+  await c.openTask(item.reference);
+  port.detail = vi.fn(async () => {
+    throw { code: "task_denied" };
+  });
+  await c.openTask(item.reference);
+  expect(c.lookup(item.reference)).toBeUndefined();
+  expect(c.state.items).toEqual([]);
+  expect(c.state.selected).toBeNull();
+  port.detail = vi.fn(async () => ({
+    ...item,
+    stage: "verified",
+    allowedActions: [],
+  }));
+  expect(await c.openNode(item.reference, "execution/pending")).toBe(
+    "unavailable",
+  );
+  expect(c.state.selected?.stage).toBe("verified");
+  expect(c.state.selected?.allowedActions).toEqual([]);
+  expect(c.state.node).toBe("");
+  c.dispose();
+});

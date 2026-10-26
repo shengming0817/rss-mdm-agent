@@ -63,6 +63,7 @@ struct Control {
     confirmed: bool,
 }
 struct State {
+    root: std::path::PathBuf,
     conn: Connection,
     consumers: BTreeMap<String, Consumer>,
     latest: BTreeMap<String, (u64, String)>,
@@ -106,6 +107,7 @@ impl Transfers {
         let result = Self {
             _lease: lease,
             state: Arc::new(Mutex::new(State {
+                root: root.to_owned(),
                 conn,
                 consumers,
                 latest: BTreeMap::new(),
@@ -350,7 +352,18 @@ impl Transfers {
                     .consumers
                     .values()
                     .any(|v| v.cache == value.cache && v.task != task && !v.paused && !v.cancelled);
-                let accepted = !pause || other;
+                let durable = if pause && !other {
+                    crate::content::pause_ready(&s.root, &value.cache)?
+                } else {
+                    None
+                };
+                if let Some(bytes) = durable {
+                    if value.total.is_some_and(|total| bytes > total) {
+                        return Err(Error::Untrusted);
+                    }
+                    value.checkpoint_bytes = Some(bytes);
+                }
+                let accepted = !pause || other || durable.is_some();
                 value.controls.push(Control {
                     id: id.into(),
                     pause,

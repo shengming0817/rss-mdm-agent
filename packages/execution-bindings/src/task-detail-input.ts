@@ -23,6 +23,9 @@ export type TaskRef =
       kind: "activity";
     };
 
+export interface TaskDetailQuery {
+  reference: TaskRef;
+}
 /**
  * Exact original versioned collection definition.
  */

@@ -39,7 +39,11 @@ it("shows appended activity beyond six rows and keeps it visible after a polling
     await activity.loadRecent();
     await flushPromises();
     expect(wrapper.findAll(".activity-row")).toHaveLength(7);
-    expect(activity.state.next).toBe("4");
+    expect(activity.state.recentNext).toBe("5");
+    await activity.loadRecent(true);
+    await flushPromises();
+    expect(activity.state.recentNext).toBe("4");
+    expect(wrapper.findAll(".activity-row")).toHaveLength(7);
     await wrapper
       .findAll("button")
       .find((b) => b.text() === "查看任务记录 ›")!

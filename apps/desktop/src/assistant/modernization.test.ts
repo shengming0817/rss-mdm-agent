@@ -215,30 +215,28 @@ it("reports clipboard rejection without a native fallback or clipboard read", as
 it("keeps preparation actions and revocation visible in the modern task card", async () => {
   const c = assistant();
   const request = offer();
-  const read = vi
-    .spyOn(c, "executionDetails")
-    .mockResolvedValue(
-      taskFromFacts({
-        kind: "preparation",
-        value: {
-          retryExpectedRevision: null,
-          cancellationExpectedRevision: null,
-          recordedAtUnixMs: 1000,
-          cancellationControl: null,
-          retryOf: null,
-          action: { kind: "offered", offer: request },
-          revision: 1,
-          state: "awaitingConfirmation",
-          risk: null,
-          confirmation: null,
-          failure: null,
-          trigger: structuredClone(fixtures.proposed.trigger) as Extract<
-            TaskDetail["facts"],
-            { kind: "preparation" }
-          >["value"]["trigger"],
-        },
-      }),
-    );
+  const read = vi.spyOn(c, "executionDetails").mockResolvedValue(
+    taskFromFacts({
+      kind: "preparation",
+      value: {
+        retryExpectedRevision: null,
+        cancellationExpectedRevision: null,
+        recordedAtUnixMs: 1000,
+        cancellationControl: null,
+        retryOf: null,
+        action: { kind: "offered", offer: request },
+        revision: 1,
+        state: "awaitingConfirmation",
+        risk: null,
+        confirmation: null,
+        failure: null,
+        trigger: structuredClone(fixtures.proposed.trigger) as Extract<
+          TaskDetail["facts"],
+          { kind: "preparation" }
+        >["value"]["trigger"],
+      },
+    }),
+  );
   const confirm = vi
     .spyOn(c, "confirmPreparation")
     .mockResolvedValue(undefined);

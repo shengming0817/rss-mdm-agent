@@ -11,6 +11,14 @@ use serde_json::Value;
 use std::{borrow::Cow, sync::Arc};
 use tokio_util::sync::CancellationToken;
 
+// MCP model interfaces require an object with named properties at the root.
+// Keep the canonical TaskRef as a nested value, including all owner variants.
+#[derive(serde::Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct TaskDetailQuery {
+    reference: execution_app::tasks::TaskRef,
+}
+
 pub(crate) struct Handler<S> {
     pub service: Arc<S>,
     pub limits: McpLimits,
@@ -195,9 +203,7 @@ impl ToolKind {
             Self::TaskList => {
                 tool::<execution_app::tasks::TaskQuery, execution_app::tasks::TaskPage>(self)
             }
-            Self::TaskDetail => {
-                tool::<execution_app::tasks::TaskRef, execution_app::tasks::TaskDetail>(self)
-            }
+            Self::TaskDetail => tool::<TaskDetailQuery, execution_app::tasks::TaskDetail>(self),
             Self::TaskControl => tool::<
                 execution_app::tasks::TaskControl,
                 execution_app::tasks::TaskControlReceipt,
@@ -401,7 +407,9 @@ impl<S: ExecutionServicePort> Handler<S> {
                     match self
                         .service
                         .task_operation(
-                            execution_app::tasks::TaskOperation::Detail(decode(raw)?),
+                            execution_app::tasks::TaskOperation::Detail(
+                                decode::<TaskDetailQuery>(raw)?.reference,
+                            ),
                             wait,
                         )
                         .await?

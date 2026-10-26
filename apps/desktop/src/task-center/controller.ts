@@ -282,6 +282,17 @@ export function createTaskCenter(
     })();
     return recentFlight;
   }
+  function forget(reference: TaskRef) {
+    const key = taskKey(reference);
+    state.byRef.delete(key);
+    readAt.delete(key);
+    state.items = state.items.filter((item) => taskKey(item.reference) !== key);
+    state.recent = state.recent.filter((item) => taskKey(item) !== key);
+    if (state.selected && taskKey(state.selected.reference) === key) {
+      state.selected = null;
+      state.node = "";
+    }
+  }
   async function detail(reference: TaskRef, fresh = false) {
     if (!tasks || !alive) throw Error("任务服务未连接");
     const key = taskKey(reference),
@@ -303,6 +314,18 @@ export function createTaskCenter(
         if (index >= 0) state.items[index] = value;
         return value;
       })
+      .catch((error) => {
+        if (
+          alive &&
+          call === epoch &&
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          error.code === "task_denied"
+        )
+          forget(reference);
+        throw error;
+      })
       .finally(() => {
         if (detailFlights.get(key) === promise) detailFlights.delete(key);
       });
@@ -312,12 +335,23 @@ export function createTaskCenter(
   async function openTask(reference: TaskRef, node = "") {
     const call = epoch,
       selection = ++selectionEpoch;
+    if (
+      state.selected &&
+      taskKey(state.selected.reference) !== taskKey(reference)
+    ) {
+      state.selected = null;
+      state.node = "";
+    }
     try {
       const value = await detail(reference, true);
       if (!alive || call !== epoch || selection !== selectionEpoch)
         return "stale" as const;
-      if (node && !value.nodes.some((n) => n.id === node))
+      if (node && !value.nodes.some((n) => n.id === node)) {
+        state.selected = value;
+        state.node = "";
+        state.error = "原步骤已不在当前详情中，已读取原任务最新事实";
         return "unavailable" as const;
+      }
       if (
         state.uncertain &&
         !state.pendingControl &&

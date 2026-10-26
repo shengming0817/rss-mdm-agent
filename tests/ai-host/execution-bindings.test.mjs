@@ -31,7 +31,7 @@ test("backend task references retain the server-selected request and reject old 
   }
   const reference = { kind: "request", request: "backend-request" };
   assert.equal(
-    operationRequestId("execution_task_detail", reference),
+    operationRequestId("execution_task_detail", { reference }),
     "backend-request",
   );
   const control = {

@@ -12505,52 +12505,57 @@
           "minLength": 1,
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
+        },
+        "TaskRef": {
+          "description": "Exact original owner identity, scoped by the authenticated native connection.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Original execution or pre-execution request.",
+              "properties": {
+                "kind": { "const": "request", "type": "string" },
+                "request": {
+                  "$ref": "#/$defs/RequestId",
+                  "description": "Original immutable request identity."
+                }
+              },
+              "required": ["kind", "request"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Original periodic collection definition/session, without generating tasks per sample.",
+              "properties": {
+                "kind": { "const": "sampling", "type": "string" },
+                "query": {
+                  "$ref": "#/$defs/QueryRef",
+                  "description": "Exact original versioned collection definition."
+                }
+              },
+              "required": ["kind", "query"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Source-qualified server activity identity.",
+              "properties": {
+                "id": {
+                  "description": "Original producer ID, never a display name.",
+                  "type": "string"
+                },
+                "kind": { "const": "activity", "type": "string" }
+              },
+              "required": ["kind", "id"],
+              "type": "object"
+            }
+          ]
         }
       },
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "description": "Exact original owner identity, scoped by the authenticated native connection.",
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "description": "Original execution or pre-execution request.",
-          "properties": {
-            "kind": { "const": "request", "type": "string" },
-            "request": {
-              "$ref": "#/$defs/RequestId",
-              "description": "Original immutable request identity."
-            }
-          },
-          "required": ["kind", "request"],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Original periodic collection definition/session, without generating tasks per sample.",
-          "properties": {
-            "kind": { "const": "sampling", "type": "string" },
-            "query": {
-              "$ref": "#/$defs/QueryRef",
-              "description": "Exact original versioned collection definition."
-            }
-          },
-          "required": ["kind", "query"],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Source-qualified server activity identity.",
-          "properties": {
-            "id": {
-              "description": "Original producer ID, never a display name.",
-              "type": "string"
-            },
-            "kind": { "const": "activity", "type": "string" }
-          },
-          "required": ["kind", "id"],
-          "type": "object"
-        }
-      ],
-      "title": "TaskRef",
+      "additionalProperties": false,
+      "properties": { "reference": { "$ref": "#/$defs/TaskRef" } },
+      "required": ["reference"],
+      "title": "TaskDetailQuery",
       "type": "object"
     },
     "name": "execution_task_detail",

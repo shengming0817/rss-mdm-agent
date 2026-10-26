@@ -200,8 +200,7 @@ export async function startModelFixture() {
       if (scenario.startsWith("CANCEL")) {
         if (!output("control-detail"))
           return call("control-detail", "execution_task_detail", {
-            kind: "request",
-            request: facts.request,
+            reference: { kind: "request", request: facts.request },
           });
         const detail = resultFrom(output("control-detail").output);
         assert.ok(detail?.scope && detail?.revision);
@@ -219,8 +218,7 @@ export async function startModelFixture() {
           return call("capabilities", "execution_capabilities", {});
         if (!output("status"))
           return call("status", "execution_task_detail", {
-            kind: "request",
-            request: facts.request,
+            reference: { kind: "request", request: facts.request },
           });
       }
       facts.completions.push(scenario);

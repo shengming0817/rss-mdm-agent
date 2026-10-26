@@ -57,8 +57,61 @@ const schema31 = {
       pattern: "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
       type: "string",
     },
+    TaskRef: {
+      description:
+        "Exact original owner identity, scoped by the authenticated native connection.",
+      oneOf: [
+        {
+          additionalProperties: false,
+          description: "Original execution or pre-execution request.",
+          properties: {
+            kind: { const: "request", type: "string" },
+            request: {
+              $ref: "#/$defs/RequestId",
+              description: "Original immutable request identity.",
+            },
+          },
+          required: ["kind", "request"],
+          type: "object",
+        },
+        {
+          additionalProperties: false,
+          description:
+            "Original periodic collection definition/session, without generating tasks per sample.",
+          properties: {
+            kind: { const: "sampling", type: "string" },
+            query: {
+              $ref: "#/$defs/QueryRef",
+              description: "Exact original versioned collection definition.",
+            },
+          },
+          required: ["kind", "query"],
+          type: "object",
+        },
+        {
+          additionalProperties: false,
+          description: "Source-qualified server activity identity.",
+          properties: {
+            id: {
+              description: "Original producer ID, never a display name.",
+              type: "string",
+            },
+            kind: { const: "activity", type: "string" },
+          },
+          required: ["kind", "id"],
+          type: "object",
+        },
+      ],
+    },
   },
   $schema: "https://json-schema.org/draft/2020-12/schema",
+  additionalProperties: false,
+  properties: { reference: { $ref: "#/$defs/TaskRef" } },
+  required: ["reference"],
+  title: "TaskDetailQuery",
+  type: "object",
+};
+const schema32 = {
   description:
     "Exact original owner identity, scoped by the authenticated native connection.",
   oneOf: [
@@ -103,10 +156,8 @@ const schema31 = {
       type: "object",
     },
   ],
-  title: "TaskRef",
-  type: "object",
 };
-const schema32 = {
+const schema33 = {
   description: "Local execution request identity.",
   maxLength: 128,
   minLength: 1,
@@ -115,7 +166,7 @@ const schema32 = {
 };
 const func1 = helper0;
 const pattern4 = new RegExp("^[A-Za-z0-9][A-Za-z0-9._:/-]*$", "u");
-const schema33 = {
+const schema34 = {
   additionalProperties: false,
   description: "Exact service-owned query definition.",
   properties: {
@@ -128,7 +179,7 @@ const schema33 = {
   required: ["id", "revision"],
   type: "object",
 };
-const schema34 = {
+const schema35 = {
   description:
     "Opaque local reference identifier; syntax validity is not authenticity.",
   maxLength: 128,
@@ -136,7 +187,7 @@ const schema34 = {
   pattern: "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
   type: "string",
 };
-const schema35 = {
+const schema36 = {
   description:
     "Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.",
   maxLength: 64,
@@ -145,7 +196,7 @@ const schema35 = {
   type: "string",
 };
 const pattern6 = new RegExp("^[0-9a-f]{64}$", "u");
-function validate21(
+function validate22(
   data,
   {
     instancePath = "",
@@ -157,7 +208,7 @@ function validate21(
 ) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate21.evaluated;
+  const evaluated0 = validate22.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = undefined;
   }
@@ -171,7 +222,7 @@ function validate21(
         (data.id === undefined && (missing0 = "id")) ||
         (data.revision === undefined && (missing0 = "revision"))
       ) {
-        validate21.errors = [
+        validate22.errors = [
           {
             instancePath,
             schemaPath: "#/required",
@@ -185,7 +236,7 @@ function validate21(
         const _errs1 = errors;
         for (const key0 in data) {
           if (!(key0 === "id" || key0 === "revision")) {
-            validate21.errors = [
+            validate22.errors = [
               {
                 instancePath,
                 schemaPath: "#/additionalProperties",
@@ -206,7 +257,7 @@ function validate21(
             if (errors === _errs3) {
               if (typeof data0 === "string") {
                 if (func1(data0) > 128) {
-                  validate21.errors = [
+                  validate22.errors = [
                     {
                       instancePath: instancePath + "/id",
                       schemaPath: "#/$defs/Id/maxLength",
@@ -218,7 +269,7 @@ function validate21(
                   return false;
                 } else {
                   if (func1(data0) < 1) {
-                    validate21.errors = [
+                    validate22.errors = [
                       {
                         instancePath: instancePath + "/id",
                         schemaPath: "#/$defs/Id/minLength",
@@ -230,7 +281,7 @@ function validate21(
                     return false;
                   } else {
                     if (!pattern4.test(data0)) {
-                      validate21.errors = [
+                      validate22.errors = [
                         {
                           instancePath: instancePath + "/id",
                           schemaPath: "#/$defs/Id/pattern",
@@ -247,7 +298,7 @@ function validate21(
                   }
                 }
               } else {
-                validate21.errors = [
+                validate22.errors = [
                   {
                     instancePath: instancePath + "/id",
                     schemaPath: "#/$defs/Id/type",
@@ -271,7 +322,7 @@ function validate21(
               if (errors === _errs6) {
                 if (typeof data1 === "string") {
                   if (func1(data1) > 64) {
-                    validate21.errors = [
+                    validate22.errors = [
                       {
                         instancePath: instancePath + "/revision",
                         schemaPath: "#/$defs/Digest/maxLength",
@@ -283,7 +334,7 @@ function validate21(
                     return false;
                   } else {
                     if (func1(data1) < 64) {
-                      validate21.errors = [
+                      validate22.errors = [
                         {
                           instancePath: instancePath + "/revision",
                           schemaPath: "#/$defs/Digest/minLength",
@@ -295,7 +346,7 @@ function validate21(
                       return false;
                     } else {
                       if (!pattern6.test(data1)) {
-                        validate21.errors = [
+                        validate22.errors = [
                           {
                             instancePath: instancePath + "/revision",
                             schemaPath: "#/$defs/Digest/pattern",
@@ -310,7 +361,7 @@ function validate21(
                     }
                   }
                 } else {
-                  validate21.errors = [
+                  validate22.errors = [
                     {
                       instancePath: instancePath + "/revision",
                       schemaPath: "#/$defs/Digest/type",
@@ -330,7 +381,7 @@ function validate21(
         }
       }
     } else {
-      validate21.errors = [
+      validate22.errors = [
         {
           instancePath,
           schemaPath: "#/type",
@@ -342,15 +393,15 @@ function validate21(
       return false;
     }
   }
-  validate21.errors = vErrors;
+  validate22.errors = vErrors;
   return errors === 0;
 }
-validate21.evaluated = {
+validate22.evaluated = {
   props: true,
   dynamicProps: false,
   dynamicItems: false,
 };
-function validate20(
+function validate21(
   data,
   {
     instancePath = "",
@@ -362,30 +413,18 @@ function validate20(
 ) {
   let vErrors = null;
   let errors = 0;
-  const evaluated0 = validate20.evaluated;
+  const evaluated0 = validate21.evaluated;
   if (evaluated0.dynamicProps) {
     evaluated0.props = undefined;
   }
   if (evaluated0.dynamicItems) {
     evaluated0.items = undefined;
   }
-  if (!(data && typeof data == "object" && !Array.isArray(data))) {
-    validate20.errors = [
-      {
-        instancePath,
-        schemaPath: "#/type",
-        keyword: "type",
-        params: { type: "object" },
-        message: "must be object",
-      },
-    ];
-    return false;
-  }
-  const _errs1 = errors;
+  const _errs0 = errors;
   let valid0 = false;
   let passing0 = null;
-  const _errs2 = errors;
-  if (errors === _errs2) {
+  const _errs1 = errors;
+  if (errors === _errs1) {
     if (data && typeof data == "object" && !Array.isArray(data)) {
       let missing0;
       if (
@@ -406,7 +445,7 @@ function validate20(
         }
         errors++;
       } else {
-        const _errs4 = errors;
+        const _errs3 = errors;
         for (const key0 in data) {
           if (!(key0 === "kind" || key0 === "request")) {
             const err1 = {
@@ -425,10 +464,10 @@ function validate20(
             break;
           }
         }
-        if (_errs4 === errors) {
+        if (_errs3 === errors) {
           if (data.kind !== undefined) {
             let data0 = data.kind;
-            const _errs5 = errors;
+            const _errs4 = errors;
             if (typeof data0 !== "string") {
               const err2 = {
                 instancePath: instancePath + "/kind",
@@ -459,16 +498,16 @@ function validate20(
               }
               errors++;
             }
-            var valid1 = _errs5 === errors;
+            var valid1 = _errs4 === errors;
           } else {
             var valid1 = true;
           }
           if (valid1) {
             if (data.request !== undefined) {
               let data1 = data.request;
+              const _errs6 = errors;
               const _errs7 = errors;
-              const _errs8 = errors;
-              if (errors === _errs8) {
+              if (errors === _errs7) {
                 if (typeof data1 === "string") {
                   if (func1(data1) > 128) {
                     const err4 = {
@@ -536,7 +575,7 @@ function validate20(
                   errors++;
                 }
               }
-              var valid1 = _errs7 === errors;
+              var valid1 = _errs6 === errors;
             } else {
               var valid1 = true;
             }
@@ -559,14 +598,14 @@ function validate20(
       errors++;
     }
   }
-  var _valid0 = _errs2 === errors;
+  var _valid0 = _errs1 === errors;
   if (_valid0) {
     valid0 = true;
     passing0 = 0;
     var props0 = true;
   }
-  const _errs10 = errors;
-  if (errors === _errs10) {
+  const _errs9 = errors;
+  if (errors === _errs9) {
     if (data && typeof data == "object" && !Array.isArray(data)) {
       let missing1;
       if (
@@ -587,7 +626,7 @@ function validate20(
         }
         errors++;
       } else {
-        const _errs12 = errors;
+        const _errs11 = errors;
         for (const key1 in data) {
           if (!(key1 === "kind" || key1 === "query")) {
             const err10 = {
@@ -606,10 +645,10 @@ function validate20(
             break;
           }
         }
-        if (_errs12 === errors) {
+        if (_errs11 === errors) {
           if (data.kind !== undefined) {
             let data2 = data.kind;
-            const _errs13 = errors;
+            const _errs12 = errors;
             if (typeof data2 !== "string") {
               const err11 = {
                 instancePath: instancePath + "/kind",
@@ -640,15 +679,15 @@ function validate20(
               }
               errors++;
             }
-            var valid3 = _errs13 === errors;
+            var valid3 = _errs12 === errors;
           } else {
             var valid3 = true;
           }
           if (valid3) {
             if (data.query !== undefined) {
-              const _errs15 = errors;
+              const _errs14 = errors;
               if (
-                !validate21(data.query, {
+                !validate22(data.query, {
                   instancePath: instancePath + "/query",
                   parentData: data,
                   parentDataProperty: "query",
@@ -658,11 +697,11 @@ function validate20(
               ) {
                 vErrors =
                   vErrors === null
-                    ? validate21.errors
-                    : vErrors.concat(validate21.errors);
+                    ? validate22.errors
+                    : vErrors.concat(validate22.errors);
                 errors = vErrors.length;
               }
-              var valid3 = _errs15 === errors;
+              var valid3 = _errs14 === errors;
             } else {
               var valid3 = true;
             }
@@ -685,7 +724,7 @@ function validate20(
       errors++;
     }
   }
-  var _valid0 = _errs10 === errors;
+  var _valid0 = _errs9 === errors;
   if (_valid0 && valid0) {
     valid0 = false;
     passing0 = [passing0, 1];
@@ -697,8 +736,8 @@ function validate20(
         props0 = true;
       }
     }
-    const _errs16 = errors;
-    if (errors === _errs16) {
+    const _errs15 = errors;
+    if (errors === _errs15) {
       if (data && typeof data == "object" && !Array.isArray(data)) {
         let missing2;
         if (
@@ -719,7 +758,7 @@ function validate20(
           }
           errors++;
         } else {
-          const _errs18 = errors;
+          const _errs17 = errors;
           for (const key2 in data) {
             if (!(key2 === "id" || key2 === "kind")) {
               const err15 = {
@@ -738,9 +777,9 @@ function validate20(
               break;
             }
           }
-          if (_errs18 === errors) {
+          if (_errs17 === errors) {
             if (data.id !== undefined) {
-              const _errs19 = errors;
+              const _errs18 = errors;
               if (typeof data.id !== "string") {
                 const err16 = {
                   instancePath: instancePath + "/id",
@@ -756,14 +795,14 @@ function validate20(
                 }
                 errors++;
               }
-              var valid4 = _errs19 === errors;
+              var valid4 = _errs18 === errors;
             } else {
               var valid4 = true;
             }
             if (valid4) {
               if (data.kind !== undefined) {
                 let data5 = data.kind;
-                const _errs21 = errors;
+                const _errs20 = errors;
                 if (typeof data5 !== "string") {
                   const err17 = {
                     instancePath: instancePath + "/kind",
@@ -794,7 +833,7 @@ function validate20(
                   }
                   errors++;
                 }
-                var valid4 = _errs21 === errors;
+                var valid4 = _errs20 === errors;
               } else {
                 var valid4 = true;
               }
@@ -817,7 +856,7 @@ function validate20(
         errors++;
       }
     }
-    var _valid0 = _errs16 === errors;
+    var _valid0 = _errs15 === errors;
     if (_valid0 && valid0) {
       valid0 = false;
       passing0 = [passing0, 2];
@@ -845,20 +884,111 @@ function validate20(
       vErrors.push(err20);
     }
     errors++;
-    validate20.errors = vErrors;
+    validate21.errors = vErrors;
     return false;
   } else {
-    errors = _errs1;
+    errors = _errs0;
     if (vErrors !== null) {
-      if (_errs1) {
-        vErrors.length = _errs1;
+      if (_errs0) {
+        vErrors.length = _errs0;
       } else {
         vErrors = null;
       }
     }
   }
-  validate20.errors = vErrors;
+  validate21.errors = vErrors;
   evaluated0.props = props0;
   return errors === 0;
 }
-validate20.evaluated = { dynamicProps: true, dynamicItems: false };
+validate21.evaluated = { dynamicProps: true, dynamicItems: false };
+function validate20(
+  data,
+  {
+    instancePath = "",
+    parentData,
+    parentDataProperty,
+    rootData = data,
+    dynamicAnchors = {},
+  } = {},
+) {
+  let vErrors = null;
+  let errors = 0;
+  const evaluated0 = validate20.evaluated;
+  if (evaluated0.dynamicProps) {
+    evaluated0.props = undefined;
+  }
+  if (evaluated0.dynamicItems) {
+    evaluated0.items = undefined;
+  }
+  if (errors === 0) {
+    if (data && typeof data == "object" && !Array.isArray(data)) {
+      let missing0;
+      if (data.reference === undefined && (missing0 = "reference")) {
+        validate20.errors = [
+          {
+            instancePath,
+            schemaPath: "#/required",
+            keyword: "required",
+            params: { missingProperty: missing0 },
+            message: "must have required property '" + missing0 + "'",
+          },
+        ];
+        return false;
+      } else {
+        const _errs1 = errors;
+        for (const key0 in data) {
+          if (!(key0 === "reference")) {
+            validate20.errors = [
+              {
+                instancePath,
+                schemaPath: "#/additionalProperties",
+                keyword: "additionalProperties",
+                params: { additionalProperty: key0 },
+                message: "must NOT have additional properties",
+              },
+            ];
+            return false;
+            break;
+          }
+        }
+        if (_errs1 === errors) {
+          if (data.reference !== undefined) {
+            if (
+              !validate21(data.reference, {
+                instancePath: instancePath + "/reference",
+                parentData: data,
+                parentDataProperty: "reference",
+                rootData,
+                dynamicAnchors,
+              })
+            ) {
+              vErrors =
+                vErrors === null
+                  ? validate21.errors
+                  : vErrors.concat(validate21.errors);
+              errors = vErrors.length;
+            }
+          }
+        }
+      }
+    } else {
+      validate20.errors = [
+        {
+          instancePath,
+          schemaPath: "#/type",
+          keyword: "type",
+          params: { type: "object" },
+          message: "must be object",
+        },
+      ];
+      return false;
+    }
+  }
+  validate20.errors = vErrors;
+  return errors === 0;
+}
+validate20.evaluated = {
+  props: true,
+  dynamicProps: false,
+  dynamicItems: false,
+};

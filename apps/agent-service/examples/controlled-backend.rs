@@ -7,6 +7,57 @@ use ring::signature::KeyPair;
 use rss_mdm_agent_wire::runtime as wire;
 use std::io::{BufRead, Write};
 
+/// Protocol fixtures consumed by the real installed owner's native task views.
+fn task_history(server: &protocol::Server) -> serde_json::Value {
+    use rss_mdm_agent_wire::activities::*;
+    let binding = server
+        .data
+        .lock()
+        .unwrap()
+        .binding
+        .clone()
+        .expect("registered native owner");
+    let mut configuration =
+        protocol::telemetry::native_performance_configuration(server, &binding).configuration;
+    configuration.expires_at += 3600;
+    let policy = configuration.policy;
+    let signed = protocol::telemetry::sign(&server.data.lock().unwrap(), configuration);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let activity: ManagementActivity = serde_json::from_value(serde_json::json!({
+        "id":"execution:native-background", "source":"execution", "kind":"execution",
+        "phase":"received", "recordedAt":now, "observedAt":now, "origin":"policy",
+        "target":{"device":binding.device_id,"registration":binding.registration_id,"generation":binding.generation},
+        "links":{"steps":[],"operations":[]}, "delivery":"received", "execution":"running",
+        "effect":"unknown", "reporting":null, "decision":null, "auditOutcome":"recorded"
+    })).unwrap();
+    let mut data = server.data.lock().unwrap();
+    data.telemetry.configuration = Some(signed);
+    data.management_page = Some(ManagementActivityPage {
+        items: vec![activity.clone()],
+        next_cursor: None,
+        sync_cursor: "native-history-anchor".into(),
+        as_of: now,
+        retained_from: Some(now - 60),
+        coverage: vec![ActivityCoverage {
+            source: "execution".into(),
+            complete: false,
+            reasons: vec!["fixture-partial-source".into()],
+        }],
+    });
+    data.management_detail = Some(ManagementActivityDetail {
+        activity: activity.clone(),
+        personal: false,
+        related: vec![],
+        related_cursor: None,
+        missing: vec!["effect-not-observed".into()],
+        as_of: now,
+    });
+    serde_json::json!({"policy":policy,"activity":activity.id})
+}
+
 #[tokio::main]
 async fn main() {
     let server = protocol::Server::tls().await;
@@ -39,6 +90,11 @@ async fn main() {
                 let command: serde_json::Value = serde_json::from_str(&line).unwrap();
                 if command["kind"] == "configuration" {
                     println!("{}", serde_json::to_string(&server.configuration()).unwrap());
+                    std::io::stdout().flush().unwrap();
+                    continue;
+                }
+                if command["kind"] == "task-history" {
+                    println!("{}", task_history(&server));
                     std::io::stdout().flush().unwrap();
                     continue;
                 }
