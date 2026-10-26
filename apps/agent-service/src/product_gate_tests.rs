@@ -5289,7 +5289,6 @@ async fn settings_desktop_cache_and_retained_task_are_bound_to_exact_context() {
                 session: c.selection.binding.clone(),
             },
         },
-        &c.context(),
         c.service.core.host.clock.millis().unwrap(),
         &c.service.core.config,
         &mut c.service.core.material_root,

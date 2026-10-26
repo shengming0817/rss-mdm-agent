@@ -157,6 +157,12 @@ impl Core {
                         .map_err(map_app_error)?;
                 }
                 if let SettingsOperation::KeepDisplay { digest, .. } = input {
+                    let Initiator::Human { os_session } = &frozen.spec().request.initiator else {
+                        return Err(Error::Denied);
+                    };
+                    if command.binding.as_ref() != Some(&os_session.session) {
+                        return Err(Error::Identity);
+                    }
                     let policy = self.software_policy()?;
                     let action: Action = metadata(&frozen, "local-settings-action")?;
                     local_settings::Permit::keep(frozen.clone(), policy, &action)?
@@ -310,7 +316,6 @@ impl Core {
             &self.host.root,
             &self.host.local_actor,
             initiator,
-            context,
             now,
             &self.config,
             &mut self.material_root,
@@ -338,6 +343,14 @@ impl Core {
             .is_ok_and(|s| s.attempts > 0 || s.cancel_requested || s.admission.is_some())
         {
             return self.settings_status(frozen);
+        }
+        if matches!(frozen.spec().run_as, RunAs::User { .. }) {
+            let Initiator::Human { os_session } = &frozen.spec().request.initiator else {
+                return Err(Error::Denied);
+            };
+            if command.binding.as_ref() != Some(&os_session.session) {
+                return Err(Error::Identity);
+            }
         }
         let policy = self.software_policy()?;
         let permit = local_settings::Permit::new(frozen.clone(), policy, action)?;
@@ -394,20 +407,11 @@ impl Core {
             .app
             .frozen_input(&self.local_caller(), request)
             .map_err(map_app_error)?;
-        if plan.spec().launch.interpreter.profile.id.as_str() != local_settings::PROFILE
-            || metadata::<NativeContextRef>(&plan, "local-settings-context")? != *context
-        {
+        if plan.spec().launch.interpreter.profile.id.as_str() != local_settings::PROFILE {
             return Err(Error::Denied);
         }
-        let Initiator::Human { os_session } = &plan.spec().request.initiator else {
-            return Err(Error::Denied);
-        };
-        if os_session.account.subject.as_str() != command.subject
-            || command.binding.as_ref() != Some(&os_session.session)
-            || os_session.device != self.host.root.device
-        {
-            return Err(Error::Denied);
-        }
+        self.data_context(command, context)?;
+        crate::account_identity::verify_local_owner(&plan, &self.host.root, &command.subject)?;
         Ok(plan)
     }
     fn settings_before(

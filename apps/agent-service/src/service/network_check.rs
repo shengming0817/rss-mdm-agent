@@ -130,19 +130,11 @@ impl Core {
             .map_err(map_app_error)?;
         if plan.spec().launch.interpreter.profile.id.as_str() != PROFILE
             || plan.spec().request.operation.action.as_str() != ACTION
-            || metadata::<NativeContextRef>(&plan, "network-check-context")? != *context
         {
             return Err(Error::Denied);
         }
-        let Initiator::Human { os_session } = &plan.spec().request.initiator else {
-            return Err(Error::Denied);
-        };
-        if os_session.account.subject.as_str() != command.subject
-            || command.binding.as_ref() != Some(&os_session.session)
-            || os_session.device != self.host.root.device
-        {
-            return Err(Error::Denied);
-        }
+        self.data_context(command, context)?;
+        crate::account_identity::verify_local_owner(&plan, &self.host.root, &command.subject)?;
         Ok(plan)
     }
     fn network_status(

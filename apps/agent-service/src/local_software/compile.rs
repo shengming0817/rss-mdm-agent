@@ -11,12 +11,18 @@ pub(crate) const DETECT_ACTION: &str = "local-software.detect";
 pub(crate) fn metadata(
     choice: &LocalSoftwareChoice,
     item: &InstalledSoftware,
-    context: &NativeContextRef,
+    initiator: &Initiator,
     target: Option<String>,
 ) -> Result<BTreeMap<String, InputValue>, Error> {
     [
         ("local-software-choice", serde_json::to_value(choice)),
-        ("local-software-context", serde_json::to_value(context)),
+        (
+            "local-owner",
+            match crate::account_identity::local_owner(initiator)? {
+                InputValue::Literal { value } => Ok(value),
+                _ => return Err(Error::Protocol),
+            },
+        ),
         ("local-software-name", serde_json::to_value(&item.name)),
         (
             "local-software-target-version",
@@ -43,7 +49,6 @@ pub(crate) fn native(
     binding: &execution_app::ServiceBinding,
     actor: &ActorId,
     initiator: Initiator,
-    context: &NativeContextRef,
     policy: &Policy,
     now: u64,
     config: &crate::ExecutionConfig,
@@ -106,7 +111,7 @@ pub(crate) fn native(
         )
         .map_err(crate::error::app_error)?;
     let image = plan::worker_image(config)?;
-    let mut parameters = metadata(choice, item, context, None)?;
+    let mut parameters = metadata(choice, item, &initiator, None)?;
     parameters.insert(
         "local-software-native".into(),
         InputValue::Literal {

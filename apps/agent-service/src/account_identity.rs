@@ -46,3 +46,66 @@ pub(crate) fn windows_authority(
         Ok(None)
     }
 }
+
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LocalOwner {
+    incarnation: String,
+}
+fn incarnation(subject: &str) -> Result<String, Error> {
+    #[cfg(target_os = "macos")]
+    {
+        generated_uid(subject)?.ok_or(Error::Identity)
+    }
+    #[cfg(windows)]
+    {
+        Ok(subject.to_owned())
+    } // The authenticated IPC subject is the native token's full SID.
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        let _ = subject;
+        Err(Error::Unsupported)
+    }
+}
+pub(crate) fn local_owner(
+    initiator: &execution_contract::Initiator,
+) -> Result<execution_contract::InputValue, Error> {
+    use execution_contract::{Initiator, InputValue};
+    let (Initiator::Human { os_session } | Initiator::Ai { os_session, .. }) = initiator else {
+        return Err(Error::Denied);
+    };
+    Ok(InputValue::Literal {
+        value: serde_json::to_value(LocalOwner {
+            incarnation: incarnation(os_session.account.subject.as_str())?,
+        })
+        .map_err(|_| Error::Protocol)?,
+    })
+}
+pub(crate) fn verify_local_owner(
+    plan: &execution_contract::FrozenExecution,
+    binding: &execution_app::ServiceBinding,
+    subject: &str,
+) -> Result<(), Error> {
+    use execution_contract::{Initiator, InputValue};
+    let p = plan.spec();
+    let (Initiator::Human { os_session } | Initiator::Ai { os_session, .. }) = &p.request.initiator
+    else {
+        return Err(Error::Denied);
+    };
+    if p.request.authority != binding.authority
+        || p.request.target.device != binding.device
+        || os_session.device != binding.device
+        || os_session.account.subject.as_str() != subject
+        || os_session.account.platform != crate::backend::plan::platform()?
+    {
+        return Err(Error::Denied);
+    }
+    let Some(InputValue::Literal { value }) = p.request.parameters.get("local-owner") else {
+        return Err(Error::Denied);
+    };
+    let owner: LocalOwner = serde_json::from_value(value.clone()).map_err(|_| Error::Denied)?;
+    if owner.incarnation != incarnation(subject)? {
+        return Err(Error::Identity);
+    }
+    Ok(())
+}

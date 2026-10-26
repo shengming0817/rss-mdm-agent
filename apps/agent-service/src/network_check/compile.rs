@@ -74,10 +74,8 @@ pub(crate) fn prepare(
             },
         ),
         (
-            "network-check-context".into(),
-            InputValue::Literal {
-                value: serde_json::to_value(context).map_err(|_| Error::Protocol)?,
-            },
+            "local-owner".into(),
+            crate::account_identity::local_owner(&initiator)?,
         ),
     ]
     .into();

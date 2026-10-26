@@ -11,7 +11,6 @@ pub(crate) fn prepare(
     binding: &ServiceBinding,
     actor: &ActorId,
     initiator: Initiator,
-    context: &NativeContextRef,
     now: u64,
     config: &crate::ExecutionConfig,
     root: &mut execution_runner::staging::MaterialRoot,
@@ -86,10 +85,8 @@ pub(crate) fn prepare(
             },
         ),
         (
-            "local-settings-context".into(),
-            InputValue::Literal {
-                value: serde_json::to_value(context).map_err(|_| Error::Protocol)?,
-            },
+            "local-owner".into(),
+            crate::account_identity::local_owner(&initiator)?,
         ),
     ]
     .into();

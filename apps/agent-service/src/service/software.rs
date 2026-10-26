@@ -317,14 +317,12 @@ impl Core {
         {
             return Err(Error::Denied);
         }
-        let original: NativeContextRef = parameter(&frozen, "local-software-context")?;
-        if original != *context {
-            return Err(Error::Identity);
-        }
+        crate::account_identity::verify_local_owner(&frozen, &self.host.root, &command.subject)?;
         if mutating
             && (self.stopping
                 || self.host.local_stopped.load(Ordering::Acquire)
-                || command.binding.as_ref() != Some(&session.session))
+                || matches!(frozen.spec().run_as, RunAs::User { .. })
+                    && command.binding.as_ref() != Some(&session.session))
         {
             return Err(Error::Denied);
         }
@@ -444,7 +442,6 @@ impl Core {
                     &self.host.root,
                     &self.host.local_actor,
                     initiator,
-                    context,
                     &policy,
                     self.host.clock.millis()?,
                     &self.config,
