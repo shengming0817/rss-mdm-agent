@@ -3761,7 +3761,7 @@ export interface BackendConfirmation {
    */
   confirmedAtUnixMs: number;
   /**
-   * Exclusive deadline, bounded by the offer, policy and one-minute interaction limit.
+   * Exclusive confirmation deadline before acceptance; it does not revoke an accepted Run.
    */
   expiresAtUnixMs: number;
 }
@@ -4432,7 +4432,7 @@ export interface InterpreterRef {
   profile: VersionedRef;
 }
 /**
- * UTC Unix milliseconds. The host separately validates current time and revocation freshness.
+ * Attempt admission window in UTC Unix milliseconds, independent of the runtime budget.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "ValidityWindow".
@@ -4443,7 +4443,7 @@ export interface ValidityWindow {
    */
   notBeforeUnixMs: number;
   /**
-   * Exclusive validity deadline as UTC Unix milliseconds, strictly after the start.
+   * Exclusive deadline for admitting and first dispatching an attempt.
    */
   expiresAtUnixMs: number;
 }

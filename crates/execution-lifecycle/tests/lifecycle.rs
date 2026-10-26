@@ -908,7 +908,7 @@ fn cancellation_before_start_and_test_mode_cannot_be_bypassed() {
 }
 
 #[test]
-fn never_dispatched_requires_reconciliation_and_unknown_effects_never_retry() {
+fn authoritative_no_dispatch_evidence_settles_delivery_and_unknown_effects_never_retry() {
     let v = verifier(Observation::NeverDispatched {
         total_output_bytes: 0,
     });
@@ -921,9 +921,15 @@ fn never_dispatched_requires_reconciliation_and_unknown_effects_never_retry() {
         1150,
     );
     let cmd = observation_event(&s, "absent", aid("a1"), evidence("absent"));
+    let confirmed = s
+        .evaluate_observation(cmd, 1200, &v)
+        .unwrap()
+        .transition
+        .unwrap();
+    assert_eq!(confirmed.next().phase(), Phase::FailedBeforeDispatch);
     assert_eq!(
-        s.evaluate_observation(cmd, 1200, &v).unwrap_err(),
-        LifecycleError::Transition
+        confirmed.next().directive(1200).unwrap(),
+        Directive::RetryEligible
     );
     let s = observe(
         s,
@@ -1250,18 +1256,35 @@ fn recovery_cannot_erase_dispatch_history() {
         apply(s.clone(), "uncertain", Command::Recover, 1200),
         observe(s, "uncertain", 1200, Observation::Uncertain),
     ] {
-        let cmd = observation_event(&s, "absent", aid("a1"), evidence("absent"));
         assert_eq!(
-            s.evaluate_observation(
+            s.snapshot().attempt.as_ref().unwrap().dispatch,
+            DispatchState::Unknown { dispatched: true }
+        );
+        let cmd = observation_event(&s, "absent", aid("a1"), evidence("absent"));
+        let result = s
+            .evaluate_observation(
                 cmd,
                 1300,
                 &verifier(Observation::NeverDispatched {
-                    total_output_bytes: 0
-                })
+                    total_output_bytes: 0,
+                }),
             )
-            .unwrap_err(),
-            LifecycleError::Transition
+            .unwrap()
+            .transition
+            .unwrap();
+        assert_eq!(result.next().phase(), Phase::FailedBeforeDispatch);
+        assert_eq!(
+            result.next().snapshot().attempt.as_ref().unwrap().dispatch,
+            DispatchState::Unknown { dispatched: true }
         );
+        assert!(Execution::restore(
+            plan(),
+            result.next().snapshot().clone(),
+            Limits {
+                max_snapshot_bytes: MIN_SNAPSHOT_BYTES
+            }
+        )
+        .is_ok());
     }
 }
 

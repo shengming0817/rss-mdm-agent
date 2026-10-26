@@ -2559,10 +2559,10 @@
       },
       "ValidityWindow": {
         "additionalProperties": false,
-        "description": "UTC Unix milliseconds. The host separately validates current time and revocation freshness.",
+        "description": "Attempt admission window in UTC Unix milliseconds, independent of the runtime budget.",
         "properties": {
           "expiresAtUnixMs": {
-            "description": "Exclusive validity deadline as UTC Unix milliseconds, strictly after the start.",
+            "description": "Exclusive deadline for admitting and first dispatching an attempt.",
             "format": "uint64",
             "minimum": 0,
             "type": "integer"

@@ -994,7 +994,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
                 } else {
                     None
                 };
-            let Some(facts) = program.or(observed).or(stored) else {
+            let Some(facts) = observed.or(stored).or(program) else {
                 if attempt.termination.is_none()
                     && (!had_live || capture.as_ref().is_some_and(|f| f.finished))
                     && !matches!(attempt.dispatch, DispatchState::Unknown { .. })

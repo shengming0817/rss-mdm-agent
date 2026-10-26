@@ -430,10 +430,7 @@ impl Execution {
                 total_output_bytes, ..
             }
             | Observation::NeverDispatched { total_output_bytes } => {
-                if a.termination.is_some()
-                    || (matches!(recorded.observation, Observation::NeverDispatched { .. })
-                        && a.dispatch.was_dispatched())
-                {
+                if a.termination.is_some() {
                     return Err(LifecycleError::Transition);
                 }
                 if *total_output_bytes < a.output_bytes {

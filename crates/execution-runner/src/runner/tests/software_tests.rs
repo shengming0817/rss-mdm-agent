@@ -566,9 +566,7 @@ fn native_before_checkpoint_does_not_consume_first_dispatch_deadline() {
     }
     loop {
         let status = app.reconcile(request).unwrap();
-        if let Some(facts) = status.process.filter(|p| p.finished) {
-            assert_eq!(facts.scope, ProcessScope::NotStarted {});
-            assert!(facts.stdout.is_empty());
+        if status.process.is_some_and(|p| p.finished) {
             break;
         }
         assert!(Instant::now() < until);
@@ -577,6 +575,9 @@ fn native_before_checkpoint_does_not_consume_first_dispatch_deadline() {
     let delivery = app
         .service_delivery(request, &Id::new("deadline-delivery").unwrap(), 64)
         .unwrap();
+    let facts = delivery.iter().find_map(|e| e.process.as_ref()).unwrap();
+    assert_eq!(facts.scope, ProcessScope::NotStarted {});
+    assert!(facts.stdout.is_empty());
     let progress = delivery
         .iter()
         .find_map(|e| e.software_progress.as_ref())
