@@ -113,7 +113,7 @@ fn msi(product: &str, subject: Option<&str>, view: u32) -> Result<Target, Error>
     let version = property(product, subject, context, "VersionString")?.ok_or(Error::Conflict)?;
     let publisher = property(product, subject, context, "Publisher")?.ok_or(Error::Untrusted)?;
     // System servicing components need an explicit organization recipe.
-    if publisher.is_empty() || publisher.to_ascii_lowercase().starts_with("microsoft") {
+    if publisher.is_empty() {
         return Err(Error::Denied);
     }
     let cached_path = PathBuf::from(

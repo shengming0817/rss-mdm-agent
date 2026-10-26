@@ -63,6 +63,7 @@ pub(crate) struct Permit {
     plan: FrozenExecution,
     policy: crate::local_permissions::Policy,
     write: bool,
+    section: SettingsSection,
 }
 impl Permit {
     pub(crate) fn new(
@@ -94,10 +95,8 @@ impl Permit {
         action: &Action,
         admission: bool,
     ) -> Result<Self, Error> {
-        policy.current()?;
         if !matches!(plan.spec().request.authority, Authority::Local { .. })
             || plan.spec().launch.interpreter.profile.id.as_str() != PROFILE
-            || plan.spec().policy.revision.as_str() != policy.revision.as_str()
             || !matches!(plan.spec().request.initiator, Initiator::Human { .. })
         {
             return Err(Error::Denied);
@@ -125,13 +124,24 @@ impl Permit {
             plan,
             policy,
             write: action.is_write(),
+            section: action.section(),
         })
     }
     pub(crate) fn verify(&self, plan: &FrozenExecution, now: u64) -> Result<RiskLevel, Error> {
         if plan.digest() != self.plan.digest() || now >= plan.spec().validity.expires_at_unix_ms {
             return Err(Error::Denied);
         }
-        self.policy.current()?;
+        if self.write {
+            let current = self.policy.current()?;
+            if !match self.section {
+                SettingsSection::Display => current.rules.allow_display,
+                SettingsSection::Network => current.rules.allow_proxy,
+                SettingsSection::Power => current.rules.allow_power,
+                _ => false,
+            } {
+                return Err(Error::Denied);
+            }
+        }
         Ok(if self.write {
             RiskLevel::Two
         } else {

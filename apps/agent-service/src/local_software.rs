@@ -20,7 +20,6 @@ pub(crate) struct Permit {
 }
 impl Permit {
     pub(crate) fn new(plan: FrozenExecution, policy: Policy) -> Result<Self, Error> {
-        policy.current()?;
         if !plan
             .spec()
             .policy
@@ -43,6 +42,24 @@ impl Permit {
         if plan.digest() != self.plan.digest() || now >= plan.spec().validity.expires_at_unix_ms {
             return Err(Error::Denied);
         }
-        self.policy.current()
+        let current = self.policy.current()?;
+        let Some(InputValue::Literal { value }) =
+            plan.spec().request.parameters.get("local-software-choice")
+        else {
+            return Err(Error::Denied);
+        };
+        let choice: LocalSoftwareChoice =
+            serde_json::from_value(value.clone()).map_err(|_| Error::Untrusted)?;
+        if !native::allowed(&current.rules, choice.action)
+            || (matches!(
+                choice.action,
+                LocalSoftwareAction::Update | LocalSoftwareAction::Uninstall
+            ) && current
+                .rules
+                .protects(plan.spec().request.operation.resource.id.as_str()))
+        {
+            return Err(Error::Denied);
+        }
+        Ok(())
     }
 }

@@ -147,7 +147,7 @@ pub(crate) fn native(
                         LocalSoftwareAction::Detect => DETECT_ACTION,
                         _ => return Err(Error::Unsupported),
                     })?,
-                    resource: plan::reference(&item.native_id, policy.revision.as_str())?,
+                    resource: plan::reference(&item.native_id, artifact.sha256.as_str())?,
                 },
                 parameters,
             },
@@ -185,10 +185,7 @@ pub(crate) fn native(
                 not_before_unix_ms: now,
                 expires_at_unix_ms: now.checked_add(60_000 + timeout).ok_or(Error::Clock)?,
             },
-            policy: plan::reference(
-                format!("local-software:{}", policy.revision.as_str()),
-                policy.revision.as_str(),
-            )?,
+            policy: plan::reference("local-software:native", "1")?,
         },
         &plan::storage_limits().input,
     )

@@ -25,7 +25,6 @@ const item: InstalledSoftware = {
   coverage: "4".repeat(64),
   reference: {
     query,
-    cursor: { snapshot: "2".repeat(64), offset: 0 },
     installation: "app",
   },
   kind: "application",
@@ -199,7 +198,6 @@ it("an installer exit or unknown effect never removes an installed record; indep
         ...result.prepared.choice,
         software: {
           ...item.reference,
-          cursor: { snapshot: "9".repeat(64), offset: 0 },
         },
       },
     },

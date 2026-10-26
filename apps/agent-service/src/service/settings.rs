@@ -319,7 +319,6 @@ impl Core {
             &self.host.local_actor,
             initiator,
             context,
-            &policy,
             now,
             &self.config,
             &mut self.material_root,

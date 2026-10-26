@@ -85,8 +85,6 @@ export function createSoftware(
     !s.after &&
     !s.page.stale &&
     s.page.collectedAt != null &&
-    s.page.collectedAt * 1000 <= state.now &&
-    state.now - s.page.collectedAt * 1000 <= 300_000 &&
     s.page.quality === "complete" &&
     s.page.enumerationComplete &&
     !s.error;

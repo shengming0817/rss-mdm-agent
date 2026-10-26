@@ -12,7 +12,6 @@ pub(crate) fn prepare(
     actor: &ActorId,
     initiator: Initiator,
     context: &NativeContextRef,
-    policy: &crate::local_permissions::Policy,
     now: u64,
     config: &crate::ExecutionConfig,
     root: &mut execution_runner::staging::MaterialRoot,
@@ -173,10 +172,7 @@ pub(crate) fn prepare(
                 not_before_unix_ms: now,
                 expires_at_unix_ms: now.checked_add(timeout).ok_or(Error::Clock)?,
             },
-            policy: plan::reference(
-                format!("local-settings:{}", policy.revision.as_str()),
-                policy.revision.as_str(),
-            )?,
+            policy: plan::reference("local-settings:native", "1")?,
         },
         &plan::storage_limits().input,
     )

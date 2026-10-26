@@ -78,7 +78,7 @@ impl Core {
         let binding = command.binding.as_ref().ok_or(Error::Denied)?;
         self.data
             .authorize_read(&input.read, &command.subject, binding)?;
-        let (data, snapshot) = self.data.read_page(
+        let (data, _) = self.data.read_page(
             &input.read,
             &command.subject,
             binding,
@@ -97,26 +97,20 @@ impl Core {
         }) {
             return Err(Error::Unsupported);
         }
-        let offset = input.read.after.as_ref().map_or(0, |c| c.offset);
         let policy = self.software_policy().ok();
-        let usable =
-            !data.stale && data.quality == DataQuality::Complete && data.enumeration_complete;
         let coverage = self.data.software_coverage(&data.query, &command.subject)?;
         let mut items = Vec::new();
-        for (index, raw) in data.rows.iter().enumerate() {
+        for raw in &data.rows {
             let Some(row) = installation_row(raw)? else {
                 continue;
             };
             if let Some(mut item) = software_item(
                 row,
                 &data.query,
-                &snapshot,
                 row_coverage(&coverage, raw)?,
-                offset + index as u32,
                 &command.subject,
             )? {
-                item.actions =
-                    software_actions(&item, row, policy.as_ref().map(|p| &p.rules), usable);
+                item.actions = software_actions(&item, row, policy.as_ref().map(|p| &p.rules));
                 items.push(item);
             }
         }
@@ -138,9 +132,7 @@ impl Core {
 pub(super) fn software_item(
     row: &Value,
     query: &QueryRef,
-    snapshot: &Digest,
     coverage: &Digest,
-    offset: u32,
     subject: &str,
 ) -> Result<Option<InstalledSoftware>, Error> {
     let scope = match (text(row, "scope"), text(row, "owner")) {
@@ -163,10 +155,6 @@ pub(super) fn software_item(
     let native_id = text(row, "native_id").ok_or(Error::Untrusted)?.to_owned();
     let reference = SoftwareRef {
         query: query.clone(),
-        cursor: DataCursor {
-            snapshot: snapshot.clone(),
-            offset,
-        },
         installation: plan::id(text(row, "id").ok_or(Error::Untrusted)?)?,
     };
     Ok(Some(InstalledSoftware {
@@ -228,41 +216,80 @@ impl Core {
         origin: &ClientOrigin,
         reference: &SoftwareRef,
     ) -> Result<(InstalledSoftware, Value), Error> {
-        let input = SoftwareRead {
-            read: DataRead {
-                selection: DataSelection::Query {
-                    query: reference.query.clone(),
-                },
-                after: Some(reference.cursor.clone()),
-                limit: 1,
-                max_age_seconds: Some(300),
-            },
-        };
-        let Reply::SoftwarePage { value } = self.read_software(command, context, origin, &input)?
-        else {
-            return Err(Error::Protocol);
-        };
-        if value.stale || value.quality != DataQuality::Complete || !value.enumeration_complete {
-            return Err(Error::Conflict);
+        self.data_context(command, context)?;
+        if matches!(origin, ClientOrigin::Ai {context: ai, ..} if ai != context) {
+            return Err(Error::Identity);
         }
-        let item = value
-            .items
+        let binding = command.binding.as_ref().ok_or(Error::Denied)?;
+        let descriptor = self
+            .local_directory(command)?
             .into_iter()
-            .next()
-            .filter(|v| v.reference == *reference)
-            .ok_or(Error::Conflict)?;
-        let data = self.data.read(
-            &input.read,
-            &command.subject,
-            command.binding.as_ref().ok_or(Error::Denied)?,
-            self.host.clock.millis()? / 1000,
-        )?;
-        let row = data.rows.first().ok_or(Error::NotFound)?;
-        Ok((
-            item,
-            installation_row(row)?.ok_or(Error::Unsupported)?.clone(),
-        ))
+            .find(|d| d.reference == reference.query)
+            .ok_or(Error::Unsupported)?;
+        if !descriptor.domains.iter().any(|d| {
+            matches!(
+                d.as_str(),
+                "software.installations" | "software.receipts" | "software.packages"
+            )
+        }) {
+            return Err(Error::Unsupported);
+        }
+        let coverage = self
+            .data
+            .software_coverage(&reference.query, &command.subject)?;
+        let mut input = DataRead {
+            selection: DataSelection::Query {
+                query: reference.query.clone(),
+            },
+            after: None,
+            limit: 128,
+            max_age_seconds: None,
+        };
+        self.data
+            .authorize_read(&input, &command.subject, binding)?;
+        let mut selected: Option<(InstalledSoftware, Value)> = None;
+        loop {
+            let (data, _) = self.data.read_page(
+                &input,
+                &command.subject,
+                binding,
+                self.host.clock.millis()? / 1000,
+            )?;
+            if data.query != reference.query {
+                return Err(Error::Conflict);
+            }
+            for raw in &data.rows {
+                let Some(row) = installation_row(raw)? else {
+                    continue;
+                };
+                if text(row, "id") != Some(reference.installation.as_str()) {
+                    continue;
+                }
+                let Some(item) = software_item(
+                    row,
+                    &data.query,
+                    row_coverage(&coverage, raw)?,
+                    &command.subject,
+                )?
+                else {
+                    continue;
+                };
+                if let Some((previous, original)) = &selected {
+                    if original != row || previous.coverage != item.coverage {
+                        return Err(Error::Conflict);
+                    }
+                } else {
+                    selected = Some((item, row.clone()));
+                }
+            }
+            let Some(next) = data.next else {
+                break;
+            };
+            input.after = Some(next);
+        }
+        selected.ok_or(Error::NotFound)
     }
+
     fn local_software_input(
         &self,
         command: &Command,
@@ -387,7 +414,7 @@ impl Core {
                 let (item, row) =
                     self.resolve_software(command, context, origin, &choice.software)?;
                 let policy = self.software_policy()?;
-                if policy.rules.protects(&item)
+                if policy.rules.protects(&item.native_id)
                     && matches!(
                         choice.action,
                         LocalSoftwareAction::Update | LocalSoftwareAction::Uninstall
@@ -424,7 +451,6 @@ impl Core {
                     &mut self.material_root,
                     helper,
                 )?;
-                policy.current()?;
                 self.data_context(command, context)?;
                 self.host
                     .materials
@@ -471,12 +497,11 @@ impl Core {
                 let (item, row) =
                     self.resolve_software(command, context, origin, &preview.choice.software)?;
                 let policy = self.software_policy()?;
-                if (policy.rules.protects(&item)
+                if policy.rules.protects(&item.native_id)
                     && matches!(
                         preview.choice.action,
                         LocalSoftwareAction::Update | LocalSoftwareAction::Uninstall
-                    ))
-                    || frozen.spec().policy.revision.as_str() != policy.revision.as_str()
+                    )
                 {
                     return Err(Error::Denied);
                 }
@@ -636,7 +661,6 @@ fn software_actions(
     item: &InstalledSoftware,
     row: &Value,
     rules: Option<&crate::local_permissions::Restrictions>,
-    usable: bool,
 ) -> Vec<SoftwareActionView> {
     let native = match item.kind {
         InstalledSoftwareKind::Application => {
@@ -650,10 +674,7 @@ fn software_actions(
             item.native_id.starts_with('{')
                 && item.native_id.ends_with('}')
                 && Uuid::parse_str(&item.native_id).is_ok()
-                && item
-                    .publisher
-                    .as_ref()
-                    .is_some_and(|p| !p.starts_with("Microsoft"))
+                && item.publisher.is_some()
         }
         InstalledSoftwareKind::Msix => {
             matches!(item.scope, DataScope::User { .. }) && item.origin == "msix.registered"
@@ -668,9 +689,7 @@ fn software_actions(
     ]
     .into_iter()
     .map(|action| {
-        let reason = if !usable {
-            Some(SoftwareBlock::ObservationUnavailable)
-        } else if let Some(rules) = rules {
+        let reason = if let Some(rules) = rules {
             if action == LocalSoftwareAction::Uninstall
                 && item.kind == InstalledSoftwareKind::Application
                 && matches!(item.scope, DataScope::Device)
@@ -679,7 +698,7 @@ fn software_actions(
                 })
             {
                 Some(SoftwareBlock::Unsupported)
-            } else if rules.protects(item)
+            } else if rules.protects(&item.native_id)
                 && matches!(
                     action,
                     LocalSoftwareAction::Update | LocalSoftwareAction::Uninstall
@@ -755,23 +774,21 @@ mod tests {
         assert!(software_item(
             &row,
             &query(),
-            &Digest::new("22".repeat(32)).unwrap(),
             &Digest::new("33".repeat(32)).unwrap(),
-            0,
             "current-user"
         )
         .unwrap()
         .is_none());
     }
     #[test]
-    fn application_reference_freezes_the_snapshot_position_without_accepting_paths_as_input() {
+    fn application_reference_uses_collector_identity_without_accepting_paths_as_input() {
         let row = json!({"id":"installation","native_id":"com.example.app","name":"App","version":"1","scope":"device","owner":"","origin":"application","location":"/Applications/App.app"});
         let snapshot = Digest::new("22".repeat(32)).unwrap();
-        let item = software_item(&row, &query(), &snapshot, &snapshot, 129, "current-user")
+        let item = software_item(&row, &query(), &snapshot, "current-user")
             .unwrap()
             .unwrap();
-        assert_eq!(item.reference.cursor.snapshot, snapshot);
-        assert_eq!(item.reference.cursor.offset, 129);
+        assert_eq!(item.reference.installation.as_str(), "installation");
+        assert_eq!(item.reference.query, query());
         assert_eq!(item.kind, InstalledSoftwareKind::Application);
         assert_eq!(item.scope, DataScope::Device);
         assert!(serde_json::to_string(&item)
@@ -785,9 +802,7 @@ mod tests {
         let item = software_item(
             &row,
             &query(),
-            &Digest::new("22".repeat(32)).unwrap(),
             &Digest::new("33".repeat(32)).unwrap(),
-            0,
             "user",
         )
         .unwrap()

@@ -1,7 +1,6 @@
 //! Protected restrictions on capabilities compiled into the installed service.
 //! ref: rustls rustls/src/verify.rs@0.23.45 (private verification markers).
 use agent_client::Error;
-use execution_contract::*;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 #[cfg(test)]
@@ -61,22 +60,20 @@ impl Restrictions {
         }
         Ok(())
     }
-    pub(crate) fn protects(&self, item: &InstalledSoftware) -> bool {
-        let native = item.native_id.to_ascii_lowercase();
-        native.starts_with("com.apple.")
-            || native == "com.rss.mdmagent"
+    pub(crate) fn protects(&self, native_id: &str) -> bool {
+        let native = native_id.to_ascii_lowercase();
+        native == "com.rss.mdmagent"
             || native == "com.rss-mdm.agent"
             || native.starts_with("rss.mdm.agent_")
             || self
                 .protected
                 .iter()
-                .any(|id| id.eq_ignore_ascii_case(&item.native_id))
+                .any(|id| id.eq_ignore_ascii_case(native_id))
     }
 }
-/// Validated rule contents and their exact revision; only a protected read constructs this value.
+/// Validated restrictions constructed only by a protected read.
 pub(crate) struct Policy {
     pub(crate) rules: Restrictions,
-    pub(crate) revision: Digest,
     pub(crate) path: PathBuf,
     #[cfg(test)]
     fixture: bool,
@@ -93,7 +90,6 @@ impl Policy {
         rules.validate()?;
         Ok(Self {
             rules,
-            revision: crate::collected_data::digest(&bytes)?,
             path: config.policy_file.clone(),
             #[cfg(test)]
             fixture: false,
@@ -110,27 +106,19 @@ impl Policy {
         rules.validate()?;
         Ok(Self {
             rules,
-            revision: crate::collected_data::digest(&bytes)?,
             path: config.policy_file.clone(),
             fixture: true,
         })
     }
-    pub(crate) fn current(&self) -> Result<(), Error> {
+    pub(crate) fn current(&self) -> Result<Self, Error> {
         let config = Config {
             policy_file: self.path.clone(),
         };
         #[cfg(test)]
-        let current = if self.fixture {
-            Self::fixture(&config)
-        } else {
-            Self::open(&config)
-        }?;
-        #[cfg(not(test))]
-        let current = Self::open(&config)?;
-        if current.revision != self.revision {
-            return Err(Error::Conflict);
+        if self.fixture {
+            return Self::fixture(&config);
         }
-        Ok(())
+        Self::open(&config)
     }
 }
 /// Establish the rule file only during explicit protected installation, preserving existing rules.
@@ -149,38 +137,16 @@ pub(crate) fn initialize(config: &Config) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn item(id: &str) -> InstalledSoftware {
-        InstalledSoftware {
-            coverage: Digest::new("4".repeat(64)).unwrap(),
-            reference: SoftwareRef {
-                query: QueryRef {
-                    id: Id::new("query").unwrap(),
-                    revision: Digest::new("11".repeat(32)).unwrap(),
-                },
-                cursor: DataCursor {
-                    snapshot: Digest::new("22".repeat(32)).unwrap(),
-                    offset: 0,
-                },
-                installation: Id::new("installation").unwrap(),
-            },
-            kind: InstalledSoftwareKind::Application,
-            name: "App".into(),
-            version: Some("1.0".into()),
-            native_id: id.into(),
-            origin: "application".into(),
-            scope: DataScope::Device,
-            publisher: Some("TEAM".into()),
-            actions: vec![],
-        }
-    }
+    use execution_contract::LocalSoftwareAction;
+
     #[test]
     fn installation_default_allows_native_removal_but_never_invents_a_recipe_or_update() {
         let r = Restrictions::installation_default();
         r.validate().unwrap();
         assert!(r.allow_native_uninstall);
-        assert!(!r.protects(&item("org.example.app")));
-        assert!(r.protects(&item("com.apple.finder")));
-        assert!(r.protects(&item("com.rss.mdmagent")));
+        assert!(!r.protects("org.example.app"));
+        assert!(!r.protects("com.apple.finder"));
+        assert!(r.protects("com.rss.mdmagent"));
         assert!(!crate::local_software::native::allowed(
             &r,
             LocalSoftwareAction::Update
