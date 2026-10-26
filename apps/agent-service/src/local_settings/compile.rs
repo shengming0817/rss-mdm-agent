@@ -90,22 +90,26 @@ pub(crate) fn prepare(
         ),
     ]
     .into();
-    if action.is_write() {
-        let key = format!(
-            "settings:{}",
-            match action.section() {
-                SettingsSection::Display => "display",
-                SettingsSection::Network => "network",
-                SettingsSection::Power => "power",
-                _ => return Err(Error::Denied),
-            }
-        );
-        parameters.insert(
-            "exclusive-resources".into(),
-            InputValue::Literal {
-                value: serde_json::json!([key]),
+    if let Action::Change { patch, .. } = &action {
+        let key = match patch {
+            // Native display configuration validates and commits the full shared topology.
+            SettingsPatch::Display { .. } => "settings:display-topology".into(),
+            SettingsPatch::Proxy { target, .. } => {
+                if cfg!(windows) {
+                    // WinINet manual proxy preferences belong to the authenticated account.
+                    format!("settings:proxy:{}", crate::collected_data::digest(&crate::account_identity::local_owner(&initiator)?)?.as_str())
+                } else {
+                    format!("settings:proxy:{}", crate::collected_data::digest(target)?.as_str())
+                }
             },
-        );
+            SettingsPatch::Power { target, .. } => {
+                if cfg!(windows) {
+                    // Activating a scheme is shared even when only one AC/DC timeout was edited.
+                    "settings:power-scheme".into()
+                } else { format!("settings:power:{target}") }
+            },
+        };
+        parameters.insert("exclusive-resources".into(), InputValue::Literal { value: serde_json::json!([key]) });
     }
     let frozen = FrozenExecution::freeze(
         ExecutionInput {

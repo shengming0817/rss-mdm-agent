@@ -173,13 +173,7 @@ impl AppHost for EnterpriseHost {
         let permit = self.permit(plan).map_err(|_| denied())?;
         Ok(AdmissionGate {
             execution_gate: ExecutionGate::Direct,
-            valid_until_unix_ms: permit.gate.until().min(
-                self.identity_until
-                    .expires_at()
-                    .and_then(|v| u64::try_from(v).ok())
-                    .and_then(|v| v.checked_mul(1000))
-                    .ok_or(JournalError::Denied)?,
-            ),
+            valid_until_unix_ms: permit.gate.until(),
         })
     }
 }

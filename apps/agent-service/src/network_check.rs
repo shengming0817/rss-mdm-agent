@@ -83,12 +83,12 @@ pub(crate) fn normalize(target: &NetworkTarget) -> Result<NetworkTarget, Error> 
     })
 }
 pub(crate) fn resource(
-    context: &NativeContextRef,
+    initiator: &Initiator,
     target: &NetworkTarget,
 ) -> Result<String, Error> {
     Ok(format!(
         "network-check:{}",
-        crate::collected_data::digest(&(context, target))?.as_str()
+        crate::collected_data::digest(&(crate::account_identity::local_owner(initiator)?, target))?.as_str()
     ))
 }
 fn millis(start: Instant) -> u64 {

@@ -95,7 +95,7 @@ pub(crate) fn compile(
             profile: reference("native-software-sequence", "1")?,
             artifact: image.artifact,
         },
-        argv: vec![],
+        argv: vec![LaunchArg::ArtifactPath {}],
         artifact_encoding: ArtifactEncoding::Utf8,
         stdin: StandardInput::Closed {},
         output: OutputSpec {

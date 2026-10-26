@@ -11,7 +11,6 @@ pub(crate) fn prepare(
     binding: &ServiceBinding,
     actor: &ActorId,
     initiator: Initiator,
-    context: &NativeContextRef,
     now: u64,
     config: &crate::ExecutionConfig,
     root: &mut execution_runner::staging::MaterialRoot,
@@ -82,7 +81,7 @@ pub(crate) fn prepare(
     parameters.insert(
         "exclusive-resources".into(),
         InputValue::Literal {
-            value: serde_json::json!([resource(context, &target)?]),
+            value: serde_json::json!([resource(&initiator, &target)?]),
         },
     );
     let frozen = FrozenExecution::freeze(

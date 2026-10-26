@@ -498,9 +498,10 @@ impl Deployment {
             self.execution
                 .interpreters
                 .iter()
-                .any(|i| i.profile == profile)
+                .any(|i| i.profile == profile && i.image.verify(&i.image.path).is_ok())
         };
         for manager in &self.execution.managers {
+            if manager.image.verify(&manager.image.path).is_err() { continue; }
             match manager.executor {
                 M::Msi if cfg!(windows) && has(wire::ExecutorProfile::PowerShell7) => {
                     values.extend([C::SoftwareMsiSystemV1, C::SoftwareMsiUserV1])
@@ -523,7 +524,7 @@ impl Deployment {
             .execution
             .interpreters
             .iter()
-            .any(|i| i.profile == profile)
+            .any(|i| i.profile == profile && i.image.verify(&i.image.path).is_ok())
         {
             values.extend(if cfg!(windows) {
                 [
@@ -559,7 +560,7 @@ impl Deployment {
                 .execution
                 .managers
                 .iter()
-                .any(|m| m.executor == M::PackageInstaller)
+                .any(|m| m.executor == M::PackageInstaller && m.image.verify(&m.image.path).is_ok())
             {
                 values.push(C::SoftwareDmgPkgSystemV1);
             }
@@ -843,7 +844,13 @@ pub(crate) mod tests {
     #[test]
     fn software_capability_requires_its_interpreter() {
         let mut deployment = deployment();
-        let image = deployment.service.clone();
+        #[cfg(target_os = "macos")]
+        let path = std::path::PathBuf::from("/bin/sh");
+        #[cfg(windows)]
+        let path = std::path::PathBuf::from(std::env::var("SystemRoot").unwrap()).join("System32/cmd.exe");
+        use sha2::{Digest as _, Sha256};
+        let image = installation_security::Artifact { sha256: format!("{:x}", Sha256::digest(std::fs::read(&path).unwrap())), path, cdhash: None };
+        deployment.execution.managers[0].image = image.clone();
         assert!(!deployment.capabilities().iter().any(|v| v.is_software()));
         deployment.execution.interpreters.push(crate::Interpreter {
             profile: if cfg!(windows) {
@@ -858,5 +865,7 @@ pub(crate) mod tests {
         } else {
             wire::Capability::SoftwarePkgSystemV1
         }));
+        deployment.execution.interpreters.last_mut().unwrap().image.sha256 = "0".repeat(64);
+        assert!(!deployment.capabilities().iter().any(|v| v.is_software()));
     }
 }

@@ -30,7 +30,12 @@ pub(crate) async fn submit<S: IdentityProvider>(
     {
         return Err(Error::Denied);
     }
-    service.core.available = None;
+    let offered_request = super::request_id(&offer)?;
+    if service.core.available.as_ref().is_some_and(|available| available.request == offered_request) {
+        service.core.available = None;
+        service.core.available_risk = None;
+        service.core.available_start = None;
+    }
     let needs_user = match offer.payload() {
         wire::TaskPayload::DeviceAccess(_) => false,
         wire::TaskPayload::Unmanage(_) => return Err(Error::Unsupported),

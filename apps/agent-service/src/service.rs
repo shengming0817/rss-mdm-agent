@@ -187,15 +187,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         if config.interpreters.len() > 8 || config.processes == 0 || config.processes > 128 {
             return Err(Error::Configuration);
         }
-        let mut profiles = Vec::new();
-        for interpreter in &config.interpreters {
-            interpreter
-                .image
-                .verify(&interpreter.image.path)
-                .map_err(|_| Error::Untrusted)?;
-            profiles.push(interpreter.profile);
-        }
-        client.set_profiles(profiles)?;
+        client.set_profiles(available_profiles(&config))?;
         platform_private_storage::validate(&config.work_root)?;
         let (root, local_actor) = crate::local_execution::binding(
             client.configuration().service_id,
@@ -503,7 +495,6 @@ impl<S: IdentityProvider> DeviceService<S> {
         }
         self.update_identity_gate()?;
         if !self.core.host.identity_ready() {
-            self.core.revoke_preparations()?;
             self.core.reconcile()?;
             return Ok(());
         }
@@ -551,36 +542,6 @@ impl<S: IdentityProvider> DeviceService<S> {
                 let task = offer.task_id();
                 self.release_waiting();
                 self.abandon(task, commands).await?;
-            }
-        }
-        // Self-service consent already lives in the original journal. A retired ingress
-        // must not discard accepted Device work. Dispatch verifies its original OS session.
-        if let Some((offer, _)) = &self.waiting {
-            if is_policy_offer(offer) {
-                let offer = self.client.retained_offer(offer.task_id())?;
-                match self.bind_policy_offer(&offer) {
-                    Ok(selection) => self.core.selected = Some(selection),
-                    Err(error) => {
-                        if retryable_submission(error) {
-                            return Err(error);
-                        }
-                        let task = offer.task_id();
-                        self.core.transition(
-                            &backend::request_id(&offer)?,
-                            BackendRequestState::Failed,
-                            Some(if matches!(error, Error::Identity | Error::Denied) {
-                                BackendRequestFailure::Revoked
-                            } else if matches!(error, Error::Expired) {
-                                BackendRequestFailure::Expired
-                            } else {
-                                BackendRequestFailure::PreparationFailed
-                            }),
-                        )?;
-                        self.release_waiting();
-                        self.abandon(task, commands).await?;
-                        return Err(error);
-                    }
-                }
             }
         }
         if self.core.selected.is_some() {
@@ -705,6 +666,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             })
         });
         self.client.set_execution_context(context)?;
+        self.client.set_profiles(available_profiles(&self.core.config))?;
         let interpreters = self.core.config.interpreters.clone();
         let environment = network(
             crate::collection_environment::observe(&interpreters),
@@ -718,7 +680,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             Err(e) => {
                 if matches!(
                     e,
-                    Error::CredentialRevoked | Error::CredentialRetired | Error::CertificateExpired
+                    Error::CredentialRevoked | Error::CredentialRetired
                 ) {
                     self.core.host.revoked.store(true, Ordering::Release);
                     self.core
@@ -779,30 +741,25 @@ impl<S: IdentityProvider> DeviceService<S> {
             }) {
                 return Ok(());
             }
-            if self.waiting.is_some() {
-                return Err(Error::Capacity);
-            }
             if self.client.bound_request(offer.task_id())?.is_some() {
                 return Ok(());
             }
-            self.core.available_risk = backend::gate::TrustedRisk::from_offer(&offer);
-            self.core.available_start = backend::gate::TrustedStart::from_offer(&offer);
-            self.core.available = Some(offered(&offer)?);
             network(self.client.received(&offer), &mut self.core, commands).await?;
             let materials = network(self.client.prepare(&offer), &mut self.core, commands).await?;
             if matches!(offer.payload(), wire::TaskPayload::DeviceAccess(_)) {
-                self.waiting = Some((offer, materials));
+                if self.waiting.is_none() {
+                    self.core.available_risk = backend::gate::TrustedRisk::from_offer(&offer);
+                    self.core.available_start = backend::gate::TrustedStart::from_offer(&offer);
+                    self.core.available = Some(offered(&offer)?);
+                    self.waiting = Some((offer, materials));
+                }
                 return Ok(());
             }
             if is_policy_offer(&offer) {
-                self.waiting = Some((offer, materials));
-                // The next owner iteration resumes automatically from the original consent.
-                return Ok(());
+                self.submit_policy_offer(offer, materials, commands).await?;
+            } else {
+                backend::submit(self, offer, materials, None, commands).await?;
             }
-            backend::submit(self, offer, materials, None, commands).await?;
-            self.core.available = None;
-            self.core.available_risk = None;
-            self.core.available_start = None;
         }
         Ok(())
     }
@@ -1068,25 +1025,18 @@ impl<S: IdentityProvider> DeviceService<S> {
         {
             let offer = self.client.retained_offer(task)?;
             if self.policy_intent(&offer)?.is_some() {
-                if self.waiting.is_some() {
-                    // Capacity delays this original intent; it never revokes consent.
-                    return Ok(());
-                }
-                // Recover only the already recorded consent and verified original offer.
-                // Binding and Start still recheck the original OS session and current device.
                 network(self.client.received(&offer), &mut self.core, commands).await?;
-                let materials =
-                    network(self.client.prepare(&offer), &mut self.core, commands).await?;
-                self.core.available_risk = backend::gate::TrustedRisk::from_offer(&offer);
-                self.core.available_start = backend::gate::TrustedStart::from_offer(&offer);
-                self.core.available = Some(offered(&offer)?);
-                self.waiting = Some((offer, materials));
+                let materials = network(self.client.prepare(&offer), &mut self.core, commands).await?;
+                self.submit_policy_offer(offer, materials, commands).await?;
             } else {
                 network(self.client.received(&offer), &mut self.core, commands).await?;
                 let materials =
                     network(self.client.prepare(&offer), &mut self.core, commands).await?;
                 if matches!(offer.payload(), wire::TaskPayload::DeviceAccess(_)) {
                     if self.waiting.is_none() {
+                        self.core.available_risk = backend::gate::TrustedRisk::from_offer(&offer);
+                        self.core.available_start = backend::gate::TrustedStart::from_offer(&offer);
+                        self.core.available = Some(offered(&offer)?);
                         self.waiting = Some((offer, materials));
                     }
                 } else {
@@ -1157,6 +1107,20 @@ impl<S: IdentityProvider> DeviceService<S> {
             return Err(error);
         }
         result
+    }
+    async fn submit_policy_offer(
+        &mut self,
+        offer: Offer,
+        materials: agent_client::Materials,
+        commands: &mut tokio::sync::mpsc::Receiver<Command>,
+    ) -> Result<(), Error> {
+        let request = backend::request_id(&offer)?;
+        let selection = match self.bind_policy_offer(&offer) {
+            Ok(selection) => selection,
+            Err(error) => return self.submission_result(&request, Err(error)).map(|_| ()),
+        };
+        let result = backend::submit(self, offer, materials, Some(selection), commands).await;
+        self.submission_result(&request, result).map(|_| ())
     }
     fn policy_intent(&self, offer: &Offer) -> Result<Option<BackendRequest>, Error> {
         let request = backend::request_id(offer)?;
@@ -1357,38 +1321,17 @@ impl<S: IdentityProvider> DeviceService<S> {
                 return Ok(());
             }
         }
-        match self.client.runtime_deadline().and_then(|until| {
-            if self.core.host.identity_until.expires_at() == Some(until) {
-                Ok(until)
-            } else {
-                Err(Error::Identity)
-            }
-        }) {
-            Ok(_) => {
-                self.core.host.revoked.store(false, Ordering::Release);
-            }
-            Err(_) => {
-                self.core.host.revoked.store(true, Ordering::Release);
-                if let Err(error) = self.core.revoke_preparations() {
-                    eprintln!("agent_revoke_preparation: {error}");
-                }
-                self.release_waiting();
-                if let Err(error) = self.core.app.stop_active_matching(128, |plan| {
-                    matches!(
-                        plan.spec().request.authority,
-                        execution_contract::Authority::Enterprise { .. }
-                    )
-                }) {
-                    eprintln!("agent_revoke_stop: {error}");
-                }
-            }
+        self.core.host.revoked.store(self.client.runtime_revoked()?, Ordering::Release);
+        if self.core.host.revoked.load(Ordering::Acquire) {
+            self.core.revoke_preparations()?;
+            self.release_waiting();
+            self.core.enforce_identity_gate()?;
         }
         Ok(())
     }
     fn drive_error(&mut self, error: Error) {
         eprintln!("agent_drive: {error}");
         if let Err(error) = self.update_identity_gate() {
-            self.core.host.revoked.store(true, Ordering::Release);
             eprintln!("agent_identity_sync: {error}");
         }
     }
@@ -1413,6 +1356,13 @@ impl<S: IdentityProvider> DeviceService<S> {
         self.core.reconcile()?;
         telemetry.map(|_| ())
     }
+}
+
+fn available_profiles(config: &ExecutionConfig) -> Vec<wire::ExecutorProfile> {
+    config.interpreters.iter()
+        .filter(|interpreter| interpreter.image.verify(&interpreter.image.path).is_ok())
+        .map(|interpreter| interpreter.profile)
+        .collect()
 }
 
 fn retryable_submission(error: Error) -> bool {
@@ -1474,7 +1424,7 @@ impl Core {
         }
     }
     fn enforce_identity_gate(&mut self) -> Result<(), Error> {
-        if !self.host.identity_ready() {
+        if self.host.revoked.load(Ordering::Acquire) || self.host.identity_until.revoked() {
             self.host.revoked.store(true, Ordering::Release);
             self.revoke_preparations()?;
             self.app

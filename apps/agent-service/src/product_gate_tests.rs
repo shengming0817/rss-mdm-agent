@@ -2318,14 +2318,16 @@ async fn fresh_revocation_and_crl_expiry_close_admission_while_pending_status_wa
                 core.reconcile()?;
                 if data.lock().unwrap().status_waiting && !identity_ready {
                     observed = true;
-                    assert!(core.host.revoked.load(Ordering::Acquire));
+                    assert_eq!(core.host.revoked.load(Ordering::Acquire), revocation);
                     let retained = core
                         .app
                         .backend_request(&core.caller(), original.action.request())
                         .unwrap()
                         .unwrap();
-                    assert_eq!(retained.state, BackendRequestState::Failed);
-                    assert_eq!(retained.failure, Some(BackendRequestFailure::Revoked));
+                    if revocation {
+                        assert_eq!(retained.state, BackendRequestState::Failed);
+                        assert_eq!(retained.failure, Some(BackendRequestFailure::Revoked));
+                    } else { assert_eq!(retained, original); }
                     assert_eq!(retained.action, original.action);
                     pause.notify_one();
                 }
@@ -2338,7 +2340,7 @@ async fn fresh_revocation_and_crl_expiry_close_admission_while_pending_status_wa
         );
         assert!(result.is_err());
         c.service.drive_error(result.unwrap_err());
-        assert!(c.service.waiting.is_none());
+        assert_eq!(c.service.waiting.is_none(), revocation);
         assert_eq!(c.service.client.registration().unwrap(), binding);
         assert!(matches!(
             c.service.core.start_task(c.selection(false)),
@@ -5503,7 +5505,6 @@ async fn network_check_replay_and_cancel_keep_the_original_sqlite_plan_and_login
         &c.service.core.host.root,
         &c.service.core.host.local_actor,
         Initiator::Human { os_session },
-        &c.context(),
         c.service.core.host.clock.millis().unwrap(),
         &c.service.core.config,
         &mut c.service.core.material_root,

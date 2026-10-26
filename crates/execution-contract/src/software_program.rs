@@ -207,8 +207,17 @@ impl SoftwareProgram {
     /// Agent serialization keys, deliberately independent of tenant and package-name aliases.
     /// These claims never promise exclusion of unrelated OS writers.
     pub fn lock_keys(&self) -> Vec<String> {
+        if self.intent == SoftwareOperation::Detect { return Vec::new(); }
         let mut keys = std::collections::BTreeSet::new();
         for step in &self.steps {
+            if let SoftwareFormat::DmgApp { target_name, .. } = &step.format {
+                let (run_as, _) = step.detection.context();
+                keys.insert(macos_application_resource(match run_as {
+                    RunAs::User { account } => Some(account.subject.as_str()),
+                    RunAs::System { .. } => None,
+                }, target_name));
+                continue;
+            }
             keys.insert(format!(
                 "manager-{}",
                 match step.format.adapter() {
@@ -269,4 +278,11 @@ pub struct SoftwareWorkerResult {
     pub closed: bool,
     /// Captured native tool diagnostics within the original budget.
     pub diagnostics: String,
+}
+
+/// Shared claim for one Applications child, across local removal and enterprise install/removal.
+/// Case folding conservatively covers case-insensitive native directories.
+pub fn macos_application_resource(subject: Option<&str>, name: &str) -> String {
+    use sha2::{Digest as _, Sha256};
+    format!("macos-app:{:x}", Sha256::digest(serde_json::to_vec(&(subject, name.to_lowercase())).expect("string tuple serializes")))
 }
