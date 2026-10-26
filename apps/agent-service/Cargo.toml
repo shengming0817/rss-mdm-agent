@@ -27,8 +27,6 @@ agent-client = { path = "../../crates/agent-client" }
 execution-interaction = { path = "../../crates/execution-interaction" }
 execution-app = { path = "../../crates/execution-app" }
 execution-contract = { path = "../../crates/execution-contract" }
-execution-admission = { path = "../../crates/execution-admission" }
-execution-approval = { path = "../../crates/execution-approval" }
 execution-capability = { path = "../../crates/execution-capability" }
 execution-lifecycle = { path = "../../crates/execution-lifecycle" }
 execution-sqlite = { path = "../../crates/execution-sqlite" }

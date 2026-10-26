@@ -45,6 +45,15 @@ pub fn verify_task<'a>(
     signed: &'a SignedTask,
     context: &TaskVerification<'_>,
 ) -> Result<VerifiedTask<'a>, Error> {
+    if context.now >= signed.payload.expires_at() {
+        return Err(Error::Expired);
+    }
+    verify_task_binding(signed, context)
+}
+pub(crate) fn verify_task_binding<'a>(
+    signed: &'a SignedTask,
+    context: &TaskVerification<'_>,
+) -> Result<VerifiedTask<'a>, Error> {
     let p = &signed.payload;
     let (tenant, device, registration, generation) = match p {
         TaskPayload::DeviceAccess(v) => (
@@ -92,7 +101,6 @@ pub fn verify_task<'a>(
     };
     if signed.key_id != context.key_id
         || context.now < 0
-        || context.now >= p.expires_at()
         || p.permit() != context.permit
         || tenant != context.tenant_id
         || device != context.device_id

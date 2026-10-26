@@ -543,14 +543,16 @@ class EvidenceTests(unittest.TestCase):
             proof['records'][0]['process']=None
             with self.assertRaises(AssertionError): acceptance.validate_journal_completion(proof,completion)
 
-    def test_software_probe_uses_directory_choice_and_original_policy_binding(self):
+    def test_software_probe_uses_exact_selector_and_original_policy_binding(self):
         context=dict(id='native',generation='login')
-        item=dict(policyId='policy',policyRevision=2,policyVersion='version')
+        item=dict(policyId='policy')
         choice={}
         class Probe:
             def request(self, request):
                 if request['method']=='bindContext': kind,value='contextBound',context
-                elif request['method']=='policyDirectory': kind,value='policyDirectory',dict(items=[item])
+                elif request['method']=='resolvePolicy':
+                    self.outer.assertEqual(request['selector'],dict(kind='id',id='policy'))
+                    kind,value='policyResolved',item
                 else:
                     self.outer.assertEqual(request['method'],'invokePolicy')
                     self.outer.assertEqual(request['context'],context)
@@ -563,7 +565,7 @@ class EvidenceTests(unittest.TestCase):
         actual, selected=acceptance.native_policy_choice(probe,command,'package','receipt')
         self.assertEqual(actual,context);self.assertEqual(selected,choice)
         self.assertEqual(calls,['software-catalog'])
-        self.assertEqual(selected['policyRevision'],2)
+        self.assertEqual(selected['policyId'],'policy')
 
     def test_failure_cleanup_waits_for_the_original_parent_scope_confirmation(self):
         for frame, expected in [(dict(method='finish',processScopeEmpty=True),True),

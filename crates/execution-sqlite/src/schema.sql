@@ -34,37 +34,6 @@ CREATE TABLE interaction_keys (
     command_id TEXT PRIMARY KEY, scope TEXT NOT NULL,
     operation_id TEXT NOT NULL REFERENCES receipts(operation_id) DEFERRABLE INITIALLY DEFERRED
 );
-CREATE TABLE trust_heads (
-    scope TEXT PRIMARY KEY, revision INTEGER NOT NULL CHECK(revision>=1),
-    authorization_revision BLOB NOT NULL, approval_revision BLOB NOT NULL,
-    approval_digest TEXT NOT NULL, fresh_until INTEGER NOT NULL CHECK(fresh_until>=0)
-);
-CREATE TABLE trust_versions (
-    scope TEXT NOT NULL, kind TEXT NOT NULL, version BLOB NOT NULL,
-    PRIMARY KEY(scope,kind,version)
-);
-CREATE TABLE approvals (
-    scope TEXT NOT NULL, record_id TEXT NOT NULL, version TEXT NOT NULL, definition BLOB NOT NULL,
-    PRIMARY KEY(scope,record_id,version)
-);
-CREATE TABLE approval_heads (
-    scope TEXT NOT NULL, record_id TEXT NOT NULL, version TEXT NOT NULL,
-    status TEXT NOT NULL CHECK(status IN ('active','revoked','unknown')),
-    PRIMARY KEY(scope,record_id),
-    FOREIGN KEY(scope,record_id,version) REFERENCES approvals(scope,record_id,version)
-);
-CREATE TABLE approval_usage (
-    scope TEXT NOT NULL, record_id TEXT NOT NULL, version TEXT NOT NULL,
-    used INTEGER NOT NULL CHECK(used>=0), revision INTEGER NOT NULL CHECK(revision>=0),
-    PRIMARY KEY(scope,record_id,version),
-    FOREIGN KEY(scope,record_id,version) REFERENCES approvals(scope,record_id,version)
-);
-CREATE TABLE approval_consumptions (
-    attempt_id TEXT NOT NULL REFERENCES attempts(attempt_id), scope TEXT NOT NULL,
-    record_id TEXT NOT NULL, version TEXT NOT NULL,
-    PRIMARY KEY(attempt_id,scope,record_id,version),
-    FOREIGN KEY(scope,record_id,version) REFERENCES approval_usage(scope,record_id,version)
-);
 CREATE TABLE confirmations (
     scope TEXT NOT NULL, consumer TEXT NOT NULL,
     sequence INTEGER NOT NULL REFERENCES receipts(sequence),

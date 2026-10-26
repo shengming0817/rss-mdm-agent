@@ -112,9 +112,9 @@ impl Store {
             return Err(Error::Conflict);
         }
         if expected.is_some_and(|p| {
-            !(p.action.same_choice(&next.action) || p.finalizes_draft(next))
+            !(p.action.same_choice(&next.action) || p.prepares_call(next))
                 || p.trigger != next.trigger
-                || p.risk != next.risk
+                || (p.risk != next.risk && !p.prepares_call(next))
                 || (p.confirmation != next.confirmation
                     && !(matches!(p.state, S::Draft | S::AwaitingConfirmation)
                         && next.state == S::Ready

@@ -26,15 +26,12 @@ impl Budget {
         }
     }
 }
-pub(super) fn execute(input: &Input, q: &w::NativeQuery, deadline: i64) -> w::NativeQueryResult {
+pub(super) fn execute(input: &Input, q: &w::NativeQuery) -> w::NativeQueryResult {
     let time = now().unwrap_or(1);
     let budget = Budget {
         output: q.budget.output_bytes as usize,
         start: Instant::now(),
-        timeout: Duration::from_secs(
-            u64::from(q.budget.timeout_seconds)
-                .min(u64::try_from(deadline.saturating_sub(time)).unwrap_or(0)),
-        ),
+        timeout: Duration::from_secs(u64::from(q.budget.timeout_seconds)),
     };
     let mut rows = Rows::new(q, time);
     let status = (|| {

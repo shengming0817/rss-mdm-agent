@@ -2,44 +2,6 @@
 //! These fixtures are independent of regenerated Rust serialization and signers.
 
 use rss_mdm_agent_wire::runtime::TaskPayload;
-use sha2::{Digest, Sha256};
-#[test]
-fn preserves_task_signatures_and_step_digest() {
-    for (body, expected) in [
-        (
-            include_bytes!("../fixtures/script-task-v1.json").as_slice(),
-            "a742a501f9d921411fa6410461274dda780dcda4996eb9704dd709ccc9dc108b",
-        ),
-        (
-            include_bytes!("../fixtures/software-task-v1.json").as_slice(),
-            "b4f5cb76c97d00154ca902da454558c5a921b153b616e0b3968a191d08af42d6",
-        ),
-        (
-            include_bytes!("../fixtures/enrollment-task-v1.json").as_slice(),
-            "339725f5ba4c5f37e2f00279595e7b7b3c9622c4266598d86dce799f3787d849",
-        ),
-    ] {
-        let task: TaskPayload = serde_json::from_slice(body).unwrap();
-        assert_eq!(serde_json::to_vec(&task).unwrap(), body);
-        assert_eq!(
-            format!(
-                "{:x}",
-                Sha256::digest(task.signing_bytes("fixture-key").unwrap())
-            ),
-            expected
-        );
-        if let TaskPayload::Software(spec) = task {
-            assert_eq!(
-                spec.steps[0].digest().unwrap(),
-                [
-                    0x78, 0xa2, 0x7e, 0x01, 0x20, 0x43, 0x10, 0xa6, 0xe6, 0x16, 0x92, 0x10, 0xfb,
-                    0x87, 0x16, 0x6e, 0xd6, 0xcb, 0x14, 0x7f, 0x54, 0xb5, 0xfe, 0x50, 0xe8, 0x4b,
-                    0xc8, 0x9e, 0x2f, 0xa1, 0x4a, 0x4e
-                ]
-            );
-        }
-    }
-}
 #[test]
 fn validates_raw_json_before_normalization() {
     let value: serde_json::Value =

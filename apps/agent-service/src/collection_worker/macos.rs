@@ -164,17 +164,7 @@ pub(super) fn execute(
     q: &w::NativeQuery,
 ) -> std::result::Result<w::NativeQueryResult, Error> {
     let time = now()?;
-    let millis = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_err(|_| Error::Clock)?
-        .as_millis() as u64;
-    let remaining = Duration::from_millis(
-        input
-            .finish_by_unix_ms
-            .saturating_sub(millis)
-            .saturating_sub(250),
-    )
-    .min(Duration::from_secs(q.budget.timeout_seconds.into()));
+    let remaining = Duration::from_secs(q.budget.timeout_seconds.into());
     let native_cap = super::macos_supervisor::remaining_budget()?.saturating_sub(1);
     let context = Context {
         input,

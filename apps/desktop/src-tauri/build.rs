@@ -103,6 +103,7 @@ fn main() {
         tauri_build::AppManifest::new().commands(&[
             "personal_vault",
             "self_service_policy_directory",
+            "self_service_policy_resolve",
             "self_service_policy_invoke",
             "self_service_policy_confirm",
             "ai_operation_submit",

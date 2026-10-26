@@ -10,7 +10,7 @@ pub fn test_store_limits() -> Limits {
             max_snapshot_bytes: 16_384,
             max_lifetime_ms: 60_000,
         },
-        max_approvals: 128,
+
         max_record_bytes: 131_072,
         max_receipts: 10_000,
         max_database_pages: 32_768,

@@ -158,9 +158,6 @@ pub(super) fn execute(
         {
             break;
         }
-        if crate::wall()? / 1000 >= task.deadline as u64 {
-            return Err(Error::Expired);
-        }
         std::thread::sleep(std::time::Duration::from_millis(200));
     }
     let receipts: Vec<w::CredentialReceipt> =

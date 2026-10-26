@@ -229,7 +229,7 @@ impl ExecutionServicePort for TestService {
         _: LocalSoftwareProposal,
         _: CancellationToken,
     ) -> Result<execution_contract::LocalSoftwarePrepared, ServiceError> {
-        self.prepare_operation(serde_json::from_value(serde_json::json!({"scene":"policy.parameters.v1","tool":"policy_fixture","locator":{"after":null},"parameters":{}})).unwrap(),CancellationToken::new()).await?;
+        self.prepare_operation(serde_json::from_value(serde_json::json!({"scene":"policy.parameters.v1","selector":{"kind":"id","id":"00000000-0000-4000-a000-000000000001"},"parameters":{}})).unwrap(),CancellationToken::new()).await?;
         Err(ServiceError::Denied)
     }
     async fn software_status(
@@ -255,7 +255,7 @@ impl ExecutionServicePort for TestService {
     }
     async fn invoke_policy(
         &self,
-        _: &str,
+        _: rss_mdm_agent_wire::runtime::CapabilitySelector,
         _: PolicyToolInput,
         _: CancellationToken,
     ) -> Result<execution_contract::BackendRequest, ServiceError> {

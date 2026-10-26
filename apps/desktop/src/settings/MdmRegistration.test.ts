@@ -52,7 +52,7 @@ it("only permits a new request when unenrolled without an unfinished original", 
         state: "ready",
         action: {
           kind: "policy",
-          directory: { task: { kind: "enrollment" } },
+          task: { kind: "enrollment" },
           choice: { request: "original" },
         },
       },

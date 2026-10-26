@@ -116,7 +116,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         &self,
         offer: &Offer,
         materials: &Materials,
-        app: &ExecutionApp<H, R, J>,
+        _app: &ExecutionApp<H, R, J>,
         caller: &RequestContext,
         plan: &FrozenExecution,
     ) -> Result<PreparedExecution, Error> {
@@ -255,7 +255,6 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         {
             return Err(Error::Untrusted);
         }
-        app.prepare_execution(caller, plan).map_err(map_app_error)?;
         Ok(PreparedExecution {
             plan: plan.clone(),
             caller: caller.clone(),
@@ -305,13 +304,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
             .map_err(|_| Error::Clock)?
             .checked_mul(1000)
             .ok_or(Error::Clock)?;
-        // Start expiry bounds the first dispatch. The signed runtime budget remains available
-        // after admission; treating the short Start window as that budget truncates valid work.
-        if plan.spec().validity.expires_at_unix_ms
-            > expiry
-                .checked_add(plan.spec().budget.total_timeout_ms)
-                .ok_or(Error::Clock)?
-        {
+        if plan.spec().validity.expires_at_unix_ms > expiry {
             return Err(Error::Expired);
         }
         materials.validate_start(&start)?;
@@ -1225,6 +1218,7 @@ fn software_result(
             after = before.clone();
         }
         results.push(wire::SoftwareStepResult {
+            step_id: step.step_id,
             index: index.try_into().map_err(|_| Error::Capacity)?,
             step_digest: step.digest()?,
             target: step.target.clone(),

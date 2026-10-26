@@ -81,11 +81,6 @@ pub(crate) fn validate(
                 if a.output_bytes != final_output {
                     return Err(bad());
                 }
-                if matches!(t.observation, Observation::NeverDispatched { .. })
-                    && a.dispatch.was_dispatched()
-                {
-                    return Err(bad());
-                }
             }
             if let Some(o) = &a.assessment {
                 if !matches!(o.observation, Observation::Effect { .. })

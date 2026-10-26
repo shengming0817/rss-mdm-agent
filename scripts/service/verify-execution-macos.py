@@ -329,16 +329,14 @@ def native_policy_choice(probe, command, package, receipt, user=False, validity_
             expiresAtUnixMs=int((time.time()+3600)*1000))))
         assert_native_reply(bound, 'contextBound')
         context = probe.policy_context = bound['envelope']['reply']['value']
-    directory = probe.request(dict(method='policyDirectory', context=context, after=None, origin=dict(kind='desktop')))
-    assert_native_reply(directory, 'policyDirectory')
-    items = [item for item in directory['envelope']['reply']['value']['items']
-        if item['policyId'] == catalog['policyId']]
-    assert len(items) == 1, 'published Policy missing from the authorized directory'
-    item = items[0]
-    choice = dict(request=str(uuid.uuid4()), policyId=item['policyId'],
-        policyRevision=item['policyRevision'], policyVersion=item['policyVersion'], parameters={})
+    resolved = probe.request(dict(method='resolvePolicy', context=context,
+        selector=dict(kind='id', id=catalog['policyId']), origin=dict(kind='desktop')))
+    assert_native_reply(resolved, 'policyResolved')
+    item = resolved['envelope']['reply']['value']
+    assert item['policyId'] == catalog['policyId'], 'resolved a different Policy'
+    choice = dict(request=str(uuid.uuid4()), policyId=item['policyId'], parameters={})
     prepared = probe.request(dict(method='invokePolicy', context=context, choice=choice,
-        locator=dict(after=None), origin=dict(kind='desktop')))
+        origin=dict(kind='desktop')))
     assert_native_reply(prepared, 'policyRequest')
     assert prepared['envelope']['reply']['value']['action']['choice'] == choice
     return context, choice

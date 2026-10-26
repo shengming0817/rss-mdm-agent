@@ -84,6 +84,7 @@ export function createFixturePorts() {
     return response.json();
   }
   const selfServicePort: SelfServicePort = {
+    policy_resolve: (input) => rpc("policy_resolve", input),
     policy_directory: (input) => rpc("policy_directory", input),
     policy_invoke: (input) => rpc("policy_invoke", input),
     policy_confirm: (input) => rpc("policy_confirm", input),

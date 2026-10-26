@@ -18,10 +18,10 @@ type OutputQuality = ProcessFacts["quality"];
 const props = defineProps<{ details: ExecutionTaskDetails; now: number }>();
 const validity = computed(() =>
   props.now < props.details.action.validity.notBeforeUnixMs
-    ? "动作尚未生效"
+    ? "首启窗口尚未开始"
     : props.now >= props.details.action.validity.expiresAtUnixMs
-      ? "动作已过期"
-      : "动作在有效期内",
+      ? "首启窗口已结束"
+      : "当前处于首启窗口",
 );
 const instant = (ms: number) =>
   ms >= -8_640_000_000_000_000 && ms <= 8_640_000_000_000_000
@@ -267,9 +267,7 @@ const text = (value: unknown) => JSON.stringify(value, null, 2);
     <p class="plan-validity">
       {{ validity }}（按本机时间判断；实际准入由执行服务核验）。
     </p>
-    <p v-if="validity !== '动作在有效期内'">
-      这是已读取的冻结动作与历史阶段；请重新读取详情，必要时重新发起新请求。不要据此重复派发。
-    </p>
+    <p>已启动任务继续使用原累计运行预算；恢复不重新计时。</p>
     <p v-if="details.status.mode === 'test'">
       测试结果不代表真实设备变更或生产接线完成。
     </p>
@@ -343,7 +341,7 @@ const text = (value: unknown) => JSON.stringify(value, null, 2);
         <dd>
           <pre>{{ text(details.action.sessionRequirement) }}</pre>
         </dd>
-        <dt>有效期</dt>
+        <dt>首次派发窗口</dt>
         <dd>
           生效：{{ instant(details.action.validity.notBeforeUnixMs) }}<br />
           到期（不含）：{{ instant(details.action.validity.expiresAtUnixMs) }}

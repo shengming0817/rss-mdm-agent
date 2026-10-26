@@ -194,15 +194,17 @@ async fn capture_recovery(case: u8) {
     input.request.operation.resource =
         super::plan::reference("backend-resource", super::plan::hex(&task.resource_digest))
             .unwrap();
-    input.validity.expires_at_unix_ms =
-        task.expires_at as u64 * 1000 + input.budget.total_timeout_ms;
+    input.validity.expires_at_unix_ms = task.expires_at as u64 * 1000;
     input.request.parameters.insert(
         "collection-tools".into(),
         InputValue::Literal {
             value: serde_json::json!({}),
         },
     );
-    let read: crate::collection_worker::ReadPlan = (**task).clone().try_into().unwrap();
+    let mut normalized = (**task).clone();
+    normalized.permit = w::TaskPermit::Offer;
+    normalized.expires_at = normalized.deadline;
+    let read: crate::collection_worker::ReadPlan = normalized.try_into().unwrap();
     input.request.parameters.insert(
         "collection-read".into(),
         InputValue::Literal {
@@ -211,7 +213,6 @@ async fn capture_recovery(case: u8) {
     );
     let bytes = serde_json::to_vec(&crate::collection_worker::Input {
         read,
-        finish_by_unix_ms: input.validity.not_before_unix_ms + input.budget.total_timeout_ms,
         image_sha256: input.launch.interpreter.artifact.sha256.clone(),
         run_as: input.run_as.clone(),
         session: input.session_requirement.clone(),

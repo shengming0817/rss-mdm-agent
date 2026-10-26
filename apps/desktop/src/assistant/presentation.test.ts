@@ -100,32 +100,29 @@ it("preserves bounded escaped unknown question content without enabling actions"
   expect(wrapper.text().length).toBeLessThan(9000);
   wrapper.unmount();
 });
-it("labels validity as a local clock estimate and does not imply an expired approval remains actionable", async () => {
+it("labels the first-dispatch window separately from the runtime budget", async () => {
   const wrapper = mount(ExecutionDetails, {
     props: {
-      details: fixtures.approvalRequired as ExecutionTaskDetails,
+      details: fixtures.running as ExecutionTaskDetails,
       now: 500,
     },
   });
-  expect(wrapper.text()).toContain("动作尚未生效");
+  expect(wrapper.text()).toContain("首启窗口尚未开始");
   await wrapper.setProps({ now: 1000 });
-  expect(wrapper.text()).toContain("动作在有效期内");
+  expect(wrapper.text()).toContain("当前处于首启窗口");
   await wrapper.setProps({ now: 2000 });
-  expect(wrapper.text()).toContain("动作已过期");
-  expect(wrapper.text()).toContain("执行服务记录：需要管理员批准");
-  expect(wrapper.text()).not.toContain("等待管理员批准");
+  expect(wrapper.text()).toContain("首启窗口已结束");
+  expect(wrapper.text()).toContain("已启动任务继续使用原累计运行预算");
   expect(wrapper.text()).toContain("按本机时间判断");
   wrapper.unmount();
 });
 it("keeps valid contract timestamps beyond Date's range readable", () => {
-  const details = structuredClone(
-    fixtures.approvalRequired,
-  ) as ExecutionTaskDetails;
+  const details = structuredClone(fixtures.running) as ExecutionTaskDetails;
   details.action.validity.expiresAtUnixMs = Number.MAX_SAFE_INTEGER;
   const wrapper = mount(ExecutionDetails, { props: { details, now: 2000 } });
   expect(wrapper.text()).toContain("9007199254740991 Unix ms");
   expect(wrapper.text()).toContain("超出本机日期格式范围");
-  expect(wrapper.text()).toContain("动作在有效期内");
+  expect(wrapper.text()).toContain("当前处于首启窗口");
   wrapper.unmount();
 });
 it.each(["prompt", "cancel", "respond"] as const)(

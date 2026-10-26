@@ -28,6 +28,10 @@ pub(crate) fn compile(
         return Err(Error::Untrusted);
     }
     task.validate()?;
+    let mut normalized = task.clone();
+    normalized.permit = w::TaskPermit::Offer;
+    normalized.expires_at = normalized.deadline;
+    let task = &normalized;
     materials.validate_offer(offer)?;
     if !matches!(
         (task.platform, plan::platform()?),
@@ -62,7 +66,6 @@ pub(crate) fn compile(
             root_key: "access-root",
             root: root.clone(),
             deadline: task.deadline,
-            expires_at: task.expires_at,
             definition_digest: task.definition_digest,
             output: crate::access_worker::OUTPUT_BYTES,
             stdin: if controlled {
@@ -94,6 +97,11 @@ pub(crate) fn compile(
     Ok((plan, artifacts))
 }
 pub(crate) fn verify_input(plan: &FrozenExecution, task: &w::AccessTaskSpec) -> Result<(), Error> {
+    let mut normalized = task.clone();
+    normalized.permit = w::TaskPermit::Offer;
+    normalized.expires_at = normalized.deadline;
+    let task = &normalized;
+
     let root = crate::access_worker::plan_root(plan)?;
     let installation: uuid::Uuid = match plan.spec().request.parameters.get("access-installation") {
         Some(InputValue::Literal { value }) => {
@@ -138,24 +146,12 @@ impl execution_lifecycle::ObservationVerifier for EffectEvidence<'_> {
         {
             return Err(E::Untrusted);
         }
-        let mut task = self.task.clone();
-        task.permit = w::TaskPermit::Start;
-        let expires = plan
-            .spec()
-            .validity
-            .expires_at_unix_ms
-            .checked_sub(plan.spec().budget.total_timeout_ms)
-            .ok_or(E::Untrusted)?;
-        if !expires.is_multiple_of(1000) {
-            return Err(E::Untrusted);
-        }
-        task.expires_at = i64::try_from(expires / 1000).map_err(|_| E::Untrusted)?;
-        verify_input(plan, &task).map_err(|_| E::Untrusted)?;
+        verify_input(plan, self.task).map_err(|_| E::Untrusted)?;
         let root = crate::access_worker::plan_root(plan).map_err(|_| E::Untrusted)?;
-        let result = crate::access_worker::stored_result(&root, &task)
+        let result = crate::access_worker::stored_result(&root, self.task)
             .map_err(|_| E::Untrusted)?
             .ok_or(E::Unavailable)?;
-        let assessment = if crate::access_worker::complete(&task, &result.effect) {
+        let assessment = if crate::access_worker::complete(self.task, &result.effect) {
             A::Satisfied
         } else if matches!(result.effect, w::AccessEffect::Failed { .. }) {
             A::NoEffect

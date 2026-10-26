@@ -225,7 +225,8 @@ export function createSoftware(
       const page = await data.query_directory({
         after,
         limit: 128,
-        policyPage: null,
+        refreshPolicies: false,
+        policyCursor: null,
       });
       if (!active || call !== epoch) return;
       if (

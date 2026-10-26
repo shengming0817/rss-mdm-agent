@@ -555,7 +555,7 @@ impl ExecutionHandle {
             .request(Request::InvokePolicy {
                 context: self.context_ref()?,
                 choice: input.choice,
-                locator: input.locator,
+
                 origin: self.origin.clone(),
             })
             .await
@@ -565,9 +565,34 @@ impl ExecutionHandle {
             _ => Err(bad(Error::OutcomeUnknown)),
         }
     }
+    pub async fn policy_resolve(
+        &self,
+        selector: rss_mdm_agent_wire::runtime::CapabilitySelector,
+    ) -> ui::Result<rss_mdm_agent_wire::runtime::SelfServiceDirectoryItem> {
+        self.resolve_policy(selector)
+            .await
+            .map_err(|_| bad(Error::Denied))
+    }
+    async fn resolve_policy(
+        &self,
+        selector: rss_mdm_agent_wire::runtime::CapabilitySelector,
+    ) -> Result<rss_mdm_agent_wire::runtime::SelfServiceDirectoryItem, mcp::ServiceError> {
+        match self
+            .request(Request::ResolvePolicy {
+                context: self.context_ref().map_err(|_| mcp::ServiceError::Denied)?,
+                selector,
+                origin: self.origin.clone(),
+            })
+            .await
+            .map_err(|_| mcp::ServiceError::Unavailable)?
+        {
+            Reply::PolicyResolved { value } => Ok(*value),
+            _ => Err(mcp::ServiceError::Denied),
+        }
+    }
     async fn policy_call(
         &self,
-        name: &str,
+        selector: rss_mdm_agent_wire::runtime::CapabilitySelector,
         input: mcp::PolicyToolInput,
         draft: bool,
     ) -> Result<BackendRequest, mcp::ServiceError> {
@@ -580,26 +605,10 @@ impl ExecutionHandle {
                 .to_string(),
         )
         .map_err(|_| mcp::ServiceError::InvalidInput)?;
-        let page = self
-            .policy_directory(ui::PolicyDirectoryQuery {
-                after: input.locator.after.clone(),
-            })
-            .await
-            .map_err(|_| mcp::ServiceError::Unavailable)?;
-        let item = page
-            .items
-            .into_iter()
-            .find(|item| mcp::policy_tool_name(item) == name)
-            .ok_or(mcp::ServiceError::Conflict)?;
-        mcp::policy_tool(&item, &input.locator)?;
         let invocation = PolicyInvocation {
-            locator: input.locator,
             choice: PolicyChoice {
                 request,
-                policy_id: Id::new(item.policy_id.to_string())
-                    .map_err(|_| mcp::ServiceError::InvalidInput)?,
-                policy_revision: item.policy_revision,
-                policy_version: Id::new(item.policy_version.to_string())
+                policy_id: Id::new(self.resolve_policy(selector).await?.policy_id.to_string())
                     .map_err(|_| mcp::ServiceError::InvalidInput)?,
                 parameters: input.parameters.into_iter().collect(),
             },
@@ -616,7 +625,7 @@ impl ExecutionHandle {
             .request(Request::PreparePolicy {
                 context: self.context_ref()?,
                 choice: input.choice,
-                locator: input.locator,
+
                 origin: self.origin.clone(),
             })
             .await
@@ -817,9 +826,9 @@ fn operation(s: ExecutionStatus) -> mcp::OperationStatus {
         } else {
             match s.phase {
                 TaskPhase::Accepted => mcp::OperationPhase::Accepted,
-                TaskPhase::Waiting
-                | TaskPhase::ApprovalRequired
-                | TaskPhase::ConfirmationRequired => mcp::OperationPhase::Waiting,
+                TaskPhase::Waiting | TaskPhase::ConfirmationRequired => {
+                    mcp::OperationPhase::Waiting
+                }
                 TaskPhase::Running => mcp::OperationPhase::Running,
                 TaskPhase::OutcomeUnknown => mcp::OperationPhase::OutcomeUnknown,
                 TaskPhase::ExecutionEnded => mcp::OperationPhase::ExecutionEnded,
@@ -983,16 +992,18 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
         if !matches!(self.origin, ClientOrigin::Ai { .. }) {
             return Err(mcp::ServiceError::Denied);
         }
-        let locator = PolicyLocator {
-            after: input.after.clone(),
-        };
         let page = self
             .policy_directory(ui::PolicyDirectoryQuery { after: input.after })
             .await
             .map_err(|_| mcp::ServiceError::Unavailable)?;
         let mut tools = Vec::new();
         for item in page.items {
-            match mcp::policy_tool(&item, &locator) {
+            match mcp::policy_tool(
+                &serde_json::from_value(
+                    serde_json::to_value(item).map_err(|_| mcp::ServiceError::InvalidInput)?,
+                )
+                .map_err(|_| mcp::ServiceError::InvalidInput)?,
+            ) {
                 Ok(tool) => tools.push(tool),
                 Err(mcp::ServiceError::InvalidInput) => (), // Unsupported Resource schemas are not executable tools.
                 Err(error) => return Err(error),
@@ -1000,30 +1011,26 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
         }
         Ok(mcp::PolicyToolPage {
             tools,
-            next: page
-                .next_cursor
-                .map(|id| Id::new(id.to_string()))
-                .transpose()
-                .map_err(|_| mcp::ServiceError::InvalidInput)?,
+            next: page.next_cursor,
         })
     }
     async fn invoke_policy(
         &self,
-        name: &str,
+        selector: rss_mdm_agent_wire::runtime::CapabilitySelector,
         input: mcp::PolicyToolInput,
         _: CancellationToken,
     ) -> Result<BackendRequest, mcp::ServiceError> {
-        self.policy_call(name, input, false).await
+        self.policy_call(selector, input, false).await
     }
     async fn prepare_operation(
         &self,
         input: mcp::OperationProposal,
         _: CancellationToken,
     ) -> Result<BackendRequest, mcp::ServiceError> {
+        let item = self.resolve_policy(input.selector).await?;
         self.policy_call(
-            &input.tool,
+            rss_mdm_agent_wire::runtime::CapabilitySelector::Id { id: item.policy_id },
             mcp::PolicyToolInput {
-                locator: input.locator,
                 parameters: input.parameters,
             },
             true,

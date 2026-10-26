@@ -141,15 +141,13 @@ fn uuid(value: &str) -> Result<Uuid, Error> {
     }
     Ok(parsed)
 }
-// Generic operation cards have no secret reference owner. Reject unresolved schema
-// references as well: they cannot prove that nested values are safe to persist/display.
+// Generic operation cards have no secret reference owner. Secret fields remain unsupported;
+// local schema references are handled by the existing validator.
 fn operation_parameters_supported(directory: &wire::SelfServiceDirectoryItem) -> Result<(), Error> {
     fn unsafe_schema(value: &serde_json::Value) -> bool {
         match value {
             serde_json::Value::Object(fields) => {
-                fields.contains_key("$ref")
-                    || fields.contains_key("$dynamicRef")
-                    || fields.get("writeOnly") == Some(&serde_json::Value::Bool(true))
+                fields.get("writeOnly") == Some(&serde_json::Value::Bool(true))
                     || fields.get("format").and_then(|v| v.as_str()) == Some("password")
                     || fields.values().any(unsafe_schema)
             }
@@ -291,18 +289,12 @@ impl Core {
         if login.device != self.host.binding.device || login.account.platform != plan::platform()? {
             return Err(Error::Identity);
         }
-        let PreparedAction::Policy {
-            directory, access, ..
-        } = &record.action
-        else {
+        let PreparedAction::Policy { access, .. } = &record.action else {
             return Err(Error::Protocol);
         };
-        let (user, session_binding) = match (&directory.subject, access) {
-            (wire::SelfServiceSubject::Device {}, PolicyAccess::Device {}) => return Ok(None),
-            (wire::SelfServiceSubject::User { user }, PolicyAccess::User { session_binding }) => {
-                (user, session_binding)
-            }
-            _ => return Err(Error::Identity),
+        let session_binding = match access {
+            PolicyAccess::Device {} => return Ok(None),
+            PolicyAccess::User { session_binding } => session_binding,
         };
         let scope = SessionKey::new(
             login.account.subject.as_str().to_owned(),
@@ -313,7 +305,7 @@ impl Core {
             .values()
             .find(|bound| bound.scope == scope && &bound.context == session_binding)
             .ok_or(Error::Identity)?;
-        if self.fences.current(&scope)? != current.epoch || current.user() != Some(user) {
+        if self.fences.current(&scope)? != current.epoch {
             return Err(Error::Identity);
         }
         if self.host.clock.millis()? >= current.expires_at_unix_ms {
@@ -407,6 +399,16 @@ impl Core {
         &self,
         record: &BackendRequest,
     ) -> Result<Option<(Arc<Fences>, SessionKey, u64)>, Error> {
+        if matches!(
+            record.action,
+            PreparedAction::Policy {
+                run_id: Some(_),
+                ..
+            }
+        ) {
+            return Ok(None);
+        }
+
         if matches!(record.action, PreparedAction::Policy { .. }) {
             return Ok(self
                 .current_policy_context(record)?
@@ -446,6 +448,15 @@ impl Core {
     pub(crate) fn current_policy_access(&self, record: &BackendRequest) -> Result<(), Error> {
         if self.host.revoked.load(Ordering::Acquire) || self.stopping {
             return Err(Error::Denied);
+        }
+        if matches!(
+            record.action,
+            PreparedAction::Policy {
+                run_id: Some(_),
+                ..
+            }
+        ) {
+            return Ok(());
         }
         if matches!(record.action, PreparedAction::Policy { .. }) {
             self.current_policy_context(record)?;
@@ -562,80 +573,69 @@ impl<S: IdentityProvider> DeviceService<S> {
         &mut self,
         bound: &NativeContext,
         origin: &ClientOrigin,
-        after: Option<Id>,
+        after: Option<String>,
         commands: &mut tokio::sync::mpsc::Receiver<Command>,
     ) -> Result<wire::SelfServiceDirectoryResponse, Error> {
         let query = wire::SelfServiceDirectory {
             source: source(origin),
-            after: after.map(|id| uuid(id.as_str())).transpose()?,
+            filter: None,
+            sort: None,
+            fields: None,
+            limit: Some(64),
+            cursor: after,
         };
-        let mut directory = network(
-            self.client.self_service_directory(None, &query),
+        network(
+            self.client
+                .self_service_directory(bound.credential().map(|v| v.as_str()), &query),
+            &mut self.core,
+            commands,
+        )
+        .await
+    }
+    async fn resolve_policy(
+        &mut self,
+        bound: &NativeContext,
+        origin: &ClientOrigin,
+        selector: wire::CapabilitySelector,
+        commands: &mut tokio::sync::mpsc::Receiver<Command>,
+    ) -> Result<wire::SelfServiceDirectoryItem, Error> {
+        let query = wire::SelfServiceResolve {
+            source: source(origin),
+            selector,
+        };
+        let item = network(
+            self.client
+                .resolve_self_service(bound.credential().map(|v| v.as_str()), &query),
             &mut self.core,
             commands,
         )
         .await?;
-        if directory
-            .items
-            .iter()
-            .any(|item| !matches!(item.subject, wire::SelfServiceSubject::Device {}))
-        {
+        if item.capability.tenant != self.client.configuration().tenant {
             return Err(Error::Untrusted);
         }
-        if let Some(secret) = bound.credential() {
-            match network(
-                self.client
-                    .self_service_directory(Some(secret.as_str()), &query),
-                &mut self.core,
-                commands,
-            )
-            .await
-            {
-                // Backend paginates published IDs before qualification; both projections
-                // share a cursor. A concurrent publication may change it: retry on refresh.
-                Ok(page) if page.next_cursor == directory.next_cursor => {
-                    for item in page.items {
-                        if let wire::SelfServiceSubject::User { user } = &item.subject {
-                            if Some(user) != bound.user() {
-                                return Err(Error::Untrusted);
-                            }
-                            directory
-                                .items
-                                .retain(|existing| existing.policy_id != item.policy_id);
-                            directory.items.push(item);
-                        }
-                    }
-                    directory.items.sort_by_key(|item| item.policy_id);
-                }
-                Ok(_) => return Err(Error::Conflict),
-                Err(error) => return Err(error),
+        if let wire::SelfServiceSubject::User { user } = &item.subject {
+            if Some(user) != bound.user() {
+                return Err(Error::Untrusted);
             }
         }
-        Ok(directory)
+        Ok(item)
     }
     async fn current_policy(
         &mut self,
         bound: &NativeContext,
         origin: &ClientOrigin,
         choice: &execution_contract::PolicyChoice,
-        locator: &execution_contract::PolicyLocator,
         commands: &mut tokio::sync::mpsc::Receiver<Command>,
     ) -> Result<wire::SelfServiceDirectoryItem, Error> {
-        let item = self
-            .policy_directory(bound, origin, locator.after.clone(), commands)
-            .await?
-            .items
-            .into_iter()
-            .find(|item| item.policy_id.to_string() == choice.policy_id.as_str())
-            .ok_or(Error::Conflict)?;
-        if item.policy_revision != choice.policy_revision
-            || item.policy_version.to_string() != choice.policy_version.as_str()
-            || !item.self_service.published
-            || (source(origin) == wire::SelfServiceCaller::Ai && !item.self_service.allow_ai)
-        {
-            return Err(Error::Conflict);
-        }
-        Ok(item)
+        self.resolve_policy(
+            bound,
+            origin,
+            wire::CapabilitySelector::Id {
+                id: uuid(choice.policy_id.as_str())?,
+            },
+            commands,
+        )
+        .await
     }
     async fn policy_command(
         &mut self,
@@ -912,6 +912,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         let bound = self.core.context(command)?.clone();
         let expected = match request {
             Request::PolicyDirectory { context, .. }
+            | Request::ResolvePolicy { context, .. }
             | Request::InvokePolicy { context, .. }
             | Request::PreparePolicy { context, .. }
             | Request::SubmitPolicy { context, .. }
@@ -923,6 +924,21 @@ impl<S: IdentityProvider> DeviceService<S> {
             return Err(Error::Identity);
         }
         let result = match request {
+            Request::ResolvePolicy {
+                selector, origin, ..
+            } => {
+                self.core.require_origin_context(
+                    &command.subject,
+                    command.binding.as_ref().ok_or(Error::Denied)?,
+                    origin,
+                )?;
+                Reply::PolicyResolved {
+                    value: Box::new(
+                        self.resolve_policy(&bound, origin, selector.clone(), commands)
+                            .await?,
+                    ),
+                }
+            }
             Request::PolicyDirectory { after, origin, .. } => {
                 self.core.require_origin_context(
                     &command.subject,
@@ -935,18 +951,8 @@ impl<S: IdentityProvider> DeviceService<S> {
                         .await?,
                 }
             }
-            Request::InvokePolicy {
-                choice,
-                locator,
-                origin,
-                ..
-            }
-            | Request::PreparePolicy {
-                choice,
-                locator,
-                origin,
-                ..
-            } => {
+            Request::InvokePolicy { choice, origin, .. }
+            | Request::PreparePolicy { choice, origin, .. } => {
                 let draft = matches!(request, Request::PreparePolicy { .. });
                 if draft && !matches!(origin, ClientOrigin::Ai { .. }) {
                     return Err(Error::Denied);
@@ -978,11 +984,9 @@ impl<S: IdentityProvider> DeviceService<S> {
                     }
                 } else {
                     let directory = self
-                        .current_policy(&bound, origin, choice, locator, commands)
+                        .current_policy(&bound, origin, choice, commands)
                         .await?;
-                    if directory.policy_revision != choice.policy_revision
-                        || directory.policy_version.to_string() != choice.policy_version.as_str()
-                        || !directory.self_service.published
+                    if !directory.self_service.published
                         || (source(origin) == wire::SelfServiceCaller::Ai
                             && !directory.self_service.allow_ai)
                     {
@@ -1012,29 +1016,21 @@ impl<S: IdentityProvider> DeviceService<S> {
                     }) {
                         return Err(Error::Protocol);
                     }
-                    let now = self.core.host.clock.millis()?;
                     let (access, until) = match &directory.subject {
                         wire::SelfServiceSubject::Device {} => {
-                            (PolicyAccess::Device {}, now.saturating_add(60_000))
+                            (PolicyAccess::Device {}, bound.expires_at_unix_ms)
                         }
                         wire::SelfServiceSubject::User { user } if Some(user) == bound.user() => (
                             PolicyAccess::User {
                                 session_binding: bound.context.clone(),
                             },
-                            now.saturating_add(60_000).min(bound.expires_at_unix_ms),
+                            bound.expires_at_unix_ms,
                         ),
                         _ => return Err(Error::Identity),
                     };
                     let risk = if source(origin) == wire::SelfServiceCaller::Ai {
                         Some(ExecutionRisk {
-                            level: match if matches!(
-                                directory.task,
-                                wire::SelfServiceTask::Software { .. }
-                            ) {
-                                2
-                            } else {
-                                directory.self_service.risk_level
-                            } {
+                            level: match directory.self_service.risk_level {
                                 1 => RiskLevel::One,
                                 2 => RiskLevel::Two,
                                 _ => return Err(Error::Denied),
@@ -1053,8 +1049,8 @@ impl<S: IdentityProvider> DeviceService<S> {
                     let record = BackendRequest {
                         action: PreparedAction::Policy {
                             choice: choice.clone(),
-                            locator: locator.clone(),
-                            directory: Box::new(directory),
+                            task: Box::new(directory.task),
+                            presentation: directory.self_service.presentation,
                             run_id: None,
                             offer: None,
                             access,
@@ -1099,13 +1095,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                     return Err(Error::Denied);
                 }
                 self.core.current_policy_access(&previous)?;
-                let PreparedAction::Policy {
-                    choice,
-                    locator,
-                    directory,
-                    ..
-                } = &previous.action
-                else {
+                let PreparedAction::Policy { choice, .. } = &previous.action else {
                     return Err(Error::Denied);
                 };
                 if previous.state != BackendRequestState::Draft {
@@ -1152,15 +1142,8 @@ impl<S: IdentityProvider> DeviceService<S> {
                         &origin,
                     )?;
                     let current = self
-                        .current_policy(&bound, &origin, choice, locator, commands)
+                        .current_policy(&bound, &origin, choice, commands)
                         .await?;
-                    if serde_json::to_value(&current).map_err(|_| Error::Protocol)?
-                        != serde_json::to_value(directory).map_err(|_| Error::Protocol)?
-                        || !current.self_service.published
-                        || !current.self_service.allow_ai
-                    {
-                        return Err(Error::Conflict);
-                    }
                     operation_parameters_supported(&current)?;
                     parameters(&current, &input.parameters)?;
                     // Network waits can revoke the context; recheck before the atomic freeze.
@@ -1174,8 +1157,29 @@ impl<S: IdentityProvider> DeviceService<S> {
                     let mut next = previous.clone();
                     next.revision += 1;
                     next.state = BackendRequestState::Ready;
-                    if let PreparedAction::Policy { choice, .. } = &mut next.action {
+                    if let PreparedAction::Policy {
+                        choice,
+                        task,
+                        presentation,
+                        ..
+                    } = &mut next.action
+                    {
                         choice.parameters = input.parameters.clone();
+                        **task = current.task.clone();
+                        *presentation = current.self_service.presentation.clone();
+                    }
+                    if let Some(risk) = &mut next.risk {
+                        risk.level = match current.self_service.risk_level {
+                            1 => RiskLevel::One,
+                            2 => RiskLevel::Two,
+                            _ => return Err(Error::Denied),
+                        };
+                        risk.source = RiskSource::Policy {
+                            policy: plan::reference(
+                                current.policy_id.to_string(),
+                                current.policy_revision.to_string(),
+                            )?,
+                        };
                     }
                     if next
                         .risk
@@ -1233,23 +1237,13 @@ impl<S: IdentityProvider> DeviceService<S> {
                     });
                 }
                 let origin = policy_origin(&previous)?;
-                let PreparedAction::Policy {
-                    choice,
-                    locator,
-                    directory,
-                    ..
-                } = &previous.action
-                else {
+                let PreparedAction::Policy { choice, .. } = &previous.action else {
                     return Err(Error::Denied);
                 };
                 let current = self
-                    .current_policy(&bound, &origin, choice, locator, commands)
+                    .current_policy(&bound, &origin, choice, commands)
                     .await?;
-                if serde_json::to_value(&current).map_err(|_| Error::Protocol)?
-                    != serde_json::to_value(directory).map_err(|_| Error::Protocol)?
-                {
-                    return Err(Error::Conflict);
-                }
+                parameters(&current, &choice.parameters)?;
                 self.core.context(command)?;
                 self.core.current_policy_access(&previous)?;
                 let BackendTrigger::Ai { os_session, .. } = &previous.trigger else {
@@ -1266,6 +1260,26 @@ impl<S: IdentityProvider> DeviceService<S> {
                 let mut next = previous.clone();
                 next.revision += 1;
                 next.state = BackendRequestState::Ready;
+                if let PreparedAction::Policy {
+                    task, presentation, ..
+                } = &mut next.action
+                {
+                    **task = current.task;
+                    *presentation = current.self_service.presentation;
+                }
+                if let Some(risk) = &mut next.risk {
+                    risk.level = match current.self_service.risk_level {
+                        1 => RiskLevel::One,
+                        2 => RiskLevel::Two,
+                        _ => return Err(Error::Denied),
+                    };
+                    risk.source = RiskSource::Policy {
+                        policy: plan::reference(
+                            current.policy_id.to_string(),
+                            current.policy_revision.to_string(),
+                        )?,
+                    };
+                }
                 next.confirmation = Some(execution_contract::BackendConfirmation {
                     os_session: os_session.clone(),
                     confirmed_at_unix_ms: now,
@@ -1293,7 +1307,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 else {
                     return Ok(Reply::PolicyAbsent);
                 };
-                let PreparedAction::Policy { directory, .. } = &previous.action else {
+                let PreparedAction::Policy { access, .. } = &previous.action else {
                     return Err(Error::Denied);
                 };
                 if trigger_subject(&previous.trigger) != Some(command.subject.as_str())
@@ -1302,11 +1316,9 @@ impl<S: IdentityProvider> DeviceService<S> {
                     return Err(Error::Denied);
                 }
                 self.core.policy_context(&previous)?;
-                let secret = match &directory.subject {
-                    wire::SelfServiceSubject::Device {} => None,
-                    wire::SelfServiceSubject::User { .. } => {
-                        bound.credential().map(|secret| secret.as_str())
-                    }
+                let secret = match access {
+                    PolicyAccess::Device {} => None,
+                    PolicyAccess::User { .. } => bound.credential().map(|secret| secret.as_str()),
                 };
                 if matches!(
                     previous.state,
@@ -1382,7 +1394,8 @@ impl<S: IdentityProvider> DeviceService<S> {
         }
         let PreparedAction::Policy {
             choice,
-            directory,
+            task,
+            access,
             run_id,
             ..
         } = &record.action
@@ -1392,16 +1405,14 @@ impl<S: IdentityProvider> DeviceService<S> {
         if run_id.is_some() {
             return Ok(record);
         }
-        if matches!(directory.task, wire::SelfServiceTask::Enrollment { .. })
+        if matches!(task.as_ref(), wire::SelfServiceTask::Enrollment { .. })
             && self.core.mdm.state != wire::MdmEnrollmentState::Unenrolled
         {
             return Err(Error::Denied);
         }
-        let secret = match &directory.subject {
-            wire::SelfServiceSubject::Device {} => None,
-            wire::SelfServiceSubject::User { .. } => {
-                Some(bound.credential().ok_or(Error::Identity)?.as_str())
-            }
+        let secret = match access {
+            PolicyAccess::Device {} => None,
+            PolicyAccess::User { .. } => Some(bound.credential().ok_or(Error::Identity)?.as_str()),
         };
         if record.state == BackendRequestState::Submitting {
             match network(
@@ -1423,8 +1434,6 @@ impl<S: IdentityProvider> DeviceService<S> {
         let input = wire::SelfServiceInvoke {
             operation_id: uuid(choice.request.as_str())?,
             policy_id: uuid(choice.policy_id.as_str())?,
-            policy_revision: choice.policy_revision,
-            policy_version: uuid(choice.policy_version.as_str())?,
             source: match record.trigger {
                 BackendTrigger::Ai { .. } => wire::SelfServiceCaller::Ai,
                 _ => wire::SelfServiceCaller::Human,
@@ -1497,14 +1506,9 @@ impl<S: IdentityProvider> DeviceService<S> {
         };
         let wire::TaskAuthorization::SelfService {
             request_id,
-            subject,
             source,
             policy_id,
-            policy_revision,
-            policy_version,
-            allow_ai,
-            risk_level,
-            confirmed,
+            ..
         } = authorization
         else {
             return Err(Error::Denied);
@@ -1516,113 +1520,42 @@ impl<S: IdentityProvider> DeviceService<S> {
             .backend_request(&self.core.caller(), &request)
             .map_err(map_app_error)?
             .ok_or(Error::Denied)?;
-        self.core.current_policy_access(&previous)?;
-        let PreparedAction::Policy {
-            choice,
-            directory,
-            access,
-            run_id,
-            ..
-        } = &previous.action
-        else {
+        let PreparedAction::Policy { choice, run_id, .. } = &previous.action else {
             return Err(Error::Denied);
         };
-        let expected_source = match previous.trigger {
-            BackendTrigger::Ai { .. } => wire::SelfServiceCaller::Ai,
-            _ => wire::SelfServiceCaller::Human,
+        let expected_source = if matches!(previous.trigger, BackendTrigger::Ai { .. }) {
+            wire::SelfServiceCaller::Ai
+        } else {
+            wire::SelfServiceCaller::Human
         };
         if previous.state != BackendRequestState::Submitting
             || request_id.to_string() != choice.request.as_str()
-            || subject != &directory.subject
             || *source != expected_source
             || policy_id.to_string() != choice.policy_id.as_str()
-            || *policy_revision != choice.policy_revision
-            || policy_version.to_string() != choice.policy_version.as_str()
-            || *allow_ai != directory.self_service.allow_ai
-            || *risk_level != directory.self_service.risk_level
-            || *confirmed != previous.confirmation.is_some()
         {
             return Err(Error::Untrusted);
         }
-        let task_id = match (&directory.task, offer.payload()) {
-            (
-                wire::SelfServiceTask::Enrollment {
-                    organization,
-                    entry,
-                },
-                wire::TaskPayload::Enrollment(spec),
-            ) => {
-                if organization != &spec.organization
-                    || entry != &spec.entry
-                    || !choice.parameters.is_empty()
-                {
-                    return Err(Error::Untrusted);
-                }
-                spec.task_id
+        if let wire::TaskPayload::Script(spec) = offer.payload() {
+            if choice
+                .parameters
+                .iter()
+                .any(|(key, value)| spec.parameters.get(key) != Some(value))
+            {
+                return Err(Error::Untrusted);
             }
-
-            (
-                wire::SelfServiceTask::Script {
-                    resource, run_as, ..
-                },
-                wire::TaskPayload::Script(spec),
-            ) => {
-                if &spec.resource != resource
-                    || &spec.run_as != run_as
-                    || spec.parameters != parameters(directory, &choice.parameters)?
-                {
-                    return Err(Error::Untrusted);
-                }
-                spec.task_id
-            }
-            (
-                wire::SelfServiceTask::Software {
-                    resource,
-                    run_as,
-                    target,
-                },
-                wire::TaskPayload::Software(spec),
-            ) => {
-                let step = spec.steps.last().ok_or(Error::Untrusted)?;
-                if step.action.version != resource.version
-                    || &step.target != target
-                    || backend::commands::software_commands(&step.action)?
-                        .install
-                        .run_as
-                        != *run_as
-                    || spec.intent != wire::SoftwareTaskIntent::Install
-                {
-                    return Err(Error::Untrusted);
-                }
-                // Full signed policy revision binds the closed software definition; direct
-                // exports carry package coordinates rather than a script resource variant.
-                match &step.export {
-                    wire::SoftwareTaskExport::Winget { binding, .. }
-                    | wire::SoftwareTaskExport::Brew { binding, .. }
-                        if binding.resource != resource.id
-                            || binding.resource_version != resource.version =>
-                    {
-                        return Err(Error::Untrusted)
-                    }
-                    _ => (),
-                }
-                spec.task_id
-            }
-            _ => return Err(Error::Untrusted),
-        };
+        } else if !choice.parameters.is_empty() {
+            return Err(Error::Untrusted);
+        }
+        let task_id = offer.task_id();
         if run_id
             .as_ref()
             .is_some_and(|id| id.as_str() != task_id.to_string())
         {
             return Err(Error::Untrusted);
         }
-        if matches!(access, PolicyAccess::User { .. }) {
-            let lease = self
-                .core
-                .policy_context(&previous)?
-                .and_then(|bound| bound.lease.clone())
-                .ok_or(Error::Identity)?;
-            self.core.credential_leases.insert(request.clone(), lease);
+        let current = offered(offer)?;
+        if previous.action.offer() == Some(&current) {
+            return Selection::from_record(&previous);
         }
         let mut next = previous.clone();
         next.revision += 1;
@@ -1632,7 +1565,6 @@ impl<S: IdentityProvider> DeviceService<S> {
             ..
         } = &mut next.action
         {
-            let current = offered(offer)?;
             if bound.as_ref().is_some_and(|old| old != &current) {
                 return Err(Error::Conflict);
             }

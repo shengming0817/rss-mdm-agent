@@ -261,10 +261,7 @@ export async function connectExecution(
       }
     },
     prepare: (namespace, proposal, commandId) => {
-      if (
-        !methods.has(proposal.name) &&
-        !/^policy_[a-f0-9]{32}_[a-f0-9]{16}$/.test(proposal.name)
-      )
+      if (!methods.has(proposal.name) && !proposal.name.startsWith("policy_"))
         return fail("unsupported_capability");
       const read = [
         "execution_query_directory",

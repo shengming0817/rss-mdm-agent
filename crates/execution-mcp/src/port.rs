@@ -87,7 +87,7 @@ pub trait ExecutionServicePort: Send + Sync + 'static {
     /// Invoke a current Policy descriptor with a Host-owned original request identity.
     fn invoke_policy(
         &self,
-        _: &str,
+        _: rss_mdm_agent_wire::runtime::CapabilitySelector,
         _: PolicyToolInput,
         _: CancellationToken,
     ) -> impl Future<Output = Result<execution_contract::BackendRequest, ServiceError>> + Send {

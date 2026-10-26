@@ -75,7 +75,21 @@ impl Case {
             else {
                 panic!("software")
             };
+            if let Some(level @ (RiskLevel::One | RiskLevel::Two)) = level {
+                if let wire::TaskAuthorization::SelfService {
+                    source,
+                    allow_ai,
+                    risk_level,
+                    ..
+                } = &mut spec.authorization
+                {
+                    *source = wire::SelfServiceCaller::Ai;
+                    *allow_ai = true;
+                    *risk_level = if level == RiskLevel::One { 1 } else { 2 };
+                }
+            }
             spec.expires_at = clock.now().unwrap() + seconds;
+            data.task_deadline = data.task_deadline.max(spec.expires_at);
             data.offer = Some(data.signed(wire::TaskPayload::Software(spec)));
             data.explicit_offers = true;
         }
@@ -488,7 +502,7 @@ async fn one_desktop_confirmation_retains_ai_origin_and_cannot_be_replaced_by_st
 }
 
 #[tokio::test]
-async fn signed_start_needs_the_current_confirmed_request_and_frozen_action() {
+async fn signed_start_keeps_the_original_confirmed_request_and_frozen_action() {
     let _budget = crate::scenario_budget::enter();
     let mut c = Case::new(Some(RiskLevel::Two)).await;
     let ai = c.selection(false);
@@ -521,35 +535,28 @@ async fn signed_start_needs_the_current_confirmed_request_and_frozen_action() {
     };
     let frozen = FrozenExecution::freeze(spec, &plan::storage_limits().input).unwrap();
     let now = c.service.core.host.clock.millis().unwrap();
-    let risk = c.service.core.available_risk.as_ref();
-    let proof = ProductGateProof::verify_start(&c.offer, &start, &frozen, Some(&record), risk, now)
-        .unwrap();
+    let proof =
+        ProductGateProof::verify_start(&c.offer, &start, &frozen, Some(&record), now).unwrap();
     assert!(proof.verify(&frozen, now).is_ok());
     assert!(proof.verify(&frozen, proof.until()).is_err());
-    assert!(
-        ProductGateProof::verify_start(&c.offer, &start, &frozen, Some(&record), None, now)
-            .is_err()
-    );
     let mut cancelled = record.clone();
     cancelled.state = BackendRequestState::Cancelled;
     assert!(
-        ProductGateProof::verify_start(&c.offer, &start, &frozen, Some(&cancelled), risk, now)
-            .is_err()
+        ProductGateProof::verify_start(&c.offer, &start, &frozen, Some(&cancelled), now).is_err()
     );
     let mut changed = frozen.spec().clone();
     changed.budget.total_timeout_ms -= 1;
     let changed = FrozenExecution::freeze(changed, &plan::storage_limits().input).unwrap();
     assert!(proof.verify(&changed, now).is_err());
-    assert!(ProductGateProof::verify_start(&c.offer, &start, &frozen, None, risk, now).is_err());
+    assert!(ProductGateProof::verify_start(&c.offer, &start, &frozen, None, now).is_err());
     assert!(ProductGateProof::verify_start(
         &c.offer,
         &start,
         &frozen,
         Some(&record),
-        risk,
         record.confirmation.as_ref().unwrap().expires_at_unix_ms
     )
-    .is_err());
+    .is_ok());
 }
 
 fn complete_material_gc<S: agent_client::IdentityProvider>(
@@ -676,7 +683,6 @@ async fn material_gc_history(materials_per_request: usize) {
     // Keep Offer/Start expiry out of GC verification, including the manual scale case.
     let fixture_started = std::time::Instant::now();
     let mut c = Case::with_offer_mode(None, 600, false).await;
-    c._server.data.lock().unwrap().start_validity_seconds = 600;
     let bytes = b"original journal material";
     let digest = execution_contract::Digest::new(format!("{:x}", Sha256::digest(bytes))).unwrap();
     let source = c
@@ -1488,22 +1494,19 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
     use execution_ipc::host::Request;
     let mut c = Case::new(Some(RiskLevel::Two)).await;
     let directory = protocol::policy_directory_fixture(c.service.client.configuration().tenant);
-    c._server.data.lock().unwrap().self_service_directory =
-        Some(wire::SelfServiceDirectoryResponse {
-            items: vec![directory.clone()],
-            next_cursor: None,
-            as_of: c._server.time.now().unwrap(),
-        });
+    c._server.data.lock().unwrap().self_service_directory = Some(protocol::Directory {
+        items: vec![directory.clone()],
+        next_cursor: None,
+        as_of: c._server.time.now().unwrap(),
+    });
     c.employee("generation-one").await;
     let mut choice = PolicyChoice {
         request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
         policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
-        policy_revision: directory.policy_revision,
-        policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
+
         parameters: std::collections::BTreeMap::from([("name".into(), serde_json::json!("Acme"))]),
     };
     let invoke = Request::InvokePolicy {
-        locator: execution_contract::PolicyLocator { after: None },
         context: c.context(),
         choice: choice.clone(),
         origin: c.selection.origin.clone(),
@@ -1526,7 +1529,6 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
         .insert("path".into(), serde_json::json!("/Library"));
     assert!(matches!(
         c.policy_call(Request::InvokePolicy {
-            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice: changed,
             origin: c.selection.origin.clone()
@@ -1565,7 +1567,6 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
     choice.request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
     assert!(matches!(
         c.policy_call(Request::InvokePolicy {
-            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice: choice.clone(),
             origin: c.selection.origin.clone()
@@ -1623,18 +1624,16 @@ async fn policy_low_risk_and_human_only_settings_have_separate_native_sources() 
             protocol::policy_directory_fixture(c.service.client.configuration().tenant);
         directory.self_service.risk_level = 1;
         directory.self_service.allow_ai = !human;
-        c._server.data.lock().unwrap().self_service_directory =
-            Some(wire::SelfServiceDirectoryResponse {
-                items: vec![directory.clone()],
-                next_cursor: None,
-                as_of: c._server.time.now().unwrap(),
-            });
+        c._server.data.lock().unwrap().self_service_directory = Some(protocol::Directory {
+            items: vec![directory.clone()],
+            next_cursor: None,
+            as_of: c._server.time.now().unwrap(),
+        });
         c.employee("generation-one").await;
         let choice = PolicyChoice {
             request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
             policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
-            policy_revision: directory.policy_revision,
-            policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
+
             parameters: std::collections::BTreeMap::from([(
                 "name".into(),
                 serde_json::json!("Acme"),
@@ -1647,7 +1646,6 @@ async fn policy_low_risk_and_human_only_settings_have_separate_native_sources() 
         };
         let Reply::PolicyRequest { value } = c
             .policy_call(Request::InvokePolicy {
-                locator: execution_contract::PolicyLocator { after: None },
                 context: c.context(),
                 choice: choice.clone(),
                 origin,
@@ -1665,19 +1663,6 @@ async fn policy_low_risk_and_human_only_settings_have_separate_native_sources() 
             assert_eq!(input["source"], if human { "human" } else { "ai" });
             assert_eq!(input["confirmed"], false);
         }
-        let mut stale = choice.clone();
-        stale.request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
-        stale.policy_revision += 1;
-        assert!(matches!(
-            c.policy_call(Request::InvokePolicy {
-                locator: execution_contract::PolicyLocator { after: None },
-                context: c.context(),
-                choice: stale,
-                origin: c.selection.origin.clone()
-            })
-            .await,
-            Reply::Rejected
-        ));
     }
 }
 
@@ -1696,18 +1681,16 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
                 if device {
                     directory.subject = wire::SelfServiceSubject::Device {};
                 }
-                c._server.data.lock().unwrap().self_service_directory =
-                    Some(wire::SelfServiceDirectoryResponse {
-                        items: vec![directory.clone()],
-                        next_cursor: None,
-                        as_of: c._server.time.now().unwrap(),
-                    });
+                c._server.data.lock().unwrap().self_service_directory = Some(protocol::Directory {
+                    items: vec![directory.clone()],
+                    next_cursor: None,
+                    as_of: c._server.time.now().unwrap(),
+                });
                 c.employee("generation-one").await;
                 let choice = PolicyChoice {
                     request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
                     policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
-                    policy_revision: directory.policy_revision,
-                    policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
+
                     parameters: std::collections::BTreeMap::from([(
                         "name".into(),
                         serde_json::json!("Acme"),
@@ -1715,7 +1698,6 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
                 };
                 assert!(matches!(
                     c.policy_call(Request::InvokePolicy {
-                        locator: execution_contract::PolicyLocator { after: None },
                         context: c.context(),
                         choice: choice.clone(),
                         origin: c.selection.origin.clone()
@@ -1776,36 +1758,28 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
                         policy_id: directory.policy_id,
                         policy_revision: directory.policy_revision,
                         policy_version: directory.policy_version,
+
                         allow_ai: true,
                         risk_level: level,
                         confirmed: level == 2,
                     };
                     match change {
                         1 => {
+                            spec.parameters.insert(
+                                "name".into(),
+                                serde_json::json!("Different original input"),
+                            );
+                        }
+                        2 => {
+                            spec.resource.version = "v2".into();
                             spec.parameters
                                 .insert("path".into(), serde_json::json!("/Library"));
                         }
-                        2 => spec.resource.version = "v2".into(),
-                        3 if device => {
-                            if let wire::TaskAuthorization::SelfService { subject, .. } =
+                        3 => {
+                            if let wire::TaskAuthorization::SelfService { policy_id, .. } =
                                 &mut spec.authorization
                             {
-                                *subject = wire::SelfServiceSubject::User {
-                                    user: wire::SelfServiceUser {
-                                        tenant_id: data.tenant,
-                                        instance_id: crate::protocol_test_support::SERVICE_ID,
-                                        principal_id: uuid::Uuid::new_v4(),
-                                    },
-                                };
-                            }
-                        }
-                        3 => {
-                            if let wire::TaskAuthorization::SelfService {
-                                subject: wire::SelfServiceSubject::User { user: actor },
-                                ..
-                            } = &mut spec.authorization
-                            {
-                                actor.principal_id = uuid::Uuid::new_v4();
+                                *policy_id = uuid::Uuid::new_v4();
                             }
                         }
                         4 => {
@@ -1817,20 +1791,10 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
                             }
                         }
                         5 => {
-                            if let wire::TaskAuthorization::SelfService { subject, .. } =
+                            if let wire::TaskAuthorization::SelfService { source, .. } =
                                 &mut spec.authorization
                             {
-                                *subject = if device {
-                                    wire::SelfServiceSubject::User {
-                                        user: wire::SelfServiceUser {
-                                            tenant_id: data.tenant,
-                                            instance_id: crate::protocol_test_support::SERVICE_ID,
-                                            principal_id: uuid::Uuid::from_u128(3),
-                                        },
-                                    }
-                                } else {
-                                    wire::SelfServiceSubject::Device {}
-                                };
+                                *source = wire::SelfServiceCaller::Human;
                             }
                         }
                         _ => (),
@@ -1840,7 +1804,7 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
                 }
                 // Every alternative is independently signed and actually verified by the HTTP client.
                 let offer = c.service.client.claim().await.unwrap().offer.unwrap();
-                if change != 0 {
+                if matches!(change, 1 | 3 | 5) {
                     assert!(c.service.bind_policy_offer(&offer).is_err());
                     assert_eq!(
                         c.service
@@ -1884,38 +1848,21 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
                     trigger: bound.trigger.clone(),
                 };
                 let frozen = FrozenExecution::freeze(input, &plan::storage_limits().input).unwrap();
-                let risk = TrustedRisk::from_offer(&offer);
                 assert!(ProductGateProof::verify_start(
                     &offer,
                     &start,
                     &frozen,
                     Some(&bound),
-                    risk.as_ref(),
                     c.service.core.host.clock.millis().unwrap()
                 )
                 .is_ok());
                 // A revoke which ACKs while HTTP is in flight invalidates this same generation.
                 let admission = c.service.core.policy_fence(&bound).unwrap();
                 c.service.core.fences.revoke(&c.scope()).unwrap();
-                if device {
-                    assert!(admission.is_none());
-                    assert!(c.service.core.current_policy_access(&bound).is_ok());
-                    assert!(!c
-                        .service
-                        .core
-                        .credential_leases
-                        .contains_key(&choice.request));
-                } else {
-                    let admission = admission.unwrap();
-                    assert!(admission.0.admit(&admission.1, admission.2).is_err());
-                    assert!(c.service.core.current_policy_access(&bound).is_err());
-                }
+                assert!(admission.is_none());
+                assert!(c.service.core.current_policy_access(&bound).is_ok());
                 c.employee("generation-two").await;
-                if device {
-                    assert!(c.service.core.current_policy_access(&bound).is_ok());
-                } else {
-                    assert!(c.service.bind_policy_offer(&offer).is_err());
-                }
+                assert!(c.service.bind_policy_offer(&offer).is_ok());
                 assert_eq!(
                     c.service
                         .core
@@ -2148,25 +2095,22 @@ async fn durable_ready_policy_resumes_original_uuid_from_each_native_entrypoint(
         let mut directory =
             protocol::policy_directory_fixture(c.service.client.configuration().tenant);
         directory.self_service.risk_level = if entry == 2 { 2 } else { 1 };
-        c._server.data.lock().unwrap().self_service_directory =
-            Some(wire::SelfServiceDirectoryResponse {
-                items: vec![directory.clone()],
-                next_cursor: None,
-                as_of: c._server.time.now().unwrap(),
-            });
+        c._server.data.lock().unwrap().self_service_directory = Some(protocol::Directory {
+            items: vec![directory.clone()],
+            next_cursor: None,
+            as_of: c._server.time.now().unwrap(),
+        });
         c.employee("generation-one").await;
         let choice = PolicyChoice {
             request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
             policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
-            policy_revision: directory.policy_revision,
-            policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
+
             parameters: std::collections::BTreeMap::from([(
                 "name".into(),
                 serde_json::json!("Acme"),
             )]),
         };
         let invoke = Request::InvokePolicy {
-            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice: choice.clone(),
             origin: c.selection.origin.clone(),
@@ -2203,7 +2147,6 @@ async fn durable_ready_policy_resumes_original_uuid_from_each_native_entrypoint(
             .unwrap();
         let request = match entry {
             0 => Request::InvokePolicy {
-                locator: execution_contract::PolicyLocator { after: None },
                 context: c.context(),
                 choice: match &restored.action {
                     PreparedAction::Policy { choice, .. } => choice.clone(),
@@ -2233,83 +2176,6 @@ async fn durable_ready_policy_resumes_original_uuid_from_each_native_entrypoint(
             .invocations
             .contains_key(&uuid::Uuid::parse_str(original.as_str()).unwrap()));
     }
-}
-#[tokio::test]
-async fn unaccepted_policy_expiry_is_durable_and_status_remains_read_only() {
-    let _budget = crate::scenario_budget::enter();
-    use execution_ipc::host::Request;
-    let mut c = Case::new(Some(RiskLevel::Two)).await;
-    let mut directory = protocol::policy_directory_fixture(c.service.client.configuration().tenant);
-    directory.self_service.risk_level = 1;
-    c._server.data.lock().unwrap().self_service_directory =
-        Some(wire::SelfServiceDirectoryResponse {
-            items: vec![directory.clone()],
-            next_cursor: None,
-            as_of: c._server.time.now().unwrap(),
-        });
-    c.employee("generation-one").await;
-    c._server.data.lock().unwrap().invocation_unaccepted = true;
-    let original = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
-    let choice = PolicyChoice {
-        request: original.clone(),
-        policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
-        policy_revision: directory.policy_revision,
-        policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
-        parameters: std::collections::BTreeMap::from([("name".into(), serde_json::json!("Acme"))]),
-    };
-    let Reply::PolicyRequest { value } = c
-        .policy_call(Request::InvokePolicy {
-            locator: execution_contract::PolicyLocator { after: None },
-            context: c.context(),
-            choice,
-            origin: c.selection.origin.clone(),
-        })
-        .await
-    else {
-        panic!("unaccepted invocation")
-    };
-    assert_eq!(value.state, BackendRequestState::Submitting);
-    // Restore an already-expired durable record at the interrupted submission boundary.
-    // SystemClock intentionally rejects artificial forward movement, so the expiry is fixed
-    // before the initial journal insert, preserving the immutable preparation contract.
-    let mut expired = *value;
-    let original = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
-    if let PreparedAction::Policy {
-        choice,
-        expires_at_unix_ms,
-        ..
-    } = &mut expired.action
-    {
-        choice.request = original.clone();
-        *expires_at_unix_ms = c.service.core.host.clock.millis().unwrap() - 1;
-    }
-    expired.risk.as_mut().unwrap().expires_at_unix_ms = expired.action.expires_at_unix_ms();
-    expired.state = BackendRequestState::Ready;
-    expired.revision = 1;
-    c.service
-        .core
-        .app
-        .record_backend_request(&c.service.core.caller(), None, &expired)
-        .unwrap();
-    c.service
-        .core
-        .transition(&original, BackendRequestState::Submitting, None)
-        .unwrap();
-    c._server.data.lock().unwrap().invocation_unaccepted = false;
-    for _ in 0..2 {
-        let Reply::PolicyRequest { value } = c
-            .policy_call(Request::PolicyStatus {
-                context: c.context(),
-                request: original.clone(),
-            })
-            .await
-        else {
-            panic!("expiry status")
-        };
-        assert_eq!(value.state, BackendRequestState::Failed);
-        assert_eq!(value.failure, Some(BackendRequestFailure::Expired));
-    }
-    assert!(c._server.data.lock().unwrap().invocations.is_empty());
 }
 
 fn select_pki_refresh(root: &std::path::Path) {
@@ -2649,7 +2515,7 @@ async fn software_self_service_binds_signed_policy_and_native_context() {
     };
     {
         let mut data = c._server.data.lock().unwrap();
-        data.self_service_directory = Some(wire::SelfServiceDirectoryResponse {
+        data.self_service_directory = Some(protocol::Directory {
             items: vec![directory.clone()],
             next_cursor: None,
             as_of: c._server.time.now().unwrap(),
@@ -2664,13 +2530,11 @@ async fn software_self_service_binds_signed_policy_and_native_context() {
     let choice = PolicyChoice {
         request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
         policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
-        policy_revision: directory.policy_revision,
-        policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
+
         parameters: Default::default(),
     };
     let Reply::PolicyRequest { value: pending } = c
         .policy_call(Request::InvokePolicy {
-            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice: choice.clone(),
             origin: c.selection.origin.clone(),
@@ -2715,7 +2579,7 @@ async fn software_self_service_binds_signed_policy_and_native_context() {
         .unwrap();
     assert_eq!(bound.risk.unwrap().level, RiskLevel::Two);
     c.employee("other-context").await;
-    assert!(c.service.bind_policy_offer(&offer).is_err());
+    assert!(c.service.bind_policy_offer(&offer).is_ok());
     assert!(!c
         .service
         .core
@@ -2753,8 +2617,7 @@ impl Case {
         PolicyChoice {
             request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
             policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
-            policy_revision: directory.policy_revision,
-            policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
+
             parameters: std::collections::BTreeMap::from([(
                 "name".into(),
                 serde_json::json!("Acme"),
@@ -2784,12 +2647,11 @@ async fn device_directory_and_invocation_are_credential_free_with_or_without_emp
                 principal_id: uuid::Uuid::from_u128(3),
             },
         };
-        c._server.data.lock().unwrap().self_service_directory =
-            Some(wire::SelfServiceDirectoryResponse {
-                items: vec![item.clone(), user_item],
-                next_cursor: None,
-                as_of: 1,
-            });
+        c._server.data.lock().unwrap().self_service_directory = Some(protocol::Directory {
+            items: vec![item.clone(), user_item],
+            next_cursor: None,
+            as_of: 1,
+        });
         let Reply::PolicyDirectory { value } = c
             .policy_call(Request::PolicyDirectory {
                 context: c.context(),
@@ -2804,7 +2666,6 @@ async fn device_directory_and_invocation_are_credential_free_with_or_without_emp
         let choice = c.policy_choice(&item);
         let Reply::PolicyRequest { value } = c
             .policy_call(Request::InvokePolicy {
-                locator: execution_contract::PolicyLocator { after: None },
                 context: c.context(),
                 choice: choice.clone(),
                 origin: c.selection.origin.clone(),
@@ -2843,18 +2704,16 @@ async fn retired_ai_ingress_cannot_read_or_invoke_but_original_device_consent_co
     let mut item = protocol::policy_directory_fixture(c.service.client.configuration().tenant);
     item.subject = wire::SelfServiceSubject::Device {};
     item.self_service.risk_level = 2;
-    c._server.data.lock().unwrap().self_service_directory =
-        Some(wire::SelfServiceDirectoryResponse {
-            items: vec![item.clone()],
-            next_cursor: None,
-            as_of: 1,
-        });
+    c._server.data.lock().unwrap().self_service_directory = Some(protocol::Directory {
+        items: vec![item.clone()],
+        next_cursor: None,
+        as_of: 1,
+    });
     let choice = c.policy_choice(&item);
     let old = c.context();
     let origin = c.selection.origin.clone();
     let Reply::PolicyRequest { value: pending } = c
         .policy_call(Request::InvokePolicy {
-            locator: execution_contract::PolicyLocator { after: None },
             context: old.clone(),
             choice: choice.clone(),
             origin: origin.clone(),
@@ -2876,7 +2735,6 @@ async fn retired_ai_ingress_cannot_read_or_invoke_but_original_device_consent_co
             origin: origin.clone(),
         },
         Request::InvokePolicy {
-            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice: choice.clone(),
             origin: origin.clone(),
@@ -2935,7 +2793,7 @@ async fn unknown_device_submission_queries_original_before_any_repeat_post_after
         item.self_service.risk_level = 1;
         {
             let mut data = c._server.data.lock().unwrap();
-            data.self_service_directory = Some(wire::SelfServiceDirectoryResponse {
+            data.self_service_directory = Some(protocol::Directory {
                 items: vec![item.clone()],
                 next_cursor: None,
                 as_of: 1,
@@ -2946,7 +2804,6 @@ async fn unknown_device_submission_queries_original_before_any_repeat_post_after
         let choice = c.policy_choice(&item);
         let Reply::PolicyRequest { value: unknown } = c
             .policy_call(Request::InvokePolicy {
-                locator: execution_contract::PolicyLocator { after: None },
                 context: c.context(),
                 choice: choice.clone(),
                 origin: c.selection.origin.clone(),
@@ -3005,17 +2862,15 @@ async fn fences_isolate_os_sessions_and_user_requests_never_downgrade() {
     use execution_ipc::host::Request;
     let mut c = Case::new(None).await;
     let mut item = protocol::policy_directory_fixture(c.service.client.configuration().tenant);
-    item.self_service.risk_level = 1;
-    c._server.data.lock().unwrap().self_service_directory =
-        Some(wire::SelfServiceDirectoryResponse {
-            items: vec![item.clone()],
-            next_cursor: None,
-            as_of: 1,
-        });
+    item.self_service.risk_level = 2;
+    c._server.data.lock().unwrap().self_service_directory = Some(protocol::Directory {
+        items: vec![item.clone()],
+        next_cursor: None,
+        as_of: 1,
+    });
     let choice = c.policy_choice(&item);
     let Reply::PolicyRequest { value } = c
         .policy_call(Request::InvokePolicy {
-            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice: choice.clone(),
             origin: c.selection.origin.clone(),
@@ -3067,16 +2922,14 @@ impl Case {
         if device {
             item.subject = wire::SelfServiceSubject::Device {};
         }
-        self._server.data.lock().unwrap().self_service_directory =
-            Some(wire::SelfServiceDirectoryResponse {
-                items: vec![item.clone()],
-                next_cursor: None,
-                as_of: 1,
-            });
+        self._server.data.lock().unwrap().self_service_directory = Some(protocol::Directory {
+            items: vec![item.clone()],
+            next_cursor: None,
+            as_of: 1,
+        });
         let choice = self.policy_choice(&item);
         let reply = self
             .policy_call(Request::InvokePolicy {
-                locator: execution_contract::PolicyLocator { after: None },
                 context: self.context(),
                 choice: choice.clone(),
                 origin: self.selection.origin.clone(),
@@ -3217,6 +3070,64 @@ impl Case {
 }
 
 #[tokio::test]
+async fn expired_unadmitted_task_releases_waiting_and_replays_abandonment_after_restart() {
+    let _budget = crate::scenario_budget::enter();
+    let mut c = Case::new(None).await;
+    let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
+    c.service.release_waiting();
+    c.service
+        .abandon(c.offer.task_id(), &mut commands)
+        .await
+        .unwrap();
+    let (original, offer) = c.accepted_policy_offer(true).await;
+    let task = offer.task_id();
+    let attempt = offer.attempt_id();
+    let materials = c.service.client.prepare(&offer).await.unwrap();
+    // Stage the original signed task at an elapsed Run deadline in the real communication DB.
+    let mut payload = offer.payload().clone();
+    c.service.waiting = Some((offer, materials));
+    let wire::TaskPayload::Script(spec) = &mut payload else {
+        panic!("script");
+    };
+    spec.deadline = c.service.core.host.clock.now().unwrap() - 1;
+    spec.expires_at = spec.deadline;
+    let signed = c._server.data.lock().unwrap().signed(payload);
+    let sql = rusqlite::Connection::open(c._root.path.join("communication.sqlite")).unwrap();
+    assert_eq!(
+        sql.execute(
+            "UPDATE tasks SET body=?1 WHERE id=?2",
+            rusqlite::params![serde_json::to_vec(&signed).unwrap(), task.to_string()]
+        )
+        .unwrap(),
+        1
+    );
+    drop(sql);
+    c._server.data.lock().unwrap().offer = Some(signed);
+    c._server.data.lock().unwrap().result_failure = true;
+    assert_eq!(
+        c.service.resume_task(task, &mut commands).await,
+        Err(Error::Unavailable)
+    );
+    assert!(c.service.waiting.is_none());
+    assert_eq!(c.service.client.pending_tasks(32).unwrap(), vec![task]);
+    assert_eq!(
+        c.policy_record(original.action.request()).failure,
+        Some(BackendRequestFailure::Expired)
+    );
+    let results = c._server.data.lock().unwrap().results.clone();
+    let mut c = c.reopen();
+    c.service.resume_task(task, &mut commands).await.unwrap();
+    assert!(c.service.client.pending_tasks(32).unwrap().is_empty());
+    let data = c._server.data.lock().unwrap();
+    assert_eq!(data.results, results);
+    assert!(data
+        .results
+        .values()
+        .any(|v| v["attemptId"] == attempt.to_string()));
+    assert!(data.start_ops.is_empty());
+}
+
+#[tokio::test]
 async fn device_recovery_reopens_both_journals_and_preserves_every_accepted_intent_at_capacity() {
     let _budget = crate::scenario_budget::enter();
     let mut c = Case::new(None).await;
@@ -3332,69 +3243,6 @@ async fn recovery_never_reconstructs_device_consent_from_a_retired_journal_inten
 }
 
 #[tokio::test]
-async fn actual_post_start_dispatch_boundary_rejects_revoked_user_before_any_runner_attempt() {
-    let _budget = crate::scenario_budget::enter();
-    for revoke_original in [false, true] {
-        let mut c = Case::new(None).await;
-        c.service.release_waiting();
-        let (original, offer) = c.accepted_policy_offer(false).await;
-        let selection = c.service.bind_policy_offer(&offer).unwrap();
-        let materials = c.service.client.prepare(&offer).await.unwrap();
-        let start = c
-            .service
-            .client
-            .start_user_initiated(&offer, &materials)
-            .await
-            .unwrap();
-        assert!(!c._server.data.lock().unwrap().start_ops.is_empty());
-        let scope = if revoke_original {
-            c.scope()
-        } else {
-            crate::service::policy::SessionKey::new(
-                c.selection.subject.clone(),
-                plan::id("other-os-session").unwrap(),
-            )
-        };
-        c.service.core.fences.revoke(&scope).unwrap();
-        if revoke_original {
-            // The production submit wrapper verifies the helper before this exact boundary.
-            // This staged peer fixture proves the shared Start-to-runner path, not native IPC.
-            assert!(matches!(
-                crate::backend::dispatch_started(
-                    &mut c.service,
-                    offer,
-                    materials,
-                    Some(selection),
-                    start,
-                    None
-                ),
-                Err(Error::Identity)
-            ));
-            assert!(c
-                .service
-                .core
-                .app
-                .service_tasks(None, 64)
-                .unwrap()
-                .items
-                .is_empty());
-            assert_eq!(
-                c.service
-                    .core
-                    .app
-                    .backend_request(&c.service.core.caller(), original.action.request())
-                    .unwrap()
-                    .unwrap()
-                    .trigger,
-                original.trigger
-            );
-        } else {
-            assert!(c.service.core.current_policy_access(&original).is_ok());
-        }
-    }
-}
-
-#[tokio::test]
 async fn expired_device_confirmation_checks_original_os_owner_before_read_or_write() {
     let _budget = crate::scenario_budget::enter();
     use execution_ipc::host::Request;
@@ -3402,16 +3250,14 @@ async fn expired_device_confirmation_checks_original_os_owner_before_read_or_wri
     c.device("original-device").await;
     let mut item = protocol::policy_directory_fixture(c.service.client.configuration().tenant);
     item.subject = wire::SelfServiceSubject::Device {};
-    c._server.data.lock().unwrap().self_service_directory =
-        Some(wire::SelfServiceDirectoryResponse {
-            items: vec![item.clone()],
-            next_cursor: None,
-            as_of: 1,
-        });
+    c._server.data.lock().unwrap().self_service_directory = Some(protocol::Directory {
+        items: vec![item.clone()],
+        next_cursor: None,
+        as_of: 1,
+    });
     let choice = c.policy_choice(&item);
     assert!(matches!(
         c.policy_call(Request::InvokePolicy {
-            locator: execution_contract::PolicyLocator { after: None },
             context: c.context(),
             choice: choice.clone(),
             origin: c.selection.origin.clone(),
@@ -3555,14 +3401,13 @@ async fn transient_start_replays_original_attempt_without_retiring_policy_or_con
         };
         *trigger = original.trigger.clone();
         let input = FrozenExecution::freeze(input, &plan::storage_limits().input).unwrap();
-        // The actual product gate needs restored signed risk as well as original consent.
+        // The product gate consumes original consent and the signed administrator configuration.
         // This fixture has no authenticated system/helper runner and grants no native launch.
         ProductGateProof::verify_start(
             &restored,
             &start,
             &input,
             Some(&retained),
-            c.service.core.available_risk.as_ref(),
             c.service.core.host.clock.millis().unwrap(),
         )
         .unwrap();
@@ -3617,78 +3462,6 @@ async fn transient_start_replays_original_attempt_without_retiring_policy_or_con
 }
 
 #[tokio::test]
-async fn restarted_policy_expiry_preserves_original_run_queries_without_start() {
-    let _budget = crate::scenario_budget::enter();
-    use execution_ipc::host::Request;
-    for offer_expired in [false, true] {
-        let mut c = Case::new(None).await;
-        let (_sender, mut commands) = tokio::sync::mpsc::channel(1);
-        c.service.release_waiting();
-        c.service
-            .abandon(c.offer.task_id(), &mut commands)
-            .await
-            .unwrap();
-        let (original, _) = c
-            .accepted_policy_offer_lifetime(true, offer_expired.then_some(2))
-            .await;
-        let request = original.action.request().clone();
-        let before = if offer_expired {
-            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-            original.clone()
-        } else {
-            c.elapsed_policy(&request)
-        };
-        let mut c = c.reopen();
-        c.service.drive(&mut commands).await.unwrap();
-        let expired = c.policy_record(&request);
-        assert_eq!(expired.failure, Some(BackendRequestFailure::Expired));
-        assert_eq!(expired.state, BackendRequestState::Failed);
-        assert_eq!(expired.confirmation, before.confirmation);
-        assert_eq!(expired.trigger, before.trigger);
-        assert!(c.service.waiting.is_none());
-        assert!(c
-            .service
-            .client
-            .pending_tasks(c.service.client.configuration().limits.pending_tasks)
-            .unwrap()
-            .is_empty());
-        c.device("new-device-context").await;
-        let offset = c._server.data.lock().unwrap().employee_calls.len();
-        let Reply::PolicyStatus { value } = c
-            .policy_call(Request::PolicyStatus {
-                context: c.context(),
-                request: request.clone(),
-            })
-            .await
-        else {
-            panic!("original Run query")
-        };
-        assert_eq!(value.request_id.to_string(), request.as_str());
-        let PreparedAction::Policy {
-            run_id: Some(run_id),
-            ..
-        } = &before.action
-        else {
-            panic!("Run")
-        };
-        assert_eq!(value.run_id.to_string(), run_id.as_str());
-        let data = c._server.data.lock().unwrap();
-        assert_eq!(data.employee_calls.len(), offset + 1);
-        assert!(data.employee_calls[offset].0.ends_with(request.as_str()));
-        assert!(!data.employee_credentials[offset]);
-        assert!(data.start_ops.is_empty());
-        assert!(c
-            .service
-            .core
-            .app
-            .service_tasks(None, 64)
-            .unwrap()
-            .items
-            .is_empty());
-    }
-}
-
-#[tokio::test]
 async fn operation_draft_freezes_current_parameters_once_and_queries_do_not_execute() {
     let _budget = crate::scenario_budget::enter();
     use execution_ipc::host::Request;
@@ -3697,23 +3470,20 @@ async fn operation_draft_freezes_current_parameters_once_and_queries_do_not_exec
         let mut directory =
             protocol::policy_directory_fixture(c.service.client.configuration().tenant);
         directory.self_service.risk_level = level;
-        c._server.data.lock().unwrap().self_service_directory =
-            Some(wire::SelfServiceDirectoryResponse {
-                items: vec![directory.clone()],
-                next_cursor: None,
-                as_of: c._server.time.now().unwrap(),
-            });
+        c._server.data.lock().unwrap().self_service_directory = Some(protocol::Directory {
+            items: vec![directory.clone()],
+            next_cursor: None,
+            as_of: c._server.time.now().unwrap(),
+        });
         c.employee("generation-one").await;
         let choice = PolicyChoice {
             request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
             policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
-            policy_revision: directory.policy_revision,
-            policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
+
             parameters: Default::default(), // An incomplete draft is not an executable choice.
         };
         let Reply::PolicyRequest { value: draft } = c
             .policy_call(Request::PreparePolicy {
-                locator: execution_contract::PolicyLocator { after: None },
                 context: c.context(),
                 choice: choice.clone(),
                 origin: c.selection.origin.clone(),
@@ -3837,84 +3607,6 @@ async fn operation_draft_freezes_current_parameters_once_and_queries_do_not_exec
 }
 
 #[tokio::test]
-async fn operation_draft_rejects_changed_policy_and_retired_native_context() {
-    let _budget = crate::scenario_budget::enter();
-    use execution_ipc::host::Request;
-    for mode in 0..3 {
-        let mut c = Case::new(None).await;
-        let directory = protocol::policy_directory_fixture(c.service.client.configuration().tenant);
-        c._server.data.lock().unwrap().self_service_directory =
-            Some(wire::SelfServiceDirectoryResponse {
-                items: vec![directory.clone()],
-                next_cursor: None,
-                as_of: c._server.time.now().unwrap(),
-            });
-        c.employee("generation-one").await;
-        let choice = PolicyChoice {
-            request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
-            policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
-            policy_revision: directory.policy_revision,
-            policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
-            parameters: Default::default(),
-        };
-        let Reply::PolicyRequest { value } = c
-            .policy_call(Request::PreparePolicy {
-                locator: execution_contract::PolicyLocator { after: None },
-                context: c.context(),
-                choice: choice.clone(),
-                origin: c.selection.origin.clone(),
-            })
-            .await
-        else {
-            panic!("draft")
-        };
-        if mode == 2 {
-            c = c.reopen();
-            assert_eq!(c.policy_record(&choice.request), *value);
-            assert!(c._server.data.lock().unwrap().invocations.is_empty());
-            c.employee("generation-restart").await;
-        } else if mode == 1 {
-            c.employee("generation-two").await;
-        } else {
-            c._server
-                .data
-                .lock()
-                .unwrap()
-                .self_service_directory
-                .as_mut()
-                .unwrap()
-                .items[0]
-                .policy_revision += 1;
-        }
-        assert!(matches!(
-            c.policy_call(Request::SubmitPolicy {
-                context: c.context(),
-                input: PolicySubmission {
-                    request: choice.request.clone(),
-                    revision: value.revision,
-                    parameters: std::collections::BTreeMap::from([(
-                        "name".into(),
-                        serde_json::json!("User edit")
-                    )]),
-                }
-            })
-            .await,
-            Reply::OperationRejected { .. }
-        ));
-        assert!(c._server.data.lock().unwrap().invocations.is_empty());
-        let retained = c
-            .service
-            .core
-            .app
-            .backend_request(&c.service.core.caller(), &choice.request)
-            .unwrap()
-            .unwrap();
-        assert_eq!(retained.state, BackendRequestState::Draft);
-        assert!(retained.confirmation.is_none());
-    }
-}
-
-#[tokio::test]
 async fn operation_draft_rejects_secret_and_unresolved_schemas_before_persistence() {
     let _budget = crate::scenario_budget::enter();
     use execution_ipc::host::Request;
@@ -3932,17 +3624,15 @@ async fn operation_draft_rejects_secret_and_unresolved_schemas_before_persistenc
         {
             *parameter_schema = schema;
         }
-        c._server.data.lock().unwrap().self_service_directory =
-            Some(wire::SelfServiceDirectoryResponse {
-                items: vec![directory.clone()],
-                next_cursor: None,
-                as_of: c._server.time.now().unwrap(),
-            });
+        c._server.data.lock().unwrap().self_service_directory = Some(protocol::Directory {
+            items: vec![directory.clone()],
+            next_cursor: None,
+            as_of: c._server.time.now().unwrap(),
+        });
         let choice = PolicyChoice {
             request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
             policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
-            policy_revision: directory.policy_revision,
-            policy_version: plan::id(directory.policy_version.to_string()).unwrap(),
+
             parameters: std::collections::BTreeMap::from([(
                 "name".into(),
                 serde_json::json!("secret-must-not-be-returned"),
@@ -3950,7 +3640,6 @@ async fn operation_draft_rejects_secret_and_unresolved_schemas_before_persistenc
         };
         let reply = c
             .policy_call(Request::PreparePolicy {
-                locator: execution_contract::PolicyLocator { after: None },
                 context: c.context(),
                 choice: choice.clone(),
                 origin: c.selection.origin.clone(),
@@ -4472,7 +4161,8 @@ async fn local_data_queries_keep_os_prerequisites_exact_authority_and_offline_re
             input: DataOperation::Directory(QueryDirectory {
                 after: None,
                 limit: 128,
-                policy_page: None,
+                refresh_policies: false,
+                policy_cursor: None,
             }),
         })
         .await;
@@ -4611,16 +4301,20 @@ async fn local_data_queries_keep_os_prerequisites_exact_authority_and_offline_re
     *c.service.core.host.local_read.lock().unwrap() =
         Some(crate::local_execution::ReadPermit::new(frozen.clone()).unwrap());
     let attempt = AttemptId::new("proof-only-no-dispatch").unwrap();
-    let facts =
-        execution_admission::AuthorityVerifier::verify(&c.service.core.host, &frozen, &attempt)
-            .unwrap();
-    assert!(matches!(facts.verified_origin, Initiator::Human { .. }));
-    assert_eq!(facts.risk, Some(RiskLevel::One));
-    *c.service.core.host.local_read.lock().unwrap() = None;
-    assert!(execution_admission::AuthorityVerifier::verify(
+    let facts = execution_app::AppHost::admit(
         &c.service.core.host,
         &frozen,
-        &attempt
+        &attempt,
+        crate::wall().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(facts.execution_gate, execution_app::ExecutionGate::Direct);
+    *c.service.core.host.local_read.lock().unwrap() = None;
+    assert!(execution_app::AppHost::admit(
+        &c.service.core.host,
+        &frozen,
+        &attempt,
+        crate::wall().unwrap()
     )
     .is_err());
     let old_epoch = c.service.core.fences.current(&c.scope()).unwrap();
@@ -4643,7 +4337,8 @@ async fn local_data_queries_keep_os_prerequisites_exact_authority_and_offline_re
             input: DataOperation::Directory(QueryDirectory {
                 after: None,
                 limit: 16,
-                policy_page: None
+                refresh_policies: false,
+                policy_cursor: None
             })
         })
         .await,
@@ -4711,104 +4406,6 @@ async fn local_data_queries_keep_os_prerequisites_exact_authority_and_offline_re
     assert_eq!(c.service.core.policy_commands.len(), queued);
 }
 
-#[tokio::test]
-async fn late_policy_page_is_revalidated_for_invoke_draft_and_confirmation_without_scanning() {
-    let _budget = crate::scenario_budget::enter();
-    use execution_ipc::host::Request;
-    for draft in [false, true] {
-        let mut c = Case::new(None).await;
-        let directory = protocol::policy_directory_fixture(c.service.client.configuration().tenant);
-        let cursor = uuid::Uuid::from_u128(18);
-        {
-            let mut data = c._server.data.lock().unwrap();
-            for page in 0..18 {
-                data.self_service_pages.insert(
-                    if page == 0 {
-                        None
-                    } else {
-                        Some(uuid::Uuid::from_u128(page))
-                    },
-                    wire::SelfServiceDirectoryResponse {
-                        items: vec![],
-                        next_cursor: Some(uuid::Uuid::from_u128(page + 1)),
-                        as_of: c._server.time.now().unwrap(),
-                    },
-                );
-            }
-            data.self_service_pages.insert(
-                Some(cursor),
-                wire::SelfServiceDirectoryResponse {
-                    items: vec![directory.clone()],
-                    next_cursor: None,
-                    as_of: c._server.time.now().unwrap(),
-                },
-            );
-        }
-        c.employee("late-page").await;
-        let choice = c.policy_choice(&directory);
-        let locator = execution_contract::PolicyLocator {
-            after: Some(plan::id(cursor.to_string()).unwrap()),
-        };
-        let request = if draft {
-            Request::PreparePolicy {
-                context: c.context(),
-                choice: choice.clone(),
-                locator: locator.clone(),
-                origin: c.selection.origin.clone(),
-            }
-        } else {
-            Request::InvokePolicy {
-                context: c.context(),
-                choice: choice.clone(),
-                locator: locator.clone(),
-                origin: c.selection.origin.clone(),
-            }
-        };
-        let offset = c._server.data.lock().unwrap().employee_calls.len();
-        let Reply::PolicyRequest { value } = c.policy_call(request).await else {
-            panic!("late-page choice")
-        };
-        assert_eq!(
-            value.state,
-            if draft {
-                BackendRequestState::Draft
-            } else {
-                BackendRequestState::AwaitingConfirmation
-            }
-        );
-        assert!(c._server.data.lock().unwrap().invocations.is_empty());
-        let calls = c._server.data.lock().unwrap().employee_calls[offset..].to_vec();
-        assert_eq!(calls.len(), 2);
-        assert!(calls
-            .iter()
-            .all(|(url, _)| url.contains(&format!("after={cursor}"))));
-        if draft {
-            c.policy_call(Request::SubmitPolicy {
-                context: c.context(),
-                input: execution_contract::PolicySubmission {
-                    request: choice.request.clone(),
-                    revision: value.revision,
-                    parameters: choice.parameters.clone(),
-                },
-            })
-            .await;
-        } else {
-            c.policy_call(Request::ConfirmPolicy {
-                context: c.context(),
-                request: choice.request.clone(),
-            })
-            .await;
-        }
-        assert!(c
-            ._server
-            .data
-            .lock()
-            .unwrap()
-            .invocations
-            .contains_key(&uuid::Uuid::parse_str(choice.request.as_str()).unwrap()));
-    }
-}
-
 /// Explicit policy authority fixture with real service/SQLite; native detector is read-only.
 /// This never establishes System privilege, a real install/uninstall or Windows acceptance.
 #[cfg(target_os = "macos")]
@@ -4826,7 +4423,8 @@ async fn local_software_case() -> (Case, LocalSoftwareChoice) {
             input: DataOperation::Directory(QueryDirectory {
                 after: None,
                 limit: 128,
-                policy_page: None,
+                refresh_policies: false,
+                policy_cursor: None,
             }),
         })
         .await
@@ -5261,7 +4859,6 @@ async fn local_software_api_rechecks_rules_and_snapshot_before_any_attempt() {
 #[tokio::test]
 #[ignore = "requires root for production material/OS identity admission; explicitly run the built test binary"]
 async fn installation_owner_exists_before_registration_and_preserves_both_scopes_after_reopen() {
-    use execution_admission::AuthorityVerifier;
     use execution_app::AppHost;
     let _budget = crate::scenario_budget::enter();
     let server = protocol::Server::new().await;
@@ -5352,7 +4949,6 @@ async fn installation_owner_exists_before_registration_and_preserves_both_scopes
             resource: plan::reference("native-read", "1").unwrap(),
         },
         plan::reference("local-native-query", "1").unwrap(),
-        (now / 1000 + 30) as i64,
         &root_binding,
         &service.core.host.local_actor,
         (&service.core.config, &mut service.core.material_root),
@@ -5374,11 +4970,20 @@ async fn installation_owner_exists_before_registration_and_preserves_both_scopes
         Some(crate::local_execution::ReadPermit::new(local.clone()).unwrap());
     let attempt = AttemptId::new("scope-proof-attempt").unwrap();
     assert_eq!(
-        service.core.host.verify(&local, &attempt).unwrap().risk,
-        Some(RiskLevel::One)
+        service
+            .core
+            .host
+            .admit(&local, &attempt, crate::wall().unwrap())
+            .unwrap()
+            .execution_gate,
+        execution_app::ExecutionGate::Direct
     );
     *service.core.host.local_read.lock().unwrap() = None;
-    assert!(service.core.host.verify(&local, &attempt).is_err());
+    assert!(service
+        .core
+        .host
+        .admit(&local, &attempt, crate::wall().unwrap())
+        .is_err());
     let capabilities = vec![
         wire::Capability::InventoryCollectionV1,
         wire::Capability::TaskExecuteV1,
@@ -5428,7 +5033,11 @@ async fn installation_owner_exists_before_registration_and_preserves_both_scopes
         .stage_execution(&service.core.caller(), &remote)
         .unwrap();
     assert!(
-        service.core.host.verify(&remote, &attempt).is_err(),
+        service
+            .core
+            .host
+            .admit(&remote, &attempt, crate::wall().unwrap())
+            .is_err(),
         "a namespace alone cannot replace a signed enterprise Start"
     );
     assert!(service

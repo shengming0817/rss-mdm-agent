@@ -186,28 +186,17 @@ fn provider_failure_stays_query_local_and_retains_a_single_control_receipt() {
     let mut spec = plan().spec().clone();
     spec.queries.get_mut("b").unwrap().budget.timeout_seconds = 9;
     let p = w::NativeCollectionPlan::new(spec).unwrap();
-    let until = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as u64
-        + 10_000;
-    let result = collect(
-        &p,
-        now().unwrap() + 10,
-        until,
-        &Default::default(),
-        |id, q, _, _| {
-            Ok(failure(
-                q,
-                if id == "a" {
-                    Status::Denied
-                } else {
-                    Status::Unsupported
-                },
-                now().unwrap(),
-            ))
-        },
-    )
+    let result = collect(&p, &Default::default(), |id, q, _, _| {
+        Ok(failure(
+            q,
+            if id == "a" {
+                Status::Denied
+            } else {
+                Status::Unsupported
+            },
+            now().unwrap(),
+        ))
+    })
     .unwrap();
     assert_eq!(result.queries["a"].status, Status::Denied);
     assert_eq!(result.queries["b"].status, Status::Unsupported);

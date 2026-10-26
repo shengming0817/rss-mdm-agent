@@ -27,7 +27,7 @@ impl Core {
                     self.host.clock.millis()? / 1000,
                 )?))
             }
-            DataOperation::Directory(query) if query.policy_page.is_none() => {
+            DataOperation::Directory(query) if !query.refresh_policies => {
                 self.maintain_data()?;
                 let items = self.local_directory(command)?;
                 Ok(DataResponse::Directory(directory_page(items, query)?))
@@ -324,7 +324,7 @@ impl Core {
                 }
             }
             OutcomeUnknown => QueryPhase::Unknown,
-            ApprovalRequired | ConfirmationRequired => QueryPhase::AwaitingConfirmation,
+            ConfirmationRequired => QueryPhase::AwaitingConfirmation,
             _ => QueryPhase::Accepted,
         };
         Ok(QueryStatus {
@@ -367,28 +367,22 @@ impl<S: IdentityProvider> DeviceService<S> {
                 }
                 let mut items = self.core.local_directory(command)?;
                 let mut policy_next = None;
-                if let Some(locator) = &query.policy_page {
+                if query.refresh_policies {
                     let page = self
-                        .policy_directory(&bound, origin, locator.after.clone(), commands)
+                        .policy_directory(&bound, origin, query.policy_cursor.clone(), commands)
                         .await?;
-                    policy_next = page
-                        .next_cursor
-                        .map(|next| {
-                            Ok::<_, Error>(PolicyLocator {
-                                after: Some(plan::id(next.to_string())?),
-                            })
-                        })
-                        .transpose()?;
-                    for item in page.items {
+                    policy_next = page.next_cursor;
+                    for projection in page.items {
+                        let item: wire::SelfServiceDirectoryItem = serde_json::from_value(
+                            serde_json::to_value(projection).map_err(|_| Error::Protocol)?,
+                        )
+                        .map_err(|_| Error::Protocol)?;
                         if matches!(item.task, wire::SelfServiceTask::Script { .. }) {
                             self.core.maintain_data()?;
-                            let descriptor = self.core.data.publish(
-                                item,
-                                locator.clone(),
-                                &command.subject,
-                                binding,
-                                context,
-                            )?;
+                            let descriptor =
+                                self.core
+                                    .data
+                                    .publish(item, &command.subject, binding, context)?;
                             items.retain(|item| item.reference.id != descriptor.reference.id);
                             items.push(descriptor);
                         }
@@ -508,7 +502,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                         });
                     }
                 }
-                if let Some((item, locator)) =
+                if let Some(item) =
                     self.core
                         .data
                         .published(&submit.query, &command.subject, binding, context)?
@@ -516,8 +510,6 @@ impl<S: IdentityProvider> DeviceService<S> {
                     let choice = PolicyChoice {
                         request: submit.request.clone(),
                         policy_id: plan::id(item.policy_id.to_string())?,
-                        policy_revision: item.policy_revision,
-                        policy_version: plan::id(item.policy_version.to_string())?,
                         parameters: submit.parameters.clone(),
                     };
                     let a = Association {
@@ -531,7 +523,6 @@ impl<S: IdentityProvider> DeviceService<S> {
                     };
                     self.core.data.associate(&submit.request, &a)?;
                     let request = Request::InvokePolicy {
-                        locator,
                         context: context.clone(),
                         choice,
                         origin: origin.clone(),
@@ -584,9 +575,8 @@ impl<S: IdentityProvider> DeviceService<S> {
                     self.core.data.associate(&submit.request, &a)?;
                     let now = self.core.host.clock.millis()?;
                     let mut read = d.read;
-                    let start_until = i64::try_from(now / 1000 + 30).map_err(|_| Error::Clock)?;
-                    read.deadline =
-                        start_until + i64::from(read.plan.spec().budget.timeout_seconds);
+                    read.deadline = i64::try_from(now / 1000).map_err(|_| Error::Clock)?
+                        + i64::from(read.plan.spec().budget.timeout_seconds);
                     let os_session = OsSessionRef {
                         device: self.core.host.root.device.clone(),
                         account: OsAccountRef {
@@ -643,7 +633,6 @@ impl<S: IdentityProvider> DeviceService<S> {
                             )?,
                         },
                         plan::reference("local-native-query", "1")?,
-                        start_until,
                         &self.core.host.root,
                         &self.core.host.local_actor,
                         (&self.core.config, &mut self.core.material_root),
@@ -784,7 +773,8 @@ pub(super) fn is_local(input: &DataOperation) -> bool {
         input,
         DataOperation::Read(_)
             | DataOperation::Directory(QueryDirectory {
-                policy_page: None,
+                refresh_policies: false,
+                policy_cursor: None,
                 ..
             })
     )

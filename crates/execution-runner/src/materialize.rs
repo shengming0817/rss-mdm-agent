@@ -39,7 +39,6 @@ impl MaterialRegistry {
     }
     /// Register exact material coordinates once. Re-registration cannot replace live or idle content.
     pub fn register(&self, plan: &FrozenExecution, value: Artifacts) -> Result<(), Error> {
-        value.inspect(plan)?;
         let mut entries = self.entries.lock().map_err(|_| Error::Unavailable)?;
         if entries.contains_key(plan.digest().as_str()) {
             return Err(Error::Conflict);

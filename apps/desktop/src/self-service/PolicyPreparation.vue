@@ -19,15 +19,12 @@ function request() {
 }
 function resolved() {
   const action = props.record.action;
-  if (action.kind !== "policy" || action.directory.task.kind !== "script")
-    return {};
+  if (action.kind !== "policy" || action.task.kind !== "script") return {};
   return Object.fromEntries(
-    Object.entries(action.directory.task.parameterSources).map(
-      ([key, source]) => [
-        key,
-        source.kind === "fixed" ? source.value : action.choice.parameters[key],
-      ],
-    ),
+    Object.entries(action.task.parameterSources).map(([key, source]) => [
+      key,
+      source.kind === "fixed" ? source.value : action.choice.parameters[key],
+    ]),
   );
 }
 function presentationText(value: unknown, fallback = "未提供"): string {
@@ -40,50 +37,44 @@ function presentationText(value: unknown, fallback = "未提供"): string {
       <h3>
         {{
           presentationText(
-            record.action.directory.selfService.presentation.displayName,
-            `策略 ${record.action.directory.policyId}`,
+            record.action.offer?.presentation.title ??
+              record.action.presentation.displayName,
+            `策略 ${record.action.choice.policyId}`,
           )
         }}
       </h3>
+      <template v-if="record.action.offer">
+        <p>已受理执行摘要</p>
+        <pre>{{
+          JSON.stringify(record.action.offer.presentation.summary, null, 2)
+        }}</pre>
+      </template>
+      <p v-if="record.action.runId">
+        以下为提交前配置快照；实际执行内容以已受理任务及执行详情为准。
+      </p>
       <p>
-        {{
-          presentationText(
-            record.action.directory.selfService.presentation.description,
-          )
-        }}
+        {{ presentationText(record.action.presentation.description) }}
       </p>
       <p>
         前置条件：{{
-          presentationText(
-            record.action.directory.selfService.presentation.prerequisites,
-          )
+          presentationText(record.action.presentation.prerequisites)
         }}
       </p>
       <p>
-        副作用：{{
-          presentationText(
-            record.action.directory.selfService.presentation.sideEffects,
-          )
-        }}
+        副作用：{{ presentationText(record.action.presentation.sideEffects) }}
       </p>
       <dl>
         <dt>请求</dt>
         <dd>{{ request() }}</dd>
-        <dt>策略 / 配置 revision / 执行版本</dt>
-        <dd>
-          {{ record.action.choice.policyId }} /
-          {{ record.action.choice.policyRevision }} /
-          {{ record.action.choice.policyVersion }}
+        <dt>策略</dt>
+        <dd>{{ record.action.choice.policyId }}</dd>
+        <dt>{{ record.action.runId ? "提交前资源版本" : "资源版本" }}</dt>
+        <dd v-if="record.action.task.kind !== 'enrollment'">
+          {{ record.action.task.resource.id }} /
+          {{ record.action.task.resource.version }} /
+          {{ record.action.task.resource.variant }}
         </dd>
-        <dt>资源版本</dt>
-        <dd v-if="record.action.directory.task.kind !== 'enrollment'">
-          {{ record.action.directory.task.resource.id }} /
-          {{ record.action.directory.task.resource.version }} /
-          {{ record.action.directory.task.resource.variant }}
-        </dd>
-        <dd v-else>
-          原生 MDM 注册 · {{ record.action.directory.task.organization }}
-        </dd>
+        <dd v-else>原生 MDM 注册 · {{ record.action.task.organization }}</dd>
         <dt>准入主体</dt>
         <dd>
           {{
@@ -92,16 +83,9 @@ function presentationText(value: unknown, fallback = "未提供"): string {
               : "企业用户准入"
           }}
         </dd>
-        <template
-          v-if="
-            record.action.directory.subject.kind === 'user' &&
-            record.action.access.kind === 'user'
-          "
-        >
-          <dt>发起企业身份 / 会话</dt>
+        <template v-if="record.action.access.kind === 'user'">
+          <dt>发起企业会话引用</dt>
           <dd>
-            {{ record.action.directory.subject.user.tenantId }} /
-            {{ record.action.directory.subject.user.principalId }} · 登录
             {{ record.action.access.sessionBinding.generation }}
           </dd>
         </template>
@@ -120,12 +104,15 @@ function presentationText(value: unknown, fallback = "未提供"): string {
           </dd></template
         >
       </dl>
-      <PolicyExecutionContext :task="record.action.directory.task" />
+      <PolicyExecutionContext
+        v-if="!record.action.runId"
+        :task="record.action.task"
+      />
       <button :disabled="disabled" @click="emit('query', request())">
         查询原请求与结果
       </button>
-      <template v-if="record.action.directory.task.kind === 'script'">
-        <p>最终参数</p>
+      <template v-if="record.action.task.kind === 'script'">
+        <p>{{ record.action.runId ? "提交前参数快照" : "最终参数" }}</p>
         <pre>{{ JSON.stringify(resolved(), null, 2) }}</pre>
       </template>
       <p>风险：{{ record.risk?.level ?? "人工操作" }} · {{ record.state }}</p>

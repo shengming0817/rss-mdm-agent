@@ -33,7 +33,6 @@ pub(crate) const PROFILE: &str = "native-collection-worker";
 #[serde(deny_unknown_fields)]
 pub(crate) struct Input {
     pub read: ReadPlan,
-    pub finish_by_unix_ms: u64,
     pub image_sha256: Digest,
     pub run_as: RunAs,
     pub session: SessionRequirement,
@@ -308,9 +307,6 @@ pub fn run(path: &Path, query: Option<&str>) -> Result<i32, Error> {
     let image = std::env::current_exe()?;
     let _lease = execution_runner::staging::verify_retained(&image, &input.image_sha256)
         .map_err(crate::error::app_error)?;
-    if now()? >= input.read.deadline {
-        return Err(Error::Expired);
-    }
     #[cfg(any(windows, target_os = "macos"))]
     {
         let output = if let Some(id) = query {
@@ -322,15 +318,13 @@ pub fn run(path: &Path, query: Option<&str>) -> Result<i32, Error> {
                 .get(id)
                 .ok_or(Error::Untrusted)?;
             #[cfg(windows)]
-            let result = windows::execute(&input, q, input.read.deadline);
+            let result = windows::execute(&input, q);
             #[cfg(target_os = "macos")]
             let result = macos::execute(&input, q)?;
             serde_json::to_vec(&result).map_err(|_| Error::Protocol)?
         } else {
             let result = collect(
                 &input.read.plan,
-                input.read.deadline,
-                input.finish_by_unix_ms,
                 &input.observed,
                 |id, q, remaining, raw_allowance| {
                     #[cfg(windows)]
@@ -444,8 +438,6 @@ pub(crate) fn tools(
 #[cfg(any(windows, target_os = "macos", test))]
 fn collect(
     plan: &w::NativeCollectionPlan,
-    deadline: i64,
-    finish_by_unix_ms: u64,
     observed: &std::sync::atomic::AtomicU64,
     mut execute: impl FnMut(
         &str,
@@ -455,29 +447,16 @@ fn collect(
     ) -> Result<w::NativeQueryResult, Error>,
 ) -> Result<w::NativeCollectionResult, Error> {
     preflight(plan)?;
-    // Compilation precedes runner dispatch. This conservative common cutoff includes
-    // staging, process startup and worker initialization without extending authorization.
-    let wall_ms = u64::try_from(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|_| Error::Clock)?
-            .as_millis(),
-    )
-    .map_err(|_| Error::Clock)?;
-    let available = std::time::Duration::from_millis(
-        finish_by_unix_ms
-            .saturating_sub(wall_ms)
-            .saturating_sub(250),
-    )
-    .min(std::time::Duration::from_secs(u64::from(
-        plan.spec().budget.timeout_seconds,
-    )));
+    // The parent runner owns the original attempt's total deadline and process scope.
+    // Queries share the worker's remaining budget, including result/cleanup headroom.
+    let available = std::time::Duration::from_secs(u64::from(plan.spec().budget.timeout_seconds))
+        .saturating_sub(std::time::Duration::from_millis(250));
     let started = std::time::Instant::now();
     let mut result = empty_result(plan, now()?);
     let mut cache: BTreeMap<[u8; 32], w::NativeQueryResult> = BTreeMap::new();
     for (id, q) in &plan.spec().queries {
         let time = now()?;
-        if time >= deadline || started.elapsed() >= available {
+        if started.elapsed() >= available {
             break;
         }
         let remaining = available.saturating_sub(started.elapsed());

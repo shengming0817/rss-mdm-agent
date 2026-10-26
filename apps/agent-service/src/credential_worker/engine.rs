@@ -40,9 +40,6 @@ pub(super) fn execute(
     let _lock = state::lock(&input.root)?; // also proves a referenced original worker has stopped
     let task = &input.task;
     task.validate()?;
-    if crate::wall()? / 1000 >= task.deadline as u64 {
-        return Err(Error::Expired);
-    }
     if let Some(result) =
         state::read_optional::<w::CredentialResult>(&input.root, &state::name(task, "result"))?
     {
@@ -279,9 +276,6 @@ fn execute_inner(input: &Input, n: &mut impl Native) -> Result<w::CredentialResu
             == Some(&digest)
         {
             break;
-        }
-        if crate::wall()? / 1000 >= task.deadline as u64 {
-            return Err(Error::Expired);
         }
         std::thread::sleep(std::time::Duration::from_millis(200));
     }

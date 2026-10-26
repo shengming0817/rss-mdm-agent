@@ -173,18 +173,6 @@
           },
           {
             "additionalProperties": false,
-            "description": "A separate approval is needed before admission.",
-            "properties": {
-              "kind": {
-                "const": "approvalRequired",
-                "type": "string"
-              }
-            },
-            "required": ["kind"],
-            "type": "object"
-          },
-          {
-            "additionalProperties": false,
             "description": "Recorded admission decision, not an executable permit.",
             "properties": {
               "kind": {
@@ -569,28 +557,6 @@
       "actor": {
         "$ref": "#/$defs/ActorId",
         "description": "Claimed product actor reference; OS/provider login does not establish this identity."
-      },
-      "approval": {
-        "anyOf": [
-          {
-            "$ref": "#/$defs/VersionedRef"
-          },
-          {
-            "type": "null"
-          }
-        ],
-        "description": "Exact approval-record reference, if applicable; validity/consumption are checked externally."
-      },
-      "approver": {
-        "anyOf": [
-          {
-            "$ref": "#/$defs/ActorId"
-          },
-          {
-            "type": "null"
-          }
-        ],
-        "description": "Referenced approving product actor, if applicable; not a trusted approval by itself."
       },
       "authority": {
         "$ref": "#/$defs/Authority",
@@ -2593,10 +2559,10 @@
       },
       "ValidityWindow": {
         "additionalProperties": false,
-        "description": "UTC Unix milliseconds. The host separately validates current time and revocation freshness.",
+        "description": "Attempt admission window in UTC Unix milliseconds, independent of the runtime budget.",
         "properties": {
           "expiresAtUnixMs": {
-            "description": "Exclusive validity deadline as UTC Unix milliseconds, strictly after the start.",
+            "description": "Exclusive deadline for admitting and first dispatching an attempt.",
             "format": "uint64",
             "minimum": 0,
             "type": "integer"

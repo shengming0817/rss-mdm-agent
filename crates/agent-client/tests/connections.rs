@@ -84,7 +84,6 @@ async fn real_tls_address_publication_preserves_original_identity_cache_pending_
     {
         let mut data = a.data.lock().unwrap();
         data.start_failure = true;
-        data.start_validity_seconds = 300;
     }
     assert!(client.request_start(&offer, &materials).await.is_err());
     let original_credentials = a.secrets.0.lock().unwrap().clone();

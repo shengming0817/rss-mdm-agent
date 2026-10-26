@@ -103,7 +103,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         )?)
     }
     /// Answer/cancel/expire through C04/C18. Administrator answers carry references only and
-    /// cannot grant approval; a future explicit attempt still needs independently verified C08 facts.
+    /// cannot grant approval; a future explicit attempt still requires the configured product permit.
     pub fn respond(
         &mut self,
         caller: &RequestContext,

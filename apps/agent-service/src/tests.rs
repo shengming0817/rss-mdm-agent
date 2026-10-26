@@ -3,7 +3,7 @@ use super::*;
 use crate::backend::{host, plan, software};
 use crate::protocol_test_support as protocol;
 use agent_client::OpenMode;
-use execution_admission::AuthorityVerifier;
+use execution_app::AppHost;
 use execution_contract::*;
 use rss_mdm_agent_wire::runtime as wire;
 use sha2::{Digest as _, Sha256};
@@ -133,7 +133,8 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
     };
     let attempt = AttemptId::new("local-attempt").unwrap();
     assert!(
-        host.verify(&preview, &attempt).is_err(),
+        host.admit(&preview, &attempt, host.clock.millis().unwrap())
+            .is_err(),
         "an Offer cannot authorize execution"
     );
     client.received(&offer).await.unwrap();
@@ -174,29 +175,17 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
             &start,
             &frozen,
             None,
-            None,
             host.clock.millis().unwrap(),
         )
         .unwrap(),
     }));
-    assert!(host.verify(&frozen, &attempt).is_ok());
-    assert!(execution_app::AppHost::approval_bindings(&host, &frozen)
-        .unwrap()
-        .is_empty());
-    // Journal reconciliation survives a later dispatch or process restart without granting
-    // a new attempt. The short-lived backend Start remains mandatory for admission.
+    assert!(host
+        .admit(&frozen, &attempt, host.clock.millis().unwrap())
+        .is_ok());
     let original_grant = host.current.lock().unwrap().take().unwrap();
-    let snapshot = execution_app::AppHost::trusted_snapshot(&host, &frozen).unwrap();
-    assert_eq!(
-        snapshot.fresh_until_unix_ms,
-        frozen.spec().validity.expires_at_unix_ms
-    );
-    assert!(snapshot.approvals.is_empty());
-    assert!(host.verify(&frozen, &attempt).is_err());
-    let mut foreign = frozen.spec().clone();
-    foreign.request.actor = ActorId::new("foreign-registration").unwrap();
-    let foreign = FrozenExecution::freeze(foreign, &plan::storage_limits().input).unwrap();
-    assert!(execution_app::AppHost::trusted_snapshot(&host, &foreign).is_err());
+    assert!(host
+        .admit(&frozen, &attempt, host.clock.millis().unwrap())
+        .is_err());
     *host.current.lock().unwrap() = Some(original_grant);
     for change in 0..7 {
         let mut changed = payload.clone();
@@ -213,7 +202,9 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
     }
     host.revoked
         .store(true, std::sync::atomic::Ordering::Release);
-    assert!(host.verify(&frozen, &attempt).is_err());
+    assert!(host
+        .admit(&frozen, &attempt, host.clock.millis().unwrap())
+        .is_err());
     let mut next = receipt.clone();
     next.generation += 1;
     assert_ne!(

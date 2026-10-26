@@ -202,15 +202,19 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         }
         let attempt = AttemptId::new(key(plan, "attempt", CommandId::initial_attempt().as_str())?)
             .map_err(|_| Error::InvalidInput)?;
-        let decision = execution_admission::decide(
-            plan,
-            &attempt,
-            &self.host,
-            execution_admission::AdmissionLimits {
-                max_rules: self.config.active()?.max_rules,
-            },
-        );
-        if decision.execution_gate() == execution_admission::ExecutionGate::Confirmation {
+        let gate = if matches!(
+            plan.spec().request.initiator,
+            execution_contract::Initiator::Ai { .. }
+        ) {
+            match self.host.admit(plan, &attempt, self.host.reliable_now()?) {
+                Ok(gate) => gate.execution_gate,
+                Err(crate::JournalError::Denied) => crate::ExecutionGate::Blocked,
+                Err(error) => return Err(error.into()),
+            }
+        } else {
+            crate::ExecutionGate::Direct
+        };
+        if gate == crate::ExecutionGate::Confirmation {
             let spec = crate::execution_confirmation(plan);
             self.open_interaction(
                 caller,
@@ -291,7 +295,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         self.advance(caller, request, command)
     }
     /// Explicit owner action, distinct from submit replay. Every new attempt rechecks capabilities,
-    /// C07 and C08 against current trusted facts and atomically consumes all required approvals.
+    /// the current product permit inside the same transaction as the attempt.
     pub(crate) fn advance(
         &mut self,
         caller: &RequestContext,
@@ -378,7 +382,6 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
                 "prepare",
                 command.as_str(),
                 Command::Prepare,
-                &[],
             )?;
             *execution = self.load(
                 context,
@@ -394,28 +397,6 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         ) {
             return Err(Error::Conflict);
         }
-        let scope = Scope::from_input(execution.input());
-        let revision = self
-            .journal
-            .trust_revision(&scope, &self.adapter(context, Some(execution.input())))
-            .map_err(|error| {
-                eprintln!("execution_trust_revision: {error:?}");
-                Error::from(error)
-            })?;
-        let refresh = operation(
-            execution.input(),
-            "trust",
-            &format!("{}:{revision:?}", command.as_str()),
-        )?;
-        let host = Host::new(&self.host, &self.binding, &self.config, context)
-            .with_input(Some(execution.input()));
-        self.journal
-            .refresh_trust(&refresh, &scope, revision, &host)
-            .map_err(|error| {
-                eprintln!("execution_trust_refresh: {error:?}");
-                Error::from(error)
-            })?;
-        let bindings = self.host.approval_bindings(execution.input())?;
         let attempt = AttemptId::new(key(execution.input(), "attempt", command.as_str())?)
             .map_err(|_| Error::InvalidInput)?;
         self.command(
@@ -428,7 +409,6 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
                 runner: self.runner.id(),
                 mode: self.runner.mode(),
             },
-            &bindings,
         )
     }
     fn dispatch(&mut self, request: &RequestId, action: DispatchAction) -> Result<(), Error> {
@@ -515,7 +495,6 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
             "dispatch-result",
             attempt.as_str(),
             command,
-            &[],
         )?;
         Ok(())
     }
@@ -526,7 +505,6 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         stage: &str,
         identity: &str,
         command: Command,
-        bindings: &[execution_approval::ProfileApproval],
     ) -> Result<CommitOutcome, Error> {
         let plan = execution.input();
         let scope = Scope::from_input(plan);
@@ -542,9 +520,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
             expected_revision: execution.snapshot().revision,
             command,
         };
-        Ok(self
-            .journal
-            .apply_command(&op, &scope, &event, bindings, &host)?)
+        Ok(self.journal.apply_command(&op, &scope, &event, &host)?)
     }
     fn observation(
         &mut self,
@@ -726,7 +702,6 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
                         attempt_id: active.id.clone(),
                         total_bytes: facts.total_output_bytes,
                     },
-                    &[],
                 )?;
                 if !matches!(
                     result.receipt().outcome,
@@ -771,7 +746,6 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
                         attempt_id: active.id.clone(),
                         total_bytes: progress.output_bytes,
                     },
-                    &[],
                 )?;
                 if !matches!(
                     result.receipt().outcome,
@@ -1020,7 +994,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
                 } else {
                     None
                 };
-            let Some(facts) = program.or(observed).or(stored) else {
+            let Some(facts) = observed.or(stored).or(program) else {
                 if attempt.termination.is_none()
                     && (!had_live || capture.as_ref().is_some_and(|f| f.finished))
                     && !matches!(attempt.dispatch, DispatchState::Unknown { .. })
@@ -1031,7 +1005,6 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
                         "recover",
                         attempt.id.as_str(),
                         Command::Recover,
-                        &[],
                     )?;
                 }
                 break;
@@ -1058,8 +1031,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         for _ in 0..3 {
             let execution = self.load(context, request, ExecutionAccess::Execute)?;
             if !execution.snapshot().cancel_requested {
-                let result =
-                    self.command(context, &execution, "cancel", "", Command::Cancel, &[])?;
+                let result = self.command(context, &execution, "cancel", "", Command::Cancel)?;
                 if result.receipt().outcome == Outcome::Rejected {
                     return Err(Error::Conflict);
                 }
@@ -1095,7 +1067,6 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
                 attempt_id: attempt.id.clone(),
                 outcome,
             },
-            &[],
         )?;
         if matches!(result.receipt().outcome, Outcome::Stale | Outcome::Rejected) {
             return Err(Error::Conflict);
@@ -1378,7 +1349,6 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
             match execution.phase() {
                 Phase::Received | Phase::Prepared | Phase::Waiting => match record.admission {
                     Some(AdmissionStatus::Denied) => TaskPhase::AdmissionDenied,
-                    Some(AdmissionStatus::ApprovalRequired) => TaskPhase::ApprovalRequired,
                     _ => TaskPhase::Waiting,
                 },
                 Phase::Starting => TaskPhase::Accepted,

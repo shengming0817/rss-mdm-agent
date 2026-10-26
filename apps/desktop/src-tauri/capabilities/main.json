@@ -16,6 +16,7 @@
     "core:window:allow-toggle-maximize",
     "core:window:allow-close",
     "allow-self-service-policy-directory",
+    "allow-self-service-policy-resolve",
     "allow-self-service-policy-invoke",
     "allow-self-service-policy-confirm",
     "allow-ai-operation-submit",

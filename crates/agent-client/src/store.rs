@@ -13,7 +13,7 @@ const SCHEMA: &str = "CREATE TABLE metadata(singleton INTEGER PRIMARY KEY CHECK(
                     CREATE TABLE tasks(id TEXT PRIMARY KEY,body BLOB NOT NULL);
                     CREATE TABLE requests(key TEXT PRIMARY KEY,task TEXT NOT NULL,source TEXT,body BLOB NOT NULL,accepted INTEGER NOT NULL DEFAULT 0 CHECK(accepted IN(0,1)));
                     CREATE TABLE cache_refs(task TEXT NOT NULL,name TEXT NOT NULL,PRIMARY KEY(task,name));
-                    PRAGMA application_id=1380008771; PRAGMA user_version=3;";
+                    PRAGMA application_id=1380008771; PRAGMA user_version=4;";
 pub(crate) struct Store {
     pub conn: Connection,
     pub root: PathBuf,
@@ -152,7 +152,7 @@ pub(crate) fn read_existing(root: &Path, cfg: &Config) -> Result<Connection, Err
     let reader = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let version: u32 = reader.pragma_query_value(None, "user_version", |r| r.get(0))?;
     let app: u32 = reader.pragma_query_value(None, "application_id", |r| r.get(0))?;
-    if version != 3 || app != 1380008771 {
+    if version != 4 || app != 1380008771 {
         return Err(Error::Schema);
     }
     validate_schema(&reader)?;

@@ -48,7 +48,7 @@ it("starts a fresh discovery after a paged traversal without reusing its visited
     .mockResolvedValueOnce({ items: [], nextCursor: "1", asOf: 1 })
     .mockResolvedValueOnce({ items: [], nextCursor: "2", asOf: 1 })
     .mockResolvedValueOnce({ items: [], nextCursor: "1", asOf: 2 });
-  const c = createDirectory({ policy_directory: read });
+  const c = createDirectory({ ...policyFixturePort, policy_directory: read });
   await c.load();
   await c.load(true);
   await c.load();

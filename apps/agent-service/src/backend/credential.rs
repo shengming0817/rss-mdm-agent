@@ -29,6 +29,10 @@ pub(crate) fn compile(
     }
     materials.validate_offer(offer)?;
     payload.validate()?;
+    let mut normalized = payload.clone();
+    normalized.permit = w::TaskPermit::Offer;
+    normalized.expires_at = normalized.deadline;
+    let payload = &normalized;
     if payload.platform
         != match plan::platform()? {
             Platform::Windows => w::TaskPlatform::Windows,
@@ -55,7 +59,6 @@ pub(crate) fn compile(
             root_key: "credential-root",
             root: state_root.clone(),
             deadline: payload.deadline,
-            expires_at: payload.expires_at,
             definition_digest: payload.definition_digest,
             output: crate::credential_worker::OUTPUT_BYTES,
             stdin: StandardInput::Closed {},
@@ -78,6 +81,11 @@ pub(crate) fn verify_input(
     plan: &FrozenExecution,
     task: &w::CredentialTaskSpec,
 ) -> Result<(), Error> {
+    let mut normalized = task.clone();
+    normalized.permit = w::TaskPermit::Offer;
+    normalized.expires_at = normalized.deadline;
+    let task = &normalized;
+
     let root = match plan.spec().request.parameters.get("credential-root") {
         Some(InputValue::Literal { value }) => {
             serde_json::from_value(value.clone()).map_err(|_| Error::Protocol)?
@@ -123,19 +131,7 @@ impl execution_lifecycle::ObservationVerifier for EffectEvidence<'_> {
         {
             return Err(E::Untrusted);
         }
-        let mut started = self.task.clone();
-        started.permit = w::TaskPermit::Start;
-        let expires = plan
-            .spec()
-            .validity
-            .expires_at_unix_ms
-            .checked_sub(plan.spec().budget.total_timeout_ms)
-            .ok_or(E::Untrusted)?;
-        if !expires.is_multiple_of(1000) {
-            return Err(E::Untrusted);
-        }
-        started.expires_at = i64::try_from(expires / 1000).map_err(|_| E::Untrusted)?;
-        verify_input(plan, &started).map_err(|_| E::Untrusted)?;
+        verify_input(plan, self.task).map_err(|_| E::Untrusted)?;
         let root = crate::credential_worker::plan_root(plan).map_err(|_| E::Untrusted)?;
         let result = crate::credential_worker::stored_result(&root, self.task)
             .map_err(|_| E::Untrusted)?

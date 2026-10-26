@@ -79,14 +79,10 @@ impl Execution {
         self.directive(now)?;
         let plan = self.plan.spec();
         let start = self.snapshot.first_attempt_at_unix_ms.unwrap_or(now);
-        let deadline = start
-            .saturating_add(plan.budget.total_timeout_ms)
-            .min(plan.validity.expires_at_unix_ms);
+        let deadline = start.saturating_add(plan.budget.total_timeout_ms);
         Ok(crate::DispatchAllowance {
             remaining_timeout_ms: deadline.saturating_sub(now),
-            deadline_unix_ms: start
-                .saturating_add(plan.budget.total_timeout_ms)
-                .min(plan.validity.expires_at_unix_ms),
+            deadline_unix_ms: deadline,
             remaining_output_bytes: plan
                 .budget
                 .total_output_bytes
@@ -98,7 +94,9 @@ impl Execution {
         let s = &self.snapshot;
         if now < p.validity.not_before_unix_ms {
             Some(LimitReason::NotYetValid)
-        } else if now >= p.validity.expires_at_unix_ms {
+        } else if now >= p.validity.expires_at_unix_ms
+            && s.attempt.as_ref().is_none_or(|a| a.termination.is_some())
+        {
             Some(LimitReason::Expired)
         } else if self.total_output_bytes() >= p.budget.total_output_bytes {
             Some(LimitReason::Output)
@@ -143,7 +141,8 @@ impl Execution {
     }
     /// Derive bounded recovery/continuation advice at reliable host time.
     /// Expired budgets stop new work but never suppress observation recording.
-    /// Cause priority: cancellation, validity, output, timeout, then attempt count.
+    /// Validity bounds new attempts; a running attempt retains its cumulative budget.
+    /// Cause priority: cancellation, attempt validity, output, timeout, then attempt count.
     /// C18/C19 retain the reason and decision time in their audit; this is not termination.
     pub fn directive(&self, now: u64) -> Result<Directive, LifecycleError> {
         if now < self.snapshot.updated_at_unix_ms {
@@ -431,10 +430,7 @@ impl Execution {
                 total_output_bytes, ..
             }
             | Observation::NeverDispatched { total_output_bytes } => {
-                if a.termination.is_some()
-                    || (matches!(recorded.observation, Observation::NeverDispatched { .. })
-                        && a.dispatch.was_dispatched())
-                {
+                if a.termination.is_some() {
                     return Err(LifecycleError::Transition);
                 }
                 if *total_output_bytes < a.output_bytes {

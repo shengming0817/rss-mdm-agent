@@ -247,8 +247,7 @@ fn freeze(
                 not_before_unix_ms: now,
                 expires_at_unix_ms: u64::try_from(payload.expires_at)
                     .map_err(|_| Error::Clock)?
-                    .checked_add(crate::enrollment_worker::TIMEOUT_MS / 1000)
-                    .and_then(|v| v.checked_mul(1000))
+                    .checked_mul(1000)
                     .ok_or(Error::Clock)?,
             },
             policy: reference(

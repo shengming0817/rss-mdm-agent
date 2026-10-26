@@ -163,7 +163,7 @@ for (const provider of engines) {
         );
         f.model.tool(
           policy.name,
-          { locator: { after: null }, parameters: { name: "Acme" } },
+          { parameters: { name: "Acme" } },
           "policy-call",
         );
         f.model.text("native policy tool delivered");
@@ -182,7 +182,6 @@ for (const provider of engines) {
           "actual dynamic Policy MCP call crosses the SDK/Host/Rust boundary",
         );
         assert.deepEqual(policyCall.arguments, {
-          locator: { after: null },
           parameters: { name: "Acme" },
         });
         assert.equal(policyCall.result.disposition, "rejected");

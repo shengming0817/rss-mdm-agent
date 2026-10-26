@@ -20,13 +20,11 @@
 - [契约来源与改写](reference/contracts-extraction.md)：C01/C02 的固定对标及参考重写边界。
 - [交互核心](../crates/execution-interaction/README.md)：回答、取消、过期与恢复。
 - [能力核心](../crates/execution-capability/README.md)：计划要求与环境快照匹配。
-- [授权核心](../crates/execution-admission/README.md)：可信宿主接缝与精确规则。
-- [批准核心](../crates/execution-approval/README.md)：完整裁决、可信验证与按尝试消费。
 - [生命周期核心](../crates/execution-lifecycle/README.md)：有界快照、证据核实与安全重试。
 - [脚本计划核心](../crates/script-plan/README.md)：字面脚本调用编译与解释器文件启动规则。
 - [生产执行服务](guides/local-service-lab.md#后台授权执行服务)：V1 有序软件步骤的生产编译、执行及恢复入口。
 - [受控 MCP 适配器](../crates/execution-mcp/README.md)：同源目录参数、宿主绑定服务 port、幂等提交与有界 stdio。
-- [执行 SQLite](../crates/execution-sqlite/README.md)与[来源改写](reference/execution-sqlite.md)：原子 journal、交互、批准和结果查询/确认。
+- [执行 SQLite](../crates/execution-sqlite/README.md)与[来源改写](reference/execution-sqlite.md)：原子 journal、交互和结果查询/确认。
 - [执行应用服务](../crates/execution-app/README.md)：无 UI 的 S1 组合根、一次性 Test 派发与独立恢复。
 - [执行核心来源](reference/execution-cores.md)：固定Rust对标及重写边界。
 - [来源与对标](reference/sources.md)：prmonitor 固定源码证据、服务端产品基线及上游参考。

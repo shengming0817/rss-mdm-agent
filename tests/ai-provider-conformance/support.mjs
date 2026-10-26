@@ -581,9 +581,10 @@ export function assertNativeToolSchema(provider, requests, definition) {
   if (provider === "codex") {
     // ref: openai/codex rust-v0.155.0 codex-rs/tools/src/json_schema/types.rs (JsonSchema).
     // App-server verifies the original MCP schema before admission. Its model-facing
-    // schema representation omits the fixture's maxLength.
+    // schema representation omits the fixture's maxLength and schema resource $id.
     assert.equal(expected.properties.parameters.properties.name.maxLength, 32);
     delete expected.properties.parameters.properties.name.maxLength;
+    delete expected.properties.parameters.$id;
   }
   assert.deepEqual(
     actual.input_schema ?? actual.parameters ?? actual.function?.parameters,
