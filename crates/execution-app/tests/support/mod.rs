@@ -167,8 +167,8 @@ impl AppHost for TestHost {
         Ok(())
     }
     fn reliable_now(&self) -> Result<u64, execution_app::JournalError> {
-        let state = self.state.lock().unwrap();
-        if state.clock_error {
+        let mut state = self.state.lock().unwrap();
+        if std::mem::take(&mut state.clock_error) {
             Err(execution_app::JournalError::Clock)
         } else {
             Ok(state.now)

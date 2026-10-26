@@ -114,6 +114,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         Ok(matches!(
             self.identity_state()?.failure,
             Some(ErrorCode::CredentialRevoked | ErrorCode::CredentialRetired)
+        ) || matches!(
+            self.active(),
+            Err(Error::CredentialRevoked | Error::CredentialRetired)
         ))
     }
 
@@ -202,6 +205,11 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         // Approved revision and all historical CRL watermarks commit together before enrollment or acknowledgement.
         self.runtime_gate.close();
         self.store.put("pki", &state)?;
+        // A verified current CRL is an explicit revocation fact, retained by the existing
+        // identity owner even if later communication or trust freshness becomes unavailable.
+        if matches!(self.active(), Err(Error::CredentialRevoked)) {
+            self.identity_failure(rss_mdm_agent_wire::enroll::ErrorCode::CredentialRevoked)?;
+        }
         self.publish_runtime_gate();
         if self.identity_state()?.active.is_some() {
             let document = self.pki_state()?.document.ok_or(Error::Storage)?;

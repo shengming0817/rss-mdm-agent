@@ -109,3 +109,70 @@ pub(crate) fn verify_local_owner(
     }
     Ok(())
 }
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+    use execution_contract::*;
+
+    #[test]
+    fn local_task_ownership_uses_current_directory_incarnation_and_original_device() {
+        let subject = execution_ipc::host::current_subject().unwrap();
+        let (binding, actor) = crate::local_execution::binding(
+            crate::protocol_test_support::SERVICE_ID,
+            uuid::Uuid::from_u128(3015),
+            uuid::Uuid::from_u128(1),
+        )
+        .unwrap();
+        let mut input = crate::backend::test_support::local::plan().spec().clone();
+        input.request.authority = binding.authority.clone();
+        input.request.actor = actor;
+        input.request.target.device = binding.device.clone();
+        input.request.initiator = Initiator::Human {
+            os_session: OsSessionRef {
+                device: binding.device.clone(),
+                account: OsAccountRef {
+                    platform: Platform::Macos,
+                    subject: crate::backend::plan::id(&subject).unwrap(),
+                },
+                session: crate::backend::plan::id("original-login").unwrap(),
+            },
+        };
+        input.request.parameters.insert(
+            "local-owner".into(),
+            local_owner(&input.request.initiator).unwrap(),
+        );
+        let freeze = |input| {
+            FrozenExecution::freeze(input, &crate::backend::plan::storage_limits().input).unwrap()
+        };
+        let original = freeze(input.clone());
+        // The current format can reopen with a new UI/login context without gaining dispatch.
+        let reopened: FrozenExecution = FrozenExecution::freeze(
+            decode_execution(
+                &serde_json::to_vec(original.spec()).unwrap(),
+                &crate::backend::plan::storage_limits().input,
+            )
+            .unwrap(),
+            &crate::backend::plan::storage_limits().input,
+        )
+        .unwrap();
+        verify_local_owner(&reopened, &binding, &subject).unwrap();
+        assert!(verify_local_owner(&reopened, &binding, "0").is_err());
+        let mut other = binding.clone();
+        other.device = DeviceId::new("other-device").unwrap();
+        assert!(verify_local_owner(&reopened, &other, &subject).is_err());
+        let mut missing = input.clone();
+        missing.request.parameters.remove("local-owner");
+        assert!(verify_local_owner(&freeze(missing), &binding, &subject).is_err());
+        input.request.parameters.insert(
+            "local-owner".into(),
+            InputValue::Literal {
+                value: serde_json::json!({"incarnation":"different-account-incarnation"}),
+            },
+        );
+        assert_eq!(
+            verify_local_owner(&freeze(input), &binding, &subject),
+            Err(Error::Identity)
+        );
+    }
+}

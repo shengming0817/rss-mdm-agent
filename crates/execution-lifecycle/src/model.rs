@@ -178,8 +178,6 @@ pub struct AttemptSnapshot {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum DispatchCause {
-    /// Required capability or its independently verified freshness is unavailable.
-    CapabilityUnavailable,
     /// A reliable clock could not be established at the gate.
     ClockUnavailable,
     /// A durable cancellation was seen before first delivery.
@@ -190,8 +188,6 @@ pub enum DispatchCause {
     StaleRevision,
     /// Current runner identity or provenance does not match the admitted action.
     RunnerMismatch,
-    /// Current service configuration does not permit new delivery.
-    ConfigurationUnavailable,
     /// Current host binding or Execute authorization was rejected.
     AuthorityUnavailable,
     /// The lifecycle no longer permits initial delivery for another reason.

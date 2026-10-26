@@ -64,7 +64,6 @@ export type AttemptId = string;
  * Closed first-delivery diagnostics. These are not observations of termination or effects.
  */
 export type DispatchCause =
-  | "capabilityUnavailable"
   | "clockUnavailable"
   | "cancelled"
   | {
@@ -72,7 +71,6 @@ export type DispatchCause =
     }
   | "staleRevision"
   | "runnerMismatch"
-  | "configurationUnavailable"
   | "authorityUnavailable"
   | "lifecycleChanged"
   | "runnerRejected"

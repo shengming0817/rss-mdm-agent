@@ -125,6 +125,10 @@ const editable = computed(
     !busy.value &&
     !!snapshot.value,
 );
+// A changed observation offers explicit draft adoption; it does not block unrelated edits.
+const conflict = computed(
+  () => dirty.value && formRevision.value !== snapshot.value?.revision,
+);
 const writable = (key: string) =>
   target.value?.fields.some((f) => f.key === key && f.writable) ?? false;
 function refresh() {
@@ -283,20 +287,24 @@ function prepare() {
     patch.value = {
       kind: "display",
       target: t.id,
-      mode: mode.value !== base("mode") ? mode.value : null,
+      mode: writable("mode") && mode.value !== base("mode") ? mode.value : null,
       origin:
-        Number(x.value) !== origin?.x || Number(y.value) !== origin?.y
+        writable("origin") &&
+        (Number(x.value) !== origin?.x || Number(y.value) !== origin?.y)
           ? { x: Number(x.value), y: Number(y.value) }
           : null,
     };
   } else if (effective.value === "network") {
     const changed = (protocol: (typeof protocols)[number]) => {
+      if (!writable(protocol)) return null;
       const p = { ...proxies[protocol], port: Number(ports[protocol] || 0) };
       return JSON.stringify(p) === JSON.stringify(base(protocol)) ? null : p;
     };
     if (
       protocols.some(
-        (p) => !/^\d*$/.test(ports[p]) || Number(ports[p] || 0) > 65535,
+        (p) =>
+          writable(p) &&
+          (!/^\d*$/.test(ports[p]) || Number(ports[p] || 0) > 65535),
       )
     )
       return;
@@ -311,6 +319,7 @@ function prepare() {
       https: changed("https"),
       socks: changed("socks"),
       bypass:
+        !writable("bypass") ||
         JSON.stringify(entries) === JSON.stringify(base("bypass"))
           ? null
           : entries,
@@ -318,8 +327,11 @@ function prepare() {
   } else if (effective.value === "power") {
     const timer = (v: string) => /^\d+$/.test(v) && Number(v) <= 1440;
     const displayChanged =
+      writable("displayOffMinutes") &&
       displayOff.value !== String(base("displayOffMinutes") ?? "");
-    const sleepChanged = sleep.value !== String(base("sleepMinutes") ?? "");
+    const sleepChanged =
+      writable("sleepMinutes") &&
+      sleep.value !== String(base("sleepMinutes") ?? "");
     if (
       (displayChanged && !timer(displayOff.value)) ||
       (sleepChanged && !timer(sleep.value))
@@ -330,7 +342,10 @@ function prepare() {
       target: t.id,
       displayOffMinutes: displayChanged ? Number(displayOff.value) : null,
       sleepMinutes: sleepChanged ? Number(sleep.value) : null,
-      mode: energy.value !== base("mode") && energy.value ? energy.value : null,
+      mode:
+        writable("mode") && energy.value !== base("mode") && energy.value
+          ? energy.value
+          : null,
     };
   } else return;
   confirmation.value = true;

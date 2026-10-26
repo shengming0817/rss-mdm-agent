@@ -212,7 +212,6 @@ export type AdmissionStatus = "admitted" | "denied";
  * via the `definition` "DispatchCause".
  */
 export type DispatchCause =
-  | "capabilityUnavailable"
   | "clockUnavailable"
   | "cancelled"
   | {
@@ -220,7 +219,6 @@ export type DispatchCause =
     }
   | "staleRevision"
   | "runnerMismatch"
-  | "configurationUnavailable"
   | "authorityUnavailable"
   | "lifecycleChanged"
   | "runnerRejected"

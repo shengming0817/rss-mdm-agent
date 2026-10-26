@@ -4779,7 +4779,7 @@ async fn local_software_api_stages_no_attempt_and_replays_the_original_after_los
             context,
             origin: ClientOrigin::Desktop {},
             input: LocalSoftwareOperation::Status(QueryRequest {
-                request: choice.request
+                request: choice.request.clone()
             })
         })
         .await,
@@ -4790,7 +4790,7 @@ async fn local_software_api_stages_no_attempt_and_replays_the_original_after_los
     c.employee("fresh-software-history-context").await;
     assert!(
         matches!(c.local_software_call(LocalSoftwareOperation::History(SoftwareHistoryQuery{after:None,limit:64}),false).await,
-        Reply::SoftwareHistory{value} if value.items.is_empty())
+        Reply::SoftwareHistory{value} if value.items.iter().any(|item| item.prepared.request == choice.request))
     );
 }
 #[cfg(target_os = "macos")]
@@ -5228,7 +5228,7 @@ async fn installation_owner_exists_before_registration_and_preserves_both_scopes
 
 #[tokio::test]
 #[ignore = "requires root for production material/OS identity admission; explicitly run the built test binary"]
-async fn settings_desktop_cache_and_retained_task_are_bound_to_exact_context() {
+async fn settings_retained_task_survives_same_account_reconnection() {
     use execution_ipc::host::Request;
     let _budget = crate::scenario_budget::enter();
     let mut c = Case::new(None).await;
@@ -5365,7 +5365,7 @@ async fn settings_desktop_cache_and_retained_task_are_bound_to_exact_context() {
             SettingsOperation::Status { request }
         ))
         .await,
-        Reply::DataFailure { .. }
+        Reply::Settings { value } if value.digest.as_ref() == Some(frozen.digest()) && value.finished
     ));
 }
 
@@ -5570,17 +5570,18 @@ async fn network_check_replay_and_cancel_keep_the_original_sqlite_plan_and_login
     let Reply::RecentTasks { value } = c.recent_call(None).await else {
         panic!("recent tasks");
     };
-    assert!(value
-        .items
-        .iter()
-        .all(|item| item.details.action.request_id != request));
+    assert!(
+        value
+            .items
+            .iter()
+            .any(|item| item.details.action.request_id == request
+                && item.details.status.attempts == 0)
+    );
 
     assert!(matches!(
         c.policy_call(call(c.context(), NetworkCheckOperation::Status { request }))
             .await,
-        Reply::DataFailure {
-            reason: DataError::Denied
-        }
+        Reply::NetworkCheck { value } if value.status.content_digest == *frozen.digest() && value.status.attempts == 0
     ));
 }
 

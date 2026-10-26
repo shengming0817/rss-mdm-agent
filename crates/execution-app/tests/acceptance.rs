@@ -2796,3 +2796,50 @@ fn recent_tasks_follow_durable_activity_not_uuid_and_survive_reopen() {
     host.state.lock().unwrap().runner_facts = false;
     assert!(app.service_recent_tasks(None, 64).is_err());
 }
+
+#[test]
+fn dispatch_gate_clock_and_authority_failures_remain_distinct_after_restart() {
+    use execution_lifecycle::DispatchCause;
+    for clock in [true, false] {
+        let db = Database::new();
+        let host = TestHost::new();
+        let other = host.clone();
+        host.state.lock().unwrap().read_hook_access = Some(Access::RunnerFact);
+        host.state.lock().unwrap().read_hook = Some(std::sync::Arc::new(move || {
+            let mut state = other.state.lock().unwrap();
+            if clock {
+                state.clock_error = true;
+            } else {
+                state.accesses = Some(vec![
+                    Access::RunnerFact,
+                    Access::ReadResult,
+                    Access::ReadAudit,
+                ]);
+            }
+        }));
+        let runner =
+            DeterministicTestRunner::new(id("test-runner"), TestScenario::Complete, 16).unwrap();
+        let input = plan();
+        let mut app = open(&db, host.clone(), runner.clone(), false);
+        let status = app.request_execution(&caller(), &input).unwrap();
+        assert_eq!(
+            status.dispatch_cause,
+            Some(if clock {
+                DispatchCause::ClockUnavailable
+            } else {
+                DispatchCause::AuthorityUnavailable
+            })
+        );
+        assert_eq!(status.attempts, 1);
+        assert_eq!(status.assessment, None);
+        assert_eq!(runner.dispatch_count(), 0);
+        host.state.lock().unwrap().accesses = None;
+        drop(app);
+        let app = open(&db, host, runner, true);
+        assert_eq!(
+            app.status(&caller(), &input.spec().request.request_id)
+                .unwrap(),
+            status
+        );
+    }
+}
