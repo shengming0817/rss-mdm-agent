@@ -372,7 +372,7 @@ impl SoftwareProgress {
                     step: i,
                     phase: SoftwarePhase::Cleanup,
                 } if *i == step => {
-                    pending = Some((command.timeout_ms / 3, command.output_bytes / 3));
+                    pending = Some((command.timeout_ms, command.output_bytes));
                 }
                 SoftwareCheckpoint::End {
                     step: i,
@@ -421,15 +421,19 @@ impl SoftwareProgress {
         if sequence >= 3 || self.closed(plan) || self.complete(plan) {
             return None;
         }
-        let time = command
-            .timeout_ms
-            .saturating_sub(elapsed)
-            .min(command.timeout_ms / 3);
-        let bytes = command
-            .output_bytes
-            .saturating_sub(output)
-            .min(command.output_bytes / 3);
-        (time > 0 && bytes >= 1024).then_some((step, sequence + 1, time, bytes))
+        let time = command.timeout_ms.saturating_sub(elapsed).min(
+            plan.spec()
+                .budget
+                .total_timeout_ms
+                .saturating_sub(self.elapsed_ms),
+        );
+        let bytes = command.output_bytes.saturating_sub(output).min(
+            plan.spec()
+                .budget
+                .total_output_bytes
+                .saturating_sub(self.output_bytes),
+        );
+        (time > 0 && bytes > 0).then_some((step, sequence + 1, time, bytes))
     }
     /// Only ended business operations can be released after resource-only recovery.
     fn original_activity_ended(&self) -> bool {

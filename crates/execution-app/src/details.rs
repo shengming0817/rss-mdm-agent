@@ -96,26 +96,8 @@ impl FrozenExecutionSummary {
                                 },
                                 package: step.package.clone(),
                                 version: step.version.clone(),
-                                run_as: if program.intent
-                                    == execution_contract::SoftwareOperation::Uninstall
-                                {
-                                    step.uninstall
-                                        .as_ref()
-                                        .unwrap_or(&step.install)
-                                        .run_as
-                                        .clone()
-                                } else if program.intent
-                                    == execution_contract::SoftwareOperation::Detect
-                                {
-                                    match &step.detection {
-                                        execution_contract::SoftwareDetector::Script {
-                                            invocation,
-                                        } => invocation.run_as.clone(),
-                                        _ => step.install.run_as.clone(),
-                                    }
-                                } else {
-                                    step.install.run_as.clone()
-                                },
+                                run_as: step.invocations.get(&execution_contract::SoftwarePhase::Mutation)
+                                    .map(|c| &c.run_as).unwrap_or_else(|| step.detection.context().0).clone(),
                             })
                             .collect(),
                     }

@@ -1630,23 +1630,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             .steps
             .get(choice.input.step as usize)
             .ok_or(Error::Denied)?;
-        let commands = backend::commands::software_commands(&step.action)?;
-        let detector = match commands.detection {
-            Some(wire::SoftwareTaskDetection::PkgReceipt { receipt, version }) => {
-                SoftwareDetector::PkgReceipt {
-                    receipt: receipt.clone(),
-                    version: PackageValue::new(version).map_err(|_| Error::Protocol)?,
-                }
-            }
-            Some(wire::SoftwareTaskDetection::MsiProduct {
-                product_code,
-                version,
-            }) => SoftwareDetector::MsiProduct {
-                product_code: product_code.clone(),
-                version: PackageValue::new(version).map_err(|_| Error::Protocol)?,
-            },
-            _ => return Err(Error::Unsupported),
-        };
+        let commands = execution_contract::software_commands(&step.action);
         let run_as = match commands.install.run_as {
             wire::ExecutionIdentity::System => RunAs::System {
                 platform: plan::platform()?,
@@ -1657,6 +1641,33 @@ impl<S: IdentityProvider> DeviceService<S> {
                     subject: plan::id(&command.subject)?,
                 },
             },
+        };
+        let session_requirement = match &run_as {
+            RunAs::System { .. } => SessionRequirement::NotRequired {},
+            RunAs::User { account } => SessionRequirement::ActiveUser {
+                account: account.clone(),
+                session: command.binding.clone().ok_or(Error::Identity)?,
+            },
+        };
+        let detector = match commands.detection {
+            Some(wire::SoftwareTaskDetection::PkgReceipt { receipt, version }) => {
+                SoftwareDetector::PkgReceipt {
+                    receipt: receipt.clone(),
+                    run_as: run_as.clone(),
+                    session_requirement: session_requirement.clone(),
+                    version: PackageValue::new(version).map_err(|_| Error::Protocol)?,
+                }
+            }
+            Some(wire::SoftwareTaskDetection::MsiProduct {
+                product_code,
+                version,
+            }) => SoftwareDetector::MsiProduct {
+                product_code: product_code.clone(),
+                run_as: run_as.clone(),
+                session_requirement: session_requirement.clone(),
+                version: PackageValue::new(version).map_err(|_| Error::Protocol)?,
+            },
+            _ => return Err(Error::Unsupported),
         };
         let native_selection = Selection {
             request: selected.request.clone(),

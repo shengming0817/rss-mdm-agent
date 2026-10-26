@@ -61,7 +61,7 @@ fn software_steps_bind_order_materials_and_context_with_exact_material_binding()
         assert_ne!(original.digest(), freeze(&changed).digest());
     }
     let mut changed = value.clone();
-    changed["execution"]["program"]["steps"][0]["install"]["launch"]["artifact"]["sha256"] =
+    changed["execution"]["program"]["steps"][0]["invocations"]["mutation"]["launch"]["artifact"]["sha256"] =
         "ab".repeat(32).into();
     assert_ne!(original.digest(), freeze(&changed).digest());
     let steps = changed["execution"]["program"]["steps"]
@@ -153,19 +153,22 @@ fn msi_reboot_completion_requires_permission_detection_and_quiescence() {
                         } else {
                             SoftwareFormat::Pkg {}
                         };
-                        step.install.exit_codes.reboot = if adapter == SoftwareKind::Msi {
+                        step.invocations.get_mut(&SoftwarePhase::Mutation).unwrap().exit_codes.reboot = if adapter == SoftwareKind::Msi {
                             [1641, 3010].into_iter().collect()
                         } else {
                             Default::default()
                         };
                         step.upgrade = SoftwareUpgrade::Deny {};
+                        step.invocations.remove(&SoftwarePhase::Upgrade);
                         step.allow_reboot = allow_reboot;
-                        step.install.run_as = RunAs::System { platform };
+                        step.invocations.get_mut(&SoftwarePhase::Mutation).unwrap().run_as = RunAs::System { platform };
                         if platform == Platform::Windows {
-                            step.install.launch.cwd = r"C:\workspace".into();
+                            step.invocations.get_mut(&SoftwarePhase::Mutation).unwrap().launch.cwd = r"C:\workspace".into();
                         }
                         if adapter == SoftwareKind::Msi {
                             step.detection = SoftwareDetector::MsiProduct {
+                                run_as: RunAs::System { platform },
+                                session_requirement: SessionRequirement::NotRequired {},
                                 product_code: "{12345678-1234-1234-1234-123456789ABC}".into(),
                                 version: step.version.clone(),
                             };
@@ -266,21 +269,20 @@ fn approved_exit_policy_and_update_invocation_are_frozen_and_closed() {
         unreachable!()
     };
     let step = &mut program.steps[0];
-    step.install.exit_codes.success.insert(42);
-    let mut update = step.install.clone();
+    step.invocations.get_mut(&SoftwarePhase::Mutation).unwrap().exit_codes.success.insert(42);
+    let mut update = step.invocations[&SoftwarePhase::Mutation].clone();
     update.launch.argv.push(LaunchArg::Literal {
         value: "--approved-update".into(),
     });
-    step.upgrade = SoftwareUpgrade::InPlace {
-        invocation: Box::new(update),
-    };
+    step.upgrade = SoftwareUpgrade::InPlace {};
+    step.invocations.insert(SoftwarePhase::Upgrade, update);
     let changed = FrozenExecution::freeze(changed, &limits()).unwrap();
     assert_ne!(original.digest(), changed.digest());
     let mut invalid = changed.spec().clone();
     let ExecutionSpec::SoftwareProgram { program } = &mut invalid.execution else {
         unreachable!()
     };
-    program.steps[0].install.exit_codes.reboot.insert(42);
+    program.steps[0].invocations.get_mut(&SoftwarePhase::Mutation).unwrap().exit_codes.reboot.insert(42);
     assert!(FrozenExecution::freeze(invalid, &limits()).is_err());
     let mut old: serde_json::Value =
         serde_json::from_slice(include_bytes!("fixtures/software.json")).unwrap();
@@ -297,7 +299,8 @@ fn removal_updates_require_independent_absence_and_keep_failed_work_closed() {
     };
     program.steps.truncate(1);
     let step = &mut program.steps[0];
-    step.uninstall = Some(step.install.clone());
+    step.invocations.remove(&SoftwarePhase::Upgrade);
+    step.invocations.insert(SoftwarePhase::Removal, step.invocations[&SoftwarePhase::Mutation].clone());
     step.upgrade = SoftwareUpgrade::UninstallThenInstall {};
     let before = SoftwareState::Present {
         version: PackageValue::new("0.9").unwrap(),
@@ -439,13 +442,13 @@ fn cleanup_recovery_closes_resources_without_replaying_unknown_business_work() {
         sha256: step.payload.sha256.clone(),
         receipt: PackageValue::new("org.rss.fixture").unwrap(),
     };
-    let mut cleanup = step.install.clone();
+    let mut cleanup = step.invocations[&SoftwarePhase::Mutation].clone();
     cleanup.launch.interpreter.profile.id = Id::new("native-software-worker").unwrap();
     cleanup.timeout_ms = 900;
     cleanup.output_bytes = 6144;
-    step.auxiliary
-        .insert(SoftwarePhase::Attach, step.install.clone());
-    step.auxiliary.insert(SoftwarePhase::Cleanup, cleanup);
+    step.invocations
+        .insert(SoftwarePhase::Attach, step.invocations[&SoftwarePhase::Mutation].clone());
+    step.invocations.insert(SoftwarePhase::Cleanup, cleanup);
     let plan = FrozenExecution::freeze(input, &limits()).unwrap();
     for unknown_mutation in [false, true] {
         let attempt = AttemptId::new("original-attempt").unwrap();

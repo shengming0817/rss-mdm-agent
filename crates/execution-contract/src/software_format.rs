@@ -197,11 +197,8 @@ pub struct SoftwareExitCodes {
 #[derive(Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum SoftwareUpgrade {
-    /// Exact distinct update invocation.
-    InPlace {
-        /// Frozen update command.
-        invocation: Box<SoftwareInvocation>,
-    },
+    /// Execute the frozen Upgrade phase for an existing different version.
+    InPlace {},
     /// Execute the explicit removal before the exact install.
     UninstallThenInstall {},
     /// Reject changes to an existing different version.
@@ -296,10 +293,11 @@ impl SoftwareFormat {
                     }
                     && match deployment {
                         MsixDeployment::DeviceProvisioning {} => {
-                            !allow_unsigned && matches!(step.install.run_as, RunAs::System { .. })
+                            !allow_unsigned
+                                && matches!(*step.detection.context().0, RunAs::System { .. })
                         }
                         MsixDeployment::TargetUserRegistration {} => {
-                            matches!(step.install.run_as, RunAs::User { .. })
+                            matches!(*step.detection.context().0, RunAs::User { .. })
                         }
                     }
             }
@@ -320,7 +318,7 @@ impl SoftwareFormat {
                 relative_material_path(path)
                     && path.ends_with(".pkg")
                     && *length > 0
-                    && matches!(step.install.run_as, RunAs::System { .. })
+                    && matches!(*step.detection.context().0, RunAs::System { .. })
             }
         }
     }

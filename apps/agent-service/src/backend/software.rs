@@ -88,8 +88,28 @@ pub(crate) fn compile(
         sources.push(source);
     }
     let (timeout, output) = crate::backend::commands::software_budget(payload)?;
-    let mut controller = steps.first().ok_or(Error::Protocol)?.install.launch.clone();
-    controller.interpreter.profile = reference("native-software-sequence", "1")?;
+    let image = plan::worker_image(config)?;
+    let controller = LaunchSpec {
+        artifact: image.artifact.clone(),
+        interpreter: InterpreterRef {
+            profile: reference("native-software-sequence", "1")?,
+            artifact: image.artifact,
+        },
+        argv: vec![],
+        artifact_encoding: ArtifactEncoding::Utf8,
+        stdin: StandardInput::Closed {},
+        output: OutputSpec {
+            format: OutputFormat::Text {},
+            stdout: TextEncoding::Utf8,
+            stderr: TextEncoding::Utf8,
+        },
+        cwd: config
+            .work_root
+            .to_str()
+            .ok_or(Error::Configuration)?
+            .into(),
+        env: Default::default(),
+    };
     let program = SoftwareProgram {
         definition_digest: Digest::new(hex(&payload.definition_digest))
             .map_err(|_| Error::Protocol)?,

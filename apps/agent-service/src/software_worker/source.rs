@@ -125,7 +125,7 @@ fn environment(request: &WorkerRequest) -> Result<BTreeMap<String, String>, Erro
             }
         }
     }
-    let commands = crate::backend::commands::software_commands(&request.action)?;
+    let commands = execution_contract::software_commands(&request.action);
     let invocation = match request.operation {
         WorkerOperation::Uninstall | WorkerOperation::RemovePrevious => {
             commands.uninstall.ok_or(Error::Unsupported)?
@@ -157,7 +157,7 @@ fn text(bytes: Vec<u8>) -> Result<String, Error> {
     Ok(text.into())
 }
 pub(super) fn detect(request: &WorkerRequest) -> Result<SoftwareState, Error> {
-    let commands = crate::backend::commands::software_commands(&request.action)?;
+    let commands = execution_contract::software_commands(&request.action);
     match commands.detection.ok_or(Error::Unsupported)? {
         wire::SoftwareTaskDetection::MsiProduct {
             product_code,
@@ -166,6 +166,8 @@ pub(super) fn detect(request: &WorkerRequest) -> Result<SoftwareState, Error> {
             &SoftwareDetector::MsiProduct {
                 product_code: product_code.clone(),
                 version: PackageValue::new(version).map_err(|_| Error::Protocol)?,
+                run_as: request.run_as.clone(),
+                session_requirement: request.session.clone(),
             },
             &request.run_as,
         )
@@ -175,6 +177,8 @@ pub(super) fn detect(request: &WorkerRequest) -> Result<SoftwareState, Error> {
                 &SoftwareDetector::PkgReceipt {
                     receipt: receipt.clone(),
                     version: PackageValue::new(version).map_err(|_| Error::Protocol)?,
+                    run_as: request.run_as.clone(),
+                    session_requirement: request.session.clone(),
                 },
                 &request.run_as,
             )

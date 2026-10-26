@@ -69,7 +69,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             return Ok(());
         };
         for (index, step) in spec.steps.iter().enumerate() {
-            if matches!(step.export, wire::SoftwareTaskExport::Direct) {
+            if spec.intent == wire::SoftwareTaskIntent::Detect
+                || matches!(step.export, wire::SoftwareTaskExport::Direct)
+            {
                 continue;
             }
             let name = name(self.store.cfg.service_id, self.store.cfg.tenant, step)?;
@@ -92,7 +94,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             return Ok(());
         };
         for (index, step) in spec.steps.iter().enumerate() {
-            if matches!(step.export, wire::SoftwareTaskExport::Direct) {
+            if spec.intent == wire::SoftwareTaskIntent::Detect
+                || matches!(step.export, wire::SoftwareTaskExport::Direct)
+            {
                 continue;
             }
             self.verify(&offer.signed, wire::TaskPermit::Offer)?;

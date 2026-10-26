@@ -77,7 +77,7 @@ pub struct UserResources {
     pub work_roots: std::collections::BTreeMap<String, PathBuf>,
 }
 impl UserResources {
-    fn connect_peer(
+    pub(crate) fn connect_peer(
         &self,
         subject: &str,
         session: u32,

@@ -533,8 +533,6 @@ fn software(p: &ExecutionInput, limits: &ExecutionLimits) -> Result<(), Contract
             if !step.format.valid_for(step)
                 || step.format.adapter().platform() != p.request.target.platform
                 || !matches!(step.architecture.as_str(), "aarch64" | "x86_64")
-                || (program.intent == crate::SoftwareOperation::Uninstall
-                    && step.uninstall.is_none())
             {
                 return Err(invalid());
             }
@@ -546,68 +544,60 @@ fn software(p: &ExecutionInput, limits: &ExecutionLimits) -> Result<(), Contract
             {
                 return Err(invalid());
             }
-            invocation(&step.install)?;
-            let mut expected = match (&step.format, program.intent) {
-                (
-                    crate::SoftwareFormat::Winget { .. } | crate::SoftwareFormat::Homebrew { .. },
-                    crate::SoftwareOperation::Install | crate::SoftwareOperation::Uninstall,
-                ) => vec![crate::SoftwarePhase::Prepare, crate::SoftwarePhase::Cleanup],
-                (crate::SoftwareFormat::DmgApp { .. }, crate::SoftwareOperation::Uninstall) => {
-                    vec![crate::SoftwarePhase::Cleanup]
-                }
-                (crate::SoftwareFormat::DmgApp { .. }, crate::SoftwareOperation::Install) => vec![
-                    crate::SoftwarePhase::Attach,
-                    crate::SoftwarePhase::Stage,
-                    crate::SoftwarePhase::Cleanup,
-                ],
-                (crate::SoftwareFormat::DmgPkg { .. }, crate::SoftwareOperation::Install) => {
-                    vec![crate::SoftwarePhase::Attach, crate::SoftwarePhase::Cleanup]
-                }
-                _ => Vec::new(),
+            use crate::{
+                SoftwareFormat as F, SoftwareOperation as O, SoftwarePhase as P,
+                SoftwareUpgrade as U,
             };
-            if step.auxiliary.contains_key(&crate::SoftwarePhase::Removal) {
-                if !matches!(
-                    step.upgrade,
-                    crate::SoftwareUpgrade::UninstallThenInstall {}
-                ) {
-                    return Err(invalid());
+            let mut expected = match (&step.format, program.intent) {
+                (F::Winget { .. } | F::Homebrew { .. }, O::Install | O::Uninstall) => {
+                    vec![P::Prepare, P::Cleanup]
                 }
-                expected.push(crate::SoftwarePhase::Removal);
+                (F::DmgApp { .. }, O::Uninstall) => vec![P::Cleanup],
+                (F::DmgApp { .. }, O::Install) => vec![P::Attach, P::Stage, P::Cleanup],
+                (F::DmgPkg { .. }, O::Install) => vec![P::Attach, P::Cleanup],
+                _ => vec![],
+            };
+            match program.intent {
+                O::Install => {
+                    expected.push(P::Mutation);
+                    match step.upgrade {
+                        U::InPlace {} => expected.push(P::Upgrade),
+                        U::UninstallThenInstall {} => expected.push(P::Removal),
+                        U::Deny {} => (),
+                    }
+                }
+                O::Uninstall => expected.push(P::Mutation),
+                O::Detect => (),
             }
-            if step.auxiliary.len() != expected.len()
-                || expected.iter().any(|p| !step.auxiliary.contains_key(p))
+            if !matches!(program.intent, O::Install) && !matches!(step.upgrade, U::Deny {})
+                || step.invocations.len() != expected.len()
+                || expected
+                    .iter()
+                    .any(|phase| !step.invocations.contains_key(phase))
             {
                 return Err(invalid());
             }
-            for command in step.auxiliary.values() {
+            for command in step.invocations.values() {
                 invocation(command)?;
             }
-            if step.install.exit_codes.success.is_empty()
-                || !step
-                    .install
-                    .exit_codes
-                    .success
-                    .is_disjoint(&step.install.exit_codes.reboot)
-                || step.install.exit_codes.success.len() + step.install.exit_codes.reboot.len() > 32
-            {
-                return Err(invalid());
-            }
-            match &step.upgrade {
-                crate::SoftwareUpgrade::InPlace {
-                    invocation: command,
-                } => invocation(command)?,
-                crate::SoftwareUpgrade::UninstallThenInstall {} if step.uninstall.is_none() => {
-                    return Err(invalid())
+            let (run_as, session) = step.detection.context();
+            if match (run_as, session) {
+                (RunAs::System { platform }, crate::SessionRequirement::NotRequired {}) => {
+                    *platform != p.request.target.platform
                 }
-                _ => (),
-            }
-            if let Some(command) = &step.uninstall {
-                invocation(command)?;
+                (
+                    RunAs::User { account },
+                    crate::SessionRequirement::ActiveUser { account: bound, .. },
+                ) => account != bound || account.platform != p.request.target.platform,
+                _ => true,
+            } {
+                return Err(invalid());
             }
             match &step.detection {
                 crate::SoftwareDetector::MsiProduct {
                     product_code,
                     version,
+                    ..
                 } => {
                     if step.format.adapter().platform() != Platform::Windows
                         || product_code.len() != 38
@@ -625,7 +615,9 @@ fn software(p: &ExecutionInput, limits: &ExecutionLimits) -> Result<(), Contract
                         return Err(invalid());
                     }
                 }
-                crate::SoftwareDetector::PkgReceipt { receipt, version } => {
+                crate::SoftwareDetector::PkgReceipt {
+                    receipt, version, ..
+                } => {
                     if step.format.adapter().platform() != Platform::Macos
                         || receipt.is_empty()
                         || receipt.len() > 1024

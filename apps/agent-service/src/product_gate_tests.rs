@@ -777,10 +777,10 @@ async fn material_gc_history(materials_per_request: usize) {
                         materials,
                         signatures: vec![],
                         upgrade: SoftwareUpgrade::Deny {},
-                        install: invocation,
-                        auxiliary: Default::default(),
-                        uninstall: None,
+                        invocations: [(SoftwarePhase::Mutation, invocation)].into(),
                         detection: SoftwareDetector::PkgReceipt {
+                            run_as: spec.run_as.clone(),
+                            session_requirement: spec.session_requirement.clone(),
                             receipt: "example.receipt".into(),
                             version: PackageValue::new("1").unwrap(),
                         },
@@ -2020,6 +2020,8 @@ async fn settled_software_observation_replays_the_original_fact_and_never_create
                 || {
                     execution_runner::software::observe_native(
                         &SoftwareDetector::PkgReceipt {
+                            run_as: RunAs::System { platform: Platform::Macos },
+                            session_requirement: SessionRequirement::NotRequired {},
                             receipt: if unavailable {
                                 "../../invalid".into()
                             } else {
@@ -2510,8 +2512,7 @@ async fn software_self_service_binds_signed_policy_and_native_context() {
             version: step.action.version.clone(),
             variant: "default".into(),
         },
-        run_as: backend::commands::software_commands(&step.action)
-            .unwrap()
+        run_as: execution_contract::software_commands(&step.action)
             .install
             .run_as,
         target: step.target.clone(),

@@ -142,7 +142,7 @@ pub(super) fn execute(input: ProgramRun) {
                         let elapsed = invocation_elapsed.get(&group).copied().unwrap_or(0);
                         let consumed = invocation_output.get(&group).copied().unwrap_or(0);
                         let reserve = if group == BudgetGroup::Mutation {
-                            step.auxiliary.get(&SoftwarePhase::Cleanup)
+                            step.invocations.get(&SoftwarePhase::Cleanup)
                         } else {
                             None
                         };
@@ -175,12 +175,12 @@ pub(super) fn execute(input: ProgramRun) {
                             command
                         };
                         let physical_timeout = if group == BudgetGroup::Cleanup {
-                            command.timeout_ms / 3
+                            command.timeout_ms
                         } else {
                             source_budget.timeout_ms.min(command.timeout_ms)
                         };
                         let physical_output = if group == BudgetGroup::Cleanup {
-                            command.output_bytes / 3
+                            command.output_bytes
                         } else {
                             source_budget.output_bytes.min(command.output_bytes)
                         };
@@ -216,20 +216,12 @@ pub(super) fn execute(input: ProgramRun) {
                     } else if phase.is_observation() {
                         // Native read-only receipt queries do not create a child process or invent
                         // an exit status. Their observation is recorded separately in this journal.
-                        let context = program
-                            .invocation(index, SoftwarePhase::Mutation)
-                            .unwrap_or(&step.install);
-                        if matches!(context.run_as, RunAs::User { .. }) {
+                        let (run_as, session) = step.detection.context();
+                        if matches!(run_as, RunAs::User { .. }) {
                             if let Some(connection) = &source.delegate {
-                                connection.verify_context(
-                                    &context.run_as,
-                                    &context.session_requirement,
-                                )?;
+                                connection.verify_context(run_as, session)?;
                             } else {
-                                crate::platform::identity(
-                                    &context.run_as,
-                                    &context.session_requirement,
-                                )?;
+                                crate::platform::identity(run_as, session)?;
                             }
                         }
                         if cancel.load(Ordering::Acquire)
@@ -243,10 +235,7 @@ pub(super) fn execute(input: ProgramRun) {
                         }
                         (
                             None,
-                            Some(crate::software::native_detection(
-                                &step.detection,
-                                &context.run_as,
-                            )),
+                            Some(crate::software::native_detection(&step.detection, run_as)),
                             true,
                         )
                     } else {
