@@ -34,6 +34,7 @@ static NSString *nativeConfiguration(ASAuthorizationProviderExtensionLoginManage
 @property(strong) NSMutableData *responseBody;
 @property(strong) NSHTTPURLResponse *response;
 @property NSUInteger generation;
+@property NSUInteger observationGeneration;
 @property(copy) NSString *registrationScope;
 @property(copy) NSString *registrationMetadata;
 @end
@@ -125,23 +126,24 @@ static NSString *nativeConfiguration(ASAuthorizationProviderExtensionLoginManage
     if(RSSQueueCancelledRegistration(NSUserDefaults.standardUserDefaults,self.registrationScope,metadata))
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0), ^{rss_psso_unregister(metadata.UTF8String);});
 }
-- (void)observeMetadata:(NSString *)metadata scope:(NSString *)scope configuration:(NSString *)actual device:(BOOL)device user:(BOOL)user remaining:(NSUInteger)remaining {
-    if(!remaining || !RSSObservationCurrent(NSUserDefaults.standardUserDefaults,scope,metadata))return;
+- (void)observeMetadata:(NSString *)metadata scope:(NSString *)scope configuration:(NSString *)actual device:(BOOL)device user:(BOOL)user generation:(NSUInteger)generation remaining:(NSUInteger)remaining {
+    if(generation!=self.observationGeneration || !remaining || !RSSObservationCurrent(NSUserDefaults.standardUserDefaults,scope,metadata))return;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0), ^{
         if(rss_psso_observe(metadata.UTF8String,actual.UTF8String,device,user)==0)return;
         // Retry this actual snapshot and source generation, never reconstruct expected facts.
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),dispatch_get_main_queue(), ^{
-            [self observeMetadata:metadata scope:scope configuration:actual device:device user:user remaining:remaining-1];
+            [self observeMetadata:metadata scope:scope configuration:actual device:device user:user generation:generation remaining:remaining-1];
         });
     });
 }
 - (void)observeUsing:(ASAuthorizationProviderExtensionLoginManager *)manager {
     if(!manager)return;
+    NSUInteger generation=++self.observationGeneration;
     NSString *actual=nativeConfiguration(manager);
     BOOL device=manager.isDeviceRegistered,user=manager.isUserRegistered;
     for(NSString *scope in RSSRegistrationScopes()) {
         NSString *metadata=[NSUserDefaults.standardUserDefaults stringForKey:scope];
-        if(metadata)[self observeMetadata:metadata scope:scope configuration:actual device:device user:user remaining:6];
+        if(metadata)[self observeMetadata:metadata scope:scope configuration:actual device:device user:user generation:generation remaining:6];
     }
 }
 - (void)registrationDidComplete { [self observeUsing:self.manager];self.manager=nil;self.registrationMetadata=nil; }
