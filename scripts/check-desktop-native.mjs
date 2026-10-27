@@ -37,6 +37,7 @@ import {
   toolchainEvidence,
   sha256,
   waitForAppearance,
+  nativeReplyComplete,
 } from "./native-evidence.mjs";
 import {
   verifyCandidate,
@@ -417,7 +418,25 @@ const navigate = async (name) => {
       ),
   );
 };
+let lastPromptKey;
+const completedReply = async (value) => {
+  assert.ok(lastPromptKey, "an original submitted prompt is required");
+  await wait(() => browser.execute(nativeReplyComplete, lastPromptKey, value));
+  await browser.execute(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      ),
+  );
+};
 const prompt = async (value) => {
+  const prior = await browser.execute(() =>
+    [
+      ...document.querySelectorAll(
+        '.assistant-timeline article[data-message-key^="prompt:"]',
+      ),
+    ].map((row) => row.getAttribute("data-message-key")),
+  );
   await browser.$(".composer textarea").click();
   await browser.$(".composer textarea").setValue(value);
   assert.equal(
@@ -436,6 +455,24 @@ const prompt = async (value) => {
     browser.execute(
       (value) => document.querySelector(".composer textarea").value !== value,
       value,
+    ),
+  );
+  lastPromptKey = await wait(() =>
+    browser.execute(
+      (value, prior) => {
+        const row = [
+          ...document.querySelectorAll(
+            '.assistant-timeline article[data-message-key^="prompt:"]',
+          ),
+        ].find(
+          (row) =>
+            !prior.includes(row.getAttribute("data-message-key")) &&
+            row.textContent.includes(value),
+        );
+        return row?.getAttribute("data-message-key");
+      },
+      value,
+      prior,
     ),
   );
 };
@@ -1984,7 +2021,7 @@ try {
       "first send and read the original human task without a generic permission",
     );
     await prompt("GOLDEN_HELLO 查看办公套件");
-    await text("完成 HELLO");
+    await completedReply("完成 HELLO");
     await browser.$('[aria-label="复制代码"]').click();
     await wait(
       async () =>
@@ -2004,12 +2041,12 @@ try {
     );
     await prompt("GOLDEN_CANCEL_REJECT 拒绝取消");
     await permission(false);
-    await text("完成 CANCEL_REJECT");
+    await completedReply("完成 CANCEL_REJECT");
     assert.equal((await task()).snapshot.cancelRequested, false);
     assert.equal(originalRequests(await serviceCall("query")).size, 1);
     mark("read the original executed task through its product card");
     await prompt("GOLDEN_READ 读取状态");
-    await text("完成 READ");
+    await completedReply("完成 READ");
     await openNativeTask(
       (await serviceCall("query")).items.find(
         (item) =>
@@ -2021,10 +2058,10 @@ try {
     await navigate("AI 助手");
     await prompt("GOLDEN_CANCEL_ALLOW 允许取消请求");
     await permission(true);
-    await text("完成 CANCEL_ALLOW");
+    await completedReply("完成 CANCEL_ALLOW");
     await wait(async () => (await task())?.snapshot.cancelRequested === true);
     await prompt("GOLDEN_READ 读取状态");
-    await text("完成 READ");
+    await completedReply("完成 READ");
     assert.equal(
       await browser.$('[aria-label="AI 工具权限请求"]').isExisting(),
       false,
@@ -2048,7 +2085,7 @@ try {
       () => document.querySelector(".assistant-timeline").scrollTop,
     );
     await prompt("GOLDEN_HELLO 保留阅读位置");
-    await text("完成 HELLO");
+    await completedReply("完成 HELLO");
     assert.ok(
       Math.abs(
         (await browser.execute(
@@ -2199,7 +2236,7 @@ try {
       "a distinct software request requires human confirmation before any Start",
     );
     await prompt("GOLDEN_REVIEW 新操作必须等待本人确认");
-    await text("完成 REVIEW");
+    await completedReply("完成 REVIEW");
     assert.notEqual(fixture.facts.reviewRequest, fixture.facts.request);
     const afterReview = await serviceCall("query");
     assert.equal(originalRequests(afterReview).size, 2);
@@ -2306,7 +2343,7 @@ try {
       );
     }
     await prompt("GOLDEN_CONTEXT 解释这个软件的版本与限制");
-    await text("完成 CONTEXT");
+    await completedReply("完成 CONTEXT");
     assert.equal(fixture.facts.contexts.length, 1);
     assert.equal(
       fixture.facts.proposals.length,
@@ -2521,7 +2558,7 @@ try {
     await text("GOLDEN_HELLO 查看办公套件");
     await click("新会话");
     await prompt("GOLDEN_HELLO 重启后新对话");
-    await text("完成 HELLO");
+    await completedReply("完成 HELLO");
     result.checks.push(
       "window-reopen-history",
       "host-restart-credential-reuse",

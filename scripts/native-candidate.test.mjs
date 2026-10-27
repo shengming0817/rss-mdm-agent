@@ -1,4 +1,6 @@
 import { test } from "node:test";
+import { Window } from "happy-dom";
+import { nativeReplyComplete } from "./native-evidence.mjs";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
@@ -391,3 +393,36 @@ test(
       await assert.rejects(import(url), { code: "ERR_MODULE_NOT_FOUND" });
   },
 );
+
+test("native completion waits for the original new turn rather than older matching text", () => {
+  const window = new Window();
+  try {
+    const doc = window.document;
+    doc.body.innerHTML = `<div class="assistant-timeline">
+      <article data-message-key="prompt:old"></article>
+      <article data-message-key="message:old">完成 READ</article>
+      <article data-message-key="prompt:new"><p class="command-state">处理中</p></article>
+    </div><form class="composer"></form>`;
+    assert.equal(nativeReplyComplete("prompt:new", "完成 READ", doc), false);
+    const timeline = doc.querySelector(".assistant-timeline");
+    timeline.insertAdjacentHTML(
+      "beforeend",
+      '<article data-message-key="message:new">完成 READ</article>',
+    );
+    assert.equal(nativeReplyComplete("prompt:new", "完成 READ", doc), false);
+    doc.querySelector(".command-state").remove();
+    doc.querySelector(".composer").innerHTML =
+      '<button data-action="cancel">停止回复</button>';
+    assert.equal(nativeReplyComplete("prompt:new", "完成 READ", doc), false);
+    doc.querySelector(".composer").innerHTML = "";
+    assert.equal(nativeReplyComplete("prompt:new", "完成 READ", doc), true);
+    doc.querySelector('[data-message-key="message:new"]').remove();
+    timeline.insertAdjacentHTML(
+      "beforeend",
+      '<article data-message-key="prompt:future"></article><article data-message-key="message:future">完成 READ</article>',
+    );
+    assert.equal(nativeReplyComplete("prompt:new", "完成 READ", doc), false);
+  } finally {
+    window.happyDOM.abort();
+  }
+});
