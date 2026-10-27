@@ -9,6 +9,11 @@ fn candidate_requires_current_format_and_valid_identity() {
     };
     let target = Target::current().unwrap();
     let candidate = Candidate {
+        cli: Artifact {
+            path: root.path.join("rssmdm"),
+            sha256: "d".repeat(64),
+            cdhash: None,
+        },
         windows_login: None,
         platform_sso: None,
         service_id: crate::protocol_test_support::SERVICE_ID,

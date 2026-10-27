@@ -47,6 +47,7 @@ pub fn initialize() -> Result<Deployment, Error> {
     };
     candidate.service.path = rebase(&candidate.service.path)?;
     candidate.desktop.path = rebase(&candidate.desktop.path)?;
+    candidate.cli.path = rebase(&candidate.cli.path)?;
     candidate.runtime_root = rebase(&candidate.runtime_root)?;
     candidate.root = root;
     if candidate.format()? != "windows_msix" {

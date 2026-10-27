@@ -8,6 +8,8 @@ import {
   type Controller,
 } from "./controller";
 import ExecutionDetails from "../assistant/ExecutionDetails.vue";
+import CopyEntry from "../workspace/CopyEntry.vue";
+import RelatedActivities from "../workspace/RelatedActivities.vue";
 import PolicyPreparation from "../self-service/PolicyPreparation.vue";
 import type {
   TaskAction,
@@ -446,6 +448,25 @@ function time(event: Event, key: "from" | "until") {
         <p v-if="selected.missing.length">
           未覆盖关联：{{ selected.missing.join(" · ") }}
         </p>
+        <CopyEntry
+          :step="s.node || undefined"
+          v-if="selected.reference.kind === 'request'"
+          :selector="{ kind: 'request', request: selected.reference.request }"
+        />
+        <CopyEntry
+          :step="s.node || undefined"
+          v-else-if="selected.reference.kind === 'activity'"
+          :selector="{ kind: 'activity', id: selected.reference.id }"
+        />
+        <RelatedActivities
+          v-if="
+            selected.reference.kind === 'activity' && selected.relatedCursor
+          "
+          :key="taskKey(selected.reference)"
+          :activity="selected.reference.id"
+          :after="selected.relatedCursor"
+          @open="c.openTask({ kind: 'activity', id: $event })"
+        />
         <button
           v-for="related in selected.related"
           :key="taskKey(related)"

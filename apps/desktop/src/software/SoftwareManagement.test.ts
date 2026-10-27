@@ -5,6 +5,71 @@ import { createSoftware } from "./controller";
 import { fixtureLocalPorts } from "../../../../tests/assistant/local-ports";
 import { currentUser } from "../test-users";
 import type { PageNavigation } from "../workspace/page-navigation";
+it("prepares an external exact installation/action only after the original page click", async () => {
+  const ports = fixtureLocalPorts(),
+    model = createSoftware(ports.data, ports.software);
+  const read = ports.software!.read;
+  vi.spyOn(ports.software!, "read").mockImplementation(async (input) => {
+    const page = await read(input);
+    return {
+      ...page,
+      items: page.items.map((item) => ({
+        ...item,
+        actions: [
+          {
+            action: "uninstall" as const,
+            available: true,
+            reason: null,
+            targetVersion: null,
+          },
+        ],
+      })),
+    };
+  });
+  const prepare = vi.spyOn(ports.software!, "prepare"),
+    submit = vi.spyOn(ports.software!, "submit");
+  const w = mount(SoftwareManagement, { props: { model, active: true } });
+  try {
+    await flushPromises();
+    const item = model.installed.value.find((v) =>
+      v.actions.some((a) => a.action === "uninstall" && a.available),
+    )!;
+    const nav = w.emitted("navigation")![0][0] as PageNavigation;
+    expect(
+      await nav.prepareEntry!({
+        kind: "software",
+        software: item.reference,
+        action: "uninstall",
+      }),
+    ).toBe(true);
+    await flushPromises();
+    expect(prepare).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
+    expect(w.get('[aria-label="外部软件建议"]').text()).toContain(item.name);
+    await w.get('[aria-label="外部软件建议"] button').trigger("click");
+    await flushPromises();
+    expect(prepare).toHaveBeenCalledWith(
+      expect.objectContaining({
+        software: item.reference,
+        action: "uninstall",
+      }),
+    );
+    expect(submit).not.toHaveBeenCalled();
+    expect(
+      await nav.prepareEntry!({
+        kind: "software",
+        software: {
+          ...item.reference,
+          query: { ...item.reference.query, revision: "f".repeat(64) },
+        },
+        action: "uninstall",
+      }),
+    ).toBe(false);
+  } finally {
+    w.unmount();
+    model.dispose();
+  }
+});
 it("uses the production model, retains its filtered list and ignores same-generation account refresh", async () => {
   const ports = fixtureLocalPorts(),
     model = createSoftware(ports.data, ports.software);

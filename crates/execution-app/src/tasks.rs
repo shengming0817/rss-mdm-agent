@@ -192,6 +192,8 @@ pub struct TaskDetail {
     pub retry_of: Option<RequestId>,
     /// Independently authorized related producer identities.
     pub related: Vec<TaskRef>,
+    /// Original producer continuation for this activity's related history.
+    pub related_cursor: Option<String>,
     /// Original signed-offer coordinates when retained by the business preparation owner.
     pub selection: Option<execution_contract::BackendSelection>,
     /// Explicit association gaps, including unconsumed related continuation.

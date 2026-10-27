@@ -15,6 +15,7 @@ import type {
   InstalledSoftware,
   LocalSoftwareAction,
   SoftwareBlock,
+  LocalPreparation,
 } from "../self-service/types";
 import PolicySelfService from "../self-service/PolicySelfService.vue";
 import LocalSoftwareActionView from "./LocalSoftwareAction.vue";
@@ -39,6 +40,9 @@ const c = props.model ?? createSoftware(nativeDataPort(), nativeSoftwarePort());
 const s = c.state;
 const directory = inject(directoryKey, undefined);
 const enterprise = ref<InstanceType<typeof PolicySelfService>>();
+const externalAction = ref<LocalSoftwareAction>();
+const external = ref(false);
+const externalItem = ref<InstalledSoftware>();
 const section = ref("installed"),
   query = ref(""),
   kind = ref(""),
@@ -194,6 +198,47 @@ function navigation(): PageNavigation {
         })) ?? []),
     ],
     openResource,
+    async prepareEntry(input: LocalPreparation) {
+      if (input.kind !== "software") return false;
+      section.value = "installed";
+      if (input.software) {
+        const reference = input.software;
+        await c.discover();
+        const matches = (item: InstalledSoftware) =>
+          item.reference.installation === reference.installation &&
+          item.reference.query.id === reference.query.id &&
+          item.reference.query.revision === reference.query.revision;
+        for (
+          let page = 0;
+          page < 16 && !c.installed.value.some(matches);
+          page++
+        ) {
+          const source = s.sources.find(
+            (v) =>
+              v.descriptor.reference.id === reference.query.id &&
+              v.descriptor.reference.revision === reference.query.revision,
+          );
+          if (source?.after) await c.read(source, true);
+          else if (s.directoryNext) await c.discover(true);
+          else break;
+        }
+        const item = c.installed.value.find(matches);
+        if (
+          !item ||
+          !input.action ||
+          !item.actions.some((v) => v.action === input.action && v.available)
+        )
+          return false;
+        await inspect(item);
+        externalItem.value = item;
+        externalAction.value = input.action;
+      } else {
+        selected.value = "";
+        externalAction.value = undefined;
+      }
+      external.value = true;
+      return true;
+    },
     async openRequest(request: string) {
       section.value = "operations";
       operation.value = request;
@@ -246,6 +291,9 @@ watch(
   { immediate: true, deep: true },
 );
 async function inspect(item: InstalledSoftware) {
+  external.value = false;
+  externalItem.value = undefined;
+  externalAction.value = undefined;
   origin = Array.from(
     listing.value?.querySelectorAll<HTMLElement>("[data-software]") ?? [],
   ).find((button) => button.dataset.software === installationKey(item));
@@ -295,6 +343,24 @@ onBeforeUnmount(() => {
 </script>
 <template>
   <div class="software-production design-page">
+    <section v-if="external" aria-label="外部软件建议">
+      <template v-if="externalItem && externalAction">
+        <p>
+          请核对 {{ externalItem.name }} ·
+          {{ externalItem.version ?? "版本未知" }} ·
+          {{
+            actionLabels[externalAction]
+          }}。点击后沿原流程准备，卸载和更新仍需原确认。
+        </p>
+        <button
+          :disabled="s.busy.has(installationKey(externalItem))"
+          @click="act(externalItem, externalAction)"
+        >
+          核对并准备{{ actionLabels[externalAction] }}
+        </button>
+      </template>
+      <p v-else>请在原软件列表选择精确安装项与操作；点击前不会准备或提交。</p>
+    </section>
     <header class="catalog-heading">
       <div>
         <h2>软件管理</h2>

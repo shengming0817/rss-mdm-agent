@@ -889,6 +889,7 @@ try {
       ? []
       : [
           ["pnpm", ["build:ai-access"]],
+          ["cargo", ["build", "--locked", "--release", "-p", "rss-mdm-cli"]],
           ["pnpm", ["--filter", "@rss-mdm-agent/desktop", "build"]],
           [
             process.execPath,
@@ -938,6 +939,9 @@ try {
         "--binary",
         candidate?.binaries.service.path ??
           join(cargoTargetDir(root), "release/rss-execution-service"),
+        "--cli",
+        candidate?.binaries.cli.path ??
+          join(cargoTargetDir(root), "release/rssmdm"),
         "--backend",
         candidate?.binaries.backend.path ??
           join(cargoTargetDir(root), "release/examples/controlled-backend"),

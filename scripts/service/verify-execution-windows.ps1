@@ -119,16 +119,18 @@ public static class RssPasskeyRecoveryProbe {
             $TaskName='RssExecution-'+$Identity.User.Value
             if (!(Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue)) { throw 'Installation owner did not register the login helper' }
             & $Owner -Action Status -Scope User -Binary $Binary -Config $Config
-            $Baseline=(& $Binary --config $Config --query | ConvertFrom-Json)
-            if ($LASTEXITCODE -ne 0 -or $Baseline.reply.kind -ne 'tasks') { throw 'Authorized query baseline failed; security negatives not executed' }
+            $Cli=$Frozen.binaries.cli.path
+            if (!$Cli) { throw 'Fixed CLI candidate required' }
+            $Baseline=(& $Cli --json --config $Config tasks list | ConvertFrom-Json)
+            if ($LASTEXITCODE -ne 0 -or $Baseline.result.kind -ne 'task') { throw 'Authorized query baseline failed; security negatives not executed' }
             $Receipt.scenarios.authorized=$Baseline
-            $Wrong=Join-Path $Output 'wrong-client.exe'; Copy-Item -LiteralPath $Binary -Destination $Wrong
-            if ((Get-FileHash -LiteralPath $Wrong).Hash -cne (Get-FileHash -LiteralPath $Binary).Hash) { throw 'Wrong-image fixture bytes changed' }
-            $Reply=(& $Wrong --config $Config --query | ConvertFrom-Json)
-            if ($Reply.reply.kind -ne 'rejected') { throw 'Same-user wrong-image client was not explicitly rejected' }
+            $Wrong=Join-Path $Output 'wrong-client.exe'; Copy-Item -LiteralPath $Cli -Destination $Wrong
+            if ((Get-FileHash -LiteralPath $Wrong).Hash -cne (Get-FileHash -LiteralPath $Cli).Hash) { throw 'Wrong-image fixture bytes changed' }
+            $Reply=(& $Wrong --json --config $Config tasks list | ConvertFrom-Json)
+            if ($LASTEXITCODE -ne 3 -or $Reply.error.code -ne 'denied') { throw 'Same-user wrong-image client was not explicitly rejected' }
             $Receipt.scenarios.wrongImage=$Reply
-            $After=(& $Binary --config $Config --query | ConvertFrom-Json)
-            if ($LASTEXITCODE -ne 0 -or $After.reply.kind -ne 'tasks') { throw 'Authorized channel failed after negative probe' }
+            $After=(& $Cli --json --config $Config tasks list | ConvertFrom-Json)
+            if ($LASTEXITCODE -ne 0 -or $After.result.kind -ne 'task') { throw 'Authorized channel failed after negative probe' }
             $Receipt.scenarios.after=$After
             Remove-Item -LiteralPath $Wrong
         }

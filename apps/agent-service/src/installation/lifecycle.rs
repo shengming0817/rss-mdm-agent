@@ -333,6 +333,9 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
 pub(super) fn inherit(old: &Deployment, next: &mut Deployment) -> Result<(), Error> {
     next.installation_id = old.installation_id;
     next.software_read_grants = old.software_read_grants.clone();
+    if let (Some(previous), Some(next_cli)) = (&old.cli, &mut next.cli) {
+        next_cli.machine_actions = previous.machine_actions.clone();
+    }
     preserved(old, next)?;
     next.execution = old.execution.clone();
     Ok(())

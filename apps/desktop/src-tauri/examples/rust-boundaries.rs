@@ -182,7 +182,11 @@ impl<'ast> Visit<'ast> for Guard {
             && matches!(&call.args[0], syn::Expr::Call(init)
                 if matches!(&*init.func, syn::Expr::Path(path)
                     if path.path.segments.iter().map(|p| p.ident.to_string()).collect::<Vec<_>>() == ["tauri_plugin_wdio_webdriver", "init"]));
-        self.forbidden |= (name == "plugin" && !native_driver)
+        let deep_link = self.main
+            && call.args.len() == 1
+            && matches!(&call.args[0], syn::Expr::Call(init) if init.args.is_empty()
+                && matches!(&*init.func, syn::Expr::Path(path) if path.path.segments.iter().map(|p|p.ident.to_string()).collect::<Vec<_>>() == ["tauri_plugin_deep_link", "init"]));
+        self.forbidden |= (name == "plugin" && !native_driver && !deep_link)
             || (!self.ipc && name == "invoke_handler")
             || (name == "manage"
                 && !(self.main

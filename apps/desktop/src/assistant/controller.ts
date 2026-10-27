@@ -943,7 +943,9 @@ export function createAssistant(
           ? result.facts.value.status.operationRequestId
           : result.facts.value.action.kind === "offered"
             ? result.facts.value.action.offer.request
-            : result.facts.value.action.choice.request;
+            : result.facts.value.action.kind === "event"
+              ? result.facts.value.action.request
+              : result.facts.value.action.choice.request;
       if (
         current !== epoch ||
         signal.aborted ||

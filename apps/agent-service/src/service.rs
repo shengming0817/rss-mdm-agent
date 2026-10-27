@@ -14,6 +14,7 @@ use execution_contract::{
 use execution_runner::{MaterialRegistry, NativeRunner};
 use rss_mdm_agent_wire::runtime as wire;
 mod data;
+mod entry;
 mod network_check;
 mod policy;
 mod settings;
@@ -1208,6 +1209,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             .and_then(|d| d.platform_sso.as_ref())
             .filter(|v| v.verify().is_ok())
             .map(|v| v.extension.clone());
+        let cli = self.installation.as_ref().and_then(|d| d.cli.clone());
         let fences = self.core.fences.clone();
         let (sender, mut commands) = tokio::sync::mpsc::channel(32);
         let finished = Arc::new(AtomicBool::new(false));
@@ -1241,6 +1243,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             let _ = completed.send(result);
         })?;
         Ok(ServiceHandle {
+            cli,
             sender,
             fences,
             policy,
@@ -1792,6 +1795,10 @@ impl Core {
             eprintln!("agent_identity_gate: {error}");
         }
         use execution_ipc::host::{Reply, Request};
+        if matches!(command.request.as_operation(), Some(Request::Entry { .. })) {
+            self.enqueue_policy(command);
+            return;
+        }
         if let Some(Request::Task { input, origin }) = command.request.as_operation() {
             if matches!(input, execution_app::tasks::TaskOperation::Control(c) if c.action==execution_app::tasks::TaskAction::Retry)
                 || matches!(input, execution_app::tasks::TaskOperation::List(q) if q.view == execution_app::tasks::TaskView::Management)
@@ -1954,7 +1961,8 @@ impl Core {
                     Ok(Reply::Unavailable)
                 }
                 Some(
-                    Request::RegistrationStatus {}
+                    Request::Entry { .. }
+                    | Request::RegistrationStatus {}
                     | Request::RequestRegistration {}
                     | Request::RegistrationContext {}
                     | Request::ImportRegistration { .. },
@@ -2005,21 +2013,25 @@ impl Core {
 }
 enum LocalRequest {
     Operation(Box<execution_ipc::host::Request>),
+    Machine(Box<execution_ipc::host::Request>),
     Stop,
 }
 impl LocalRequest {
+    fn is_machine(&self) -> bool {
+        matches!(self, Self::Machine(_))
+    }
     fn operation(request: execution_ipc::host::Request) -> Self {
         Self::Operation(Box::new(request))
     }
     fn as_operation(&self) -> Option<&execution_ipc::host::Request> {
         match self {
-            Self::Operation(request) => Some(request),
+            Self::Operation(request) | Self::Machine(request) => Some(request),
             Self::Stop => None,
         }
     }
     fn into_operation(self) -> Option<execution_ipc::host::Request> {
         match self {
-            Self::Operation(request) => Some(*request),
+            Self::Operation(request) | Self::Machine(request) => Some(*request),
             Self::Stop => None,
         }
     }
@@ -2102,6 +2114,7 @@ pub(crate) async fn network_loop<T>(
 }
 /// Native callbacks forward bounded commands to the only journal/network owner.
 pub struct ServiceHandle {
+    cli: Option<execution_ipc::entry::CliPolicy>,
     sender: tokio::sync::mpsc::Sender<Command>,
     fences: Arc<policy::Fences>,
     policy: execution_ipc::host::PeerPolicy,
@@ -2213,6 +2226,17 @@ impl execution_ipc::host::Handler for ServiceHandle {
         if let Some(image) = &self.psso_image {
             policy.images.push(image.clone());
         }
+        if let Some(cli) = &self.cli {
+            if !policy.images.iter().any(|i| i.path == cli.image.path) {
+                policy.images.push(cli.image.clone());
+            }
+            if !cli.machine_actions.is_empty() {
+                let subject = if cfg!(windows) { "S-1-5-18" } else { "0" }.to_owned();
+                if !policy.subjects.contains(&subject) {
+                    policy.subjects.push(subject);
+                }
+            }
+        }
         Some(policy)
     }
     fn register_helper(
@@ -2231,6 +2255,32 @@ impl execution_ipc::host::Handler for ServiceHandle {
         peer: &execution_ipc::host::Peer,
         request: execution_ipc::host::Request,
     ) -> execution_ipc::host::Reply {
+        if let Some(cli) = self.cli.as_ref().filter(|c| c.permits(&request)) {
+            let policy = execution_ipc::host::PeerPolicy {
+                images: vec![cli.image.clone()],
+                subjects: vec![if cfg!(windows) { "S-1-5-18" } else { "0" }.into()],
+                interactive: false,
+            };
+            if let Ok(subject) = peer.authenticate(&policy) {
+                use sha2::{Digest as _, Sha256};
+                let binding = execution_ipc::host::boot_generation().and_then(|boot| {
+                    execution_contract::Id::new(format!(
+                        "machine/{:x}",
+                        Sha256::digest(format!("{}:{}", boot.as_str(), cli.image.sha256))
+                    ))
+                    .map_err(|_| execution_app::Error::Configuration)
+                });
+                return match binding {
+                    Ok(binding) => self.call(
+                        LocalRequest::Machine(Box::new(request)),
+                        subject,
+                        0,
+                        Some(binding),
+                    ),
+                    Err(_) => execution_ipc::host::Reply::Rejected,
+                };
+            }
+        }
         let authenticated = if matches!(request, execution_ipc::host::Request::PlatformSso { .. }) {
             self.psso_image
                 .as_ref()

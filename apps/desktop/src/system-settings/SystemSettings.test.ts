@@ -101,6 +101,9 @@ it("keeps sleep under power, exposes clickable ancestors, and resets to overview
     await w.vm.$nextTick();
     expect(w.find(".settings-overview-grid").exists()).toBe(true);
     expect(navigation.path).toEqual([]);
+    expect(await navigation.openNode!("lock")).toBe(true);
+    expect(navigation.path.map((e) => e.id)).toEqual(["power", "lock"]);
+    expect(await navigation.openNode!("unknown")).toBe(false);
   } finally {
     w.unmount();
   }

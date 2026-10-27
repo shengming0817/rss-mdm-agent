@@ -207,7 +207,18 @@ export function createSoftware(
       if (active && call === epoch) source.busy = false;
     }
   }
-  async function discover(append = false, visible: () => boolean = () => true) {
+  let discovery: Promise<void> | undefined;
+  function discover(
+    append = false,
+    visible: () => boolean = () => true,
+  ): Promise<void> {
+    if (discovery) return discovery;
+    discovery = discoverPage(append, visible).finally(() => {
+      discovery = undefined;
+    });
+    return discovery;
+  }
+  async function discoverPage(append: boolean, visible: () => boolean) {
     if (!active || !data || state.loading || (append && !state.directoryNext))
       return;
     state.loading = true;

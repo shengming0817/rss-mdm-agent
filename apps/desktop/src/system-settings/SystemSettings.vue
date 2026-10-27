@@ -4,7 +4,7 @@ import { ChevronRight, UiSearchInput, useUiContext } from "@rss-mdm-agent/ui";
 import SettingsGlyph from "./SettingsGlyph.vue";
 import SettingDetail from "./SettingDetail.vue";
 import { systemSettingsKey } from "./controller";
-import type { SettingsSection } from "../self-service/types";
+import type { SettingsSection, LocalPreparation } from "../self-service/types";
 const controller = inject(systemSettingsKey, undefined);
 import { systemEntries } from "./catalog";
 import type { PageNavigation } from "../workspace/page-navigation";
@@ -19,6 +19,7 @@ const selected = ref("overview");
 const heading = ref<HTMLElement>();
 const searchInput = ref<InstanceType<typeof UiSearchInput>>();
 const listing = ref<HTMLElement>();
+const detail = ref<InstanceType<typeof SettingDetail>>();
 const entries = computed(() => systemEntries(mac.value));
 const sections = computed(() => [
   { id: "overview", title: "系统概览" },
@@ -55,10 +56,10 @@ const path = computed(() =>
       ],
 );
 let origin = "";
-async function openSection(id: string) {
+async function openSection(id: string, read = true) {
   if (!sections.value.some((e) => e.id === id) && id !== "lock") return;
   selected.value = id;
-  void controller?.load(id as SettingsSection);
+  if (read) void controller?.load(id as SettingsSection);
   await nextTick();
   heading.value?.focus();
 }
@@ -82,79 +83,81 @@ async function back() {
   else searchInput.value?.focus();
 }
 
-emit(
-  "navigation",
-  reactive({
-    reset,
-    openSection,
-    section,
-    sections,
-    path,
-    resources: computed(() =>
-      (current.value ? [current.value] : filtered.value).map((item) => ({
-        id: item.id,
-        title: item.title,
-        description:
-          entries.value.find((e) => e.id === item.id)?.description ?? "",
-        status: (() => {
-          const value = controller?.state.observations.get(
-            item.id as SettingsSection,
-          );
-          const observed = value?.snapshot
-            ? `${value.effect} · ${new Date(value.snapshot.collectedAtUnixMs).toISOString()} · ${JSON.stringify(value.snapshot.targets.map((target) => ({ name: target.name, fields: target.fields.filter((field) => !["http", "https", "socks", "bypass", "proxy"].includes(field.key)) })))}`
-            : "系统值未读取";
-          const facts =
-            controller
-              ?.relevant(item.id as SettingsSection)
-              .flatMap((source) => {
-                const fact = controller.state.facts.get(
-                  source.reference.id,
-                )?.value;
-                return fact
-                  ? [
-                      {
-                        domains: source.domains,
-                        quality: fact.quality,
-                        stale: fact.stale,
-                        collectedAt: fact.collectedAt,
-                        fields: fact.fields,
-                      },
-                    ]
-                  : [];
-              }) ?? [];
-          return `${observed}${facts.length ? ` · ${JSON.stringify(facts)}` : ""}`;
-        })(),
-        source: "本机状态",
-        revision: JSON.stringify([
-          controller?.state.observations.get(item.id as SettingsSection)
-            ?.snapshot?.revision,
-          controller?.relevant(item.id as SettingsSection).map((source) => {
-            const value = controller.state.facts.get(
-              source.reference.id,
-            )?.value;
-            return [
-              source.reference,
-              value?.collectedAt,
-              value?.quality,
-              value?.stale,
-            ];
-          }),
-        ]),
-        collectedAt: controller?.state.observations.get(
+const navigation = reactive({
+  reset,
+  openSection,
+  async openNode(id: string) {
+    if (id !== "lock" && !sections.value.some((e) => e.id === id)) return false;
+    await openSection(id);
+    return true;
+  },
+  async prepareEntry(input: LocalPreparation) {
+    if (input.kind !== "settings") return false;
+    await openSection(input.section, false);
+    return (await detail.value?.prepareEntry(input)) ?? false;
+  },
+  section,
+  sections,
+  path,
+  resources: computed(() =>
+    (current.value ? [current.value] : filtered.value).map((item) => ({
+      id: item.id,
+      title: item.title,
+      description:
+        entries.value.find((e) => e.id === item.id)?.description ?? "",
+      status: (() => {
+        const value = controller?.state.observations.get(
           item.id as SettingsSection,
-        )?.snapshot?.collectedAtUnixMs,
-        validUntil: (() => {
-          const snapshot = controller?.state.observations.get(
-            item.id as SettingsSection,
-          )?.snapshot;
-          return snapshot ? snapshot.collectedAtUnixMs + 30_000 : undefined;
-        })(),
-        verified: !controller?.state.errors.has(item.id as SettingsSection),
-      })),
-    ),
-    setQuery: (value: string) => (query.value = value),
-  }),
-);
+        );
+        const observed = value?.snapshot
+          ? `${value.effect} · ${new Date(value.snapshot.collectedAtUnixMs).toISOString()} · ${JSON.stringify(value.snapshot.targets.map((target) => ({ name: target.name, fields: target.fields.filter((field) => !["http", "https", "socks", "bypass", "proxy"].includes(field.key)) })))}`
+          : "系统值未读取";
+        const facts =
+          controller?.relevant(item.id as SettingsSection).flatMap((source) => {
+            const fact = controller.state.facts.get(source.reference.id)?.value;
+            return fact
+              ? [
+                  {
+                    domains: source.domains,
+                    quality: fact.quality,
+                    stale: fact.stale,
+                    collectedAt: fact.collectedAt,
+                    fields: fact.fields,
+                  },
+                ]
+              : [];
+          }) ?? [];
+        return `${observed}${facts.length ? ` · ${JSON.stringify(facts)}` : ""}`;
+      })(),
+      source: "本机状态",
+      revision: JSON.stringify([
+        controller?.state.observations.get(item.id as SettingsSection)?.snapshot
+          ?.revision,
+        controller?.relevant(item.id as SettingsSection).map((source) => {
+          const value = controller.state.facts.get(source.reference.id)?.value;
+          return [
+            source.reference,
+            value?.collectedAt,
+            value?.quality,
+            value?.stale,
+          ];
+        }),
+      ]),
+      collectedAt: controller?.state.observations.get(
+        item.id as SettingsSection,
+      )?.snapshot?.collectedAtUnixMs,
+      validUntil: (() => {
+        const snapshot = controller?.state.observations.get(
+          item.id as SettingsSection,
+        )?.snapshot;
+        return snapshot ? snapshot.collectedAtUnixMs + 30_000 : undefined;
+      })(),
+      verified: !controller?.state.errors.has(item.id as SettingsSection),
+    })),
+  ),
+  setQuery: (value: string) => (query.value = value),
+});
+emit("navigation", navigation);
 </script>
 <template>
   <section class="system-settings design-page" aria-label="系统设置工作区">
@@ -220,7 +223,11 @@ emit(
         </div>
         <small>{{ mac ? "macOS" : "Windows" }}</small>
       </header>
-      <SettingDetail :key="selected" :section="selected as SettingsSection" />
+      <SettingDetail
+        ref="detail"
+        :key="selected"
+        :section="selected as SettingsSection"
+      />
       <button
         v-if="selected === 'power'"
         class="design-row"

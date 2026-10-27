@@ -36,27 +36,22 @@ def absent_execution_registration():
 
 class NativeReadinessTests(unittest.TestCase):
     def test_replacement_transport_is_retried_until_authenticated_ready(self):
-        unavailable = subprocess.CalledProcessError(1, ['service'], stderr='agent_service: Agent transport unavailable\nRSS_IPC_TRANSPORT_ERROR code=4099\n')
         ready = {'reply': {'kind': 'serviceStatus', 'value': {'readiness': {'phase': 'ready'}}}}
-        with patch.object(acceptance, 'run', side_effect=[unavailable, subprocess.CompletedProcess([], 0, json.dumps(ready))]) as call, patch.object(acceptance.time, 'sleep'):
+        with patch.object(acceptance, 'cli_query', side_effect=[{'reply': {'kind': 'unavailable'}}, ready]) as call, patch.object(acceptance.time, 'sleep'):
             self.assertEqual(acceptance.wait_service_ready('service', 'config'), ready)
             self.assertEqual(call.call_count, 2)
+            self.assertTrue(all(row.args == ('service', 'config', 'status') for row in call.call_args_list))
 
-    def test_authorization_and_not_ready_are_terminal(self):
-        rejected = subprocess.CalledProcessError(1, ['service'], stderr='agent_service: Agent identity unavailable\n')
-        with patch.object(acceptance, 'run', side_effect=rejected) as call:
-            with self.assertRaises(subprocess.CalledProcessError): acceptance.wait_service_ready('service', 'config')
-            self.assertEqual(call.call_count, 1)
-        response = {'reply': {'kind': 'serviceStatus', 'value': {'readiness': {'phase': 'notReady'}}}}
-        with patch.object(acceptance, 'run', return_value=subprocess.CompletedProcess([], 0, json.dumps(response))) as call:
-            with self.assertRaisesRegex(RuntimeError, 'authenticated service readiness failed'): acceptance.wait_service_ready('service', 'config')
-            self.assertEqual(call.call_count, 1)
+    def test_denied_and_not_ready_are_terminal(self):
+        for reply in [{'kind': 'rejected'}, {'kind': 'serviceStatus', 'value': {'readiness': {'phase': 'notReady'}}}]:
+            with patch.object(acceptance, 'cli_query', return_value={'reply': reply}) as call:
+                with self.assertRaisesRegex(RuntimeError, 'authenticated service readiness failed'):
+                    acceptance.wait_service_ready('service', 'config')
+                self.assertEqual(call.call_count, 1)
 
-    def test_transport_deadline_preserves_original_failure(self):
-        error = subprocess.CalledProcessError(1, ['service'], stderr='agent_service: Agent transport unavailable\n')
-        with patch.object(acceptance, 'run', side_effect=error), patch.object(acceptance.time, 'monotonic', side_effect=[0, 16]):
-            with self.assertRaises(subprocess.CalledProcessError) as raised: acceptance.wait_service_ready('service', 'config')
-            self.assertIs(raised.exception, error)
+    def test_transport_deadline_is_bounded(self):
+        with patch.object(acceptance, 'cli_query', return_value={'reply': {'kind': 'unavailable'}}), patch.object(acceptance.time, 'monotonic', side_effect=[0, 16]):
+            with self.assertRaises(RuntimeError): acceptance.wait_service_ready('service', 'config')
 
 
 class NativeDiagnosticRegistrationTests(unittest.TestCase):
@@ -90,31 +85,28 @@ class NativeDiagnosticRegistrationTests(unittest.TestCase):
 
 
 class NativeTaskReadTests(unittest.TestCase):
-    def test_transient_transport_and_busy_owner_retry_only_the_same_read(self):
-        unavailable = subprocess.CalledProcessError(1, ['service'], stderr='agent_service: Agent transport unavailable\n')
-        busy = subprocess.CompletedProcess([], 0, json.dumps({'reply': {'kind': 'unavailable'}}))
+    def test_transient_transport_retries_only_the_same_cli_read(self):
         page = {'items': [], 'complete': True}
-        ready = subprocess.CompletedProcess([], 0, json.dumps({'reply': {'kind': 'task', 'value': {'kind': 'page', 'value': page}}}))
-        with patch.object(acceptance, 'run', side_effect=[unavailable, busy, ready]) as call, patch.object(acceptance.time, 'sleep'):
+        ready = {'reply': {'kind': 'task', 'value': {'kind': 'page', 'value': page}}}
+        with patch.object(acceptance, 'cli_query', side_effect=[{'reply': {'kind': 'unavailable'}}, ready]) as call, patch.object(acceptance.time, 'sleep'):
             self.assertEqual(acceptance.read_task_page('service', 'config'), page)
-            self.assertEqual(call.call_count, 3)
-            self.assertTrue(all(row.args == ('service', '--config', 'config', '--query') for row in call.call_args_list))
+            self.assertEqual(call.call_count, 2)
+            self.assertTrue(all(row.args == ('service', 'config', 'tasks', 'list') for row in call.call_args_list))
 
-    def test_authorization_wrong_reply_and_malformed_data_are_terminal(self):
-        denied = subprocess.CalledProcessError(1, ['service'], stderr='agent_service: Agent identity unavailable\n')
-        with patch.object(acceptance, 'run', side_effect=denied) as call:
-            with self.assertRaises(subprocess.CalledProcessError): acceptance.read_task_page('service', 'config')
+    def test_authorization_is_terminal(self):
+        with patch.object(acceptance, 'cli_query', return_value={'reply': {'kind': 'rejected'}}) as call:
+            with self.assertRaises(RuntimeError): acceptance.read_task_page('service', 'config')
             self.assertEqual(call.call_count, 1)
-        for stdout in (json.dumps({'reply': {'kind': 'rejected'}}), '{'):
-            with self.subTest(stdout=stdout), patch.object(acceptance, 'run', return_value=subprocess.CompletedProcess([], 0, stdout)) as call:
-                with self.assertRaises((RuntimeError, ValueError)): acceptance.read_task_page('service', 'config')
-                self.assertEqual(call.call_count, 1)
 
-    def test_transport_deadline_preserves_original_failure(self):
-        error = subprocess.CalledProcessError(1, ['service'], stderr='agent_service: Agent transport unavailable\n')
-        with patch.object(acceptance, 'run', side_effect=error), patch.object(acceptance.time, 'monotonic', side_effect=[0, 0, 16]):
-            with self.assertRaises(subprocess.CalledProcessError) as raised: acceptance.read_task_page('service', 'config')
-            self.assertIs(raised.exception, error)
+    def test_transport_deadline_is_bounded(self):
+        with patch.object(acceptance, 'cli_query', return_value={'reply': {'kind': 'unavailable'}}), patch.object(acceptance.time, 'monotonic', side_effect=[0, 0, 16]):
+            with self.assertRaises(RuntimeError): acceptance.read_task_page('service', 'config')
+
+    def test_cli_query_uses_the_actual_cli_and_closed_json_error(self):
+        for code,body,kind in [(0,{'ok':True,'result':{'kind':'task'}},'task'),(7,{'ok':False,'error':{'code':'service_unavailable'}},'unavailable'),(3,{'ok':False,'error':{'code':'denied'}},'rejected')]:
+            with patch.object(acceptance.subprocess, 'run', return_value=subprocess.CompletedProcess([],code,json.dumps(body))) as call:
+                self.assertEqual(acceptance.cli_query('/installed/service','config','tasks','list')['reply']['kind'],kind)
+                self.assertEqual(call.call_args.args[0],['/installed/rssmdm','--json','--config','config','tasks','list'])
 
 
 class PssoPreflightTests(unittest.TestCase):
@@ -327,7 +319,7 @@ class BackendLifecycleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);backend=root/'backend';pid=root/'pid';output=root/'output'
             backend.write_text('#!/usr/bin/python3\nimport os,time\nfrom pathlib import Path\nPath('+repr(str(pid))+').write_text(str(os.getpid()))\nprint("[]",flush=True)\ntime.sleep(60)\n');backend.chmod(0o700)
-            with absent_execution_registration(), patch.object(acceptance.sys,'argv',['verify','--binary','/bin/sh','--backend',str(backend),'--output',str(output)]), patch.object(acceptance,'AdministratorSession') as administrator:
+            with absent_execution_registration(), patch.object(acceptance.sys,'argv',['verify','--binary','/bin/sh','--cli','/bin/sh','--backend',str(backend),'--output',str(output)]), patch.object(acceptance,'AdministratorSession') as administrator:
                 with self.assertRaisesRegex(RuntimeError,'invalid controlled backend response'): acceptance.main()
                 administrator.assert_not_called()
             receipt=json.loads((output/'receipt.json').read_text())
@@ -423,8 +415,8 @@ finally: connection.close()
                     def start(self): raise RuntimeError('stop before administrator authority')
                     def close(self): pass
                 frozen=dict(source=dict(head='historical-build',node='old-node',pnpm='old-pnpm'),
-                            binaries={name:dict(path=str(path.resolve())) for name,path in [('service',Path('/bin/sh')),('desktop',Path('/bin/sh')),('backend',backend)]}) if fixed else None
-                argv=['verify','--binary','/bin/sh','--desktop','/bin/sh','--backend',str(backend),'--output',str(output)]
+                            binaries={name:dict(path=str(path.resolve())) for name,path in [('service',Path('/bin/sh')),('desktop',Path('/bin/sh')),('cli',Path('/bin/sh')),('backend',backend)]}) if fixed else None
+                argv=['verify','--binary','/bin/sh','--cli','/bin/sh','--desktop','/bin/sh','--backend',str(backend),'--output',str(output)]
                 if fixed: argv+=['--candidate',str(root/'candidate.json')]
                 actual_run=acceptance.run
                 def no_git(*args,**kwargs):
@@ -449,8 +441,8 @@ finally: connection.close()
             self.assertFalse(output.exists())
 
     def test_fixed_candidate_arguments_and_security_probes_remain_required(self):
-        frozen=dict(source=dict(head='historical-build'),binaries={name:dict(path=str(Path('/bin/sh').resolve())) for name in ('service','backend')})
-        base=['verify','--binary','/bin/sh','--backend','/bin/sh','--output','unused','--candidate','candidate.json']
+        frozen=dict(source=dict(head='historical-build'),binaries={name:dict(path=str(Path('/bin/sh').resolve())) for name in ('service','backend','cli')})
+        base=['verify','--binary','/bin/sh','--cli','/bin/sh','--backend','/bin/sh','--output','unused','--candidate','candidate.json']
         for extra,message in [(['--binary','/bin/ls'],'candidate argument mismatch'),(['--security'],'security matrix requires frozen')]:
             with self.subTest(extra=extra),patch.object(acceptance.sys,'argv',base+extra),patch.object(acceptance,'verify_candidate',return_value=frozen):
                 with self.assertRaisesRegex(RuntimeError,message): acceptance.main()
@@ -637,8 +629,14 @@ class EvidenceTests(unittest.TestCase):
             proof=acceptance.journal_proof(path,quiescent=True)
             self.assertEqual([r['request'] for r in proof['records']],['original'])
             self.assertEqual({p:p.read_bytes() for p in before},before)
+            # Apple SQLite may retain empty sidecars after a read-only connection.
+            # Establish this fixture's fully checkpointed/no-sidecar state explicitly.
+            self.assertEqual(db.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone(),(0,0,0))
             db.close()
-            self.assertFalse(wal.exists())
+            if wal.exists():
+                self.assertEqual(wal.stat().st_size,0)
+                wal.unlink()
+            path.with_name(path.name+'-shm').unlink(missing_ok=True)
             before=path.read_bytes()
             proof=acceptance.journal_proof(path,quiescent=True)
             self.assertEqual([r['request'] for r in proof['records']],['original'])

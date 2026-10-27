@@ -75,6 +75,7 @@ export function parseChanges(raw) {
 // Build scripts, generated bindings, runtime packing and shared fixtures are not
 // represented by Cargo or pnpm dependencies. These are directed consumer edges.
 export const sourceEdges = [
+  ["rss-mdm-cli", "agent-service"],
   ["macos-passkey-extension", "rss-mdm-desktop"],
   ["macos-passkey-extension", "agent-service"],
   ["platform-sso-extension", "rss-mdm-desktop"],

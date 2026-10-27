@@ -15,7 +15,9 @@ function request() {
   const action = props.record.action;
   return action.kind === "offered"
     ? action.offer.request
-    : action.choice.request;
+    : action.kind === "event"
+      ? action.request
+      : action.choice.request;
 }
 function resolved() {
   const action = props.record.action;

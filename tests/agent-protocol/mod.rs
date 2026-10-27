@@ -237,6 +237,9 @@ pub struct Data {
     pub management_page: Option<rss_mdm_agent_wire::activities::ManagementActivityPage>,
     pub management_detail: Option<rss_mdm_agent_wire::activities::ManagementActivityDetail>,
     pub management_calls: Vec<String>,
+    pub policy_events: BTreeMap<Uuid, (Value, PolicyEventAccepted)>,
+    pub policy_event_reply_lost: bool,
+    pub policy_event_calls: usize,
     pub started: bool,
     pub received: bool,
     pub content_calls: Vec<Option<String>>,
@@ -750,6 +753,9 @@ impl Server {
             content_gate: None,
             content_header_pause: None,
             content_header_waiting: false,
+            policy_events: BTreeMap::new(),
+            policy_event_reply_lost: false,
+            policy_event_calls: 0,
             management_page: None,
             management_detail: None,
             management_calls: Vec::new(),
@@ -1244,6 +1250,34 @@ fn runtime_response(d: &mut Data, path: &str, headers: HeaderMap, value: Value) 
     }
     if path.contains("/runtime/telemetry/") {
         return telemetry::response(d, path, value);
+    }
+    if path.ends_with("/policy-events") {
+        let input: PolicyEventRequest = match serde_json::from_value(value.clone()) {
+            Ok(value) => value,
+            Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+        };
+        d.policy_event_calls += 1;
+        let previous = d
+            .policy_events
+            .entry(input.operation_id)
+            .or_insert_with(|| {
+                (
+                    value.clone(),
+                    PolicyEventAccepted {
+                        operation_id: input.operation_id,
+                        batch_id: Uuid::new_v4(),
+                        members: 0,
+                    },
+                )
+            });
+        if previous.0 != value {
+            return StatusCode::CONFLICT.into_response();
+        }
+        let receipt = previous.1.clone();
+        if std::mem::take(&mut d.policy_event_reply_lost) {
+            return interrupted_response();
+        }
+        return axum::Json(receipt).into_response();
     }
     if path.contains("/management-activities") {
         if path.ends_with("/management-activities")

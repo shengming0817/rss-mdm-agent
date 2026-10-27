@@ -39,6 +39,7 @@ export function freezeCandidate(
     service,
     backend,
     desktop,
+    cli,
     securityProbe,
     untrustedProbe,
     platformSso,
@@ -53,6 +54,7 @@ export function freezeCandidate(
       service,
       backend,
       desktop,
+      cli,
       securityProbe,
       untrustedProbe,
       platformSso,
@@ -66,6 +68,8 @@ export function freezeCandidate(
     (binaries.service && binaries.backend) || binaries.windowsPasskey,
     "service/backend or Windows Passkey candidate required",
   );
+  if (binaries.service)
+    assert.ok(binaries.cli, "installed CLI candidate required");
   const source = sourceEvidence(root);
   const manifest = JSON.parse(
     readFileSync(resolve(root, "package.json"), "utf8"),
@@ -117,6 +121,8 @@ export function verifyCandidate(path) {
     (candidate.binaries.service && candidate.binaries.backend) ||
       candidate.binaries.windowsPasskey,
   );
+  if (candidate.binaries.service)
+    assert.ok(candidate.binaries.cli, "installed CLI candidate required");
   for (const expected of Object.values(candidate.binaries))
     assert.deepEqual(image(expected.path), expected, "candidate image changed");
   if (candidate.installer)
@@ -197,6 +203,7 @@ if (
           "service",
           "backend",
           "desktop",
+          "cli",
           "securityProbe",
           "windowsLogin",
           "windowsPasskey",

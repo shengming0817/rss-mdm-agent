@@ -23,6 +23,8 @@ pub struct PlatformSsoConfiguration {
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Deployment {
+    /// Actual installed CLI; absence means no CLI image is trusted.
+    pub cli: Option<execution_ipc::entry::CliPolicy>,
     /// Optional installed macOS PSSO component. Absence means not installed, never a compatibility fallback.
     pub platform_sso: Option<PlatformSsoConfiguration>,
     pub software_read_grants: Vec<agent_client::SoftwareReadGrant>,
@@ -116,6 +118,26 @@ impl Deployment {
             return Err(Error::Configuration);
         }
         value.clients.validate().map_err(crate::error::app_error)?;
+        if let Some(cli) = &value.cli {
+            cli.image
+                .verify(&cli.image.path)
+                .map_err(|_| Error::Identity)?;
+            crate::installation::validate_native_artifact(&cli.image)?;
+            if cli.machine_actions.len() > 5
+                || cli
+                    .machine_actions
+                    .iter()
+                    .enumerate()
+                    .any(|(i, a)| cli.machine_actions[..i].contains(a))
+                || !value.clients.images.iter().any(|i| {
+                    i.path == cli.image.path
+                        && i.sha256 == cli.image.sha256
+                        && i.cdhash == cli.image.cdhash
+                })
+            {
+                return Err(Error::Configuration);
+            }
+        }
         value
             .service
             .verify(&value.service.path)
@@ -776,6 +798,7 @@ pub(crate) mod tests {
             cdhash: None,
         };
         Deployment {
+            cli: None,
             platform_sso: None,
             service_id: crate::protocol_test_support::SERVICE_ID,
             connections: crate::protocol_test_support::signed_connections(

@@ -486,7 +486,110 @@ fn retained_image(path: &Path, desktop: bool) -> Result<(), Error> {
     Err(Error::Identity)
 }
 pub(super) fn preflight_desktop_entry(candidate: &Candidate) -> Result<(), Error> {
+    if candidate.format()? == "windows_exe" {
+        protocol_owner(candidate, false)?;
+    }
     preflight_entry(candidate, false)
+}
+const PROTOCOL_KEY: &str = "Software\\Classes\\rssmdm";
+fn protocol_command() -> Result<Option<String>, Error> {
+    use windows_sys::Win32::System::Registry::*;
+    let mut bytes = vec![0u16; 32768];
+    let mut len = (bytes.len() * 2) as u32;
+    let code = unsafe {
+        RegGetValueW(
+            HKEY_LOCAL_MACHINE,
+            wide(format!("{PROTOCOL_KEY}\\shell\\open\\command")).as_ptr(),
+            null(),
+            RRF_RT_REG_SZ | RRF_SUBKEY_WOW6464KEY,
+            null_mut(),
+            bytes.as_mut_ptr().cast(),
+            &mut len,
+        )
+    };
+    if code == ERROR_FILE_NOT_FOUND {
+        return Ok(None);
+    }
+    if code != 0 || len < 2 || len as usize > bytes.len() * 2 {
+        return Err(Error::Identity);
+    }
+    String::from_utf16(&bytes[..len as usize / 2 - 1])
+        .map(Some)
+        .map_err(|_| Error::Identity)
+}
+fn protocol_owner(candidate: &Candidate, retirement: bool) -> Result<(), Error> {
+    if let Some(command) = protocol_command()? {
+        let target = command
+            .strip_prefix('"')
+            .and_then(|v| v.strip_suffix("\" \"%1\""))
+            .ok_or(Error::Identity)?;
+        if retirement {
+            if Path::new(target) != candidate.desktop.path {
+                return Err(Error::Identity);
+            }
+        } else {
+            retained_image(Path::new(target), true)?;
+        }
+    }
+    Ok(())
+}
+fn protocol_register(candidate: &Candidate) -> Result<(), Error> {
+    use windows_sys::Win32::System::Registry::*;
+    protocol_owner(candidate, false)?;
+    for (path, name, value) in [
+        (PROTOCOL_KEY.to_owned(), "", "URL:RSS MDM Agent".into()),
+        (PROTOCOL_KEY.to_owned(), "URL Protocol", String::new()),
+        (
+            format!("{PROTOCOL_KEY}\\shell\\open\\command"),
+            "",
+            format!("\"{}\" \"%1\"", candidate.desktop.path.display()),
+        ),
+    ] {
+        let mut key = null_mut();
+        if unsafe {
+            RegCreateKeyExW(
+                HKEY_LOCAL_MACHINE,
+                wide(path).as_ptr(),
+                0,
+                null(),
+                0,
+                KEY_SET_VALUE | KEY_WOW64_64KEY,
+                null(),
+                &mut key,
+                null_mut(),
+            )
+        } != 0
+        {
+            return Err(Error::Unavailable);
+        }
+        let value = wide(value);
+        let code = unsafe {
+            RegSetValueExW(
+                key,
+                wide(name).as_ptr(),
+                0,
+                REG_SZ,
+                value.as_ptr().cast(),
+                (value.len() * 2) as u32,
+            )
+        };
+        unsafe {
+            RegCloseKey(key);
+        }
+        if code != 0 {
+            return Err(Error::Unavailable);
+        }
+    }
+    Ok(())
+}
+fn protocol_remove(candidate: &Candidate) -> Result<(), Error> {
+    use windows_sys::Win32::System::Registry::*;
+    protocol_owner(candidate, true)?;
+    let code = unsafe { RegDeleteTreeW(HKEY_LOCAL_MACHINE, wide(PROTOCOL_KEY).as_ptr()) };
+    if code != 0 && code != ERROR_FILE_NOT_FOUND {
+        return Err(Error::Unavailable);
+    }
+    Ok(())
 }
 fn preflight_entry(candidate: &Candidate, retirement: bool) -> Result<(), Error> {
     use ::windows::{
@@ -545,6 +648,7 @@ pub(super) fn desktop_entry(candidate: &Candidate) -> Result<(), Error> {
         // The package manager owns its shortcut lifecycle, including uninstall and rollback.
         return Ok(());
     }
+    protocol_register(candidate)?;
     let mut key = null_mut();
     if unsafe {
         RegCreateKeyExW(
@@ -1328,6 +1432,9 @@ impl Drop for ComApartment {
 pub(super) fn uninstall_payload(candidate: &Candidate) -> Result<(), Error> {
     use windows_sys::Win32::System::Registry::*;
     preflight_entry(candidate, true)?;
+    if candidate.format()? == "windows_exe" {
+        protocol_remove(candidate)?;
+    }
     if let Some(image) = registry_value("ServiceImage")? {
         if Path::new(&image) != candidate.service.path {
             return Err(Error::Identity);
