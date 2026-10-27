@@ -104,6 +104,7 @@ test("TypeScript bindings preserve open metadata and closed core objects", async
     properties: {
       presentation: { type: "object" },
       definition: { type: ["object", "boolean"] },
+      commands: { type: "object", properties: { run: { type: "string" } } },
       core: {
         type: "object",
         additionalProperties: false,
@@ -118,6 +119,7 @@ test("TypeScript bindings preserve open metadata and closed core objects", async
   assert.equal(projected.properties.presentation.additionalProperties, true);
   assert.equal(projected.properties.definition.additionalProperties, true);
   assert.equal(projected.properties.core.additionalProperties, false);
+  assert.equal(projected.properties.commands.additionalProperties, undefined);
   const binding = await compile(projected, "Consumer", {
     additionalProperties: false,
   });

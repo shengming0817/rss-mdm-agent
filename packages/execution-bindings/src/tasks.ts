@@ -66,7 +66,6 @@ export type TaskFacts =
 export type AccessSummary =
   | {
       kind: "osIdentity";
-      [k: string]: unknown;
     }
   | {
       /**
@@ -94,7 +93,6 @@ export type AccessSummary =
        * Number of declared write paths.
        */
       writePathCount: number;
-      [k: string]: unknown;
     };
 /**
  * Product actor reference, not an authenticated principal.
@@ -166,11 +164,9 @@ export type ExecutionSummary =
        * Safe step identities, without launch inputs or paths.
        */
       steps: SoftwareStepSummary[];
-      [k: string]: unknown;
     }
   | {
       kind: "process";
-      [k: string]: unknown;
     };
 /**
  * One backend software intent, independent of individual process exit codes.
@@ -1444,7 +1440,6 @@ export interface ExecutionTaskDetails {
    * Authoritative lifecycle projection.
    */
   status: ExecutionStatus;
-  [k: string]: unknown;
 }
 /**
  * Allowlisted view of the immutable plan; no parameters, launch inputs, secrets or audit.
@@ -1521,7 +1516,6 @@ export interface FrozenExecutionSummary {
    * Original validity window.
    */
   validity: ValidityWindow;
-  [k: string]: unknown;
 }
 /**
  * Resource revision and exact SHA-256 content identity; does not itself verify downloaded bytes.
@@ -1603,7 +1597,6 @@ export interface SoftwareStepSummary {
    * Fixed package version.
    */
   version: PackageValue;
-  [k: string]: unknown;
 }
 /**
  * Opaque account reference in an OS namespace, independent of product or provider identity.
@@ -1788,7 +1781,6 @@ export interface ExecutionStatus {
    * Last stop request response; independent of termination/effect evidence.
    */
   stopOutcome: StopOutcome | null;
-  [k: string]: unknown;
 }
 /**
  * Versioned observation reference and runner provenance; the referenced fact remains unverified.
