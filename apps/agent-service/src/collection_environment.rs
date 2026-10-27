@@ -72,7 +72,9 @@ async fn probe(path: &std::path::Path, args: &[&str], name: &str) -> Option<Stri
 fn version(bytes: &[u8], name: &str) -> Option<String> {
     let text = std::str::from_utf8(bytes).ok()?.trim();
     let value = if name == "osquery" {
-        text.strip_prefix("osqueryi version ")?
+        // Official macOS packages pin the real osqueryd image; osqueryi may be a link.
+        text.strip_prefix("osqueryi version ")
+            .or_else(|| text.strip_prefix("osqueryd version "))?
     } else {
         text
     };
@@ -148,6 +150,25 @@ mod tests {
             b"7.4.1.2.3",
         ] {
             assert!(version(bad, "powershell").is_none());
+        }
+    }
+    #[test]
+    fn official_osquery_daemon_and_shell_share_the_same_tool_prerequisite() {
+        assert_eq!(
+            version(b"osqueryd version 5.23.1\n", "osquery").as_deref(),
+            Some("5.23.1")
+        );
+        assert_eq!(
+            version(b"osqueryi version 5.23.1\n", "osquery").as_deref(),
+            Some("5.23.1")
+        );
+        for value in [
+            "osquery version 5.23.1",
+            "osqueryd version 5.23.1-preview",
+            "osqueryd version 5.23.1\nextra",
+            "5.23.1",
+        ] {
+            assert!(version(value.as_bytes(), "osquery").is_none());
         }
     }
 }
