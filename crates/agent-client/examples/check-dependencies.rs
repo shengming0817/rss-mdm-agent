@@ -2,6 +2,10 @@
 //! ref: Cargo src/cargo/core/source_id.rs@rust-1.96.0 (Git reference and precise commit).
 use std::{fs, path::Path, process::Command};
 
+#[path = "../../../tests/agent-protocol/contract.rs"]
+#[allow(dead_code)]
+mod contract;
+
 const WIRE: &str = "rss-mdm-agent-wire";
 const WIRE_URL: &str = "https://dev.azure.com/shengming0923/rss/_git/rss-mdm";
 const CRATES_IO: &str = "registry+https://github.com/rust-lang/crates.io-index";
@@ -203,7 +207,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for package in packages {
         policy.package(package, &root)?;
     }
-    println!("Agent consumes one fixed protocol package and public dependencies");
+    contract::from_metadata(&metadata)?;
+    println!("Agent consumes one fixed protocol package and its committed HTTP contract");
     Ok(())
 }
 #[cfg(test)]

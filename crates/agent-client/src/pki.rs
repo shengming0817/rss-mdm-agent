@@ -1,3 +1,4 @@
+use crate::http as h;
 use crate::{
     trust::{VerifiedTrust, Watermark},
     Client, Clock, Error, IdentityProvider,
@@ -150,15 +151,16 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             state.verified(&self.store.cfg, now)?;
             return Ok(());
         }
-        let url = self
-            .connection_origin()?
-            .join("api/v1/agent/enroll/trust")
-            .map_err(|_| Error::Configuration)?;
         let (status, bytes) = self
             .agent_json_transport(
-                self.bootstrap
-                    .get(url)
-                    .timeout(self.store.cfg.limits.request_timeout),
+                crate::http::Call::<h::Trust>::new(
+                    &self.bootstrap,
+                    &self.connection_origin()?,
+                    &[],
+                    None,
+                    None,
+                )?
+                .timeout(self.store.cfg.limits.request_timeout),
                 self.store.cfg.limits.response_bytes,
             )
             .await?;
@@ -262,18 +264,16 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         if ack.completed {
             return Ok(());
         }
-        let url = self
-            .connection_origin()?
-            .join("api/v1/agent/enroll/trust/acknowledgements")
-            .map_err(|_| Error::Configuration)?;
-        let body = crate::store::encode(&ack.request)?;
         let (status, bytes) = self
             .agent_json_transport(
-                self.http
-                    .post(url)
-                    .header("content-type", "application/json")
-                    .body(body)
-                    .timeout(self.store.cfg.limits.request_timeout),
+                crate::http::Call::<h::TrustAck>::new(
+                    &self.http,
+                    &self.connection_origin()?,
+                    &[],
+                    None,
+                    Some(&ack.request),
+                )?
+                .timeout(self.store.cfg.limits.request_timeout),
                 self.store.cfg.limits.response_bytes,
             )
             .await?;
@@ -414,17 +414,16 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             return Ok(());
         };
         self.restore_runtime_transport()?;
-        let url = self
-            .connection_origin()?
-            .join("api/v1/agent/enroll/trust/observations")
-            .map_err(|_| Error::Configuration)?;
         let (status, bytes) = self
             .agent_json_transport(
-                self.http
-                    .post(url)
-                    .header("content-type", "application/json")
-                    .body(crate::store::encode(pending)?)
-                    .timeout(self.store.cfg.limits.request_timeout),
+                crate::http::Call::<h::TrustObservation>::new(
+                    &self.http,
+                    &self.connection_origin()?,
+                    &[],
+                    None,
+                    Some(pending),
+                )?
+                .timeout(self.store.cfg.limits.request_timeout),
                 self.store.cfg.limits.response_bytes,
             )
             .await?;

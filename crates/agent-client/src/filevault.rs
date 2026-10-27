@@ -1,5 +1,6 @@
 //! Device-authenticated CMS custody, independent of ordinary tasks and employee sessions.
 //! ref: RustCrypto cms 0.2.3 enveloped_data.rs; Apple DeviceManagement/FDERecoveryKeyEscrow.
+use crate::http as h;
 use crate::{
     store::{encode, hash},
     Client, Clock, Error, IdentityProvider,
@@ -7,7 +8,6 @@ use crate::{
 use base64::{engine::general_purpose::STANDARD, Engine};
 use der::Decode;
 use execution_contract::FilevaultState as Status;
-use reqwest::Method;
 use rss_mdm_agent_wire::filevault as w;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -213,7 +213,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         state.next_check = now.saturating_add(60);
         state.save(&self.store)?;
         let config: w::Configuration = match self
-            .self_service_json(None, Method::GET, "filevault/configuration", None)
+            .employee_json::<h::FilevaultConfiguration>(None, &[], None, None)
             .await
         {
             Ok(v) => v,
@@ -308,22 +308,16 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         self.active()?;
         self.now()?;
         input.decode()?;
-        let body = encode(input)?;
-        if body.len() > w::REQUEST_BYTES {
-            return Err(Error::Capacity);
-        }
         let request = self
-            .http
-            .post(self.url("filevault/escrows")?)
+            .call::<h::FilevaultUpload>(&[], None, Some(input))?
+            .body_limit(w::REQUEST_BYTES)?
             .timeout(
                 self.store
                     .cfg
                     .limits
                     .request_timeout
                     .min(std::time::Duration::from_secs(2)),
-            )
-            .header("content-type", "application/json")
-            .body(body);
+            );
         let (status, bytes) = self
             .agent_json_transport(request, self.store.cfg.limits.response_bytes)
             .await?;
@@ -354,10 +348,10 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         state.save(&self.store)?;
         let result = if attempted {
             match self
-                .self_service_json::<Option<w::Receipt>>(
+                .employee_json::<h::FilevaultReceipt>(
                     None,
-                    Method::GET,
-                    &format!("filevault/operations/{}", input.operation_id),
+                    &[&input.operation_id.to_string()],
+                    None,
                     None,
                 )
                 .await

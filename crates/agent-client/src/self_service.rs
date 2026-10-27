@@ -1,10 +1,6 @@
 //! Device-authenticated employee HTTP; no caller can supply a different endpoint or credential origin.
-use crate::{
-    store::{decode, encode},
-    wire, Client, Clock, Error, IdentityProvider,
-};
-use reqwest::Method;
-use serde::de::DeserializeOwned;
+use crate::http::{self as h, Endpoint};
+use crate::{store::decode, wire, Client, Clock, Error, IdentityProvider};
 use uuid::Uuid;
 impl<S: IdentityProvider, C: Clock> Client<S, C> {
     /// Submit the original journal-frozen explicit event. Producer idempotency binds
@@ -14,20 +10,20 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         request: &wire::PolicyEventRequest,
     ) -> Result<wire::PolicyEventAccepted, Error> {
         let value: wire::PolicyEventAccepted = self
-            .self_service_json(None, Method::POST, "policy-events", Some(encode(request)?))
+            .employee_json::<h::PolicyEvent>(None, &[], None, Some(request))
             .await?;
         if value.operation_id != request.operation_id || value.batch_id.is_nil() {
             return Err(Error::Untrusted);
         }
         Ok(value)
     }
-    pub(crate) async fn self_service_json<T: DeserializeOwned>(
+    pub(crate) async fn employee_json<E: Endpoint>(
         &self,
         secret: Option<&str>,
-        method: Method,
-        path: &str,
-        body: Option<Vec<u8>>,
-    ) -> Result<T, Error> {
+        params: &[&str],
+        query: Option<&str>,
+        input: Option<&E::Input>,
+    ) -> Result<E::Output, Error> {
         self.active()?;
         self.now()?;
         if secret.is_some_and(|secret| {
@@ -38,23 +34,18 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         }) {
             return Err(Error::Identity);
         }
-        let mut request = self.http.request(method, self.url(path)?).timeout(
-            self.store
-                .cfg
-                .limits
-                .request_timeout
-                .min(std::time::Duration::from_secs(2)),
-        );
+        let mut request = self
+            .call::<E>(params, query, input)?
+            .body_limit(131072)?
+            .timeout(
+                self.store
+                    .cfg
+                    .limits
+                    .request_timeout
+                    .min(std::time::Duration::from_secs(2)),
+            );
         if let Some(secret) = secret {
             request = request.header("x-rss-user-session", secret);
-        }
-        if let Some(body) = body {
-            if body.len() > 131072 {
-                return Err(Error::Capacity);
-            }
-            request = request
-                .header("content-type", "application/json")
-                .body(body);
         }
         let (status, bytes) = self
             .agent_json_transport(request, self.store.cfg.limits.response_bytes)
@@ -96,9 +87,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 pairs.append_pair("limit", &limit.to_string());
             }
         }
-        let path = format!("self-service?{}", url.query().ok_or(Error::Protocol)?);
         let response: wire::SelfServiceDirectoryResponse = self
-            .self_service_json(secret, Method::GET, &path, None)
+            .employee_json::<h::Directory>(secret, &[], url.query(), None)
             .await?;
         if response.items.len() > usize::from(query.limit.unwrap_or(64))
             || response.as_of < 0
@@ -118,12 +108,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         request: &wire::SelfServiceResolve,
     ) -> Result<wire::SelfServiceDirectoryItem, Error> {
         let item: wire::SelfServiceDirectoryItem = self
-            .self_service_json(
-                secret,
-                Method::POST,
-                "self-service/resolve",
-                Some(encode(request)?),
-            )
+            .employee_json::<h::Resolve>(secret, &[], None, Some(request))
             .await?;
         if item.capability.id != item.policy_id
             || request
@@ -143,12 +128,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         request: &wire::SelfServiceInvoke,
     ) -> Result<wire::SelfServiceAccepted, Error> {
         let response: wire::SelfServiceAccepted = self
-            .self_service_json(
-                secret,
-                Method::POST,
-                "self-service/invocations",
-                Some(encode(request)?),
-            )
+            .employee_json::<h::Invoke>(secret, &[], None, Some(request))
             .await?;
         if response.request_id != request.operation_id
             || response.policy_id != request.policy_id
@@ -165,12 +145,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         request: Uuid,
     ) -> Result<wire::SelfServiceStatus, Error> {
         let response: wire::SelfServiceStatus = self
-            .self_service_json(
-                secret,
-                Method::GET,
-                &format!("self-service/invocations/{request}"),
-                None,
-            )
+            .employee_json::<h::Invocation>(secret, &[&request.to_string()], None, None)
             .await?;
         if response.request_id != request || response.run_id.is_nil() {
             return Err(Error::Untrusted);

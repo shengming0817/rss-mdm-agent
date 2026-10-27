@@ -1,11 +1,11 @@
 //! Device-wide enterprise relation, settled by the sole communication owner.
 //! ref: reqwest v0.13.5 src/async_impl/client.rs; rusqlite v0.32.1 src/transaction.rs.
+use crate::http as h;
 use crate::{
     store::{encode, hash},
     wire, Client, Clock, Error, IdentityProvider,
 };
 use execution_contract::NativeContextRef;
-use reqwest::Method;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -107,7 +107,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     /// Read the server's public relation using the actual device mTLS identity.
     pub async fn current_user(&self) -> Result<wire::CurrentUser, Error> {
         let value: wire::CurrentUser = self
-            .self_service_json(None, Method::GET, "current-user", None)
+            .employee_json::<h::CurrentUser>(None, &[], None, None)
             .await?;
         Self::check_relation(&value)?;
         Ok(value)
@@ -279,18 +279,13 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         {
             return Err(Error::Identity);
         }
-        let response = self
-            .self_service_json::<wire::CurrentUser>(
-                proof,
-                if pending.user.is_some() {
-                    Method::PUT
-                } else {
-                    Method::DELETE
-                },
-                "current-user",
-                Some(encode(&pending.input)?),
-            )
-            .await;
+        let response = if pending.user.is_some() {
+            self.employee_json::<h::BindUser>(proof, &[], None, Some(&pending.input))
+                .await
+        } else {
+            self.employee_json::<h::UnbindUser>(proof, &[], None, Some(&pending.input))
+                .await
+        };
         let value = match response {
             Ok(value) => value,
             Err(Error::Conflict) => {

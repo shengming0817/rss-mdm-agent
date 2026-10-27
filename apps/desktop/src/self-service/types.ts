@@ -307,7 +307,11 @@ export type SelfServiceTask =
       /**
        * Full resolved parameter constraints owned by Resource.
        */
-      parameterSchema: unknown;
+      parameterSchema:
+        | {
+            [k: string]: unknown;
+          }
+        | boolean;
       kind: "script";
     }
   | {
@@ -2731,11 +2735,19 @@ export interface CapabilityDescriptor {
   /**
    * Schema for caller-provided parameters.
    */
-  inputSchema: unknown;
+  inputSchema:
+    | {
+        [k: string]: unknown;
+      }
+    | boolean;
   /**
    * Schema of the operation result.
    */
-  outputSchema: unknown;
+  outputSchema:
+    | {
+        [k: string]: unknown;
+      }
+    | boolean;
 }
 /**
  * Authenticated product user; contains no session credential.

@@ -119,6 +119,7 @@ async fn invalid_updates_and_failed_sqlite_commit_do_not_ack_or_replace_installe
     let root = Root::new();
     let mut client = server.client(&root, OpenMode::Create);
     server.register(&mut client).await;
+    server.data.lock().unwrap().invalid_contract_response = true; // Deliberately malformed trust input must reach the verifier.
     let original = state(&root)["document"].clone();
     for (index, field, value) in [
         (0, "tenant", serde_json::json!(uuid::Uuid::new_v4())),

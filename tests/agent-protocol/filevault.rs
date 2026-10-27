@@ -103,10 +103,7 @@ pub fn response(
         .clone();
     assert!(receipt.matches(&input));
     if std::mem::take(&mut data.lose_ack) {
-        return runtime_error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            ErrorCode::ServiceUnavailable,
-        );
+        return super::interrupted_response();
     }
     let mut returned = receipt;
     if std::mem::take(&mut data.wrong_ack) {

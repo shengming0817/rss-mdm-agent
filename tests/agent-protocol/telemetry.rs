@@ -32,21 +32,21 @@ pub fn response(d: &mut Data, path: &str, value: Value) -> Response {
     if path.ends_with("/gaps") {
         d.telemetry.gap_attempts.push(value.clone());
         let Ok(report) = serde_json::from_value::<TelemetryGapReport>(value.clone()) else {
-            return StatusCode::BAD_REQUEST.into_response();
+            return runtime_error(StatusCode::BAD_REQUEST, ErrorCode::MalformedRequest);
         };
         let now = d.time.now().unwrap() * 1_000_000;
         if report.validate().is_err()
             || report.created_at + TELEMETRY_GAP_WINDOW_MICROS <= now
             || report.created_at > now + 300_000_000
         {
-            return StatusCode::BAD_REQUEST.into_response();
+            return runtime_error(StatusCode::BAD_REQUEST, ErrorCode::MalformedRequest);
         }
         if d.telemetry
             .gap_bodies
             .get(&report.report_id)
             .is_some_and(|old| old != &value)
         {
-            return StatusCode::CONFLICT.into_response();
+            return runtime_error(StatusCode::CONFLICT, ErrorCode::OperationConflict);
         }
         let replayed = d.telemetry.gap_receipts.contains_key(&report.report_id);
         d.telemetry.gap_bodies.insert(report.report_id, value);
@@ -63,13 +63,14 @@ pub fn response(d: &mut Data, path: &str, value: Value) -> Response {
         receipt.replayed = replayed;
         if std::mem::take(&mut d.telemetry.lose_response) {
             return Response::builder()
-                .status(200)
+                .status(202)
+                .header("content-type", "application/json")
                 .body(Body::from_stream(futures_util::stream::once(async {
                     Err::<Bytes, _>(std::io::Error::other("lost gap response"))
                 })))
                 .unwrap();
         }
-        return axum::Json(receipt).into_response();
+        return (StatusCode::ACCEPTED, axum::Json(receipt)).into_response();
     }
     if path.contains("/gaps/") {
         return path
@@ -78,7 +79,7 @@ pub fn response(d: &mut Data, path: &str, value: Value) -> Response {
             .and_then(|v| Uuid::parse_str(v).ok())
             .and_then(|id| d.telemetry.gap_receipts.get(&id))
             .map(|r| axum::Json(r.clone()).into_response())
-            .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response());
+            .unwrap_or_else(|| runtime_error(StatusCode::NOT_FOUND, ErrorCode::ReportNotFound));
     }
     if path.ends_with("/configurations") {
         let assignments = d
@@ -101,7 +102,7 @@ pub fn response(d: &mut Data, path: &str, value: Value) -> Response {
             .configuration
             .clone()
             .map(|s| axum::Json(s).into_response())
-            .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response());
+            .unwrap_or_else(|| runtime_error(StatusCode::NOT_FOUND, ErrorCode::ReportNotFound));
     }
     if path.ends_with("/batches") {
         let batch: TelemetryUpload = serde_json::from_value(value.clone()).unwrap();
@@ -110,7 +111,7 @@ pub fn response(d: &mut Data, path: &str, value: Value) -> Response {
             .get(&batch.batch_id)
             .is_some_and(|b| b != &value)
         {
-            return StatusCode::CONFLICT.into_response();
+            return runtime_error(StatusCode::CONFLICT, ErrorCode::OperationConflict);
         }
         d.telemetry.uploads.push(value.clone());
         d.telemetry.bodies.insert(batch.batch_id, value);
@@ -127,13 +128,14 @@ pub fn response(d: &mut Data, path: &str, value: Value) -> Response {
             .clone();
         if std::mem::take(&mut d.telemetry.lose_response) {
             return Response::builder()
-                .status(200)
+                .status(202)
+                .header("content-type", "application/json")
                 .body(Body::from_stream(futures_util::stream::once(async {
                     Err::<Bytes, _>(std::io::Error::other("lost response"))
                 })))
                 .unwrap();
         }
-        return axum::Json(receipt).into_response();
+        return (StatusCode::ACCEPTED, axum::Json(receipt)).into_response();
     }
     let id = path
         .rsplit('/')
@@ -141,7 +143,7 @@ pub fn response(d: &mut Data, path: &str, value: Value) -> Response {
         .and_then(|v| Uuid::parse_str(v).ok());
     id.and_then(|id| d.telemetry.receipts.get(&id))
         .map(|r| axum::Json(r.clone()).into_response())
-        .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
+        .unwrap_or_else(|| runtime_error(StatusCode::NOT_FOUND, ErrorCode::ReportNotFound))
 }
 pub fn configuration(
     server: &Server,

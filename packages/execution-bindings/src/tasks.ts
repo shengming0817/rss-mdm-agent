@@ -938,7 +938,11 @@ export type SelfServiceTask =
       /**
        * Full resolved parameter constraints owned by Resource.
        */
-      parameterSchema: unknown;
+      parameterSchema:
+        | {
+            [k: string]: unknown;
+          }
+        | boolean;
       /**
        * Complete sources for script parameters.
        */

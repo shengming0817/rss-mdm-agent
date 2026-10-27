@@ -1,4 +1,5 @@
 //! Device-authorized management projection cache; transport receipts never assert device effects.
+use crate::http as h;
 use crate::{store::encode, Client, Clock, Error, IdentityProvider};
 use rss_mdm_agent_wire::activities::{
     ActivityCoverage, ManagementActivity, ManagementActivityDetail, ManagementActivityPage,
@@ -61,12 +62,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             }
         }
         let value: ManagementActivityPage = self
-            .self_service_json(
-                None,
-                reqwest::Method::GET,
-                &format!("management-activities?{}", query.finish()),
-                None,
-            )
+            .employee_json::<h::Activities>(None, &[], Some(&query.finish()), None)
             .await?;
         if value.items.len() > usize::from(limit)
             || value.as_of < 0
@@ -87,10 +83,10 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     /// replay may follow a successful read with no match.
     pub async fn event_batch(&self, request: uuid::Uuid) -> Result<Option<uuid::Uuid>, Error> {
         let page: ManagementActivityPage = self
-            .self_service_json(
+            .employee_json::<h::Activities>(
                 None,
-                reqwest::Method::GET,
-                &format!("management-activities?request={request}&kind=batch&limit=64"),
+                &[],
+                Some(&format!("request={request}&kind=batch&limit=64")),
                 None,
             )
             .await?;
@@ -188,14 +184,14 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         if let Some(cursor) = cache.next.as_ref().or(cache.sync.as_ref()) {
             query.append_pair("cursor", cursor);
         }
-        let path = format!(
-            "management-activities{}?{}",
-            if changes { "/changes" } else { "" },
-            query.finish()
-        );
-        let response = self
-            .self_service_json::<ManagementActivityPage>(None, reqwest::Method::GET, &path, None)
-            .await;
+        let query = query.finish();
+        let response = if changes {
+            self.employee_json::<h::Changes>(None, &[], Some(&query), None)
+                .await
+        } else {
+            self.employee_json::<h::Activities>(None, &[], Some(&query), None)
+                .await
+        };
         let page = match response {
             Ok(page) => page,
             Err(Error::Protocol | Error::Conflict) => {
@@ -268,19 +264,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         if id.is_empty() || id.len() > 512 {
             return Err(Error::Protocol);
         }
-        let mut url = url::Url::parse("https://query.invalid/management-activities/")
-            .map_err(|_| Error::Protocol)?;
-        url.path_segments_mut()
-            .map_err(|_| Error::Protocol)?
-            .pop_if_empty()
-            .push(id);
         let value: ManagementActivityDetail = self
-            .self_service_json(
-                None,
-                reqwest::Method::GET,
-                &format!("{}?view=summary", url.path().trim_start_matches('/')),
-                None,
-            )
+            .employee_json::<h::Activity>(None, &[id], Some("view=summary"), None)
             .await?;
         if value.activity.id != id
             || value.personal

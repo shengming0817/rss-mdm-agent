@@ -41,6 +41,7 @@ flate2 = { version = "=1.1.10", default-features = false, features = ["rust_back
 libc = "=0.2.189"
 
 [dev-dependencies]
+jsonschema.workspace = true
 toml = "=1.1.5"
 tokio-rustls = { version = "=0.26.6", default-features = false, features = ["ring", "tls12"] }
 axum = "=0.8.9"

@@ -1,6 +1,7 @@
+use crate::http::{self as h, Call, Endpoint};
 use crate::{
     identity::{Active, IdentityState, Pending, Purpose},
-    store::{decode, encode},
+    store::decode,
     Client, Clock, Error, IdentityProvider,
 };
 use rss_mdm_agent_wire::{enroll, runtime};
@@ -423,22 +424,20 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         self.drive_enrollment().await?;
         self.enrollment_status()
     }
-    pub(crate) async fn enrollment_json<T: serde::de::DeserializeOwned>(
+    pub(crate) async fn enrollment_json<E: Endpoint>(
         &self,
         http: &reqwest::Client,
-        path: &str,
-        body: &impl Serialize,
-    ) -> Result<T, Error> {
-        self.enrollment_response(http, path, body, true).await
+        body: &E::Input,
+    ) -> Result<E::Output, Error> {
+        self.enrollment_response::<E>(http, body, true).await
     }
-    pub(crate) async fn enrollment_response<T: serde::de::DeserializeOwned>(
+    pub(crate) async fn enrollment_response<E: Endpoint>(
         &self,
         http: &reqwest::Client,
-        path: &str,
-        body: &impl Serialize,
+        body: &E::Input,
         record_failure: bool,
-    ) -> Result<T, Error> {
-        match self.enrollment_outcome(http, path, body).await {
+    ) -> Result<E::Output, Error> {
+        match self.enrollment_outcome::<E>(http, body).await {
             Ok(value) => Ok(value),
             Err(EnrollmentFailure::Local(error)) => Err(error),
             Err(EnrollmentFailure::Rejected(code)) => {
@@ -449,20 +448,12 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             }
         }
     }
-    pub(crate) async fn enrollment_outcome<T: serde::de::DeserializeOwned>(
+    pub(crate) async fn enrollment_outcome<E: Endpoint>(
         &self,
         http: &reqwest::Client,
-        path: &str,
-        body: &impl Serialize,
-    ) -> Result<T, EnrollmentFailure> {
-        let url = self
-            .connection_origin()?
-            .join(&format!("api/v1/agent/enroll/{path}"))
-            .map_err(|_| Error::Configuration)?;
-        let request = http
-            .post(url)
-            .header("content-type", "application/json")
-            .body(encode(body)?)
+        body: &E::Input,
+    ) -> Result<E::Output, EnrollmentFailure> {
+        let request = Call::<E>::new(http, &self.connection_origin()?, &[], None, Some(body))?
             .timeout(self.store.cfg.limits.request_timeout);
         let (status, bytes) = self
             .agent_json_transport(request, self.store.cfg.limits.response_bytes)
@@ -495,12 +486,11 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 self.exchange_configuration(&mut p, &bootstrap).await?
             } else if p.purpose == Purpose::Renewal {
                 if self.restore_runtime_transport().is_ok() {
-                    self.enrollment_json(&self.http, "renewal-grants", &request)
+                    self.enrollment_json::<h::Renewal>(&self.http, &request)
                         .await?
                 } else {
-                    self.enrollment_json(
+                    self.enrollment_json::<h::RenewalStatus>(
                         &bootstrap,
-                        "renewal-grants/status",
                         &rss_mdm_agent_wire::enroll::RenewalStatusRequest {
                             wire_version: 1,
                             operation_id: p.operation,
@@ -510,7 +500,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                     .await?
                 }
             } else {
-                self.enrollment_json(&bootstrap, "requests", &request)
+                self.enrollment_json::<h::Grant>(&bootstrap, &request)
                     .await?
             };
             if grant.grant_id.is_nil()
@@ -526,9 +516,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         }
         let grant = p.grant.clone().ok_or(Error::Identity)?;
         let progress: enroll::Progress = self
-            .enrollment_json(
+            .enrollment_json::<h::EnrollmentStatus>(
                 &bootstrap,
-                "status",
                 &enroll::StatusRequest {
                     wire_version: enroll::API_VERSION,
                     grant_id: grant.grant_id,
@@ -577,9 +566,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         }
         if p.candidate.is_none() {
             let candidate: enroll::Candidate = self
-                .enrollment_json(
+                .enrollment_json::<h::Certificate>(
                     &bootstrap,
-                    "certificates",
                     &enroll::CertificateRequest {
                         wire_version: enroll::API_VERSION,
                         operation_id: p.certificate_operation,
@@ -619,9 +607,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             &self.secrets,
         )?;
         let receipt: enroll::ActivationReceipt = self
-            .enrollment_json(
+            .enrollment_json::<h::Activate>(
                 &http,
-                "activate",
                 &enroll::ActivationRequest {
                     wire_version: enroll::API_VERSION,
                     issuance_id: candidate.issuance_id,

@@ -313,7 +313,11 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             offset = 0;
         }
         if offset < length {
-            let mut url = self.url(&format!("tasks/{}/content", offer.task_id()))?;
+            let mut url = crate::http::url::<crate::http::TaskContent>(
+                &self.connection_origin()?,
+                &[&offer.task_id().to_string()],
+                None,
+            )?;
             url.query_pairs_mut()
                 .append_pair("attempt", &offer.attempt_id().to_string());
             if key != "script" {
@@ -339,8 +343,11 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 return Err(Error::Expired);
             }
             let mut request = self
-                .http
-                .get(url)
+                .call::<crate::http::TaskContent>(
+                    &[&offer.task_id().to_string()],
+                    url.query(),
+                    None,
+                )?
                 .header("accept-encoding", "identity")
                 .timeout(self.store.cfg.limits.transfer_timeout.min(remaining));
             if offset > 0 {
@@ -412,7 +419,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     }
     async fn content_response(
         &self,
-        request: reqwest::RequestBuilder,
+        request: crate::http::Call<crate::http::TaskContent>,
         file: &mut File,
         name: &str,
         offset: u64,

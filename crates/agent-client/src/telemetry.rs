@@ -1,8 +1,8 @@
 //! Authenticated periodic collection and an independent bounded spool.
 //! ref: reqwest src/async_impl/client.rs; rusqlite 0.32.1 src/transaction.rs.
+use crate::http::{self as h, Call, Endpoint};
 use crate::{client::bounded, store::decode, wire as w, Client, Clock, Error, IdentityProvider};
 use base64::Engine;
-use reqwest::Method;
 use uuid::Uuid;
 mod spool;
 pub use spool::{GapReason, Limits, Pending, PendingGap, Spool, Summary};
@@ -83,7 +83,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     /// Fetch a complete directory. Errors must never be interpreted as an empty assignment set.
     pub async fn telemetry_directory(&self) -> Result<w::TelemetryDirectory, Failure> {
         let bytes = self
-            .telemetry_request(Method::GET, "telemetry/configurations", None)
+            .telemetry_request(self.call::<h::TelemetryDirectory>(&[], None, None)?)
             .await?;
         let value: w::TelemetryDirectory = decode(&bytes)?;
         let mut keys = std::collections::BTreeSet::new();
@@ -104,11 +104,11 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         version: Uuid,
     ) -> Result<Configuration, Failure> {
         let bytes = self
-            .telemetry_request(
-                Method::GET,
-                &format!("telemetry/configurations/{policy}/{version}"),
+            .telemetry_request(self.call::<h::TelemetryConfiguration>(
+                &[&policy.to_string(), &version.to_string()],
                 None,
-            )
+                None,
+            )?)
             .await?;
         let signed: w::SignedTelemetryConfiguration = decode(&bytes)?;
         if signed.configuration.policy != policy || signed.configuration.policy_version != version {
@@ -130,14 +130,11 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             return Err(Error::Capacity.into());
         }
         let bytes = self
-            .telemetry_request(
-                Method::GET,
-                &format!(
-                    "telemetry/configurations/{}/{}/content",
-                    p.policy, p.policy_version
-                ),
+            .telemetry_request(self.call::<h::TelemetryContent>(
+                &[&p.policy.to_string(), &p.policy_version.to_string()],
                 None,
-            )
+                None,
+            )?)
             .await?;
         use sha2::{Digest, Sha256};
         if bytes.len() as u64 != content.length
@@ -154,11 +151,11 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     ) -> Result<Option<w::TelemetryReceipt>, Failure> {
         self.check_telemetry_owner(pending)?;
         match self
-            .telemetry_request(
-                Method::GET,
-                &format!("telemetry/batches/{}", pending.id()),
+            .telemetry_request(self.call::<h::TelemetryStatus>(
+                &[&pending.id().to_string()],
                 None,
-            )
+                None,
+            )?)
             .await
         {
             Ok(bytes) => Ok(Some(receipt(&bytes, pending.id())?)),
@@ -176,7 +173,12 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     ) -> Result<w::TelemetryReceipt, Failure> {
         self.check_telemetry_owner(pending)?;
         let bytes = self
-            .telemetry_request(Method::POST, "telemetry/batches", Some(pending.body()))
+            .telemetry_request(Call::<h::TelemetryUpload>::frozen(
+                &self.http,
+                &self.connection_origin()?,
+                &[],
+                pending.body(),
+            )?)
             .await?;
         receipt(&bytes, pending.id()).map_err(Into::into)
     }
@@ -187,11 +189,11 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     ) -> Result<Option<w::TelemetryGapReceipt>, Failure> {
         self.check_gap_owner(pending)?;
         match self
-            .telemetry_request(
-                Method::GET,
-                &format!("telemetry/gaps/{}", pending.id()),
+            .telemetry_request(self.call::<h::TelemetryGapStatus>(
+                &[&pending.id().to_string()],
                 None,
-            )
+                None,
+            )?)
             .await
         {
             Ok(bytes) => Ok(Some(gap_receipt(&bytes, pending.id())?)),
@@ -209,7 +211,12 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     ) -> Result<w::TelemetryGapReceipt, Failure> {
         self.check_gap_owner(pending)?;
         let bytes = self
-            .telemetry_request(Method::POST, "telemetry/gaps", Some(pending.body()))
+            .telemetry_request(Call::<h::TelemetryGap>::frozen(
+                &self.http,
+                &self.connection_origin()?,
+                &[],
+                pending.body(),
+            )?)
             .await?;
         gap_receipt(&bytes, pending.id()).map_err(Into::into)
     }
@@ -231,23 +238,10 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         }
         Ok(())
     }
-    async fn telemetry_request(
-        &self,
-        method: Method,
-        path: &str,
-        body: Option<&[u8]>,
-    ) -> Result<Vec<u8>, Failure> {
+    async fn telemetry_request<E: Endpoint>(&self, call: Call<E>) -> Result<Vec<u8>, Failure> {
         self.active()?;
         let now = self.now()?;
-        let mut request = self
-            .http
-            .request(method, self.url(path)?)
-            .timeout(self.store.cfg.limits.request_timeout);
-        if let Some(body) = body {
-            request = request
-                .header("content-type", "application/json")
-                .body(body.to_vec());
-        }
+        let request = call.timeout(self.store.cfg.limits.request_timeout);
         let response = self.agent_send(request).await.map_err(Failure::from)?;
         let status = response.status();
         let retry_after = response

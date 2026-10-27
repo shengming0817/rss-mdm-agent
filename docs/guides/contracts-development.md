@@ -18,7 +18,7 @@ Schema 描述结构，不能替代动态预算、可信主体验证或 provider 
 
 来源和改写边界见[执行契约来源](../reference/contracts-extraction.md)与[AI Runtime 来源](../reference/ai-runtime.md)。
 
-Agent HTTP API 直接消费固定 Git rev 的 `rss-mdm-agent-wire`。DTO、静态约束、签名字节和摘要由协议包唯一维护；本仓不生成后端绑定，也不执行通用后端 JSON Schema 校验。升级时修改 workspace 依赖的完整 rev、更新 Cargo.lock，核验固定编码向量及受影响通信/执行接缝。来源无法取得时失败，不切换到相邻 checkout、浮动分支或备用来源。
+Agent HTTP API 直接消费固定 Git rev 的 `rss-mdm-agent-wire`。DTO、静态约束、签名字节和摘要由协议包唯一维护；本仓私有 HTTP 调用声明关联这些类型、method/path、成功状态和媒体类型，不生成或复制后端 DTO/schema，也不执行运行时 JSON Schema 校验。升级时修改 workspace 依赖的完整 rev、更新 Cargo.lock，核验固定编码向量及受影响通信/执行接缝。依赖检查从 Cargo 实际解析的同一 Git 来源读取指定提交的 HTTP 制品，复用该提交的纯提取/来源校验工具，不构建后端。协议测试用此制品核对调用声明和实际请求/响应，包括 200/null、204 空响应与下载语义；有意畸形响应属于显式故障注入。来源无法取得时失败，不切换到相邻 checkout、浮动分支或备用来源。
 
 私库读取使用系统 Git credential helper 或受保护构建凭据；可通过 `CARGO_NET_GIT_FETCH_WITH_CLI=true` 使用 Git helper，不在 manifest 或日志中写凭据。`node scripts/check-agent-dependencies.mjs` 核对完整依赖闭包，常规 `make ci` 已包含该检查。Agent 继续拥有验签、身份绑定、防重放、本机权限与预算；网络解码成功不授予本机执行权限。
 

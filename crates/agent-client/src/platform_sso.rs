@@ -1,6 +1,6 @@
 //! Immediate mTLS registration control, independent of task polling and Desktop sessions.
-use crate::{store::encode, Client, Clock, Error, IdentityProvider};
-use reqwest::Method;
+use crate::http as h;
+use crate::{Client, Clock, Error, IdentityProvider};
 use rss_mdm_agent_wire::platform_sso as w;
 use uuid::Uuid;
 impl<S: IdentityProvider, C: Clock> Client<S, C> {
@@ -9,13 +9,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         &self,
         input: &w::Bootstrap,
     ) -> Result<w::BootstrapResponse, Error> {
-        self.self_service_json(
-            None,
-            Method::POST,
-            "platform-sso/bootstrap",
-            Some(encode(input)?),
-        )
-        .await
+        self.employee_json::<h::PssoBootstrap>(None, &[], None, Some(input))
+            .await
     }
     /// Complete exactly one device-authenticated challenge. None is a definite rejection;
     /// transport, malformed success and server failures remain unknown outcomes.
@@ -26,22 +21,16 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let request = (|| -> Result<_, Error> {
             self.active()?;
             self.now()?;
-            let body = encode(input)?;
-            if body.len() > 131072 {
-                return Err(Error::Capacity);
-            }
             Ok(self
-                .http
-                .post(self.url("platform-sso/register")?)
+                .call::<h::PssoRegister>(&[], None, Some(input))?
+                .body_limit(131072)?
                 .timeout(
                     self.store
                         .cfg
                         .limits
                         .request_timeout
                         .min(std::time::Duration::from_secs(2)),
-                )
-                .header("content-type", "application/json")
-                .body(body))
+                ))
         })();
         // Every preparation failure precedes transport; it cannot have committed a source.
         let Ok(request) = request else {
@@ -61,11 +50,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     }
     /// Recover a lost registration result using current public source/key coordinates.
     pub async fn psso_status(&self, binding: Option<Uuid>) -> Result<w::Status, Error> {
-        let path = binding.map_or_else(
-            || "platform-sso/status".into(),
-            |id| format!("platform-sso/status?bindingId={id}"),
-        );
-        self.self_service_json(None, Method::GET, &path, None).await
+        let query = binding.map(|id| format!("bindingId={id}"));
+        self.employee_json::<h::PssoStatus>(None, &[], query.as_deref(), None)
+            .await
     }
     /// Revoke one exact source; local system cleanup remains a separate fact.
     pub async fn psso_revoke(
@@ -76,11 +63,11 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         if source.is_nil() || source_version < 1 {
             return Err(Error::Protocol);
         }
-        self.self_service_json(
+        self.employee_json::<h::PssoRevoke>(
             None,
-            Method::POST,
-            &format!("platform-sso/sources/{source}/revoke"),
-            Some(encode(&w::Revocation { source_version })?),
+            &[&source.to_string()],
+            None,
+            Some(&w::Revocation { source_version }),
         )
         .await
     }

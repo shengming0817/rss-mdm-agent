@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+pub(crate) mod contract;
 pub mod current_user;
 pub mod filevault;
 pub(crate) mod pki;
@@ -149,6 +150,8 @@ impl IdentityProvider for Secrets {
     }
 }
 pub struct Data {
+    pub invalid_contract_response: bool,
+    pub contract_violations: Arc<Mutex<Vec<String>>>,
     pub connection_configuration: Option<rss_mdm_agent_wire::connections::SignedConfiguration>,
     pub connection_ack_calls: Vec<Value>,
     pub connection_failure_calls: Vec<Value>,
@@ -640,6 +643,7 @@ pub struct Server {
 // tasks alive; a dedicated runtime owns and cancels the entire server together.
 // ref: axum 0.8.9 src/serve/mod.rs; tokio 1.53.1 src/runtime/runtime.rs.
 struct ServerRuntime {
+    contract_violations: Arc<Mutex<Vec<String>>>,
     stop: Option<tokio::sync::oneshot::Sender<()>>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -654,6 +658,17 @@ impl Drop for ServerRuntime {
                     std::panic::resume_unwind(panic);
                 }
             }
+        }
+        let violations = self.contract_violations.lock().unwrap();
+        if std::thread::panicking() {
+            if !violations.is_empty() {
+                eprintln!("fixture HTTP contract violations: {violations:?}");
+            }
+        } else {
+            assert!(
+                violations.is_empty(),
+                "fixture HTTP contract violations: {violations:?}"
+            );
         }
     }
 }
@@ -762,6 +777,8 @@ impl Server {
             started: false,
             received: false,
             content_calls: vec![],
+            invalid_contract_response: false,
+            contract_violations: Arc::default(),
             reports: BTreeMap::new(),
             collections: None,
             results: BTreeMap::new(),
@@ -871,6 +888,7 @@ impl Server {
             })
             .unwrap();
         let runtime = ServerRuntime {
+            contract_violations: data.lock().unwrap().contract_violations.clone(),
             stop: Some(stop),
             thread: Some(thread),
         };
@@ -1078,6 +1096,94 @@ fn native_enrollment_response(d: &mut Data, value: Value) -> Response {
 }
 
 async fn handler(
+    state: State<Arc<Mutex<Data>>>,
+    uri: Uri,
+    method: axum::http::Method,
+    headers: HeaderMap,
+    peer: Result<ConnectInfo<TlsIdentity>, axum::extract::rejection::ExtensionRejection>,
+    bytes: Bytes,
+) -> Response {
+    if !uri.path().starts_with("/api/v1/agent/") {
+        return handle(state, uri, method, headers, peer, bytes).await;
+    }
+    let contract = contract::fixed();
+    let violations = state.0.lock().unwrap().contract_violations.clone();
+    if let Err(error) = contract.request(method.as_str(), &uri, &headers, &bytes) {
+        violations
+            .lock()
+            .unwrap()
+            .push(format!("request {} {}: {error}", method, uri.path()));
+        return runtime_error(StatusCode::BAD_REQUEST, ErrorCode::MalformedRequest);
+    }
+    // Fault overrides deliberately reach the client. All ordinary fixture replies
+    // must match the producer, rather than a second hand-written protocol.
+    let (verify, body_override) = {
+        let data = state.0.lock().unwrap();
+        let body_override = data
+            .response_override
+            .as_ref()
+            .is_some_and(|(suffix, _)| uri.path().ends_with(suffix));
+        // reason: these explicit faults model a proxy/transport failure, not a producer response.
+        let transport_fault = uri.path().contains("/telemetry/")
+            && (data.telemetry.throttled || data.telemetry.timed_out);
+        let status_fault =
+            uri.path().contains("/platform-sso/") && data.psso_status_override.is_some();
+        (
+            !data.invalid_contract_response && !status_fault && !transport_fault,
+            body_override,
+        )
+    };
+    let endpoint = contract.endpoint(method.as_str(), uri.path()).unwrap();
+    let mut response = handle(state, uri, method, headers, peer, bytes).await;
+    if body_override && response.status().is_success() {
+        // Body tampering keeps the real operation's success status. Explicit status
+        // faults are supplied separately by the existing status-override fixture.
+        let status = endpoint["responses"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find_map(|r| r["status"].as_u64().filter(|s| *s < 300))
+            .unwrap();
+        *response.status_mut() = StatusCode::from_u16(status as u16).unwrap();
+    }
+    if !verify {
+        return response;
+    }
+    if response
+        .headers()
+        .get("content-type")
+        .and_then(|h| h.to_str().ok())
+        .is_some_and(|h| h.starts_with("application/octet-stream"))
+    {
+        if let Err(error) = contract.response(
+            endpoint,
+            response.status().as_u16(),
+            response.headers(),
+            &[],
+        ) {
+            violations
+                .lock()
+                .unwrap()
+                .push(format!("response {}: {error}", endpoint["operationId"]));
+        }
+        return response;
+    }
+    let (parts, body) = response.into_parts();
+    let bytes = match axum::body::to_bytes(body, 16 * 1024 * 1024).await {
+        Ok(bytes) => bytes,
+        // Preserve the existing transport fault rather than replacing it with a JSON error.
+        Err(_) => return Response::from_parts(parts, interrupted_response().into_body()),
+    };
+    if let Err(error) = contract.response(endpoint, parts.status.as_u16(), &parts.headers, &bytes) {
+        violations
+            .lock()
+            .unwrap()
+            .push(format!("response {}: {error}", endpoint["operationId"]));
+    }
+    Response::from_parts(parts, Body::from(bytes))
+}
+
+async fn handle(
     State(data): State<Arc<Mutex<Data>>>,
     uri: Uri,
     method: axum::http::Method,
@@ -1143,7 +1249,14 @@ async fn handler(
         }
         if let Some((suffix, body)) = &d.response_override {
             if path.ends_with(suffix) {
-                return axum::Json(body.clone()).into_response();
+                return (
+                    [
+                        ("cache-control", "no-store"),
+                        ("referrer-policy", "no-referrer"),
+                    ],
+                    axum::Json(body.clone()),
+                )
+                    .into_response();
             }
         }
         return StatusCode::NOT_FOUND.into_response();
@@ -1187,7 +1300,19 @@ fn connection_response(d: &mut Data, path: &str, headers: &HeaderMap, value: Val
     if path == "/api/v1/agent/enroll/connections" {
         d.connection_get_calls += 1;
         if let Some(status) = d.connection_get_fault.take() {
-            return (status, axum::Json(json!({"code":"service_unavailable"}))).into_response();
+            let code = match status {
+                StatusCode::UNAUTHORIZED => enroll::ErrorCode::InvalidIdentity,
+                StatusCode::TOO_MANY_REQUESTS => enroll::ErrorCode::RegistrationLimit,
+                _ => enroll::ErrorCode::ServiceUnavailable,
+            };
+            return (
+                status,
+                axum::Json(enroll::ErrorBody {
+                    code,
+                    issuance_id: None,
+                }),
+            )
+                .into_response();
         }
         return axum::Json(d.connection_configuration.as_ref().unwrap()).into_response();
     }
@@ -1271,13 +1396,13 @@ fn runtime_response(d: &mut Data, path: &str, headers: HeaderMap, value: Value) 
                 )
             });
         if previous.0 != value {
-            return StatusCode::CONFLICT.into_response();
+            return runtime_error(StatusCode::CONFLICT, ErrorCode::OperationConflict);
         }
         let receipt = previous.1.clone();
         if std::mem::take(&mut d.policy_event_reply_lost) {
             return interrupted_response();
         }
-        return axum::Json(receipt).into_response();
+        return (StatusCode::ACCEPTED, axum::Json(receipt)).into_response();
     }
     if path.contains("/management-activities") {
         if path.ends_with("/management-activities")
@@ -1288,7 +1413,12 @@ fn runtime_response(d: &mut Data, path: &str, headers: HeaderMap, value: Value) 
                 .clone()
                 .map(axum::Json)
                 .map(IntoResponse::into_response)
-                .unwrap_or_else(|| StatusCode::SERVICE_UNAVAILABLE.into_response());
+                .unwrap_or_else(|| {
+                    runtime_error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        ErrorCode::ServiceUnavailable,
+                    )
+                });
         }
         return d
             .management_detail
@@ -1368,7 +1498,11 @@ fn configuration_response(d: &mut Data, action: &str, value: Value) -> Response 
             d.configuration_calls.push(value.clone());
             if let Some(code) = d.configuration_rejection {
                 return (
-                    StatusCode::FORBIDDEN,
+                    if code == enroll::ErrorCode::RegistrationLimit {
+                        StatusCode::TOO_MANY_REQUESTS
+                    } else {
+                        StatusCode::FORBIDDEN
+                    },
                     axum::Json(enroll::ErrorBody {
                         code,
                         issuance_id: None,
@@ -1438,7 +1572,10 @@ fn enrollment_response(d: &mut Data, action: &str, value: Value, peer: Option<&[
             if std::mem::take(&mut d.trust_failure) {
                 return (
                     StatusCode::SERVICE_UNAVAILABLE,
-                    axum::Json(serde_json::json!({"code":"service_unavailable"})),
+                    axum::Json(enroll::ErrorBody {
+                        code: enroll::ErrorCode::ServiceUnavailable,
+                        issuance_id: None,
+                    }),
                 )
                     .into_response();
             }
@@ -1680,12 +1817,15 @@ fn report_response(d: &mut Data, value: Value) -> Response {
     let id = value["reportId"].as_str().unwrap().to_owned();
     if let Some(old) = d.reports.get(&id) {
         if old != &value {
-            return StatusCode::CONFLICT.into_response();
+            return runtime_error(StatusCode::CONFLICT, ErrorCode::OperationConflict);
         }
     }
     d.reports.insert(id.clone(), value);
     if std::mem::take(&mut d.report_failure) {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        return runtime_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            ErrorCode::ServiceUnavailable,
+        );
     }
     (StatusCode::ACCEPTED,axum::Json(json!({"wireVersion":1,"reportId":if d.bad_ack{Uuid::new_v4().to_string()}else{id},"receivedAt":1,"intake":"durable"}))).into_response()
 }
@@ -1696,7 +1836,7 @@ fn claim_response(d: &mut Data, value: Value) -> Response {
     d.claim_ops.push(op.clone());
     let signed = if let Some(old) = d.claims.get(&op) {
         if old.payload.expires_at() <= d.time.now().unwrap() {
-            return StatusCode::CONFLICT.into_response();
+            return runtime_error(StatusCode::CONFLICT, ErrorCode::OperationConflict);
         }
         old.clone()
     } else {
@@ -1741,7 +1881,10 @@ fn claim_response(d: &mut Data, value: Value) -> Response {
         signed
     };
     if std::mem::take(&mut d.claim_failure) {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        return runtime_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            ErrorCode::ServiceUnavailable,
+        );
     }
     axum::Json(TaskClaimResponse::new(Some(signed), d.cancellations.clone()).unwrap())
         .into_response()
@@ -1749,7 +1892,7 @@ fn claim_response(d: &mut Data, value: Value) -> Response {
 fn event_response(d: &mut Data, value: Value) -> Response {
     let request: TaskEventRequest = serde_json::from_value(value.clone()).unwrap();
     if request.attempt_id() != d.attempt {
-        return StatusCode::CONFLICT.into_response();
+        return runtime_error(StatusCode::CONFLICT, ErrorCode::OperationConflict);
     }
     let operation = request.operation_id().to_string();
     match request.event() {
@@ -1760,11 +1903,14 @@ fn event_response(d: &mut Data, value: Value) -> Response {
         TaskEvent::Start => start_event(d, operation),
         TaskEvent::CredentialEscrow(escrow) => {
             if d.credential_escrows.iter().any(|old| old != &value) {
-                return StatusCode::CONFLICT.into_response();
+                return runtime_error(StatusCode::CONFLICT, ErrorCode::OperationConflict);
             }
             d.credential_escrows.push(value);
             if std::mem::take(&mut d.escrow_reply_lost) {
-                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                return runtime_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    ErrorCode::ServiceUnavailable,
+                );
             }
             let receipts = escrow
                 .materials
@@ -1780,11 +1926,14 @@ fn event_response(d: &mut Data, value: Value) -> Response {
         TaskEvent::DeviceAccessResult(_) => {
             d.result_calls += 1;
             if d.results.get(&operation).is_some_and(|old| old != &value) {
-                return StatusCode::CONFLICT.into_response();
+                return runtime_error(StatusCode::CONFLICT, ErrorCode::OperationConflict);
             }
             d.results.insert(operation.clone(), value);
             if std::mem::take(&mut d.result_failure) {
-                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                return runtime_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    ErrorCode::ServiceUnavailable,
+                );
             }
             d.acknowledged.insert(operation);
             axum::Json(TaskEventAck::new(None, false)).into_response()
@@ -1792,11 +1941,14 @@ fn event_response(d: &mut Data, value: Value) -> Response {
         TaskEvent::OutputChunk(chunk) => {
             d.chunk_calls.push(value);
             if d.chunks.get(&chunk.index()).is_some_and(|v| v != chunk) {
-                return StatusCode::CONFLICT.into_response();
+                return runtime_error(StatusCode::CONFLICT, ErrorCode::OperationConflict);
             }
             d.chunks.insert(chunk.index(), chunk.clone());
             if std::mem::take(&mut d.chunk_failure) {
-                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                return runtime_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    ErrorCode::ServiceUnavailable,
+                );
             }
             axum::Json(TaskEventAck::new(None, false)).into_response()
         }
@@ -1806,11 +1958,14 @@ fn event_response(d: &mut Data, value: Value) -> Response {
                 .values()
                 .any(|old| old["attemptId"] == value["attemptId"] && old != &value)
             {
-                return StatusCode::CONFLICT.into_response();
+                return runtime_error(StatusCode::CONFLICT, ErrorCode::OperationConflict);
             }
             d.results.insert(operation.clone(), value);
             if std::mem::take(&mut d.result_failure) {
-                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                return runtime_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    ErrorCode::ServiceUnavailable,
+                );
             }
             if let Some(hook) = d.result_hook.take() {
                 hook();
@@ -1866,7 +2021,10 @@ fn start_event(d: &mut Data, operation: String) -> Response {
         d.start_permit = Some(d.signed(payload));
     }
     if std::mem::take(&mut d.start_failure) {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        return runtime_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            ErrorCode::ServiceUnavailable,
+        );
     }
     let mut signed = d.start_permit.clone().unwrap();
     if d.forged_start {
@@ -1885,7 +2043,10 @@ fn content_response(d: &mut Data, headers: HeaderMap) -> Response {
         .map(str::to_owned);
     d.content_calls.push(range.clone());
     if std::mem::take(&mut d.content_failure) {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        return runtime_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            ErrorCode::ServiceUnavailable,
+        );
     }
     let start = if d.range_ignored {
         0
@@ -1898,7 +2059,10 @@ fn content_response(d: &mut Data, headers: HeaderMap) -> Response {
             .unwrap_or(0)
     };
     if start >= d.bytes.len() {
-        return StatusCode::RANGE_NOT_SATISFIABLE.into_response();
+        return runtime_error(
+            StatusCode::RANGE_NOT_SATISFIABLE,
+            ErrorCode::RangeNotSatisfiable,
+        );
     }
     let etag = if d.bad_etag {
         "\"wrong\"".into()
@@ -1907,6 +2071,9 @@ fn content_response(d: &mut Data, headers: HeaderMap) -> Response {
     };
     let mut response = Response::builder()
         .status(if start > 0 { 206 } else { 200 })
+        .header("content-type", "application/octet-stream")
+        .header("accept-ranges", "bytes")
+        .header("cache-control", "private, no-store")
         .header("content-length", d.bytes.len() - start)
         .header("etag", etag);
     if start > 0 {
@@ -2115,7 +2282,7 @@ fn self_service_response(d: &mut Data, uri: &Uri, headers: &HeaderMap, value: Va
         }
         let accepted = if let Some((old, accepted)) = d.invocations.get(&input.operation_id) {
             if old != &value {
-                return StatusCode::CONFLICT.into_response();
+                return runtime_error(StatusCode::CONFLICT, ErrorCode::OperationConflict);
             }
             accepted.clone()
         } else {

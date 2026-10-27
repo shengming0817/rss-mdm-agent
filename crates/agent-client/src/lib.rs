@@ -24,6 +24,7 @@ pub use redaction::CredentialRedactor;
 mod client;
 mod configuration;
 mod connections;
+mod http;
 pub use connections::{verify_connections, ConnectionStatus};
 mod enrollment;
 mod managed;

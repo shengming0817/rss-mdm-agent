@@ -11,6 +11,7 @@ export function typescriptSchema(schema) {
     "readOnly",
     "writeOnly",
     "deprecated",
+    "x-rss-extension",
   ]);
   const maps = new Set([
     "$defs",
@@ -44,6 +45,17 @@ export function typescriptSchema(schema) {
     const keys = Object.keys(node);
     if (keys.length && keys.every((key) => annotations.has(key)))
       node.tsType = "unknown";
+    // Preserve free-form object metadata before the TS compiler applies its
+    // closed-object default. Structured command/DTO projections keep that default.
+    // ref: json-schema-to-typescript src/normalizer.ts (Default additionalProperties).
+    if (
+      (node.type === "object" ||
+        (Array.isArray(node.type) && node.type.includes("object"))) &&
+      !("additionalProperties" in node) &&
+      !("properties" in node) &&
+      !("patternProperties" in node)
+    )
+      node.additionalProperties = true;
     for (const [key, value] of Object.entries(node)) {
       if (maps.has(key)) Object.values(value).forEach(visit);
       else if (children.has(key)) visit(value);
