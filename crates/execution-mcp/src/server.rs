@@ -93,7 +93,6 @@ pub(crate) enum ToolKind {
     PolicyTools,
     InvokePolicy,
     PrepareOperation,
-    PolicyStatus,
     SoftwareRead,
     Capabilities,
     Execute,
@@ -108,7 +107,7 @@ enum Effect {
     MayPersist,
 }
 impl ToolKind {
-    const ALL: [Self; 19] = [
+    const ALL: [Self; 18] = [
         Self::LocalSoftwareRead,
         Self::LocalSoftwarePrepare,
         Self::LocalSoftwareStatus,
@@ -120,7 +119,6 @@ impl ToolKind {
         Self::PolicyTools,
         Self::InvokePolicy,
         Self::PrepareOperation,
-        Self::PolicyStatus,
         Self::SoftwareRead,
         Self::Capabilities,
         Self::Execute,
@@ -143,7 +141,6 @@ impl ToolKind {
             Self::PrepareOperation => ("execution_operation_prepare", "Show an editable operation card for a current policy tool. Use for requests to display or edit settings. Suggestions do not execute: the user saves the final parameters in the desktop. Only registered scenes are accepted.", Effect::MayPersist),
             Self::InvokePolicy => ("execution_policy_invoke", "Invoke one authorized Policy directly by formal ID, tool name or alias. Supply Resource inputs. Current configuration and entry permissions are resolved by the product owner.", Effect::MayPersist),
             Self::PolicyTools => ("execution_policy_tools", "Currently authorized self-service software, scripts and enrollment entries. Publication, allowAi and risk are verified for this AI origin.", Effect::ReadOnly),
-            Self::PolicyStatus => ("execution_policy_status", "Read structured status and result for the original Policy request. Unknown never permits another invocation.", Effect::ReadOnly),
             Self::Offers => ("execution_offers", "Verified backend tasks. Select the exact task, attempt and revision; presence never authorizes execution.", Effect::ReadOnly),
             Self::Capabilities => ("execution_capabilities", "Current bound-context capabilities. Unknown is not supported.", Effect::ReadOnly),
             Self::Execute => ("execution_execute", "Propose an exact backend task. The desktop user must confirm installation. Query the returned original request; never choose another attempt after response loss.", Effect::MayPersist),
@@ -196,7 +193,6 @@ impl ToolKind {
             }
             Self::InvokePolicy => tool::<PolicyToolCall, OperationRequest>(self),
             Self::PolicyTools => tool::<PolicyToolsQuery, PolicyToolPage>(self),
-            Self::PolicyStatus => tool::<OperationRequest, Value>(self),
             Self::Offers => tool::<Empty, Vec<BackendTask>>(self),
             Self::Capabilities => tool::<Empty, CapabilityView>(self),
             Self::Execute => tool::<BackendSelection, TaskSubmission>(self),
@@ -369,10 +365,6 @@ impl<S: ExecutionServicePort> Handler<S> {
             ),
             ToolKind::PolicyTools => result(
                 async { Ok(self.service.policy_tools(decode(raw)?, wait).await?) }.await,
-                max,
-            ),
-            ToolKind::PolicyStatus => result(
-                async { Ok(self.service.policy_status(decode(raw)?, wait).await?) }.await,
                 max,
             ),
             ToolKind::Offers => result(self.offers(raw, wait).await, max),

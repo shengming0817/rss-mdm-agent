@@ -138,7 +138,7 @@ async fn discovery_exposes_backend_references_and_rejects_old_script_and_catalog
     let s = service();
     let mut w = Wire::open(s.clone(), limits()).await;
     let tools = w.tools(2).await;
-    assert_eq!(tools.len(), 19);
+    assert_eq!(tools.len(), 18);
     for tool in &tools {
         jsonschema::draft202012::new(&tool["inputSchema"]).unwrap();
         jsonschema::draft202012::new(&tool["outputSchema"]).unwrap();
@@ -436,7 +436,7 @@ async fn official_rmcp_client_can_consume_the_bounded_service() {
             break;
         }
     }
-    assert_eq!(found.len(), 19);
+    assert_eq!(found.len(), 18);
     client.cancel().await.unwrap();
     timeout(Duration::from_secs(2), task)
         .await
@@ -601,7 +601,6 @@ async fn every_tool_advertises_and_times_out_according_to_its_effects() {
         true
     );
     let tools = w.tools(12).await;
-    let operation = json!({"operationRequestId":"original-id"});
     let cases = [
         (
             "execution_policy_invoke",
@@ -672,12 +671,6 @@ async fn every_tool_advertises_and_times_out_according_to_its_effects() {
         (
             "execution_policy_tools",
             json!({"after":null}),
-            true,
-            "unavailable",
-        ),
-        (
-            "execution_policy_status",
-            operation.clone(),
             true,
             "unavailable",
         ),

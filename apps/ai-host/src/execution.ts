@@ -371,34 +371,17 @@ export async function connectExecution(
         }
         if (
           name === "execution_software_prepare" ||
-          name === "execution_query_submit"
-        ) {
-          const query =
-            name === "execution_software_prepare"
-              ? "execution_software_status"
-              : "execution_query_status";
-          const status = await call(
-            request,
-            query,
-            { request: request.body.operationId },
-            b,
-          );
-          if (status.status === "error")
-            return ok({
-              state:
-                status.error?.code === "notFound" ? "not_submitted" : "unknown",
-            });
-          return ok({ state: "committed", receipt: receipt(request, status) });
-        }
-        if (
+          name === "execution_query_submit" ||
           name.startsWith("policy_") ||
           name === "execution_operation_prepare" ||
           name === "execution_policy_invoke"
         ) {
           const status = await call(
             request,
-            "execution_policy_status",
-            { operationRequestId: request.body.operationId },
+            "execution_task_detail",
+            {
+              reference: { kind: "request", request: request.body.operationId },
+            },
             b,
           );
           if (status.status === "error")
@@ -406,6 +389,11 @@ export async function connectExecution(
               state:
                 status.error?.code === "notFound" ? "not_submitted" : "unknown",
             });
+          if (
+            status.result?.reference?.kind !== "request" ||
+            status.result.reference.request !== request.body.operationId
+          )
+            return ok({ state: "unknown" });
           return ok({ state: "committed", receipt: receipt(request, status) });
         }
         // Reads and exact immutable registrations are receiver-idempotent.

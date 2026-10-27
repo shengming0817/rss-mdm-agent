@@ -186,16 +186,20 @@ export async function startModelFixture() {
         assert.notEqual(operation.operationRequestId, facts.request);
         facts.reviewRequest = operation.operationRequestId;
         if (!output("status"))
-          return call("status", "execution_policy_status", {
-            operationRequestId: facts.reviewRequest,
+          return call("status", "execution_task_detail", {
+            reference: { kind: "request", request: facts.reviewRequest },
           });
         const status = resultFrom(output("status").output);
-        assert.equal(status?.kind, "preparation");
-        assert.equal(status.value.action.kind, "policy");
-        assert.equal(status.value.action.choice.request, facts.reviewRequest);
-        assert.equal(status.value.state, "awaitingConfirmation");
-        assert.equal(status.value.risk?.level, "two");
-        assert.equal(status.value.confirmation, null);
+        assert.equal(status?.reference?.request, facts.reviewRequest);
+        assert.equal(status?.facts?.kind, "preparation");
+        assert.equal(status.facts.value.action.kind, "policy");
+        assert.equal(
+          status.facts.value.action.choice.request,
+          facts.reviewRequest,
+        );
+        assert.equal(status.facts.value.state, "awaitingConfirmation");
+        assert.equal(status.facts.value.risk?.level, "two");
+        assert.equal(status.facts.value.confirmation, null);
       }
       if (scenario.startsWith("CANCEL")) {
         if (!output("control-detail"))

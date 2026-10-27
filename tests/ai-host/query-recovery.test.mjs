@@ -69,18 +69,44 @@ test("query response loss reconciles the Host-owned original ID and never replay
         : {
             status: "ok",
             result: {
-              kind: "status",
-              value: {
-                request: params.arguments.request,
-                query: { id: "native:fixture", revision: "a".repeat(64) },
-                preparation: null,
-                phase: "running",
-                cancelRequested: cancelled,
+              scope: "fixture-scope",
+              revision: { owner: 1, transfers: [] },
+              recordedAt: null,
+              source: "human",
+              taskKind: "query",
+              stage: "running",
+              active: true,
+              facts: {
+                kind: "execution",
+                value: (
+                  await import("../assistant/execution-fixtures.json", {
+                    with: { type: "json" },
+                  })
+                ).default.running,
+              },
+              nodes: [],
+              allowedActions: ["cancel"],
+              controlReason: null,
+              uploadAcknowledged: null,
+              collectionQuality: null,
+              collectionComplete: null,
+              softwareState: null,
+              policy: null,
+              policyRevision: null,
+              retryOf: null,
+              related: [],
+              selection: null,
+              missing: [],
+              parameterSummary: {},
+              humanConfirmation: false,
+              reference: {
+                kind: "request",
+                request: params.arguments.reference.request,
               },
             },
           };
-    if (malformed && params.name === "execution_query_status")
-      delete value.result.value.query;
+    if (malformed && params.name === "execution_task_detail")
+      delete value.result.reference;
     return { content: [], structuredContent: value, isError: failure };
   });
   await peer.connect(new ParentTransport(incoming, outgoing));
@@ -119,13 +145,16 @@ test("query response loss reconciles the Host-owned original ID and never replay
     (await connection.router.reconcile(request, budget())).value.state,
     "committed",
   );
-  assert.equal(calls[1].name, "execution_query_status");
-  assert.equal(calls[1].arguments.request, prepared.value.operationId);
+  assert.equal(calls[1].name, "execution_task_detail");
+  assert.equal(
+    calls[1].arguments.reference.request,
+    prepared.value.operationId,
+  );
   assert.equal(
     calls.filter((c) => c.name === "execution_query_submit").length,
     1,
   );
-  // Query status is on an earlier catalog page. A malformed original response
+  // Task detail is on an earlier catalog page. A malformed original response
   // must remain Unknown even after subsequent pages replace the SDK cache.
   malformed = true;
   assert.equal(
@@ -137,6 +166,38 @@ test("query response loss reconciles the Host-owned original ID and never replay
     1,
   );
   malformed = false;
+  for (const name of [
+    "execution_software_prepare",
+    "execution_operation_prepare",
+    "execution_policy_invoke",
+    "policy_fixture",
+  ]) {
+    const proposal = { name, callId: "original-policy-call", arguments: {} };
+    const intent = connection.router.prepare(
+      namespace,
+      proposal,
+      "original-policy-command",
+    );
+    assert.equal(intent.ok, true);
+    const original = {
+      ...request,
+      body: { type: "delivery_requested", ...intent.value, proposal },
+    };
+    assert.equal(
+      (await connection.router.reconcile(original, budget())).value.state,
+      "committed",
+    );
+    assert.equal(calls.at(-1).name, "execution_task_detail");
+    assert.equal(
+      calls.at(-1).arguments.reference.request,
+      intent.value.operationId,
+    );
+    assert.equal(
+      calls.filter((call) => call.name === name).length,
+      0,
+      "recovery only reads the original task",
+    );
+  }
   const cancelProposal = {
     name: "execution_task_control",
     arguments: {

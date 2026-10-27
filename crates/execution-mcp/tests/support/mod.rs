@@ -405,14 +405,6 @@ impl ExecutionServicePort for TestService {
             next: None,
         })
     }
-    async fn policy_status(
-        &self,
-        _: OperationRequest,
-        _: CancellationToken,
-    ) -> Result<serde_json::Value, ServiceError> {
-        self.capabilities(CancellationToken::new()).await?;
-        Err(ServiceError::Denied)
-    }
     async fn observe_software(
         &self,
         _: execution_contract::SoftwareReadSelection,

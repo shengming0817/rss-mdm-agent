@@ -25,6 +25,7 @@ fn bad(_: Error) -> ui::ServiceError {
     ui::error("execution_unavailable", "执行服务未确认操作，请查询原任务")
 }
 fn task_ui_error(error: Error) -> ui::ServiceError {
+    eprintln!("RSS_TASK_FAILURE code={error:?}");
     let (code, message) = match error {
         Error::Denied | Error::NotFound | Error::Unbound => {
             ("task_denied", "原任务不可访问或授权已变化，操作未获准")
@@ -1057,22 +1058,6 @@ impl mcp::ExecutionServicePort for ExecutionHandle {
         .await
     }
 
-    async fn policy_status(
-        &self,
-        request: mcp::OperationRequest,
-        _: CancellationToken,
-    ) -> Result<serde_json::Value, mcp::ServiceError> {
-        let value = self
-            .policy_status(ui::ActionRef {
-                request_id: request.operation_request_id,
-            })
-            .await
-            .map_err(|_| mcp::ServiceError::Unavailable)?;
-        if matches!(value, ui::PolicyStatus::Absent) {
-            return Err(mcp::ServiceError::NotFound);
-        }
-        serde_json::to_value(value).map_err(|_| mcp::ServiceError::Unavailable)
-    }
     async fn capabilities(
         &self,
         _: CancellationToken,

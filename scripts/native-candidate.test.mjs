@@ -76,12 +76,15 @@ test("native model oracle requires the original software request to await human 
             type: "function_call_output",
             call_id: "REVIEW-status",
             output: result({
-              kind: "preparation",
-              value: {
-                action: { kind: "policy", choice: { request } },
-                state,
-                risk: { level: "two" },
-                confirmation,
+              reference: { kind: "request", request: "review-request" },
+              facts: {
+                kind: "preparation",
+                value: {
+                  action: { kind: "policy", choice: { request } },
+                  state,
+                  risk: { level: "two" },
+                  confirmation,
+                },
               },
             }),
           },
@@ -96,6 +99,63 @@ test("native model oracle requires the original software request to await human 
       expectedStatus === 200 ? ["REVIEW"] : [],
     );
   }
+});
+
+test("native review reads the original request through a registered task tool", async (t) => {
+  const fixture = await startModelFixture();
+  t.after(() => fixture.close());
+  fixture.accept();
+  fixture.facts.request = "human-original";
+  const output = (step, result) => ({
+    type: "function_call_output",
+    call_id: `REVIEW-${step}`,
+    output: JSON.stringify({
+      content: [
+        { type: "text", text: JSON.stringify({ status: "ok", result }) },
+      ],
+    }),
+  });
+  const response = await fetch(fixture.url + "/responses", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${fixture.secret}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "native-golden-model",
+      input: [
+        { role: "user", content: "GOLDEN_REVIEW" },
+        output("tools", {
+          tools: [
+            {
+              name: "registered-policy",
+              inputSchema: { properties: { parameters: { type: "object" } } },
+            },
+          ],
+        }),
+        output("invoke", { operationRequestId: "ai-original" }),
+      ],
+    }),
+  });
+  assert.equal(response.status, 200);
+  const events = (await response.text())
+    .split("\n")
+    .filter((line) => line.startsWith("data: {"))
+    .map((line) => JSON.parse(line.slice(6)));
+  const proposal = events.find(
+    (event) => event.item?.type === "function_call",
+  ).item;
+  assert.equal(proposal.name, "execution_task_detail");
+  assert.deepEqual(JSON.parse(proposal.arguments), {
+    reference: { kind: "request", request: "ai-original" },
+  });
+  const tools = JSON.parse(
+    readFileSync(
+      new URL("../packages/execution-bindings/src/tools.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  assert.ok(tools.some((tool) => tool.name === proposal.name));
 });
 
 function fixture(t) {
