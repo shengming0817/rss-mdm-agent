@@ -186,6 +186,59 @@ fn denied() -> io::Error {
     io::Error::other("protected device credential unavailable")
 }
 impl SecretStore {
+    #[cfg(target_os = "macos")]
+    pub(crate) fn prepare_handoff(
+        &self,
+        old: &Path,
+        new: &Path,
+    ) -> io::Result<platform_credentials::KeychainHandoff> {
+        use platform_credentials::CredentialItem;
+        let _guard = self.access.lock().map_err(|_| denied())?;
+        if !self.catalog_complete()? {
+            return Err(denied());
+        }
+        let mut items = Vec::new();
+        for entry in std::fs::read_dir(&self.root)? {
+            let path = entry?.path();
+            if !path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .is_some_and(|s| s.ends_with(".credential.json"))
+            {
+                continue;
+            }
+            if items.len() >= 4096 {
+                return Err(denied());
+            }
+            let bytes = files::read(&path, 1024)?;
+            if path.file_name()
+                != Some(std::ffi::OsStr::new(&format!(
+                    "{:x}.credential.json",
+                    Sha256::digest(&bytes)
+                )))
+            {
+                return Err(denied());
+            }
+            let (reference, key): (String, bool) =
+                serde_json::from_slice(&bytes).map_err(io::Error::other)?;
+            let account = self.account(&reference)?;
+            items.push(if key {
+                CredentialItem::PrivateKey { account }
+            } else {
+                CredentialItem::Password {
+                    service: "RSS MDM Agent device".into(),
+                    account,
+                }
+            });
+        }
+        platform_credentials::KeychainHandoff::prepare(
+            &self.keychain,
+            old,
+            new,
+            "identifier \"com.rss.mdmagent.execution-service\" and certificate leaf exists",
+            &items,
+        )
+    }
     /// Open an existing private root. No public path, default secret or plaintext fallback exists.
     pub fn open(root: &Path, namespace: &str) -> io::Result<Self> {
         files::validate(root)?;

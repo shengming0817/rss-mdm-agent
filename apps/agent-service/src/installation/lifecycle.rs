@@ -8,6 +8,8 @@ enum Action {
     Status,
     Refresh,
     Apply,
+    #[cfg(target_os = "macos")]
+    AuthorizeUpgrade,
     Recover,
     Import,
     ImportConnections,
@@ -34,6 +36,8 @@ impl Action {
             "status" => Ok(Self::Status),
             "refresh" => Ok(Self::Refresh),
             "apply" => Ok(Self::Apply),
+            #[cfg(target_os = "macos")]
+            "authorize-upgrade" => Ok(Self::AuthorizeUpgrade),
             "recover" => Ok(Self::Recover),
             "import" => Ok(Self::Import),
             "import-connections" => Ok(Self::ImportConnections),
@@ -238,6 +242,7 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
                 &opts.config()?,
                 &opts.path("--candidate-binary")?,
                 &opts.path("--candidate-config")?,
+                false,
             )?;
         }
         Action::Apply => {
@@ -248,6 +253,7 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
                 &opts.path("--candidate")?,
                 opts.values.get("--profile"),
                 &opts.config()?,
+                false,
             )?;
             if let Some(package) = opts.values.get("--package-path") {
                 // Installation succeeds independently of registration. Invalid material is reported,
@@ -287,6 +293,13 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
             let restart = platform::register(true, &deployment.service.path, &config);
             result?;
             restart?;
+        }
+        #[cfg(target_os = "macos")]
+        Action::AuthorizeUpgrade => {
+            if !opts.system()? || unsafe { libc::geteuid() } != 0 {
+                return Err(Error::Identity);
+            }
+            apply(&opts.path("--candidate")?, None, &opts.config()?, true)?;
         }
         Action::ImportConnections => {
             if !opts.system()? {
@@ -373,6 +386,7 @@ fn refresh(
     config: &Path,
     candidate: &Path,
     next_config: &Path,
+    authorize_handoff: bool,
 ) -> Result<(), Error> {
     let old = Deployment::metadata(config)?;
     outcome::phase("refresh-preflight")?;
@@ -386,7 +400,23 @@ fn refresh(
     if current.exists() {
         Deployment::load_persistent(config)?;
     }
-    persistent(candidate, next_config)?;
+    #[cfg(target_os = "macos")]
+    let mut handoff = if authorize_handoff {
+        outcome::phase("keychain-handoff-preflight")?;
+        Some(
+            crate::secrets::SecretStore::open(&old.state_root.join("secrets"), &old.namespace()?)?
+                .prepare_handoff(current, candidate)?,
+        )
+    } else {
+        None
+    };
+    #[cfg(not(target_os = "macos"))]
+    if authorize_handoff {
+        return Err(Error::Unsupported);
+    }
+    if !authorize_handoff {
+        persistent(candidate, next_config)?;
+    }
     #[cfg(windows)]
     crate::access_component::preflight(&next)?;
     outcome::phase("refresh-quiescence")?;
@@ -394,7 +424,24 @@ fn refresh(
     transition(|action| {
         outcome::phase(action.phase())?;
         match action {
-            Step::StopCurrent => platform::stop(true, current, config),
+            Step::StopCurrent => {
+                platform::stop(true, current, config)?;
+                #[cfg(target_os = "macos")]
+                if let Some(handoff) = &mut handoff {
+                    let result = outcome::phase("keychain-handoff")
+                        .and_then(|_| handoff.apply().map_err(Error::from))
+                        .and_then(|_| persistent(candidate, next_config));
+                    if let Err(error) = result {
+                        outcome::failed(error);
+                        outcome::compensation("running");
+                        handoff.rollback()?;
+                        platform::register(true, current, config)?;
+                        outcome::compensation("succeeded");
+                        return Err(error);
+                    }
+                }
+                Ok(())
+            }
             Step::RemoveCurrent => platform::remove(true, current, config),
             Step::PublishCandidate => {
                 crate::local_permissions::initialize(&next.execution.local_permissions)?;
@@ -407,7 +454,13 @@ fn refresh(
             }
             Step::RemoveCandidate => platform::remove(true, candidate, config),
             Step::RestoreCurrent => publish(config, &json(&old)?),
-            Step::RegisterCurrent => platform::register(true, current, config),
+            Step::RegisterCurrent => {
+                #[cfg(target_os = "macos")]
+                if let Some(handoff) = &mut handoff {
+                    handoff.rollback()?;
+                }
+                platform::register(true, current, config)
+            }
         }
     })
 }
@@ -607,7 +660,12 @@ pub(super) fn initial_profile() -> Result<Profile, Error> {
     }
     platform::interactive_profile()
 }
-fn apply(candidate_path: &Path, profile: Option<&PathBuf>, config: &Path) -> Result<(), Error> {
+fn apply(
+    candidate_path: &Path,
+    profile: Option<&PathBuf>,
+    config: &Path,
+    authorize_handoff: bool,
+) -> Result<(), Error> {
     outcome::phase("candidate-preflight")?;
     let (candidate, artifact) = Candidate::load(candidate_path)?;
     let old = match std::fs::symlink_metadata(config) {
@@ -656,10 +714,19 @@ fn apply(candidate_path: &Path, profile: Option<&PathBuf>, config: &Path) -> Res
         }
         let staged = config.with_extension(format!("candidate-{}", uuid::Uuid::new_v4()));
         write_new(&staged, &json(&next)?)?;
-        let result = refresh(&old.service.path, config, &next.service.path, &staged);
+        let result = refresh(
+            &old.service.path,
+            config,
+            &next.service.path,
+            &staged,
+            authorize_handoff,
+        );
         let _ = std::fs::remove_file(staged);
         result?;
     } else {
+        if authorize_handoff {
+            return Err(Error::Identity);
+        }
         if std::fs::symlink_metadata(&next.state_root).is_ok() {
             return Err(Error::Identity);
         }

@@ -1,7 +1,11 @@
 //! OS credential primitives. Product names, references, formats and key sizes belong to callers.
 use std::io;
 mod device_key;
+#[cfg(target_os = "macos")]
+mod handoff;
 pub use device_key::{DeviceKey, SignatureScheme};
+#[cfg(target_os = "macos")]
+pub use handoff::{CredentialItem, KeychainHandoff};
 #[cfg(windows)]
 mod windows;
 #[cfg(windows)]
