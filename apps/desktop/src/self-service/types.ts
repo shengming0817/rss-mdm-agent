@@ -21,6 +21,9 @@ export type NavigationOperation =
     }
   | {
       selector: EntrySelector;
+      version: string | null;
+      revision: number | null;
+      step: string | null;
       kind: "link";
     }
   | {

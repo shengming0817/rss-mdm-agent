@@ -87,6 +87,12 @@ emit(
   reactive({
     reset,
     openSection,
+    async openNode(id: string) {
+      if (id !== "lock" && !sections.value.some((e) => e.id === id))
+        return false;
+      await openSection(id);
+      return true;
+    },
     section,
     sections,
     path,

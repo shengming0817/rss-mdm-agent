@@ -123,13 +123,11 @@ const entryBatch = shallowRef<{
 }>();
 const pageNode = computed(() => {
   const page =
-    (
-      {
-        "device-tools": "tools",
-        "software-management": "software",
-        "system-settings": "system",
-      } as Record<string, string>
-    )[props.page] ?? props.page;
+    new Map([
+      ["device-tools", "tools"],
+      ["software-management", "software"],
+      ["system-settings", "system"],
+    ]).get(props.page) ?? props.page;
   const section = currentModule.value?.section;
   return {
     kind: "node" as const,
@@ -139,16 +137,19 @@ const pageNode = computed(() => {
 let entryDraining = false,
   entryDisposed = false;
 let stopEntry: (() => void) | undefined;
+async function openEntryTask(request: string) {
+  entrySelection.value = undefined;
+  await nextTick();
+  await openTask(request);
+}
 async function openEntryNode(id: string) {
   const [owner, section] = id.split(".");
   const page =
-    (
-      {
-        tools: "device-tools",
-        software: "software-management",
-        system: "system-settings",
-      } as Record<string, string>
-    )[owner] ?? owner;
+    new Map([
+      ["tools", "device-tools"],
+      ["software", "software-management"],
+      ["system", "system-settings"],
+    ]).get(owner) ?? owner;
   navigateMain(page);
   await nextTick();
   const module =
@@ -200,11 +201,12 @@ async function drainEntries() {
       if (delivery.intent.selector.kind === "node")
         await openEntryNode(delivery.intent.selector.id);
       else if (delivery.intent.selector.kind === "localTool") {
-        const node = {
-          "network.check": "tools.network",
-          "system.settings": "system.overview",
-          "software.manage": "software.installed",
-        }[delivery.intent.selector.name];
+        const node = new Map([
+          ["network.check", "tools.network"],
+          ["system.settings", "system.overview"],
+          ["software.manage", "software.installed"],
+        ]).get(delivery.intent.selector.name);
+        if (!node) throw Error("unavailable");
         await openEntryNode(node);
       } else if (result.kind === "task")
         await openTask(result.value, delivery.intent.step ?? "");
@@ -1194,7 +1196,7 @@ onBeforeUnmount(() => {
         :port="controller.port"
         :navigation="entryPort"
         @close="entrySelection = undefined"
-        @task="openTask($event)"
+        @task="openEntryTask"
       />
       <BatchDetails
         v-if="entryPort && entryBatch"

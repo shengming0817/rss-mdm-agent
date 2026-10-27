@@ -147,7 +147,7 @@ macOS arm64 的实际执行与目标 Windows 环境按需运行的验证分别�
 
 ## 固定候选安全验收
 
-在全部源码变更与构建完成后，使用 `node scripts/native-candidate.mjs freeze --service <服务产物> --backend <controlled-backend产物> --desktop <native-acceptance桌面产物> --runtime <Host运行包> --output <新的忽略目录内candidate.json>` 固定候选。
+在全部源码变更与构建完成后，使用 `node scripts/native-candidate.mjs freeze --service <服务产物> --cli <已构建签名的rssmdm产物> --backend <controlled-backend产物> --desktop <native-acceptance桌面产物> --runtime <Host运行包> --output <新的忽略目录内candidate.json>` 固定候选。
 服务单独旅程可以省略 desktop/runtime。签名在冻结前完成；验收只复制原字节，不重新签名或构建。
 冻结时记录源码、锁文件和构建工具链供追溯；运行验收以固定程序摘要、代码身份、运行包完整性及适用平台/架构为准。
 后续文档、提交、源码或锁文件变化无需重新冻结原产物；更换程序、代码身份或运行包后重新冻结。

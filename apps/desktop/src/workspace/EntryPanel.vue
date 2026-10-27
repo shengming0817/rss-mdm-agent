@@ -36,6 +36,8 @@ const port = computed<SelfServicePort | null>(() =>
     ? {
         ...props.port,
         async policy_invoke(input) {
+          if (!props.policy || input.choice.policyId !== props.policy.policyId)
+            throw Error("target_changed");
           const result = await props.navigation({
             kind: "submit",
             intent: {
@@ -98,11 +100,17 @@ async function submitEvent() {
       </h2>
       <button type="button" @click="emit('close')">返回原页面</button>
     </header>
-    <CopyEntry :selector="delivery.intent.selector" />
+    <CopyEntry
+      :selector="delivery.intent.selector"
+      :version="intent.version ?? undefined"
+      :revision="intent.revision ?? undefined"
+      :step="intent.step ?? undefined"
+    />
     <p v-if="error" role="alert">{{ error }}</p>
     <PolicySelfService
       v-if="policy"
       ref="form"
+      :target-policy="policy.policyId"
       :port="port"
       :records="original ? [original] : []"
       :allow-new-requests="true"

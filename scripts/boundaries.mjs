@@ -587,7 +587,10 @@ export function checkSource(file, source) {
           (file === "apps/desktop/src/assistant/ExecutionDetails.vue" &&
             name === "../self-service/RequestOrigin.vue") ||
           (file === "apps/desktop/src/self-service/PolicySelfService.vue" &&
-            name === "../task-center/controller") ||
+            [
+              "../task-center/controller",
+              "../workspace/CopyEntry.vue",
+            ].includes(name)) ||
           (file === "apps/desktop/src/assistant/native.ts" &&
             name === "../self-service/native")
         ) &&

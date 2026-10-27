@@ -61,6 +61,39 @@ fn peer(stream: &UnixStream) -> Result<(), Error> {
         .map_err(|_| Error::Unavailable)?;
     Ok(())
 }
+// A socket read timeout applies per syscall, so enforce the whole-frame deadline
+// and shutdown independently even when a peer continuously dribbles bytes.
+fn frame_read(
+    stream: &mut UnixStream,
+    mut bytes: &mut [u8],
+    deadline: Instant,
+    stop: &AtomicBool,
+) -> Result<(), Error> {
+    while !bytes.is_empty() {
+        if stop.load(Ordering::Acquire) {
+            return Err(Error::Unavailable);
+        }
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .ok_or(Error::Unavailable)?;
+        stream
+            .set_read_timeout(Some(remaining.min(Duration::from_millis(100))))
+            .map_err(|_| Error::Unavailable)?;
+        match stream.read(bytes) {
+            Ok(0) => return Err(Error::Unavailable),
+            Ok(count) => bytes = &mut bytes[count..],
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock
+                        | std::io::ErrorKind::TimedOut
+                        | std::io::ErrorKind::Interrupted
+                ) => {}
+            Err(_) => return Err(Error::Unavailable),
+        }
+    }
+    Ok(())
+}
 impl NavigationInstance {
     /// Elect a receiver or forward one bounded intent, exiting only after its queue ACK.
     /// An empty message requests focus only. Every nonempty message is parsed again.
@@ -153,18 +186,15 @@ impl NavigationInstance {
                     Ok((mut stream, _)) => {
                         let result = (|| -> Result<bool, Error> {
                             peer(&stream)?;
+                            let deadline = Instant::now() + Duration::from_secs(2);
                             let mut header = [0; 4];
-                            stream
-                                .read_exact(&mut header)
-                                .map_err(|_| Error::Unavailable)?;
+                            frame_read(&mut stream, &mut header, deadline, &cancelled)?;
                             let len = u32::from_be_bytes(header) as usize;
                             if len > execution_contract::ENTRY_URI_BYTES {
                                 return Err(Error::InvalidInput);
                             }
                             let mut body = vec![0; len];
-                            stream
-                                .read_exact(&mut body)
-                                .map_err(|_| Error::Unavailable)?;
+                            frame_read(&mut stream, &mut body, deadline, &cancelled)?;
                             let uri = String::from_utf8(body).map_err(|_| Error::InvalidInput)?;
                             if !uri.is_empty() {
                                 EntryIntent::parse(&uri).map_err(|_| Error::InvalidInput)?;
@@ -193,6 +223,34 @@ use std::os::unix::fs::DirBuilderExt;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_slow_frame_cannot_extend_the_total_budget_or_ignore_shutdown() {
+        let (mut reader, mut writer) = UnixStream::pair().unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let deadline = Instant::now() + Duration::from_millis(160);
+        let thread = std::thread::spawn(move || {
+            for _ in 0..8 {
+                if writer.write_all(&[1]).is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(40));
+            }
+        });
+        let mut frame = [0; 32];
+        assert!(frame_read(&mut reader, &mut frame, deadline, &stop).is_err());
+        assert!(Instant::now().duration_since(deadline) < Duration::from_millis(100));
+        drop(reader);
+        thread.join().unwrap();
+        let (mut reader, _writer) = UnixStream::pair().unwrap();
+        stop.store(true, Ordering::Release);
+        assert!(frame_read(
+            &mut reader,
+            &mut frame,
+            Instant::now() + Duration::from_secs(2),
+            &stop
+        )
+        .is_err());
+    }
     #[test]
     fn actual_kernel_login_handoff_is_acknowledged_and_does_not_submit() {
         // Isolate the real native transport from the user's production desktop endpoint.

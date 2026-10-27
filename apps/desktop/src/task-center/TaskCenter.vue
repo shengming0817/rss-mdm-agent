@@ -449,10 +449,12 @@ function time(event: Event, key: "from" | "until") {
           未覆盖关联：{{ selected.missing.join(" · ") }}
         </p>
         <CopyEntry
+          :step="s.node || undefined"
           v-if="selected.reference.kind === 'request'"
           :selector="{ kind: 'request', request: selected.reference.request }"
         />
         <CopyEntry
+          :step="s.node || undefined"
           v-else-if="selected.reference.kind === 'activity'"
           :selector="{ kind: 'activity', id: selected.reference.id }"
         />

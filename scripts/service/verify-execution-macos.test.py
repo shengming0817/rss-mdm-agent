@@ -415,8 +415,8 @@ finally: connection.close()
                     def start(self): raise RuntimeError('stop before administrator authority')
                     def close(self): pass
                 frozen=dict(source=dict(head='historical-build',node='old-node',pnpm='old-pnpm'),
-                            binaries={name:dict(path=str(path.resolve())) for name,path in [('service',Path('/bin/sh')),('desktop',Path('/bin/sh')),('backend',backend)]}) if fixed else None
-                argv=['verify','--binary','/bin/sh','--desktop','/bin/sh','--backend',str(backend),'--output',str(output)]
+                            binaries={name:dict(path=str(path.resolve())) for name,path in [('service',Path('/bin/sh')),('desktop',Path('/bin/sh')),('cli',Path('/bin/sh')),('backend',backend)]}) if fixed else None
+                argv=['verify','--binary','/bin/sh','--cli','/bin/sh','--desktop','/bin/sh','--backend',str(backend),'--output',str(output)]
                 if fixed: argv+=['--candidate',str(root/'candidate.json')]
                 actual_run=acceptance.run
                 def no_git(*args,**kwargs):
@@ -441,8 +441,8 @@ finally: connection.close()
             self.assertFalse(output.exists())
 
     def test_fixed_candidate_arguments_and_security_probes_remain_required(self):
-        frozen=dict(source=dict(head='historical-build'),binaries={name:dict(path=str(Path('/bin/sh').resolve())) for name in ('service','backend')})
-        base=['verify','--binary','/bin/sh','--backend','/bin/sh','--output','unused','--candidate','candidate.json']
+        frozen=dict(source=dict(head='historical-build'),binaries={name:dict(path=str(Path('/bin/sh').resolve())) for name in ('service','backend','cli')})
+        base=['verify','--binary','/bin/sh','--cli','/bin/sh','--backend','/bin/sh','--output','unused','--candidate','candidate.json']
         for extra,message in [(['--binary','/bin/ls'],'candidate argument mismatch'),(['--security'],'security matrix requires frozen')]:
             with self.subTest(extra=extra),patch.object(acceptance.sys,'argv',base+extra),patch.object(acceptance,'verify_candidate',return_value=frozen):
                 with self.assertRaisesRegex(RuntimeError,message): acceptance.main()

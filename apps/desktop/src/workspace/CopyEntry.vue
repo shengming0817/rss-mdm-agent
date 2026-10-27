@@ -3,12 +3,23 @@ import { ref } from "vue";
 import type { EntrySelector } from "../self-service/types";
 import { copyText } from "../assistant/clipboard";
 import { nativeNavigation } from "./entry";
-const props = defineProps<{ selector: EntrySelector }>();
+const props = defineProps<{
+  selector: EntrySelector;
+  version?: string;
+  revision?: number;
+  step?: string;
+}>();
 const port = nativeNavigation();
 const message = ref("");
 async function copy(cli: boolean) {
   try {
-    const result = await port?.({ kind: "link", selector: props.selector });
+    const result = await port?.({
+      kind: "link",
+      selector: props.selector,
+      version: props.version ?? null,
+      revision: props.revision ?? null,
+      step: props.step ?? null,
+    });
     if (result?.kind !== "uri") throw Error("unavailable");
     message.value = (await copyText(
       cli

@@ -634,3 +634,46 @@ test("a hidden policy consumer does not load the shared catalog until it becomes
     w.unmount();
   }
 });
+
+test("a linked form keeps its exact target when the shared directory contains another compatible Policy", async () => {
+  const original = directoryItem(record("original").action);
+  original.selfService.presentation.displayName = "Linked Policy";
+  const other = structuredClone(original);
+  other.policyId = "other-policy";
+  other.selfService.presentation.displayName = "Other Policy";
+  const invoke = vi.fn();
+  const port = {
+    policy_directory: async () => ({
+      items: [original, other],
+      nextCursor: null,
+      asOf: 1,
+    }),
+    policy_invoke: invoke,
+  } as unknown as SelfServicePort;
+  const w = mount(PolicySelfService, {
+    props: { port, records: [], targetPolicy: original.policyId },
+  });
+  try {
+    await flushPromises();
+    expect(w.findAll(".resource-card")).toHaveLength(1);
+    expect(w.findAll(".resource-card")[0].text()).toContain("Linked Policy");
+    expect(await w.vm.openPolicy(other.policyId)).toBe(false);
+    expect(
+      await w.vm.openPolicy(
+        original.policyId,
+        { name: "suggestion" },
+        original,
+      ),
+    ).toBe(true);
+    expect(
+      (w.get('input[name="name"]').element as HTMLInputElement).value,
+    ).toBe("suggestion");
+    expect(invoke).not.toHaveBeenCalled();
+    const changed = structuredClone(original);
+    changed.policyRevision++;
+    expect(await w.vm.openPolicy(original.policyId, {}, changed)).toBe(false);
+    expect(invoke).not.toHaveBeenCalled();
+  } finally {
+    w.unmount();
+  }
+});

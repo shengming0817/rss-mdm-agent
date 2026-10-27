@@ -70,6 +70,9 @@ pub enum NavigationOperation {
     },
     Link {
         selector: EntrySelector,
+        version: Option<String>,
+        revision: Option<u64>,
+        step: Option<String>,
     },
     Resolve {
         intent: EntryIntent,
@@ -142,9 +145,12 @@ pub async fn navigation<R: tauri::Runtime>(
                     .collect(),
             ))
         }
-        NavigationOperation::Link { ref selector }
-            if matches!(selector, EntrySelector::Node { .. }) =>
-        {
+        NavigationOperation::Link {
+            ref selector,
+            version: None,
+            revision: None,
+            step: None,
+        } if matches!(selector, EntrySelector::Node { .. }) => {
             let intent = EntryIntent {
                 action: EntryAction::View,
                 selector: selector.clone(),
@@ -183,16 +189,34 @@ pub async fn navigation<R: tauri::Runtime>(
     };
     runtime.current(&generation)?;
     let reply = match input {
-        NavigationOperation::Link { selector } => {
-            let intent = EntryIntent {
+        NavigationOperation::Link {
+            selector,
+            version,
+            revision,
+            step,
+        } => {
+            let mut intent = EntryIntent {
                 action: EntryAction::View,
                 selector,
                 namespace: context.namespace,
-                version: None,
-                revision: None,
-                step: None,
+                version,
+                revision,
+                step,
                 parameters: Default::default(),
             };
+            if matches!(intent.selector, EntrySelector::Capability { .. }) {
+                let Reply::PolicyResolved { value } = execution
+                    .entry(EntryOperation::Preview {
+                        intent: intent.clone(),
+                    })
+                    .await?
+                else {
+                    return Err(denied());
+                };
+                runtime.current(&generation)?;
+                intent.version = Some(value.policy_version.to_string());
+                intent.revision = Some(value.policy_revision);
+            }
             return Ok(NavigationResponse::Uri(intent.uri().map_err(|_| denied())?));
         }
         NavigationOperation::Resolve { intent } => {

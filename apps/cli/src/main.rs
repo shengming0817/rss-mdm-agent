@@ -733,7 +733,7 @@ fn observe(
         if watch {
             println!(
                 "{}",
-                serde_json::json!({"version":1,"ok":true,"result":value})
+                serde_json::json!({"version":1,"ok":result_exit(&value)==0,"exitCode":result_exit(&value),"result":value})
             );
             let _ = std::io::stdout().flush();
         }
@@ -766,7 +766,8 @@ fn main() -> std::process::ExitCode {
             return std::process::ExitCode::from(code);
         }
     };
-    let json = cli.json;
+    let watching = matches!(&cli.command, Command::Tasks(TaskCommand::Watch { .. }));
+    let json = cli.json || watching;
     let result = (|| {
         let client = match cli.config {
             Some(path) => ServiceClient::installed_at(&path),
@@ -778,15 +779,17 @@ fn main() -> std::process::ExitCode {
     match result {
         Ok(result) => {
             let exit = result_exit(&result);
-            println!(
-                "{}",
-                if json {
-                    serde_json::json!({"version":1,"ok":exit==0,"exitCode":exit,"result":result})
+            if !watching {
+                println!(
+                    "{}",
+                    if json {
+                        serde_json::json!({"version":1,"ok":exit==0,"exitCode":exit,"result":result})
                         .to_string()
-                } else {
-                    serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".into())
-                }
-            );
+                    } else {
+                        serde_json::to_string_pretty(&result).unwrap_or_else(|_| "{}".into())
+                    }
+                );
+            }
             std::process::ExitCode::from(exit)
         }
         Err(failure) => {
