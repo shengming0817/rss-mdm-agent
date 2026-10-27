@@ -1388,7 +1388,7 @@ def wait_service_ready(binary, config, timeout=15):
         if reply['kind'] == 'serviceStatus' and reply['value']['readiness']['phase'] == 'ready':
             return response
         if reply['kind'] != 'unavailable' or time.monotonic() >= deadline:
-            raise RuntimeError('authenticated service readiness failed')
+            raise RuntimeError('authenticated service readiness failed: '+json.dumps(reply))
         time.sleep(.2)
 
 
@@ -1763,8 +1763,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             # differs from the image payload while the actual native code signature remains valid.
             setup.write_text(setup.read_text() + "\nassert not Path(%r).exists()\nsubprocess.run(['/usr/bin/ditto',%r,%r],check=True)\nos.chmod(%r,0o700)\n" %
                              (str(existing_app),str(application),str(existing_app),str(existing_app)))
-        first = None if args.desktop else command('script', body='printf \'{"fixture":"system"}\\n\'\n')
-        if not args.desktop: command('result_failure')
+        first = None
         administrator_session = AdministratorSession(setup,initialize,restart,cleanup,lab,args.authorization_password_file,
             **(dict(security=security, refresh=refresh, diagnostics=diagnostics, refresh_preflight=refresh_preflight) if args.security else {}))
         administrator_session.start()
@@ -1791,6 +1790,11 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         helper = True
         # A native PID is distinct from the asynchronous registration owner's readiness.
         wait_service_ready(binary, config)
+        # Initialization restarts the owner. Offer the first task only after that
+        # barrier, so this harness does not interrupt its own first attempt.
+        if not args.desktop:
+            first = command('script', body='printf \'{"fixture":"system"}\\n\'\n')
+            command('result_failure')
         def query():
             return read_task_page(binary, config)
         def offers():
@@ -1906,6 +1910,25 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         security_begin(receipt['security'],'wrong_image_same_uid')
         receipt['scenarios']['wrong_image_same_uid'] = rejected_image_probe(args.cli, binary, config)
         security_result(receipt['security'], 'wrong_image_same_uid', receipt['scenarios']['wrong_image_same_uid'])
+        directory = cli_query(binary, config, 'query', 'list')['reply']
+        assert directory['kind']=='data' and directory['value']['kind']=='directory', 'CLI query directory unavailable'
+        memory = next((v for v in directory['value']['value']['items'] if v['kind']=='native' and v['scope']['kind']=='device' and v['available'] and 'hardware.memory' in v['domains']), None)
+        assert memory is not None, 'packaged device memory definition unavailable'
+        local_request = str(uuid.uuid4())
+        receipt['scenarios']['cli_query_request'] = local_request
+        submitted = cli_query(binary, config, 'query', 'submit', memory['reference']['id'], '--revision', memory['reference']['revision'], '--request-id', local_request)['reply']
+        assert submitted['kind']=='data' and submitted['value']['value']['request']==local_request, 'CLI changed original query request'
+        deadline=time.monotonic()+30
+        while True:
+            observed=cli_query(binary,config,'query','status',local_request)['reply']
+            phase=observed['value']['value']['phase']
+            if phase not in ('accepted','running'):break
+            assert time.monotonic()<deadline, 'CLI original query status deadline exceeded'
+            time.sleep(.2)
+        assert phase=='completed', 'CLI collection did not produce a validated original result'
+        retained=cli_query(binary,config,'data','read',local_request)['reply']
+        assert retained['kind']=='data' and retained['value']['kind']=='read' and retained['value']['value']['request']==local_request, 'CLI read did not retain the original query identity'
+        receipt['scenarios']['cli_native_query'] = dict(directory=directory,status=observed,result=retained)
         system = completed(first['attempt'])
         validate_script(acknowledged_result(system, first['attempt']), 'system')
         if native_probe: native_transport_security(native_probe, receipt['security'], query, command, administrator_session)
@@ -1940,7 +1963,16 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             replay_offer = native_policy_offer(native_probe, query, command, pkg, package_receipt)
             third = dict(task=replay_offer['task'], attempt=replay_offer['attempt'])
         else:
-            third = command('package', path=str(pkg), receipt=package_receipt)
+            publication=command('software-catalog',path=str(pkg),receipt=package_receipt)
+            assert 'policyId' in publication, 'controlled software publication failed'
+            policy_request=str(uuid.uuid4())
+            invoked=cli_query(binary,config,'invoke','id:'+publication['policyId'],'--request-id',policy_request)['reply']
+            assert invoked['kind']=='policyRequest' and invoked['value']['action']['choice']['request']==policy_request, 'CLI Policy identity changed'
+            third=command('status')
+            repeated=cli_query(binary,config,'invoke','id:'+publication['policyId'],'--request-id',policy_request)['reply']
+            assert repeated['value']['action']['runId']==invoked['value']['action']['runId'], 'same-ID CLI replay changed the original run'
+            assert command('status')['invocationCount']==third['invocationCount'], 'CLI replay submitted a second Policy invocation'
+            receipt['scenarios']['cli_policy']=dict(request=policy_request,invoked=invoked,replayed=repeated)
         package = completed(third['attempt'], 60)
         event = acknowledged_result(package, third['attempt'])
         assert event['kind'] == 'software_result' and len(event['steps']) == 1
@@ -1954,6 +1986,8 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         assert step['after']['state'] == 'present'
         assert step['after']['version'] == '1.0'
         receipt['scenarios']['package_exit_and_independent_effect'] = package
+        if not native_probe:
+            receipt['scenarios']['cli_policy']['originalResult']=cli_query(binary,config,'tasks','show','request:'+policy_request)['reply']
         final = query()
         for attempt in [first['attempt'], second['attempt'], third['attempt']]:
             records = [r for r in task_executions(final) if r['action']['initiator'].get('attempt') == attempt]

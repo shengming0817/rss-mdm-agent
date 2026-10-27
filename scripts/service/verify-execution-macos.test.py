@@ -629,8 +629,14 @@ class EvidenceTests(unittest.TestCase):
             proof=acceptance.journal_proof(path,quiescent=True)
             self.assertEqual([r['request'] for r in proof['records']],['original'])
             self.assertEqual({p:p.read_bytes() for p in before},before)
+            # Apple SQLite may retain empty sidecars after a read-only connection.
+            # Establish this fixture's fully checkpointed/no-sidecar state explicitly.
+            self.assertEqual(db.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone(),(0,0,0))
             db.close()
-            self.assertFalse(wal.exists())
+            if wal.exists():
+                self.assertEqual(wal.stat().st_size,0)
+                wal.unlink()
+            path.with_name(path.name+'-shm').unlink(missing_ok=True)
             before=path.read_bytes()
             proof=acceptance.journal_proof(path,quiescent=True)
             self.assertEqual([r['request'] for r in proof['records']],['original'])

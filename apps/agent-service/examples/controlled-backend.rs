@@ -55,6 +55,30 @@ fn task_history(server: &protocol::Server) -> serde_json::Value {
     serde_json::json!({"policy":policy,"activity":activity.id})
 }
 
+fn bind_script_user(
+    payload: &mut wire::TaskSpec,
+    context: &wire::SoftwareExecutionContext,
+) -> Result<(), &'static str> {
+    let user = context
+        .interactive_user
+        .as_ref()
+        .ok_or("interactive_user_unavailable")?;
+    payload.execution_target = wire::SoftwareExecutionTarget::User {
+        identity: user.identity.clone(),
+        session_id: user.session_id,
+    };
+    payload.run_as = wire::ExecutionIdentity::LoggedInUser;
+    Ok(())
+}
+
+// Keep the producer's bounded Offer and absolute execution deadline consistent.
+fn extend_script_lifetime(payload: &mut wire::TaskSpec) {
+    payload.expires_at += 3600;
+    payload.deadline = payload
+        .deadline
+        .max(payload.expires_at + i64::from(payload.timeout_seconds));
+}
+
 // The producer renews the same bounded grant, preserving the original definition
 // identity while the real UI journey runs. No consumer expiry bypass is involved.
 fn renew_task_history(server: &protocol::Server, now: i64) {
@@ -116,9 +140,13 @@ async fn main() {
                         data.script();
                         {
                             let wire::TaskPayload::Script(mut payload) = data.offer.as_ref().unwrap().payload.clone() else { unreachable!() };
-                            payload.expires_at += 3600;
                             if let Some(timeout) = command["timeout"].as_u64() { payload.timeout_seconds = timeout.clamp(1, 300) as u32; }
-                            if command["user"].as_bool() == Some(true) { payload.run_as = wire::ExecutionIdentity::LoggedInUser; }
+                            if command["user"].as_bool() == Some(true) {
+                                let context=data.claim_inputs.last().and_then(|v| serde_json::from_value::<wire::TaskClaimRequest>(v.clone()).ok());
+                                let bound=context.as_ref().ok_or("interactive_user_unavailable").and_then(|v|bind_script_user(&mut payload,v.execution_context()));
+                                if let Err(reason)=bound { println!("{}",serde_json::json!({"error":reason}));std::io::stdout().flush().unwrap();continue; }
+                            }
+                            extend_script_lifetime(&mut payload);
                             data.offer = Some(data.signed(wire::TaskPayload::Script(payload)));
                         }
                     }
@@ -184,7 +212,7 @@ async fn main() {
                     "stop" => break,
                     _ => panic!("unknown harness command"),
                 }
-                println!("{}", serde_json::json!({"task": data.task, "attempt":data.attempt,"received":data.received,"startRequests":data.start_ops.len(),"resultCalls":data.result_calls,"acknowledged":data.acknowledged,"results":data.results}));
+                println!("{}", serde_json::json!({"task": data.task, "attempt":data.attempt,"received":data.received,"startRequests":data.start_ops.len(),"invocationCount":data.invocations.len(),"resultCalls":data.result_calls,"acknowledged":data.acknowledged,"results":data.results}));
                 std::io::stdout().flush().unwrap();
             }
             _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => (),
@@ -195,6 +223,22 @@ async fn main() {
 #[cfg(test)]
 mod task_history_tests {
     use super::*;
+    #[tokio::test]
+    async fn long_native_journey_offer_retains_a_valid_execution_deadline() {
+        let server = protocol::Server::new().await;
+        let mut data = server.data.lock().unwrap();
+        data.script();
+        let wire::TaskPayload::Script(mut payload) = data.offer.as_ref().unwrap().payload.clone()
+        else {
+            panic!("script")
+        };
+        assert!(bind_script_user(&mut payload, &protocol::execution_context()).is_err());
+        extend_script_lifetime(&mut payload);
+        assert!(payload.deadline >= payload.expires_at + i64::from(payload.timeout_seconds));
+        assert!(wire::TaskPayload::Script(payload)
+            .signing_bytes(&data.task_key_id)
+            .is_ok());
+    }
     #[tokio::test]
     async fn signed_history_renews_time_without_splitting_the_original_policy() {
         let server = protocol::Server::new().await;
