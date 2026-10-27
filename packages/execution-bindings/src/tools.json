@@ -6804,7 +6804,9 @@
               "properties": {
                 "kind": { "const": "script", "type": "string" },
                 "parameterSchema": {
-                  "description": "Full resolved parameter constraints owned by Resource."
+                  "description": "Full resolved parameter constraints owned by Resource.",
+                  "type": ["object", "boolean"],
+                  "x-rss-extension": "Self-contained JSON Schema document supplied by the Resource or capability owner"
                 },
                 "parameterSources": {
                   "additionalProperties": {
@@ -8733,7 +8735,9 @@
               "properties": {
                 "kind": { "const": "script", "type": "string" },
                 "parameterSchema": {
-                  "description": "Full resolved parameter constraints owned by Resource."
+                  "description": "Full resolved parameter constraints owned by Resource.",
+                  "type": ["object", "boolean"],
+                  "x-rss-extension": "Self-contained JSON Schema document supplied by the Resource or capability owner"
                 },
                 "parameterSources": {
                   "additionalProperties": {
@@ -12737,7 +12741,9 @@
               "properties": {
                 "kind": { "const": "script", "type": "string" },
                 "parameterSchema": {
-                  "description": "Full resolved parameter constraints owned by Resource."
+                  "description": "Full resolved parameter constraints owned by Resource.",
+                  "type": ["object", "boolean"],
+                  "x-rss-extension": "Self-contained JSON Schema document supplied by the Resource or capability owner"
                 },
                 "parameterSources": {
                   "additionalProperties": {
@@ -17083,7 +17089,9 @@
               "properties": {
                 "kind": { "const": "script", "type": "string" },
                 "parameterSchema": {
-                  "description": "Full resolved parameter constraints owned by Resource."
+                  "description": "Full resolved parameter constraints owned by Resource.",
+                  "type": ["object", "boolean"],
+                  "x-rss-extension": "Self-contained JSON Schema document supplied by the Resource or capability owner"
                 },
                 "parameterSources": {
                   "additionalProperties": {

@@ -1,7 +1,5 @@
 use super::*;
-#[path = "../../../tests/agent-protocol/contract.rs"]
-#[allow(dead_code)]
-mod contract;
+use crate::test_support::contract;
 
 #[test]
 fn production_bindings_match_the_exact_wire_commit_http_surface() {

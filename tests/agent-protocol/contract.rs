@@ -177,17 +177,16 @@ impl Contract {
                 .unwrap()
                 .split('/')
                 .zip(uri.path().split('/'))
-                .filter_map(|(pattern, actual)| {
-                    pattern.starts_with('{').then(|| {
-                        let encoded = format!("value={}", actual.replace('+', "%2B"));
-                        Value::String(
-                            url::form_urlencoded::parse(encoded.as_bytes())
-                                .next()
-                                .unwrap()
-                                .1
-                                .into_owned(),
-                        )
-                    })
+                .filter(|(pattern, _)| pattern.starts_with('{'))
+                .map(|(_, actual)| {
+                    let encoded = format!("value={}", actual.replace('+', "%2B"));
+                    Value::String(
+                        url::form_urlencoded::parse(encoded.as_bytes())
+                            .next()
+                            .unwrap()
+                            .1
+                            .into_owned(),
+                    )
                 })
                 .collect();
             let schema = &self.document["schemas"]
