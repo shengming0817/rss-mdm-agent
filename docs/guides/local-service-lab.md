@@ -547,3 +547,5 @@ JSON 输出为版本化 envelope，业务结果在 result，诊断写 stderr。�
 无人值守只接受管理员在受保护部署文档 `cli.machineActions` 中显式授予的有限动作，默认空数组；授权绑定安装 CLI 镜像和服务 OS 主体。机器模式不借用 GUI 会话，不取得企业用户权限，不提交 Human Policy 或确认。
 
 外部导航唯一 scheme 为 `rssmdm`，语法由共享 Rust 契约持有，例如 `rssmdm://view/v1/node/settings.account`。页面与任务详情可复制链接或 `rssmdm open` 命令。企业目标链接携带 instance、tenant、device、registration、generation，接收端只核对当前注册，不据链接切换身份。`invoke` 链接只打开精确原表单，必须由用户再次点击提交；链接不承载凭据、确认票据或秘密字段。首次启动与已启动桌面均经当前真实 OS 登录会话交接，队列有界、过期丢弃，登录后重新解析授权；旧 scheme、未知字段和旧格式直接拒绝。
+
+本地工具 `invoke` 的 `parameters` 使用原操作 schema 的建议值，并省略 `request`：网络接受 `run` 的 `target`；设置接受 `change` 的原 `expected`/`patch`，以及 `refresh`/`openNative` 的 `section`；软件接受 `prepare` 的 `input.software`/`input.action`。原生接缝解码后只交付类型化显示数据，URI 中的请求 ID、保留显示配置或软件 submit 被拒绝。设置快照变化时不采用旧建议；软件只从原目录的保留清单精确解析，不隐式采集。空参数进入原页面的填写/选择状态。实际请求由用户在原页面点击后生成，原风险确认、显示预览恢复与软件二次提交流程继续生效。

@@ -14,8 +14,31 @@ import type {
   SettingsPatch,
   SettingsSection,
   SettingsTarget,
+  LocalPreparation,
 } from "../self-service/types";
 const props = defineProps<{ section: SettingsSection }>();
+type ExternalSettings = Extract<LocalPreparation, { kind: "settings" }>;
+const external = ref<ExternalSettings>();
+defineExpose({
+  async prepareEntry(input: ExternalSettings) {
+    // Retained reads only. A refresh, edit or native opening still needs a real click.
+    await controller?.load(input.section);
+    if (input.patch) {
+      const observed = controller?.state.observations.get(
+        input.section,
+      )?.snapshot;
+      if (
+        !observed ||
+        observed.revision !== input.expected ||
+        !observed.targets.some((t) => t.id === input.patch?.target)
+      )
+        return false;
+      selected.value = input.patch.target;
+    }
+    external.value = input;
+    return true;
+  },
+});
 const controller = inject(systemSettingsKey, undefined);
 const effective = computed<SettingsSection>(() =>
   props.section === "lock" ? "power" : props.section,
@@ -263,6 +286,19 @@ const effectLabels = {
 };
 const confirmation = ref(false),
   patch = ref<SettingsPatch>();
+function reviewExternal() {
+  const draft = external.value;
+  if (
+    !draft?.patch ||
+    !editable.value ||
+    snapshot.value?.revision !== draft.expected
+  )
+    return;
+  selected.value = draft.patch.target;
+  patch.value = draft.patch;
+  formRevision.value = draft.expected!;
+  confirmation.value = true;
+}
 const remaining = computed(() =>
   Math.max(
     0,
@@ -363,6 +399,33 @@ async function submit() {
 </script>
 <template>
   <div class="settings-live">
+    <section v-if="external" aria-label="外部设置建议">
+      <p>已准备外部设置建议，请核对当前目标与精确输入后再操作。</p>
+      <template v-if="external.patch">
+        <pre>{{ JSON.stringify(external.patch, null, 2) }}</pre>
+        <p v-if="snapshot?.revision !== external.expected" role="alert">
+          状态已变化，请重新取得目标建议。
+        </p>
+        <UiButton
+          :disabled="!editable || snapshot?.revision !== external.expected"
+          @click="reviewExternal"
+          >核对外部修改</UiButton
+        >
+      </template>
+      <UiButton
+        v-else-if="external.action === 'refresh'"
+        :disabled="busy || !controller?.available"
+        @click="refresh"
+        >确认刷新 {{ section }}</UiButton
+      >
+      <UiButton
+        v-else-if="external.action === 'openNative'"
+        :disabled="busy || !controller?.available"
+        @click="controller?.openNative(section)"
+        >确认打开 {{ section }} 系统设置</UiButton
+      >
+      <p v-else>在下方原表单选择并核对设置，点击后才会提交。</p>
+    </section>
     <div class="setting-actions">
       <UiButton :disabled="!controller?.available || busy" @click="refresh"
         >刷新本机状态</UiButton

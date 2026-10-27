@@ -4,6 +4,7 @@ import { inject, ref, computed, watch, onBeforeUnmount } from "vue";
 import { currentUser } from "../test-users";
 import type { NetworkCheckPort } from "../self-service/native";
 import type { NetworkCheckStatus, NetworkFinding } from "../self-service/types";
+import type { NetworkTarget } from "../self-service/types";
 const tasks = inject(taskCenterKey, undefined);
 const props = withDefaults(
   defineProps<{
@@ -20,6 +21,22 @@ const host = ref(""),
   busy = ref(false),
   error = ref("");
 const value = ref<NetworkCheckStatus>();
+const external = ref(false);
+const hostInput = ref<HTMLInputElement>();
+defineExpose({
+  prepareEntry(target: NetworkTarget | null) {
+    if (busy.value || (request.value && !finished.value)) return false;
+    request.value = "";
+    value.value = undefined;
+    if (target) {
+      host.value = target.host;
+      port.value = target.port;
+    }
+    external.value = true;
+    hostInput.value?.focus();
+    return true;
+  },
+});
 const allowed = computed(() =>
   request.value
     ? (tasks?.lookup(requestRef(request.value))?.allowedActions ?? [])
@@ -193,10 +210,12 @@ onBeforeUnmount(() => {
 </script>
 <template>
   <section aria-label="连接检查">
+    <p v-if="external">已填入外部目标建议，请核对域名与端口后点击开始检查。</p>
     <form @submit.prevent="call('run')">
       <label
         >域名或 IP<input
           v-model="host"
+          ref="hostInput"
           required
           maxlength="253"
           :disabled="!!request && !finished"

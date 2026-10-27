@@ -21,6 +21,10 @@ export interface PageNavigation {
   openResource?(id: string, revision: string): boolean | Promise<boolean>;
   /** Explicit stable external node owned by this page; never a DOM/title lookup. */
   openNode?(id: string): boolean | Promise<boolean>;
+  /** Prepare the original UI only; a user gesture is still required to submit. */
+  prepareEntry?(
+    input: import("../self-service/types").LocalPreparation,
+  ): boolean | Promise<boolean>;
   search?: {
     loading: boolean;
     complete: boolean;

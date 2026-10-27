@@ -233,6 +233,10 @@ export type NavigationResponse =
       value: EntryIntent;
     }
   | {
+      kind: "localTool";
+      value: LocalPreparation;
+    }
+  | {
       kind: "request";
       value: BackendRequest;
     };
@@ -552,6 +556,124 @@ export type ActivityDecision =
   | "cancellation_requested"
   | "assigned"
   | "unavailable";
+/**
+ * Display-only preparation. Request identities and confirmation never cross from a URI.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "LocalPreparation".
+ */
+export type LocalPreparation =
+  | {
+      target: NetworkTarget | null;
+      kind: "network";
+    }
+  | {
+      section: SettingsSection;
+      action: SettingsEntryAction;
+      patch: SettingsPatch | null;
+      expected: Digest | null;
+      kind: "settings";
+    }
+  | {
+      software: SoftwareRef | null;
+      action: LocalSoftwareAction | null;
+      kind: "software";
+    };
+/**
+ * Product setting page and fixed native destination.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SettingsSection".
+ */
+export type SettingsSection =
+  | "network"
+  | "display"
+  | "sound"
+  | "power"
+  | "lock"
+  | "storage"
+  | "security"
+  | "about";
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SettingsEntryAction".
+ */
+export type SettingsEntryAction =
+  | "snapshot"
+  | "refresh"
+  | "change"
+  | "openNative";
+/**
+ * Closed settings edits; omitted properties are preserved.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SettingsPatch".
+ */
+export type SettingsPatch =
+  | {
+      /**
+       * Snapshot-selected native service identity.
+       */
+      target: string;
+      /**
+       * HTTP endpoint, if changed.
+       */
+      http: ProxyEndpoint | null;
+      /**
+       * HTTPS endpoint, if changed.
+       */
+      https: ProxyEndpoint | null;
+      /**
+       * SOCKS endpoint, if changed.
+       */
+      socks: ProxyEndpoint | null;
+      /**
+       * Optional exact replacement of manual bypass entries.
+       */
+      bypass: string[] | null;
+      kind: "proxy";
+    }
+  | {
+      /**
+       * Snapshot-selected stable display identity.
+       */
+      target: string;
+      /**
+       * Native mode from the observed options; includes supported HiDPI modes.
+       */
+      mode: string | null;
+      /**
+       * Desktop origin, if changed.
+       */
+      origin: DisplayOrigin | null;
+      kind: "display";
+    }
+  | {
+      /**
+       * AC or DC target returned by the native reader.
+       */
+      target: string;
+      /**
+       * Minutes before display sleep; zero means never.
+       */
+      displayOffMinutes: number | null;
+      /**
+       * Minutes before system sleep; zero means never.
+       */
+      sleepMinutes: number | null;
+      /**
+       * Supported native energy mode, if changed.
+       */
+      mode: string | null;
+      kind: "power";
+    };
+/**
+ * Product-owned local actions; arbitrary commands are never accepted.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "LocalSoftwareAction".
+ */
+export type LocalSoftwareAction = "launch" | "update" | "uninstall" | "detect";
 /**
  * One preparation reference, before or after a signed Offer has arrived.
  *
@@ -1613,85 +1735,6 @@ export type SettingsOperation =
       kind: "keepDisplay";
     };
 /**
- * Product setting page and fixed native destination.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "SettingsSection".
- */
-export type SettingsSection =
-  | "network"
-  | "display"
-  | "sound"
-  | "power"
-  | "lock"
-  | "storage"
-  | "security"
-  | "about";
-/**
- * Closed settings edits; omitted properties are preserved.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "SettingsPatch".
- */
-export type SettingsPatch =
-  | {
-      /**
-       * Snapshot-selected native service identity.
-       */
-      target: string;
-      /**
-       * HTTP endpoint, if changed.
-       */
-      http: ProxyEndpoint | null;
-      /**
-       * HTTPS endpoint, if changed.
-       */
-      https: ProxyEndpoint | null;
-      /**
-       * SOCKS endpoint, if changed.
-       */
-      socks: ProxyEndpoint | null;
-      /**
-       * Optional exact replacement of manual bypass entries.
-       */
-      bypass: string[] | null;
-      kind: "proxy";
-    }
-  | {
-      /**
-       * Snapshot-selected stable display identity.
-       */
-      target: string;
-      /**
-       * Native mode from the observed options; includes supported HiDPI modes.
-       */
-      mode: string | null;
-      /**
-       * Desktop origin, if changed.
-       */
-      origin: DisplayOrigin | null;
-      kind: "display";
-    }
-  | {
-      /**
-       * AC or DC target returned by the native reader.
-       */
-      target: string;
-      /**
-       * Minutes before display sleep; zero means never.
-       */
-      displayOffMinutes: number | null;
-      /**
-       * Minutes before system sleep; zero means never.
-       */
-      sleepMinutes: number | null;
-      /**
-       * Supported native energy mode, if changed.
-       */
-      mode: string | null;
-      kind: "power";
-    };
-/**
  * Exact effect observation, never inferred from exit status.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -2252,13 +2295,6 @@ export type AccessFailure =
   | "recovery_account_protected"
   | "needs_user"
   | "native_failure";
-/**
- * Product-owned local actions; arbitrary commands are never accepted.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "LocalSoftwareAction".
- */
-export type LocalSoftwareAction = "launch" | "update" | "uninstall" | "detect";
 /**
  * Select an existing snapshot without starting collection.
  *
@@ -2958,6 +2994,74 @@ export interface ActivityCoverage {
    * Explicit incomplete/unsupported association or source reasons.
    */
   reasons: string[];
+}
+/**
+ * One destination selected by the user, independent of backend configuration.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "NetworkTarget".
+ */
+export interface NetworkTarget {
+  /**
+   * A domain or IP literal, never a URL or command.
+   */
+  host: string;
+  /**
+   * One TCP port, from 1 through 65535.
+   */
+  port: number;
+}
+/**
+ * One explicit manual proxy endpoint. Automatic configuration is preserved independently.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ProxyEndpoint".
+ */
+export interface ProxyEndpoint {
+  /**
+   * Whether this manual protocol proxy is enabled.
+   */
+  enabled: boolean;
+  /**
+   * Hostname or IP only, without scheme, credentials or path.
+   */
+  host: string;
+  /**
+   * Native TCP port; zero allowed only when disabled.
+   */
+  port: number;
+}
+/**
+ * Exact native desktop coordinates.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "DisplayOrigin".
+ */
+export interface DisplayOrigin {
+  /**
+   * Horizontal desktop coordinate.
+   */
+  x: number;
+  /**
+   * Vertical desktop coordinate.
+   */
+  y: number;
+}
+/**
+ * Stable installation identity within a currently authorized collection definition.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SoftwareRef".
+ */
+export interface SoftwareRef {
+  /**
+   * Service-owned collection definition.
+   */
+  query: QueryRef;
+  /**
+   * Native collector's stable installation identity.
+   */
+  installation: Id;
 }
 /**
  * User intent retained in the sole execution journal before a frozen execution exists.
@@ -4350,22 +4454,6 @@ export interface Command8 {
   output: NetworkCheckResponse;
 }
 /**
- * One destination selected by the user, independent of backend configuration.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "NetworkTarget".
- */
-export interface NetworkTarget {
-  /**
-   * A domain or IP literal, never a URL or command.
-   */
-  host: string;
-  /**
-   * One TCP port, from 1 through 65535.
-   */
-  port: number;
-}
-/**
  * Original execution status plus bounded fixed-worker diagnostic evidence.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -4432,42 +4520,6 @@ export interface NetworkProbe {
 export interface Command9 {
   input: SettingsOperation;
   output: SettingsResponse;
-}
-/**
- * One explicit manual proxy endpoint. Automatic configuration is preserved independently.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ProxyEndpoint".
- */
-export interface ProxyEndpoint {
-  /**
-   * Whether this manual protocol proxy is enabled.
-   */
-  enabled: boolean;
-  /**
-   * Hostname or IP only, without scheme, credentials or path.
-   */
-  host: string;
-  /**
-   * Native TCP port; zero allowed only when disabled.
-   */
-  port: number;
-}
-/**
- * Exact native desktop coordinates.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "DisplayOrigin".
- */
-export interface DisplayOrigin {
-  /**
-   * Horizontal desktop coordinate.
-   */
-  x: number;
-  /**
-   * Vertical desktop coordinate.
-   */
-  y: number;
 }
 /**
  * Read-only projection of the original settings operation.
@@ -4961,22 +5013,6 @@ export interface LocalSoftwareChoice {
    * Closed operation.
    */
   action: LocalSoftwareAction;
-}
-/**
- * Stable installation identity within a currently authorized collection definition.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "SoftwareRef".
- */
-export interface SoftwareRef {
-  /**
-   * Service-owned collection definition.
-   */
-  query: QueryRef;
-  /**
-   * Native collector's stable installation identity.
-   */
-  installation: Id;
 }
 /**
  * Safe immutable preview of a locally prepared operation; executable input stays in the journal.

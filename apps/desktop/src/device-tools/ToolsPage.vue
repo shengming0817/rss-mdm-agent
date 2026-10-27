@@ -29,6 +29,7 @@ const props = withDefaults(
 const systemSettings = inject(systemSettingsKey, undefined);
 const facts = computed(() => homeFacts(systemSettings));
 import type { PageNavigation } from "../workspace/page-navigation";
+import type { LocalPreparation } from "../self-service/types";
 const emit = defineEmits<{
   navigation: [state: PageNavigation];
   navigate: [page: string, section?: string];
@@ -37,6 +38,7 @@ const emit = defineEmits<{
 const query = ref("");
 const directory = inject(directoryKey, undefined);
 const enterprise = ref<InstanceType<typeof PolicySelfService>>();
+const connection = ref<InstanceType<typeof ConnectionCheck>>();
 const sections = [
   { id: "全部", title: "全部工具" },
   { id: "连接与网络", title: "连接与网络" },
@@ -209,6 +211,11 @@ const navigation = reactive({
     selected.value = "network";
     requested.value = request;
     await nextTick();
+  },
+  async prepareEntry(input: LocalPreparation) {
+    if (input.kind !== "network") return false;
+    await inspect("network");
+    return connection.value?.prepareEntry(input.target) ?? false;
   },
   async openNode(id: string) {
     if (id === "enterprise") {
@@ -450,6 +457,7 @@ emit("navigation", navigation);
         </div>
       </section>
       <ConnectionCheck
+        ref="connection"
         :initial-request="requested"
         v-show="current?.id === 'network'"
         :port="networkPort ?? null"

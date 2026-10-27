@@ -1,5 +1,5 @@
 //! Bounded native navigation queue. Business identity and execution stay with the service.
-use execution_contract::{EntryAction, EntryIntent, EntrySelector};
+use execution_contract::{EntryAction, EntryIntent, EntrySelector, LocalTool};
 use execution_ipc::{entry::EntryOperation, host::Reply};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -15,6 +15,126 @@ use tauri::Manager;
 pub struct Delivery {
     pub id: String,
     pub intent: EntryIntent,
+}
+/// Display-only preparation. Request identities and confirmation never cross from a URI.
+#[derive(Clone, Serialize, JsonSchema)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum LocalPreparation {
+    Network {
+        target: Option<execution_contract::NetworkTarget>,
+    },
+    Settings {
+        section: execution_contract::SettingsSection,
+        action: SettingsEntryAction,
+        patch: Option<execution_contract::SettingsPatch>,
+        expected: Option<execution_contract::Digest>,
+    },
+    Software {
+        software: Option<execution_contract::SoftwareRef>,
+        action: Option<execution_contract::LocalSoftwareAction>,
+    },
+}
+#[derive(Clone, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum SettingsEntryAction {
+    Snapshot,
+    Refresh,
+    Change,
+    OpenNative,
+}
+
+// Decode the original operation schemas; the placeholder is never returned or submitted.
+// ref: serde-rs/json src/value/mod.rs@v1.0.149 (from_value)
+fn local_preparation(intent: &EntryIntent) -> Result<LocalPreparation, ()> {
+    use execution_contract::{LocalSoftwareOperation, NetworkCheckOperation, SettingsOperation};
+    let EntrySelector::LocalTool { name } = intent.selector else {
+        return Err(());
+    };
+    if intent.action != EntryAction::Invoke {
+        return Err(());
+    }
+    if intent.parameters.is_empty() {
+        return Ok(match name {
+            LocalTool::Network => LocalPreparation::Network { target: None },
+            LocalTool::Settings => LocalPreparation::Settings {
+                section: execution_contract::SettingsSection::Power,
+                action: SettingsEntryAction::Snapshot,
+                patch: None,
+                expected: None,
+            },
+            LocalTool::Software => LocalPreparation::Software {
+                software: None,
+                action: None,
+            },
+        });
+    }
+    let mut value = serde_json::to_value(&intent.parameters).map_err(|_| ())?;
+    let fields = if matches!(name, LocalTool::Software) {
+        value
+            .get_mut("input")
+            .and_then(serde_json::Value::as_object_mut)
+            .ok_or(())?
+    } else {
+        value.as_object_mut().ok_or(())?
+    };
+    if fields.contains_key("request") {
+        return Err(());
+    }
+    fields.insert("request".into(), serde_json::json!("navigation-draft"));
+    Ok(match name {
+        LocalTool::Network => {
+            match serde_json::from_value::<NetworkCheckOperation>(value).map_err(|_| ())? {
+                NetworkCheckOperation::Run { target, .. }
+                    if !target.host.is_empty()
+                        && target.host.len() <= 253
+                        && !target.host.chars().any(|c| {
+                            c.is_control() || c.is_whitespace() || "/@?#%;\\".contains(c)
+                        })
+                        && target.port != 0 =>
+                {
+                    LocalPreparation::Network {
+                        target: Some(target),
+                    }
+                }
+                _ => return Err(()),
+            }
+        }
+        LocalTool::Settings => {
+            let (section, action, patch, expected) =
+                match serde_json::from_value::<SettingsOperation>(value).map_err(|_| ())? {
+                    SettingsOperation::Change {
+                        patch, expected, ..
+                    } if patch.valid() => (
+                        patch.section(),
+                        SettingsEntryAction::Change,
+                        Some(patch),
+                        Some(expected),
+                    ),
+                    SettingsOperation::Refresh { section, .. } => {
+                        (section, SettingsEntryAction::Refresh, None, None)
+                    }
+                    SettingsOperation::OpenNative { section, .. } => {
+                        (section, SettingsEntryAction::OpenNative, None, None)
+                    }
+                    _ => return Err(()),
+                };
+            LocalPreparation::Settings {
+                section,
+                action,
+                patch,
+                expected,
+            }
+        }
+        LocalTool::Software => {
+            match serde_json::from_value::<LocalSoftwareOperation>(value).map_err(|_| ())? {
+                LocalSoftwareOperation::Prepare(choice) => LocalPreparation::Software {
+                    software: Some(choice.software),
+                    action: Some(choice.action),
+                },
+                _ => return Err(()),
+            }
+        }
+    })
 }
 struct Pending {
     delivery: Delivery,
@@ -100,6 +220,7 @@ pub enum NavigationResponse {
     Task(execution_app::tasks::TaskRef),
     Activities(rss_mdm_agent_wire::activities::ManagementActivityPage),
     Event(execution_contract::EntryIntent),
+    LocalTool(LocalPreparation),
     Request(Box<execution_contract::BackendRequest>),
 }
 fn denied() -> super::super::self_service::ServiceError {
@@ -170,8 +291,12 @@ pub async fn dispatch<R: tauri::Runtime>(
             ) && intent.namespace.is_none() =>
         {
             intent.validate().map_err(|_| denied())?;
-            if !intent.parameters.is_empty() {
-                return Err(denied());
+            if matches!(intent.selector, EntrySelector::LocalTool { .. })
+                && intent.action == EntryAction::Invoke
+            {
+                return Ok(NavigationResponse::LocalTool(
+                    local_preparation(intent).map_err(|_| denied())?,
+                ));
             }
             return Ok(NavigationResponse::Event(intent.clone()));
         }
@@ -228,9 +353,11 @@ pub async fn dispatch<R: tauri::Runtime>(
                 | EntrySelector::Event { .. }
                 | EntrySelector::LocalTool { .. } => {
                     if matches!(intent.selector, EntrySelector::LocalTool { .. })
-                        && !intent.parameters.is_empty()
+                        && intent.action == EntryAction::Invoke
                     {
-                        return Err(denied());
+                        return Ok(NavigationResponse::LocalTool(
+                            local_preparation(&intent).map_err(|_| denied())?,
+                        ));
                     }
                     return Ok(NavigationResponse::Event(intent));
                 }
@@ -287,6 +414,67 @@ pub async fn dispatch<R: tauri::Runtime>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn prepared(tool: &str, parameters: serde_json::Value) -> Result<LocalPreparation, ()> {
+        let mut intent = EntryIntent::parse(&format!("rssmdm://invoke/v1/tool/{tool}")).unwrap();
+        intent.parameters = serde_json::from_value(parameters).unwrap();
+        intent.validate().map_err(|_| ())?;
+        local_preparation(&intent)
+    }
+    #[test]
+    fn local_suggestions_decode_original_schemas_without_request_or_confirmation_authority() {
+        for (tool, input, kind) in [
+            (
+                "network.check",
+                serde_json::json!({"kind":"run","target":{"host":"example.test","port":443}}),
+                "network",
+            ),
+            (
+                "system.settings",
+                serde_json::json!({"kind":"change","expected":"ab".repeat(32),"patch":{"kind":"power","target":"ac","displayOffMinutes":10}}),
+                "settings",
+            ),
+            (
+                "software.manage",
+                serde_json::json!({"kind":"prepare","input":{"software":{"query":{"id":"local-software","revision":"ab".repeat(32)},"installation":"notes"},"action":"uninstall"}}),
+                "software",
+            ),
+        ] {
+            let value = serde_json::to_value(prepared(tool, input).unwrap()).unwrap();
+            assert_eq!(value["kind"], kind);
+            assert!(!value.to_string().contains("navigation-draft"));
+        }
+        for tool in ["network.check", "system.settings", "software.manage"] {
+            assert!(prepared(tool, serde_json::json!({})).is_ok());
+        }
+        for (tool, input) in [
+            (
+                "network.check",
+                serde_json::json!({"kind":"run","request":"borrowed","target":{"host":"example.test","port":443}}),
+            ),
+            (
+                "network.check",
+                serde_json::json!({"kind":"run","target":{"host":"https://secret@example.test","port":443}}),
+            ),
+            (
+                "network.check",
+                serde_json::json!({"kind":"run","token":"secret","target":{"host":"example.test","port":443}}),
+            ),
+            (
+                "system.settings",
+                serde_json::json!({"kind":"keepDisplay","digest":"ab".repeat(32)}),
+            ),
+            (
+                "system.settings",
+                serde_json::json!({"kind":"change","expected":"ab".repeat(32),"patch":{"kind":"power","target":"ac","displayOffMinutes":2000}}),
+            ),
+            (
+                "software.manage",
+                serde_json::json!({"kind":"submit","input":{"digest":"ab".repeat(32)}}),
+            ),
+        ] {
+            assert!(prepared(tool, input).is_err());
+        }
+    }
     #[test]
     fn navigation_is_bounded_and_never_transforms_a_delivery_into_a_submission() {
         let state = Navigation::default();

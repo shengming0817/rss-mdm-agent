@@ -11,6 +11,73 @@ import {
 } from "../../../tests/self-service/support";
 import { createHostSettings } from "./settings/controller";
 import * as externalEntry from "./workspace/entry";
+import ConnectionCheck from "./device-tools/ConnectionCheck.vue";
+import { fixtureLocalPorts } from "../../../tests/assistant/local-ports";
+
+it("hands validated local invoke suggestions to the original page without submitting", async () => {
+  const intent: import("./self-service/types").EntryIntent = {
+    action: "invoke",
+    selector: { kind: "localTool", name: "network.check" },
+    namespace: null,
+    version: null,
+    revision: null,
+    step: null,
+    parameters: {
+      kind: "run",
+      target: { host: "unvalidated.example", port: 443 },
+    },
+  };
+  let pending = true;
+  const port = vi.fn<externalEntry.NavigationPort>(async (input) => {
+    if (input.kind === "next")
+      return {
+        kind: "pending",
+        value: pending ? { id: "external", intent } : null,
+      };
+    if (input.kind === "resolve")
+      return {
+        kind: "localTool",
+        value: {
+          kind: "network",
+          target: { host: "validated.example", port: 8443 },
+        },
+      };
+    if (input.kind === "ack") {
+      pending = false;
+      return { kind: "done" };
+    }
+    throw Error("unexpected operation");
+  });
+  vi.spyOn(externalEntry, "nativeNavigation").mockReturnValue(port);
+  vi.spyOn(externalEntry, "listenNavigation").mockResolvedValue(() => {});
+  const local = fixtureLocalPorts();
+  const network = vi.fn<NonNullable<typeof local.network>>(async () => ({
+    kind: "defaults",
+    value: null,
+  }));
+  local.network = network;
+  const w = mount(Workspace, {
+    props: {
+      ready: true,
+      busy: false,
+      page: "assistant",
+      host: createHostSettings(undefined),
+      localPorts: local,
+    },
+  });
+  try {
+    await flushPromises();
+    expect(pending).toBe(false);
+    expect(w.emitted("navigate")?.at(-1)).toEqual(["device-tools"]);
+    expect(w.getComponent(ConnectionCheck).get("input").element.value).toBe(
+      "validated.example",
+    );
+    expect(network.mock.calls.every(([v]) => v.kind === "defaults")).toBe(true);
+    expect(port.mock.calls.every(([v]) => v.kind !== "submit")).toBe(true);
+  } finally {
+    w.unmount();
+  }
+});
 
 it.each(["discard", "login"])(
   "retains a failed external target and resumes the queue after %s",

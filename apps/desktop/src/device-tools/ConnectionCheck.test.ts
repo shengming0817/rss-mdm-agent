@@ -42,6 +42,33 @@ it("defaults to the backend and submits the edited target only on an explicit cl
     w.unmount();
   }
 });
+it("adopts the exact external target in the original form and allocates its request only on submit", async () => {
+  const call = vi.fn(async (input) =>
+    input.kind === "defaults"
+      ? { kind: "defaults", value: null }
+      : { kind: "status", value: state(input.request) },
+  );
+  const w = mount(ConnectionCheck, {
+    props: { port: call as NetworkCheckPort },
+  });
+  try {
+    await flushPromises();
+    expect(w.vm.prepareEntry({ host: "external.example", port: 8443 })).toBe(
+      true,
+    );
+    await flushPromises();
+    expect(w.get("input").element.value).toBe("external.example");
+    expect(call.mock.calls.filter(([v]) => v.kind === "run")).toHaveLength(0);
+    await w.get("form").trigger("submit");
+    await flushPromises();
+    const run = call.mock.calls.find(([v]) => v.kind === "run")![0];
+    expect(run.target).toEqual({ host: "external.example", port: 8443 });
+    expect(run.request).toMatch(/^[0-9a-f-]{36}$/);
+    expect(w.vm.prepareEntry({ host: "other.example", port: 443 })).toBe(false);
+  } finally {
+    w.unmount();
+  }
+});
 it("lost submission receipts preserve the UUID and cancellation uses it", async () => {
   const call = vi.fn(async (input) => {
     if (input.kind === "defaults") return { kind: "defaults", value: null };

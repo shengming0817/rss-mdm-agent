@@ -221,7 +221,27 @@ async function drainEntries() {
           ["software.manage", "software.installed"],
         ]).get(delivery.intent.selector.name);
         if (!node) throw Error("unavailable");
-        await openEntryNode(node);
+        if (delivery.intent.action === "invoke") {
+          navigateMain(
+            node.startsWith("tools.")
+              ? "device-tools"
+              : node.startsWith("system.")
+                ? "system-settings"
+                : "software-management",
+          );
+          await nextTick();
+          const owner =
+            delivery.intent.selector.name === "network.check"
+              ? toolsPage.value
+              : delivery.intent.selector.name === "system.settings"
+                ? systemPage.value
+                : softwarePage.value;
+          if (
+            result.kind !== "localTool" ||
+            !(await owner?.prepareEntry?.(result.value))
+          )
+            throw Error("unavailable");
+        } else await openEntryNode(node);
       } else if (result.kind === "task")
         await openTask(result.value, delivery.intent.step ?? "");
       else if (
