@@ -21,6 +21,8 @@ type ExternalSettings = Extract<LocalPreparation, { kind: "settings" }>;
 const external = ref<ExternalSettings>();
 defineExpose({
   async prepareEntry(input: ExternalSettings) {
+    if (confirmation.value || submitting.value || dirty.value || busy.value)
+      return false;
     // Retained reads only. A refresh, edit or native opening still needs a real click.
     await controller?.load(input.section);
     if (input.patch) {
@@ -286,6 +288,7 @@ const effectLabels = {
 };
 const confirmation = ref(false),
   patch = ref<SettingsPatch>();
+const confirmationInput = ref<{ patch: SettingsPatch; expected: string }>();
 function reviewExternal() {
   const draft = external.value;
   if (
@@ -296,7 +299,7 @@ function reviewExternal() {
     return;
   selected.value = draft.patch.target;
   patch.value = draft.patch;
-  formRevision.value = draft.expected!;
+  confirmationInput.value = { patch: draft.patch, expected: draft.expected! };
   confirmation.value = true;
 }
 const remaining = computed(() =>
@@ -384,14 +387,19 @@ function prepare() {
           : null,
     };
   } else return;
+  confirmationInput.value = {
+    patch: patch.value,
+    expected: formRevision.value,
+  };
   confirmation.value = true;
 }
 async function submit() {
-  if (!patch.value || !editable.value) return;
+  if (!confirmationInput.value || !editable.value) return;
+  const original = confirmationInput.value;
   confirmation.value = false;
   submitting.value = true;
   try {
-    await controller?.save(patch.value, formRevision.value);
+    await controller?.save(original.patch, original.expected);
   } finally {
     submitting.value = false;
   }

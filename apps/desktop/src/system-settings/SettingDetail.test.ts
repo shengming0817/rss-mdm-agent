@@ -87,6 +87,24 @@ it("prepares an exact external patch, rejects changed snapshots, and retains the
       .find((v) => v.text() === "核对外部修改")!
       .trigger("click");
     expect(calls.every((v) => v.kind === "snapshot")).toBe(true);
+    const reads = calls.length;
+    expect(
+      await w.vm.prepareEntry({
+        ...input,
+        patch: {
+          kind: "power",
+          target: "dc",
+          displayOffMinutes: 15,
+          sleepMinutes: null,
+          mode: null,
+        },
+      }),
+    ).toBe(false);
+    expect(calls).toHaveLength(reads);
+    // A later observation must not rebind an already confirmed external patch.
+    response.snapshot!.revision = "b".repeat(64);
+    await controller.load("power");
+    await nextTick();
     await w
       .findAll("button")
       .find((v) => v.text() === "确认修改")!
