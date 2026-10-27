@@ -2383,7 +2383,7 @@ try {
     mark("explicit local collection: open original detail");
     await openNativeTask(collected);
     mark("explicit local collection: Home activity entry");
-    await navigate("首页");
+    await navigate("主页");
     const recent = browser.$(
       `//button[@data-task-ref='${JSON.stringify(collected.reference)}']`,
     );
