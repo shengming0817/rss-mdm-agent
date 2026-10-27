@@ -36,6 +36,7 @@ type Source = {
 export function createSoftware(
   data: DataAccessPort | null,
   port: SoftwarePort | null,
+  tasks?: import("../task-center/controller").Controller,
 ) {
   const state = reactive({
     sources: [] as Source[],
@@ -206,7 +207,7 @@ export function createSoftware(
       if (active && call === epoch) source.busy = false;
     }
   }
-  async function discover(append = false) {
+  async function discover(append = false, visible: () => boolean = () => true) {
     if (!active || !data || state.loading || (append && !state.directoryNext))
       return;
     state.loading = true;
@@ -263,9 +264,10 @@ export function createSoftware(
       state.directoryNext = page.next;
       state.directoryComplete = !page.next;
       state.error = "";
-      await Promise.all(
-        state.sources.filter((s) => !s.page).map((s) => read(s)),
-      );
+      for (const source of state.sources.filter((s) => !s.page)) {
+        if (!visible()) break;
+        await read(source);
+      }
     } catch {
       if (active && call === epoch)
         state.error = "软件来源读取未完成；可重试，当前结果仍保留。";
@@ -366,7 +368,9 @@ export function createSoftware(
   async function cancel(request: string) {
     if (!port) return;
     const call = epoch;
-    const value = await port.cancel({ request });
+    if (!tasks) throw Error("task port unavailable");
+    await tasks.cancel(request);
+    const value = await port.status({ request });
     if (active && call === epoch) accept(value);
   }
   async function refreshSource(source: Source) {
@@ -423,7 +427,9 @@ export function createSoftware(
     if (!data || !active) return;
     const call = epoch;
     try {
-      const value = await data.query_cancel({ request });
+      if (!tasks) throw Error("task port unavailable");
+      await tasks.cancel(request);
+      const value = await data.query_status({ request });
       if (active && call === epoch) state.queries.set(request, value);
     } catch {
       if (active && call === epoch)

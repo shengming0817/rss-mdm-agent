@@ -1,6 +1,6 @@
 use crate::{
     database::bounded_blob,
-    journal::{authorize, decode, encode},
+    journal::{authorize, decode, encode, integer},
     *,
 };
 use execution_contract::BackendRequest;
@@ -112,6 +112,29 @@ impl Store {
             return Err(Error::Conflict);
         }
         if expected.is_some_and(|p| {
+            p.recorded_at_unix_ms != next.recorded_at_unix_ms
+                || p.retry_of != next.retry_of
+                || p.retry_expected_revision != next.retry_expected_revision
+        }) {
+            return Err(Error::Conflict);
+        }
+        if next.retry_of.is_some() != next.retry_expected_revision.is_some()
+            || next.cancellation_control.is_some() != next.cancellation_expected_revision.is_some()
+        {
+            return Err(Error::InvalidInput);
+        }
+        if next.cancellation_control.is_some() && (next.state != S::Cancelled || expected.is_none())
+        {
+            return Err(Error::InvalidInput);
+        }
+        if expected.is_some_and(|p| {
+            p.cancellation_control.is_some()
+                && (p.cancellation_control != next.cancellation_control
+                    || p.cancellation_expected_revision != next.cancellation_expected_revision)
+        }) {
+            return Err(Error::Conflict);
+        }
+        if expected.is_some_and(|p| {
             !(p.action.same_choice(&next.action) || p.prepares_call(next))
                 || p.trigger != next.trigger
                 || (p.risk != next.risk && !p.prepares_call(next))
@@ -157,4 +180,107 @@ pub(crate) fn reserve_request(conn: &rusqlite::Connection, scope: &Scope) -> Res
         return Err(Error::Conflict);
     }
     Ok(())
+}
+
+impl Store {
+    pub(crate) fn sql_task_history_page(
+        &self,
+        authority: &execution_contract::Authority,
+        actor: &execution_contract::ActorId,
+        query: &TaskHistoryQuery,
+        host: &impl JournalHost,
+    ) -> Result<Vec<TaskHistoryPosition>, Error> {
+        if !(1..=128).contains(&query.limit) {
+            return Err(Error::InvalidInput);
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        crate::database::ensure_current(&tx, &self.authority, self.limits)?;
+        // ref: sqlite.org/rowvalue.html#scrolling_window_queries. Both coordinates are
+        // immutable. UNION reads original tables; no materialized history or migration.
+        let sql = format!(
+            "WITH history AS (
+                SELECT request_id, scope, json_extract(CAST({} AS TEXT),'$.recordedAtUnixMs') AS at, 0 AS lane
+                FROM backend_requests WHERE actor=?1 AND rowid<=?2
+                UNION ALL
+                SELECT e.request_id,e.scope,json_extract(CAST({} AS TEXT),'$.occurredAtUnixMs') AS at,1 AS lane
+                FROM receipts r JOIN executions e ON e.scope=r.scope
+                WHERE r.sequence<=?3
+                  AND r.sequence=(SELECT MIN(first.sequence) FROM receipts first WHERE first.scope=r.scope)
+                  AND NOT EXISTS(SELECT 1 FROM backend_requests b WHERE b.scope=e.scope AND b.actor=?1)
+            ) SELECT request_id,scope,at,lane FROM history
+              WHERE at<=?4 AND (?5 IS NULL OR (at,request_id)<(?5,?6))
+              ORDER BY at DESC,request_id DESC LIMIT ?7",
+            bounded_blob("body", self.limits.max_record_bytes),
+            bounded_blob("r.body", self.limits.max_record_bytes));
+        let mut statement = tx.prepare(&sql)?;
+        let rows = statement.query_map(
+            params![
+                actor.as_str(),
+                integer(query.preparations)?,
+                integer(query.receipts)?,
+                integer(query.as_of)?,
+                query
+                    .after
+                    .as_ref()
+                    .map(|p| integer(p.recorded_at_unix_ms))
+                    .transpose()?,
+                query.after.as_ref().map(|p| p.request.as_str()),
+                query.limit as i64,
+            ],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, u64>(2)?,
+                    r.get::<_, u8>(3)?,
+                ))
+            },
+        )?;
+        let mut result = Vec::new();
+        for row in rows {
+            let (request, key, at, lane) = row?;
+            let request =
+                execution_contract::RequestId::new(request).map_err(|_| Error::Corrupt)?;
+            if lane == 0 {
+                let scope = Scope {
+                    authority: authority.clone(),
+                    actor: actor.clone(),
+                    request_id: request.clone(),
+                };
+                self.check_scope(&scope)?;
+                if scope.interaction_subject().as_str() != key {
+                    return Err(Error::Corrupt);
+                }
+                authorize(host, Access::ReadResult, &scope, None)?;
+                let record = read(&tx, &key, self.limits)?.ok_or(Error::Corrupt)?;
+                if record.action.request() != &request || record.recorded_at_unix_ms != at {
+                    return Err(Error::Corrupt);
+                }
+            } else {
+                let (plan_bytes,receipt_bytes):(Vec<u8>,Vec<u8>)=tx.query_row(&format!(
+                    "SELECT {},{} FROM executions e JOIN receipts r ON r.scope=e.scope WHERE e.scope=?1 ORDER BY r.sequence LIMIT 1",
+                    bounded_blob("e.plan",self.limits.input.max_input_bytes),bounded_blob("r.body",self.limits.max_record_bytes)),[&key],|r|Ok((r.get(0)?,r.get(1)?)))?;
+                let spec = execution_contract::decode_execution(&plan_bytes, &self.limits.input)
+                    .map_err(|_| Error::Corrupt)?;
+                let input = execution_contract::FrozenExecution::freeze(spec, &self.limits.input)
+                    .map_err(|_| Error::Corrupt)?;
+                let scope = Scope::from_input(&input);
+                let receipt: Receipt = decode(&receipt_bytes, self.limits.max_record_bytes)?;
+                self.check_scope(&scope)?;
+                if scope.request_id != request
+                    || scope.interaction_subject().as_str() != key
+                    || receipt.scope != scope
+                    || receipt.occurred_at_unix_ms != at
+                {
+                    return Err(Error::Corrupt);
+                }
+                authorize(host, Access::RunnerFact, &scope, None)?;
+            }
+            result.push(TaskHistoryPosition {
+                request,
+                recorded_at_unix_ms: at,
+            });
+        }
+        Ok(result)
+    }
 }

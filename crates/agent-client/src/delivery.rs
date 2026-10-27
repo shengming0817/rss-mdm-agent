@@ -400,6 +400,13 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         if pending {
             return Err(Error::Conflict);
         }
+        let key = format!(
+            "delivery-terminal/{}/{}",
+            ack.association.task(),
+            ack.association.attempt()
+        );
+        self.store.put(&key, &true)?;
+        self.store.conn.execute("DELETE FROM state WHERE key IN (SELECT key FROM state WHERE key LIKE 'delivery-terminal/%' ORDER BY rowid DESC LIMIT -1 OFFSET ?1)", [self.store.cfg.limits.pending_tasks.saturating_mul(64).min(4096)])?;
         self.release(ack.association.task())
     }
     /// Freeze cancellation only; the backend must independently prove journal absence.
@@ -458,5 +465,34 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             return Err(Error::Conflict);
         }
         self.release(ack.0.task)
+    }
+}
+
+impl<S: IdentityProvider, C: Clock> Client<S, C> {
+    /// Durable bounded original result-ACK receipt, independent of execution success.
+    pub fn terminal_delivery(&self, task: Uuid, attempt: Uuid) -> Result<Option<bool>, Error> {
+        self.store
+            .get(&format!("delivery-terminal/{task}/{attempt}"))
+    }
+}
+
+impl<S: IdentityProvider, C: Clock> Client<S, C> {
+    /// Bounded durable delivery receipts for presentation; never execution/effect claims.
+    pub fn terminal_deliveries(&self) -> Result<std::collections::BTreeMap<String, bool>, Error> {
+        let mut query=self.store.conn.prepare("SELECT key,body FROM state WHERE key LIKE 'delivery-terminal/%' ORDER BY rowid DESC LIMIT ?1")?;
+        let mut items = std::collections::BTreeMap::new();
+        for row in query.query_map(
+            [self
+                .configuration()
+                .limits
+                .pending_tasks
+                .saturating_mul(64)
+                .min(4096)],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?)),
+        )? {
+            let (key, body) = row?;
+            items.insert(key, decode::<bool>(&body)?);
+        }
+        Ok(items)
     }
 }

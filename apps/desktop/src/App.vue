@@ -76,6 +76,29 @@ const host = createHostSettings(
 );
 const appearance = createAppearance();
 let polling: ReturnType<typeof setInterval> | undefined;
+let readingAccount = false;
+async function pollAccount() {
+  if (
+    props.environment ||
+    loading.value ||
+    registrationPending.value ||
+    !selectedUser.value ||
+    document.hidden ||
+    readingAccount
+  )
+    return;
+  readingAccount = true;
+  try {
+    // Registration retires the old account before publishing its replacement.
+    // Reject a passive response that crossed that registration transition.
+    const epoch = registrationEpoch;
+    await refreshAccount(
+      () => epoch === registrationEpoch && !registrationPending.value,
+    );
+  } finally {
+    readingAccount = false;
+  }
+}
 async function refresh() {
   try {
     users.value = (await loadTestUsers()).users;
@@ -185,19 +208,7 @@ onMounted(() => {
     if (!document.hidden) void appearance.refresh();
     if (!document.hidden && page.value === "settings" && host.available)
       void host.refresh();
-    // Registration retires the preceding account before publishing the activated
-    // identity. A passive refresh must not remount and cancel its owning view.
-    if (
-      !props.environment &&
-      !loading.value &&
-      !registrationPending.value &&
-      !!selectedUser.value
-    ) {
-      const epoch = registrationEpoch;
-      void refreshAccount(
-        () => epoch === registrationEpoch && !registrationPending.value,
-      );
-    }
+    void pollAccount();
   }, 2000);
 });
 onBeforeUnmount(() => {

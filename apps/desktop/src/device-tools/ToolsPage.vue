@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { reactive, computed, nextTick, ref, inject, onMounted } from "vue";
+import { reactive, computed, nextTick, ref, inject } from "vue";
 import {
   Activity,
   Terminal,
@@ -14,7 +14,7 @@ import ConnectionCheck from "../device-tools/ConnectionCheck.vue";
 import type { NetworkCheckPort } from "../self-service/native";
 import { directoryKey } from "../self-service/directory";
 import PolicySelfService from "../self-service/PolicySelfService.vue";
-import type { Controller } from "../self-service/controller";
+import type { Controller } from "../task-center/controller";
 import { systemSettingsKey } from "../system-settings/controller";
 import { labels, display } from "../system-settings/presentation";
 import { homeFacts } from "../system-settings/facts";
@@ -37,9 +37,6 @@ const emit = defineEmits<{
 const query = ref("");
 const directory = inject(directoryKey, undefined);
 const enterprise = ref<InstanceType<typeof PolicySelfService>>();
-onMounted(() => {
-  if (directory && !directory.state.asOf) void directory.load();
-});
 const sections = [
   { id: "全部", title: "全部工具" },
   { id: "连接与网络", title: "连接与网络" },
@@ -423,8 +420,9 @@ emit("navigation", navigation);
           <h3>组织发布的工具</h3>
           <PolicySelfService
             ref="enterprise"
+            :active="active && !current"
             :port="execution?.port ?? null"
-            :records="execution?.state.snapshot?.preparations ?? []"
+            :records="execution?.preparations.value ?? []"
             kind="script"
             :filter="query"
             @changed="execution?.refresh()"

@@ -10,6 +10,17 @@ pub(super) struct Collector {
     runner: PeriodicRunner,
     active: Option<Active>,
     completed: Option<ProcessEvidence>,
+    preparing: Option<Preparing>,
+}
+struct NativeMaterials {
+    image: SoftwareMaterial,
+    tools: BTreeMap<String, SoftwareMaterial>,
+}
+struct Preparing {
+    configuration: Configuration,
+    observed: i64,
+    cancelled: std::sync::atomic::AtomicBool,
+    result: std::sync::mpsc::Receiver<Result<NativeMaterials, Error>>,
 }
 pub(super) struct Active {
     pub configuration: Configuration,
@@ -23,18 +34,37 @@ impl Collector {
             runner: PeriodicRunner::new().map_err(crate::error::app_error)?,
             active: None,
             completed: None,
+            preparing: None,
         })
     }
     pub fn active(&self) -> bool {
-        self.runner.active()
+        self.preparing.is_some() || self.runner.active()
     }
     pub fn configuration(&self) -> Option<&Configuration> {
-        self.active.as_ref().map(|v| &v.configuration)
+        self.preparing
+            .as_ref()
+            .map(|v| &v.configuration)
+            .or_else(|| self.active.as_ref().map(|v| &v.configuration))
     }
     pub fn cancel(&self) -> Result<(), Error> {
+        if let Some(preparing) = &self.preparing {
+            preparing
+                .cancelled
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
         self.runner.cancel().map_err(crate::error::app_error)
     }
     pub fn shutdown(&mut self) -> Result<(), Error> {
+        self.cancel()?;
+        // Preparation performs bounded read-only validation and cannot launch a process.
+        // Wait for its single worker before releasing this owner.
+        if let Some(preparing) = &self.preparing {
+            let _ = preparing
+                .result
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .map_err(|_| Error::Unavailable)?;
+            self.preparing = None;
+        }
         self.runner.shutdown().map_err(crate::error::app_error)?;
         let until = std::time::Instant::now() + std::time::Duration::from_secs(1);
         while self.runner.active() {
@@ -80,8 +110,71 @@ impl Collector {
         if self.active() {
             return Err(Error::Capacity);
         }
+        if let w::TelemetryCollector::Native { plan: read, .. } = &configuration.payload().collector
+        {
+            let read = read.clone();
+            let config = core.config.clone();
+            let (sender, result) = std::sync::mpsc::sync_channel(1);
+            // Keep hashing and OS prerequisite reads off the SQLite/IPC owner. There is
+            // exactly one preparation or physical collection; no task or receipt is created.
+            std::thread::Builder::new()
+                .name("rss-collection-prepare".into())
+                .spawn(move || {
+                    let prepared = (|| {
+                        crate::collection_worker::preflight(&read)?;
+                        let image = plan::worker_image(&config)?;
+                        let tools = crate::collection_worker::tools(&config, &read)?;
+                        Ok(NativeMaterials { image, tools })
+                    })();
+                    let _ = sender.send(prepared);
+                })?;
+            self.preparing = Some(Preparing {
+                configuration,
+                observed,
+                result,
+                cancelled: std::sync::atomic::AtomicBool::new(false),
+            });
+            return Ok(());
+        }
+        self.start_ready(configuration, bytes, core, observed, None)
+    }
+    /// Finish preparation on the original owner, after its current revocation checks.
+    pub fn advance(&mut self, core: &mut crate::service::Core) -> Result<(), Error> {
+        let Some(preparing) = &self.preparing else {
+            return Ok(());
+        };
+        let result = match preparing.result.try_recv() {
+            Ok(result) => result,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return Ok(()),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => Err(Error::Unavailable),
+        };
+        let preparing = self.preparing.take().ok_or(Error::Storage)?;
+        if preparing
+            .cancelled
+            .load(std::sync::atomic::Ordering::Acquire)
+            || !core.host.identity_ready()
+            || core.stopping
+        {
+            return Err(Error::Denied);
+        }
+        self.start_ready(
+            preparing.configuration,
+            None,
+            core,
+            preparing.observed,
+            Some(result?),
+        )
+    }
+    fn start_ready(
+        &mut self,
+        configuration: Configuration,
+        bytes: Option<Vec<u8>>,
+        core: &mut crate::service::Core,
+        observed: i64,
+        native: Option<NativeMaterials>,
+    ) -> Result<(), Error> {
         let p = configuration.payload();
-        let now_ms = u64::try_from(observed / 1000).map_err(|_| Error::Clock)?;
+        let now_ms = crate::wall()?;
         let deadline =
             (p.expires_at as u64 * 1000).min(now_ms.saturating_add(u64::from(p.execution_millis)));
         if deadline <= now_ms {
@@ -234,9 +327,7 @@ impl Collector {
                 {
                     return Err(Error::Unsupported);
                 }
-                crate::collection_worker::preflight(read)?;
-                let image = plan::pin(&std::env::current_exe()?)?;
-                let tools = crate::collection_worker::tools(&core.config, read)?;
+                let NativeMaterials { image, tools } = native.ok_or(Error::Unavailable)?;
                 let input = crate::collection_worker::Input {
                     read: crate::collection_worker::ReadPlan::periodic(
                         p,

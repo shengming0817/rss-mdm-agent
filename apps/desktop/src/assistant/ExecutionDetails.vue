@@ -9,7 +9,7 @@ import type {
   SoftwareDiagnostic,
   DispatchCause,
   LimitReason,
-} from "@rss-mdm-agent/execution-bindings/task-details";
+} from "@rss-mdm-agent/execution-bindings/tasks";
 type TaskPhase = ExecutionTaskDetails["status"]["phase"];
 type ProcessFacts = NonNullable<ExecutionTaskDetails["status"]["process"]>;
 type ProcessEnd = ProcessFacts["end"];

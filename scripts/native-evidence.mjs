@@ -73,3 +73,42 @@ export function toolchainEvidence(root) {
     ).trim(),
   };
 }
+
+// Standalone DOM predicate serialized by WebDriver into the actual WKWebView.
+// A repeated completion phrase in an older turn is never evidence for this prompt.
+export function nativeReplyComplete(
+  promptKey,
+  expected,
+  root = globalThis.document,
+) {
+  const rows = [...root.querySelectorAll(".assistant-timeline article")];
+  const at = rows.findIndex(
+    (row) => row.getAttribute("data-message-key") === promptKey,
+  );
+  if (
+    at < 0 ||
+    rows[at].querySelector(".command-state") ||
+    root.querySelector('.composer [data-action="cancel"]')
+  )
+    return false;
+  const after = rows.slice(at + 1);
+  const next = after.findIndex((row) =>
+    row.getAttribute("data-message-key")?.startsWith("prompt:"),
+  );
+  return after
+    .slice(0, next < 0 ? undefined : next)
+    .some(
+      (row) =>
+        row.getAttribute("data-message-key")?.startsWith("message:") &&
+        row.textContent.includes(expected),
+    );
+}
+
+export function sampledNativeTask(page) {
+  return page.items.find(
+    (item) =>
+      item.reference.kind === "sampling" &&
+      item.facts.kind === "sampling" &&
+      item.facts.value.latest.collectedAt != null,
+  );
+}

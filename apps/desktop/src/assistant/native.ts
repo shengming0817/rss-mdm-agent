@@ -7,7 +7,9 @@ import {
 } from "@rss-mdm-agent/ai-client";
 import type { AssistantServices } from "./controller";
 /** IPC carries bounded ACP frames. Credentials, sockets and providers stay outside the WebView. */
-export function nativeAssistant(): AssistantServices | undefined {
+export function nativeAssistant(
+  taskCenter: import("../task-center/controller").Controller,
+): AssistantServices | undefined {
   if (!isTauri()) return undefined;
   const generation = userGeneration();
   return {
@@ -85,16 +87,39 @@ export function nativeAssistant(): AssistantServices | undefined {
         throw new ClientError("request_failed");
     },
     async cancelTask(requestId) {
-      await invoke("self_service_cancel", { generation, input: { requestId } });
-      if (generation !== userGeneration())
+      const detail = await taskCenter.detail(
+        { kind: "request", request: requestId },
+        true,
+      );
+      if (!detail.allowedActions.includes("cancel"))
         throw new ClientError("request_failed");
+      await taskCenter.control(detail, "cancel");
+      if (
+        taskCenter.state.pendingControl ||
+        taskCenter.state.uncertain ||
+        taskCenter.state.error
+      )
+        throw new ClientError("request_failed");
+    },
+    async preparationDetails(request) {
+      const result = await invoke<import("../self-service/types").PolicyStatus>(
+        "self_service_policy_status",
+        { generation, input: { requestId: request } },
+      );
+      if (generation !== userGeneration() || result.kind !== "preparation")
+        throw new ClientError("request_failed");
+      return result.value;
     },
     async taskDetails(requestId, signal) {
       if (signal.aborted) throw new ClientError("request_failed");
-      const result = await invoke<
-        import("@rss-mdm-agent/execution-bindings/task-details").BackendTaskView
-      >("execution_task_details", { requestId, generation });
-      if (generation !== userGeneration())
+      const result = await taskCenter.detail(
+        {
+          kind: "request",
+          request: requestId,
+        },
+        true,
+      );
+      if (generation !== userGeneration() || signal.aborted)
         throw new ClientError("request_failed");
       return result;
     },

@@ -582,19 +582,14 @@ impl Core {
                     .map_err(|_| Error::Unavailable)? = None;
                 result
             }
-            LocalSoftwareOperation::Status(query) | LocalSoftwareOperation::Cancel(query) => {
+            LocalSoftwareOperation::Status(query) => {
                 let frozen = self.local_software_input(command, context, &query.request, false)?;
-                if matches!(input, LocalSoftwareOperation::Cancel(_)) {
-                    self.app
-                        .cancel(&self.local_caller(), &query.request)
-                        .map_err(map_app_error)?;
-                }
                 self.app.reconcile(&query.request).map_err(map_app_error)?;
                 self.software_status(&frozen)
             }
         }
     }
-    fn software_status(&self, frozen: &FrozenExecution) -> Result<Reply, Error> {
+    pub(super) fn software_status(&self, frozen: &FrozenExecution) -> Result<Reply, Error> {
         let detected = if frozen.spec().launch.interpreter.profile.id.as_str()
             == crate::local_software::native::PROFILE
         {

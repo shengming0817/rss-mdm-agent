@@ -231,6 +231,12 @@ pub struct Data {
     pub range_ignored: bool,
     pub denied: bool,
     pub content_failure: bool,
+    pub content_gate: Option<Arc<tokio::sync::Semaphore>>,
+    pub content_header_pause: Option<Arc<tokio::sync::Notify>>,
+    pub content_header_waiting: bool,
+    pub management_page: Option<rss_mdm_agent_wire::activities::ManagementActivityPage>,
+    pub management_detail: Option<rss_mdm_agent_wire::activities::ManagementActivityDetail>,
+    pub management_calls: Vec<String>,
     pub started: bool,
     pub received: bool,
     pub content_calls: Vec<Option<String>>,
@@ -261,6 +267,11 @@ pub struct Data {
     pub claims: BTreeMap<String, SignedTask>,
 }
 impl Data {
+    fn observe_management_call(&mut self, uri: &Uri) {
+        if uri.path().contains("/management-activities") {
+            self.management_calls.push(uri.to_string());
+        }
+    }
     pub fn signed(&self, payload: TaskPayload) -> SignedTask {
         SignedTask {
             signature: base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
@@ -736,6 +747,12 @@ impl Server {
             range_ignored: false,
             denied: false,
             content_failure: false,
+            content_gate: None,
+            content_header_pause: None,
+            content_header_waiting: false,
+            management_page: None,
+            management_detail: None,
+            management_calls: Vec::new(),
             started: false,
             received: false,
             content_calls: vec![],
@@ -1068,6 +1085,7 @@ async fn handler(
     }
     let mut d = data.lock().unwrap();
     let path = uri.path();
+    d.observe_management_call(&uri);
     let peer_leaf = peer.ok().and_then(|v| v.0 .0);
     let authenticated = peer_leaf.is_some();
     if path.starts_with("/native/") {
@@ -1227,6 +1245,24 @@ fn runtime_response(d: &mut Data, path: &str, headers: HeaderMap, value: Value) 
     if path.contains("/runtime/telemetry/") {
         return telemetry::response(d, path, value);
     }
+    if path.contains("/management-activities") {
+        if path.ends_with("/management-activities")
+            || path.ends_with("/management-activities/changes")
+        {
+            return d
+                .management_page
+                .clone()
+                .map(axum::Json)
+                .map(IntoResponse::into_response)
+                .unwrap_or_else(|| StatusCode::SERVICE_UNAVAILABLE.into_response());
+        }
+        return d
+            .management_detail
+            .clone()
+            .map(axum::Json)
+            .map(IntoResponse::into_response)
+            .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response());
+    }
     let response = if path.ends_with("/runtime/task-trust") {
         task_trust_response(d, value)
     } else if path.ends_with("/enrollment") {
@@ -1260,6 +1296,9 @@ fn response_pause(d: &mut Data, path: &str) -> Option<Arc<tokio::sync::Notify>> 
     if path.ends_with("/claim") && d.claim_pause.is_some() {
         d.claim_waiting = true;
         d.claim_pause.clone()
+    } else if path.ends_with("/content") && d.content_header_pause.is_some() {
+        d.content_header_waiting = true;
+        d.content_header_pause.clone()
     } else if path.ends_with("/enroll/status") && d.status_pause.is_some() {
         d.status_waiting = true;
         d.status_pause.clone()
@@ -1847,9 +1886,29 @@ fn content_response(d: &mut Data, headers: HeaderMap) -> Response {
             ),
         );
     }
-    response
-        .body(Body::from(d.bytes[start..].to_vec()))
-        .unwrap()
+    if let Some(gate) = d.content_gate.clone() {
+        let bytes = d.bytes[start..].to_vec();
+        let stream = futures_util::stream::unfold(
+            (bytes, 0usize, gate),
+            |(bytes, offset, gate)| async move {
+                if offset == bytes.len() {
+                    return None;
+                }
+                if offset > 0 {
+                    let permit = gate.acquire().await.ok()?;
+                    permit.forget();
+                }
+                let end = (offset + 1024).min(bytes.len());
+                let chunk = bytes[offset..end].to_vec();
+                Some((Ok::<_, std::io::Error>(chunk), (bytes, end, gate)))
+            },
+        );
+        response.body(Body::from_stream(stream)).unwrap()
+    } else {
+        response
+            .body(Body::from(d.bytes[start..].to_vec()))
+            .unwrap()
+    }
 }
 
 pub fn collections() -> Vec<rss_mdm_agent_wire::runtime::CollectionDefinition> {

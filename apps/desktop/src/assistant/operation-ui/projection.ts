@@ -1,7 +1,7 @@
 import type {
-  BackendTaskView,
+  TaskDetail,
   BackendRequest,
-} from "@rss-mdm-agent/execution-bindings/task-details";
+} from "@rss-mdm-agent/execution-bindings/tasks";
 import type {
   OperationField,
   OperationPresentation,
@@ -116,24 +116,26 @@ function policyFields(action: Policy, editable: boolean) {
   }
   return { fields, bindings, specialized, blocked };
 }
-export function requestId(view: BackendTaskView) {
-  if (view.kind === "execution") return view.value.status.operationRequestId;
-  return view.value.action.kind === "offered"
-    ? view.value.action.offer.request
-    : view.value.action.choice.request;
+export function requestId(view: TaskDetail) {
+  if (view.reference.kind !== "request") throw Error("操作不是原请求");
+  return view.reference.request;
 }
-export function operationOrigin(view: BackendTaskView) {
+export function operationOrigin(view: TaskDetail) {
+  const facts = view.facts;
+  if (facts.kind !== "execution" && facts.kind !== "preparation")
+    throw Error("操作来源不适用");
   const origin =
-    view.kind === "execution"
-      ? view.value.action.initiator
-      : view.value.trigger;
+    facts.kind === "execution"
+      ? facts.value.action.initiator
+      : facts.value.trigger;
   return origin.kind === "backend" ? origin.trigger : origin;
 }
 export function operationProjection(
-  view: BackendTaskView,
+  view: TaskDetail,
   scope: OperationSnapshot["scope"],
   revision: number,
   now = Date.now(),
+  preparation?: BackendRequest,
 ) {
   const snapshot: OperationSnapshot = {
     scope,
@@ -160,8 +162,8 @@ export function operationProjection(
   };
   let ui = presentation("TaskExecution"),
     bindings: FieldBinding[] = [];
-  if (view.kind === "execution") {
-    const details = view.value,
+  if (view.facts.kind === "execution") {
+    const details = view.facts.value,
       status = details.status,
       display = taskPresentation(details);
     snapshot.presentation.title = details.action.operation.resource.id;
@@ -198,15 +200,9 @@ export function operationProjection(
       details.action.runAs.kind === "system"
         ? "系统执行身份；不表示用户授予提权"
         : "本机用户执行身份";
-    if (
-      !["verified", "cancelled", "failedBeforeDispatch"].includes(
-        status.phase,
-      ) &&
-      !status.cancelRequested
-    )
-      snapshot.allowed.push("cancel");
-  } else {
-    const record = view.value,
+    if (view.allowedActions.includes("cancel")) snapshot.allowed.push("cancel");
+  } else if (view.facts.kind === "preparation") {
+    const record = preparation ?? view.facts.value,
       action = record.action;
     const editable = record.state === "draft";
     ui = presentation("OperationApproval");
@@ -235,9 +231,12 @@ export function operationProjection(
         : record.state === "awaitingConfirmation"
           ? "等待本人确认"
           : "可信策略未要求确认";
-    if (!["failed", "cancelled", "observed"].includes(record.state))
-      snapshot.allowed.push("cancel");
-    if (!expired && ["draft", "awaitingConfirmation"].includes(record.state))
+    if (view.allowedActions.includes("cancel")) snapshot.allowed.push("cancel");
+    if (
+      !expired &&
+      ((record.state === "draft" && !!preparation) ||
+        (record.state === "awaitingConfirmation" && view.humanConfirmation))
+    )
       snapshot.allowed.push("submit");
     if (action.kind === "policy") {
       const form = policyFields(action, editable);

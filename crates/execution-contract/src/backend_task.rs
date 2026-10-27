@@ -197,6 +197,10 @@ pub enum PreparedAction {
     },
     /// Policy invocation and its eventual exact Offer, held in the same journal record.
     Policy {
+        /// Exact original published Policy ID/version, independent of its eventual task.
+        definition: crate::VersionedRef,
+        /// Original configuration revision.
+        policy_revision: u64,
         /// Immutable employee choice.
         choice: PolicyChoice,
         /// Prepared operation interface for display and input editing, never authorization.
@@ -206,7 +210,7 @@ pub enum PreparedAction {
         /// Backend Run returned for the original request, absent until acceptance is known.
         run_id: Option<Id>,
         /// Eventual signed Offer; no task/attempt is invented before this exists.
-        offer: Option<BackendTask>,
+        offer: Option<Box<BackendTask>>,
         /// Local continuation binding; enterprise identity is solely directory.subject.
         access: PolicyAccess,
         /// Bounded validity of the original preparation.
@@ -237,7 +241,7 @@ impl PreparedAction {
         match self {
             Self::SoftwareRead { .. } => None,
             Self::Offered { offer } => Some(offer),
-            Self::Policy { offer, .. } => offer.as_ref(),
+            Self::Policy { offer, .. } => offer.as_deref(),
         }
     }
     /// The same immutable choice; only acceptance and eventual Offer may be appended.
@@ -395,6 +399,16 @@ pub enum BackendRequestFailure {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BackendRequest {
+    /// Original failed request when this explicit retry was independently admitted.
+    pub retry_of: Option<RequestId>,
+    /// Complete original control revision, retained with an explicit retry's immutable association.
+    pub retry_expected_revision: Option<TaskRevision>,
+    /// Trusted original request acceptance time in UTC milliseconds.
+    pub recorded_at_unix_ms: u64,
+    /// Original explicit cancellation control, absent for owner-driven retirement.
+    pub cancellation_control: Option<Id>,
+    /// Original complete revision fingerprint for the retained cancellation receipt.
+    pub cancellation_expected_revision: Option<TaskRevision>,
     /// The sole choice, frozen on submission, and appended backend association.
     pub action: PreparedAction,
     /// OS-authenticated original trigger; never accepted from an IPC request body.
@@ -552,4 +566,14 @@ pub struct SoftwareObservation {
     pub expected_version: String,
     /// Native receipt or product observation; unknown remains explicit.
     pub state: crate::SoftwareState,
+}
+
+/// Exact owner revisions; transient byte counts never participate in control CAS.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TaskRevision {
+    /// Execution or preparation owner revision.
+    pub owner: u64,
+    /// Exact artifact consumer revisions, ordered by original key.
+    pub transfers: Vec<(String, u64)>,
 }

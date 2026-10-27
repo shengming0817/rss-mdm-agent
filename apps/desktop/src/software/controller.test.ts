@@ -112,13 +112,6 @@ function ports() {
       cancelRequested: false,
       preparation: null,
     })),
-    query_cancel: vi.fn(async (input) => ({
-      request: input.request,
-      query,
-      phase: "accepted" as const,
-      cancelRequested: true,
-      preparation: null,
-    })),
   };
   const port: SoftwarePort = {
     read: vi.fn(async () => structuredClone(page)),
@@ -126,10 +119,6 @@ function ports() {
     prepare: vi.fn(async (c) => original(c.request).prepared),
     submit: vi.fn(async (c) => original(c.request)),
     status: vi.fn(async (c) => original(c.request)),
-    cancel: vi.fn(async (c) => ({
-      ...original(c.request),
-      execution: { ...original(c.request).execution, cancelRequested: true },
-    })),
   };
   return { data, port };
 }

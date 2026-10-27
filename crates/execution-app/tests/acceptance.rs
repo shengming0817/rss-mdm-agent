@@ -304,7 +304,7 @@ fn newer_schema_retains_read_only_startup_diagnostic() {
     };
     assert_eq!(
         format!("{error:?}"),
-        "UnsupportedSchema { found: 999, supported: 3 }"
+        "UnsupportedSchema { found: 999, supported: 4 }"
     );
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
     assert_eq!(runner.dispatch_count(), 0);
@@ -2190,7 +2190,7 @@ fn unknown_schema_reports_exact_versions_and_keeps_bytes() {
     let host = TestHost::new();
     let runner = DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
     drop(open(&db, host.clone(), runner.clone(), false));
-    db.sql().execute_batch("PRAGMA user_version=4;").unwrap();
+    db.sql().execute_batch("PRAGMA user_version=3;").unwrap();
     let before = std::fs::read(&db.path).unwrap();
     let error = match reopen_app(&db.path, host, runner, AppConfig::test_defaults()) {
         Ok(_) => panic!("old format opened"),
@@ -2198,7 +2198,7 @@ fn unknown_schema_reports_exact_versions_and_keeps_bytes() {
     };
     assert_eq!(
         error.to_string(),
-        "execution database schema 4 is unsupported; required schema 3; preserve the existing database; initialization and automatic migration are disabled"
+        "execution database schema 3 is unsupported; required schema 4; preserve the existing database; initialization and automatic migration are disabled"
     );
     assert_eq!(std::fs::read(&db.path).unwrap(), before);
 }
@@ -2346,6 +2346,11 @@ fn backend_preparation_is_durable_bound_and_never_dispatches_without_start() {
         panic!("human fixture")
     };
     let original = BackendRequest {
+        retry_of: None,
+        retry_expected_revision: None,
+        recorded_at_unix_ms: 1,
+        cancellation_control: None,
+        cancellation_expected_revision: None,
         action: PreparedAction::Offered {
             offer: BackendTask {
                 request: request("backend-intent"),
@@ -2746,7 +2751,7 @@ fn exact_physical_claims_survive_owner_reopen_and_release_only_after_quiescence(
 }
 
 #[test]
-fn recent_tasks_follow_durable_activity_not_uuid_and_survive_reopen() {
+fn task_pages_keep_first_receipt_order_across_updates_and_reopen() {
     let db = Database::new();
     let host = TestHost::new();
     let runner = DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
@@ -2763,7 +2768,7 @@ fn recent_tasks_follow_durable_activity_not_uuid_and_survive_reopen() {
     let mut found = Vec::new();
     let mut cursor = None;
     for _ in 0..64 {
-        let page = app.service_recent_tasks(cursor, 1).unwrap();
+        let page = app.service_task_page(cursor, 1).unwrap();
         for item in page.items {
             if !found
                 .iter()
@@ -2785,27 +2790,27 @@ fn recent_tasks_follow_durable_activity_not_uuid_and_survive_reopen() {
         ]
     );
     assert!(app
-        .service_recent_tasks(None, 64)
+        .service_task_page(None, 64)
         .unwrap()
         .items
         .iter()
         .all(|item| item.recorded_at_unix_ms == 1000));
     let before = db.count("receipts");
-    app.service_recent_tasks(None, 64).unwrap();
+    app.service_task_page(None, 64).unwrap();
     assert_eq!(db.count("receipts"), before);
     drop(app);
     let mut app = open(&db, host.clone(), runner, true);
-    assert_eq!(app.service_recent_tasks(None, 64).unwrap().items.len(), 2);
+    assert_eq!(app.service_task_page(None, 64).unwrap().items.len(), 2);
     app.cancel(&caller(), &first.spec().request.request_id)
         .unwrap();
-    let recent = app.service_recent_tasks(None, 64).unwrap();
+    let recent = app.service_task_page(None, 64).unwrap();
     assert_eq!(recent.items.len(), 2);
     assert_eq!(
         recent.items[0].details.action.request_id,
-        first.spec().request.request_id
+        second.spec().request.request_id
     );
     host.state.lock().unwrap().runner_facts = false;
-    assert!(app.service_recent_tasks(None, 64).is_err());
+    assert!(app.service_task_page(None, 64).is_err());
 }
 
 #[test]
@@ -2862,4 +2867,84 @@ fn dispatch_gate_clock_and_authority_failures_remain_distinct_after_restart() {
             status
         );
     }
+}
+
+#[test]
+fn task_control_receipts_survive_restart_and_do_not_cancel_a_newer_owner_revision() {
+    let db = Database::new();
+    let host = TestHost::new();
+    let runner = DeterministicTestRunner::new(id("test-runner"), TestScenario::Wait, 16).unwrap();
+    let mut app = create_app(
+        &db.path,
+        host.clone(),
+        runner.clone(),
+        AppConfig::test_defaults(),
+    )
+    .unwrap();
+    let input = plan();
+    let caller = caller();
+    let request = &input.spec().request.request_id;
+    app.request_execution(&caller, &input).unwrap();
+    let details = app.task_details(&caller, request).unwrap();
+    let first = app
+        .cancel_control(
+            &caller,
+            request,
+            &id("explicit-cancel"),
+            &TaskRevision {
+                owner: details.revision,
+                transfers: vec![],
+            },
+        )
+        .unwrap();
+    let replay = app
+        .cancel_control(
+            &caller,
+            request,
+            &id("explicit-cancel"),
+            &TaskRevision {
+                owner: details.revision,
+                transfers: vec![],
+            },
+        )
+        .unwrap();
+    assert_eq!(first.operation_id, replay.operation_id);
+    assert_eq!(first.revision, replay.revision);
+    assert!(matches!(
+        app.cancel_control(
+            &caller,
+            request,
+            &id("explicit-cancel"),
+            &TaskRevision {
+                owner: details.revision,
+                transfers: vec![("changed".into(), 0)]
+            }
+        ),
+        Err(Error::Conflict)
+    ));
+    assert!(
+        app.task_details(&caller, request)
+            .unwrap()
+            .status
+            .cancel_requested
+    );
+    let stale = app
+        .cancel_control(
+            &caller,
+            request,
+            &id("stale-cancel"),
+            &TaskRevision {
+                owner: details.revision,
+                transfers: vec![],
+            },
+        )
+        .unwrap();
+    assert_eq!(stale.outcome, Outcome::Stale);
+    drop(app);
+    let app = reopen_app(&db.path, host, runner, AppConfig::test_defaults()).unwrap();
+    let receipt = app
+        .control_receipt(&caller, request, &id("explicit-cancel"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(receipt.operation_id, first.operation_id);
 }

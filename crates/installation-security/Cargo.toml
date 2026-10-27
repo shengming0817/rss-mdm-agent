@@ -13,6 +13,11 @@ thiserror.workspace = true
 sha2.workspace = true
 constant_time_eq = "=0.4.2"
 
+# ref: sha2 0.10.9 src/sha256.rs and src/sha256/aarch64.rs: the ARM
+# hardware backend is gated by asm and still checks CPU support before use.
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+sha2 = { workspace = true, features = ["asm"] }
+
 [target.'cfg(unix)'.dependencies]
 libc = "=0.2.189"
 

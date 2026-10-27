@@ -34,6 +34,89 @@ def absent_execution_registration():
         yield
 
 
+class NativeReadinessTests(unittest.TestCase):
+    def test_replacement_transport_is_retried_until_authenticated_ready(self):
+        unavailable = subprocess.CalledProcessError(1, ['service'], stderr='agent_service: Agent transport unavailable\nRSS_IPC_TRANSPORT_ERROR code=4099\n')
+        ready = {'reply': {'kind': 'serviceStatus', 'value': {'readiness': {'phase': 'ready'}}}}
+        with patch.object(acceptance, 'run', side_effect=[unavailable, subprocess.CompletedProcess([], 0, json.dumps(ready))]) as call, patch.object(acceptance.time, 'sleep'):
+            self.assertEqual(acceptance.wait_service_ready('service', 'config'), ready)
+            self.assertEqual(call.call_count, 2)
+
+    def test_authorization_and_not_ready_are_terminal(self):
+        rejected = subprocess.CalledProcessError(1, ['service'], stderr='agent_service: Agent identity unavailable\n')
+        with patch.object(acceptance, 'run', side_effect=rejected) as call:
+            with self.assertRaises(subprocess.CalledProcessError): acceptance.wait_service_ready('service', 'config')
+            self.assertEqual(call.call_count, 1)
+        response = {'reply': {'kind': 'serviceStatus', 'value': {'readiness': {'phase': 'notReady'}}}}
+        with patch.object(acceptance, 'run', return_value=subprocess.CompletedProcess([], 0, json.dumps(response))) as call:
+            with self.assertRaisesRegex(RuntimeError, 'authenticated service readiness failed'): acceptance.wait_service_ready('service', 'config')
+            self.assertEqual(call.call_count, 1)
+
+    def test_transport_deadline_preserves_original_failure(self):
+        error = subprocess.CalledProcessError(1, ['service'], stderr='agent_service: Agent transport unavailable\n')
+        with patch.object(acceptance, 'run', side_effect=error), patch.object(acceptance.time, 'monotonic', side_effect=[0, 16]):
+            with self.assertRaises(subprocess.CalledProcessError) as raised: acceptance.wait_service_ready('service', 'config')
+            self.assertIs(raised.exception, error)
+
+
+class NativeDiagnosticRegistrationTests(unittest.TestCase):
+    def test_diagnostic_restart_waits_for_the_original_process_to_exit(self):
+        import plistlib
+        from types import SimpleNamespace
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory); binary=root/'service'; config=root/'config'
+            registration=root/'job.plist'; log=root/'service-stderr.log';log.touch()
+            registration.write_bytes(plistlib.dumps({'Label':'com.rss-mdm.agent.execution','ProgramArguments':[str(binary),'--config',str(config)]}))
+            concrete=type(root); real_stat=concrete.stat
+            events=[]; alive=[True,True,False]
+            def kill(pid, signal):
+                self.assertEqual((pid,signal),(42,0))
+                events.append('probe-old')
+                if not alive.pop(0): raise ProcessLookupError()
+            def command(args, **kwargs):
+                if args[1]=='bootout':events.append('bootout')
+                if args[1]=='bootstrap':
+                    self.assertFalse(alive, 'replacement was bootstrapped before original exit')
+                    events.append('bootstrap')
+                return subprocess.CompletedProcess(args,113 if args[1]=='print' and 'bootout' in events and 'bootstrap' not in events else 0,'pid = 43\n' if 'bootstrap' in events else 'pid = 42\n')
+            def path(value):
+                return registration if str(value)=='/Library/LaunchDaemons/com.rss-mdm.agent.execution.plist' else concrete(value)
+            def metadata(value,*args,**kwargs):
+                return SimpleNamespace(st_uid=0,st_mode=0o100600) if value==log else real_stat(value,*args,**kwargs)
+            with patch('pathlib.Path',side_effect=path), patch.object(concrete,'stat',metadata), patch.object(acceptance.os,'kill',side_effect=kill), patch.object(acceptance.subprocess,'run',side_effect=command), patch.object(acceptance.time,'sleep'):
+                acceptance.instrument_service_diagnostics(root,binary,config)
+            self.assertEqual(events,['bootout','probe-old','probe-old','probe-old','bootstrap'])
+            self.assertEqual(plistlib.loads(registration.read_bytes())['StandardErrorPath'],str(log))
+
+
+class NativeTaskReadTests(unittest.TestCase):
+    def test_transient_transport_and_busy_owner_retry_only_the_same_read(self):
+        unavailable = subprocess.CalledProcessError(1, ['service'], stderr='agent_service: Agent transport unavailable\n')
+        busy = subprocess.CompletedProcess([], 0, json.dumps({'reply': {'kind': 'unavailable'}}))
+        page = {'items': [], 'complete': True}
+        ready = subprocess.CompletedProcess([], 0, json.dumps({'reply': {'kind': 'task', 'value': {'kind': 'page', 'value': page}}}))
+        with patch.object(acceptance, 'run', side_effect=[unavailable, busy, ready]) as call, patch.object(acceptance.time, 'sleep'):
+            self.assertEqual(acceptance.read_task_page('service', 'config'), page)
+            self.assertEqual(call.call_count, 3)
+            self.assertTrue(all(row.args == ('service', '--config', 'config', '--query') for row in call.call_args_list))
+
+    def test_authorization_wrong_reply_and_malformed_data_are_terminal(self):
+        denied = subprocess.CalledProcessError(1, ['service'], stderr='agent_service: Agent identity unavailable\n')
+        with patch.object(acceptance, 'run', side_effect=denied) as call:
+            with self.assertRaises(subprocess.CalledProcessError): acceptance.read_task_page('service', 'config')
+            self.assertEqual(call.call_count, 1)
+        for stdout in (json.dumps({'reply': {'kind': 'rejected'}}), '{'):
+            with self.subTest(stdout=stdout), patch.object(acceptance, 'run', return_value=subprocess.CompletedProcess([], 0, stdout)) as call:
+                with self.assertRaises((RuntimeError, ValueError)): acceptance.read_task_page('service', 'config')
+                self.assertEqual(call.call_count, 1)
+
+    def test_transport_deadline_preserves_original_failure(self):
+        error = subprocess.CalledProcessError(1, ['service'], stderr='agent_service: Agent transport unavailable\n')
+        with patch.object(acceptance, 'run', side_effect=error), patch.object(acceptance.time, 'monotonic', side_effect=[0, 0, 16]):
+            with self.assertRaises(subprocess.CalledProcessError) as raised: acceptance.read_task_page('service', 'config')
+            self.assertIs(raised.exception, error)
+
+
 class PssoPreflightTests(unittest.TestCase):
     def test_missing_candidate_blocks_without_claiming_system_acceptance(self):
         from types import SimpleNamespace
@@ -69,20 +152,18 @@ class PssoPreflightTests(unittest.TestCase):
 
 class BackendLifecycleTests(unittest.TestCase):
     def test_completed_offer_is_bound_to_the_original_policy_request_and_execution(self):
-        offer = dict(request='original', attempt='attempt', task='run', revision='a'*64)
-        action = dict(kind='policy', choice=dict(request='original'), runId='run', offer=offer)
-        completion = dict(request='original', record=dict(action=dict(initiator=dict(attempt='attempt'))))
-        current = dict(preparations=[dict(action=action)], available=[dict(offer, request='other')])
-        self.assertEqual(acceptance.completed_replay_offer(current, completion), offer)
-        for change in ('missing', 'duplicate', 'request', 'attempt', 'choice', 'run'):
-            value = copy.deepcopy(current)
-            if change == 'missing': value['preparations'] = []
-            elif change == 'duplicate': value['preparations'] *= 2
-            elif change in ('request', 'attempt'): value['preparations'][0]['action']['offer'][change] = 'other'
-            elif change == 'choice': value['preparations'][0]['action']['choice']['request'] = 'other'
-            else: value['preparations'][0]['action']['runId'] = 'other'
-            with self.subTest(change=change), self.assertRaises(AssertionError):
-                acceptance.completed_replay_offer(value, completion)
+        offer=dict(request='original',attempt='attempt',task='run',revision='a'*64)
+        record=dict(action=dict(initiator=dict(attempt='attempt',task='run')))
+        completion=dict(request='original',record=record)
+        current=dict(items=[dict(reference=dict(kind='request',request='original'),selection=offer,facts=dict(kind='execution',value=record))])
+        self.assertEqual(acceptance.completed_replay_offer(current,completion),offer)
+        for change in ('missing','duplicate','request','attempt','reference','run'):
+            value=copy.deepcopy(current)
+            if change=='missing':value['items']=[]
+            elif change=='duplicate':value['items']*=2
+            elif change=='reference':value['items'][0]['reference']['request']='other'
+            else:value['items'][0]['selection']['task' if change=='run' else change]='other'
+            with self.subTest(change=change),self.assertRaises(AssertionError):acceptance.completed_replay_offer(value,completion)
 
     def test_security_completion_keeps_the_original_policy_offer(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -90,14 +171,15 @@ class BackendLifecycleTests(unittest.TestCase):
             (root/'package-payload/fixed.txt').write_bytes(b'original effect')
             (root/'service-stderr.log').write_bytes(b'')
             offer = dict(request='original', task='run', attempt='attempt', revision='c'*64)
-            record = dict(action=dict(initiator=dict(attempt='attempt')), status=dict(attempts=1))
+            record = dict(action=dict(initiator=dict(attempt='attempt',task='run')), status=dict(attempts=1))
             action = dict(kind='policy', choice=dict(request='original'), runId='run', offer=offer)
-            current = dict(available=[], preparations=[dict(action=action)], value=dict(items=[record]))
+            current = dict(items=[dict(reference=dict(kind='request',request='original'),selection=offer,facts=dict(kind='execution',value=record))])
             replay = acceptance.completed_replay_offer(current, dict(request='original', record=record))
             expiring = dict(request='expired', task='expired-run', attempt='expired-attempt', revision='b'*64, expiresAt=0)
             probe = MagicMock(); probe.suspended.side_effect = nullcontext
             def reply(request):
                 kind = 'pending'
+                if request['method']=='offers':return dict(envelope=dict(reply=dict(kind='offers',available=[])))
                 if request['method'] == 'serviceStatus':
                     return dict(transport='reply', peerUid=0, peerPid=123,
                         envelope=dict(reply=dict(kind='serviceStatus', value=dict(readiness=dict(phase='ready')))))
@@ -107,7 +189,7 @@ class BackendLifecycleTests(unittest.TestCase):
             probe.request.side_effect = reply
             command = MagicMock(side_effect=lambda name, **kw: dict(startRequests=1) if name == 'status' else expiring)
             expired_record = dict(action=dict(initiator=dict(attempt='expired-attempt')), status=dict(attempts=1))
-            views = lambda: dict(current, value=dict(items=[record, expired_record]))
+            views = lambda: dict(current,items=current['items']+[dict(reference=dict(kind='request',request='expired'),selection=expiring,facts=dict(kind='execution',value=expired_record))])
             expiring['expiresAt'] = time.time()+20
             def elapse(seconds): expiring['expiresAt'] = 0
             administrator = MagicMock()
@@ -130,13 +212,13 @@ class BackendLifecycleTests(unittest.TestCase):
 
     def test_unregistered_local_owner_requires_ready_and_empty_original_tasks(self):
         status = {'reply': {'kind': 'serviceStatus', 'value': {'readiness': {'phase': 'ready'}}}}
-        tasks = {'reply': {'kind': 'tasks', 'value': {'items': [], 'next': None}}}
+        tasks = {'reply': {'kind': 'task', 'value': {'kind':'page','value':{'items': [], 'next': None}}}}
         self.assertEqual(acceptance.unregistered_local_evidence(status, tasks), dict(service=status, tasks=tasks))
         for phase in ('notReady', 'registrationRequired'):
             changed = copy.deepcopy(status)
             changed['reply']['value']['readiness']['phase'] = phase
             with self.assertRaises(AssertionError): acceptance.unregistered_local_evidence(changed, tasks)
-        for reply in ({'kind': 'rejected'}, {'kind': 'tasks', 'value': {'items': [{'request': 'unexpected'}]}}):
+        for reply in ({'kind': 'rejected'}, {'kind': 'task', 'value': {'kind':'page','value':{'items': [{'request': 'unexpected'}]}}}):
             with self.assertRaises(AssertionError): acceptance.unregistered_local_evidence(status, {'reply': reply})
 
     def test_fixed_operation_cancellation_reaps_child_and_restores_before_cleanup(self):
@@ -542,6 +624,27 @@ class EvidenceTests(unittest.TestCase):
             acceptance.validate_journal_completion(proof,completion)
             proof['records'][0]['process']=None
             with self.assertRaises(AssertionError): acceptance.validate_journal_completion(proof,completion)
+
+    def test_quiescent_journal_proof_preserves_wal_and_never_creates_sidecars_after_checkpoint(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'journal.sqlite'
+            db=sqlite3.connect(path)
+            db.executescript('PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE executions(request_id TEXT,snapshot BLOB); CREATE TABLE process_evidence(attempt_id TEXT,body BLOB);')
+            db.execute('INSERT INTO executions VALUES(?,?)',('original',json.dumps({'attempts':1})))
+            db.commit()
+            wal=path.with_name(path.name+'-wal')
+            before={p:p.read_bytes() for p in (path,wal)}
+            proof=acceptance.journal_proof(path,quiescent=True)
+            self.assertEqual([r['request'] for r in proof['records']],['original'])
+            self.assertEqual({p:p.read_bytes() for p in before},before)
+            db.close()
+            self.assertFalse(wal.exists())
+            before=path.read_bytes()
+            proof=acceptance.journal_proof(path,quiescent=True)
+            self.assertEqual([r['request'] for r in proof['records']],['original'])
+            self.assertEqual(path.read_bytes(),before)
+            self.assertFalse(wal.exists())
+            self.assertFalse(path.with_name(path.name+'-shm').exists())
 
     def test_software_probe_uses_exact_selector_and_original_policy_binding(self):
         context=dict(id='native',generation='login')

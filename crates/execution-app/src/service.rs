@@ -3,6 +3,7 @@ use crate::{
     *,
 };
 use execution_contract::{AttemptId, Authority, EventId, FrozenExecution, RequestId};
+use execution_contract::{Id, SoftwareProgress};
 use execution_lifecycle::{
     Command, CommandEvent, Directive, DispatchAction, DispatchCause, DispatchState, Execution,
     ExecutionMode, Observation, ObservationEvent, ObservationFacts, Phase, Preparation,
@@ -21,6 +22,22 @@ pub struct ExecutionApp<H, R, J: JournalPort> {
     pub(crate) config: AppConfig,
 }
 impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
+    /// Owner-only time-ordered discovery; each projected task still authorizes its reader.
+    pub fn service_task_history(
+        &self,
+        caller: &RequestContext,
+        query: &TaskHistoryQuery,
+    ) -> Result<Vec<TaskHistoryPosition>, Error> {
+        if self.host.service_binding()? != self.binding {
+            return Err(Error::Denied);
+        }
+        Ok(self.journal.task_history_page(
+            &self.host.binding_for_actor(&caller.actor)?.authority,
+            &caller.actor,
+            query,
+            &self.adapter(None),
+        )?)
+    }
     /// Bounded pre-execution history for the same authenticated actor.
     pub fn backend_requests(
         &self,
@@ -1016,6 +1033,57 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         }
         Err(Error::Conflict)
     }
+    /// Apply cancellation with the caller-observed version and stable original receipt identity.
+    pub fn cancel_control(
+        &mut self,
+        caller: &RequestContext,
+        request: &RequestId,
+        id: &Id,
+        expected_revision: &execution_contract::TaskRevision,
+    ) -> Result<Receipt, Error> {
+        let execution = self.load(Some(caller), request, ExecutionAccess::Execute)?;
+        let op = OperationRequestId::new(key(execution.input(), "task-control", id.as_str())?)
+            .map_err(|_| Error::InvalidInput)?;
+        let scope = Scope::from_input(execution.input());
+        let event = CommandEvent {
+            id: EventId::new(key(
+                execution.input(),
+                "task-control-event",
+                &format!(
+                    "{:x}",
+                    Sha256::digest(
+                        serde_json::to_vec(&(id, expected_revision))
+                            .map_err(|_| Error::InvalidInput)?
+                    )
+                ),
+            )?)
+            .map_err(|_| Error::InvalidInput)?,
+            expected_revision: expected_revision.owner,
+            command: Command::Cancel,
+        };
+        let host = Host::new(&self.host, &self.binding, &self.config, Some(caller));
+        Ok(self
+            .journal
+            .apply_command(&op, &scope, &event, &host)?
+            .receipt()
+            .clone())
+    }
+    /// Read one original cancellation receipt under current owner permission.
+    pub fn control_receipt(
+        &self,
+        caller: &RequestContext,
+        request: &RequestId,
+        id: &Id,
+    ) -> Result<Option<Receipt>, Error> {
+        let execution = self.load(Some(caller), request, ExecutionAccess::Execute)?;
+        let op = OperationRequestId::new(key(execution.input(), "task-control", id.as_str())?)
+            .map_err(|_| Error::InvalidInput)?;
+        Ok(self.journal.execution_receipt(
+            &Scope::from_input(execution.input()),
+            &op,
+            &self.adapter(Some(caller)),
+        )?)
+    }
     fn stop_and_record(&mut self, execution: &Execution) -> Result<(), Error> {
         let context = None;
         self.authorize_runner(execution.input(), Access::RunnerFact)?;
@@ -1074,6 +1142,22 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
     ) -> Result<crate::ExecutionTaskDetails, Error> {
         let context = Some(caller);
         self.details_for(context, request, ExecutionAccess::Result)
+    }
+    /// Authorized append-only software checkpoints for the original attempt.
+    pub fn task_software_progress(
+        &self,
+        caller: &RequestContext,
+        request: &RequestId,
+    ) -> Result<Option<SoftwareProgress>, Error> {
+        let execution = self.load(Some(caller), request, ExecutionAccess::Result)?;
+        let Some(attempt) = &execution.snapshot().attempt else {
+            return Ok(None);
+        };
+        Ok(self.journal.software_progress(
+            &Scope::from_input(execution.input()),
+            &attempt.id,
+            &self.adapter(Some(caller)),
+        )?)
     }
     /// Trusted Rust composition read of the original plan. Contains private launch inputs;
     /// UI/model transports must expose only task_details, never serialize this value.
@@ -1182,6 +1266,19 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         }
         self.journal.with_material_proof(checkpoint, action)
     }
+    /// Service-only exact remote/local association from the original frozen execution owner.
+    pub fn service_remote_request(
+        &self,
+        task: &Id,
+        attempt: &Id,
+    ) -> Result<Option<RequestId>, Error> {
+        if self.host.service_binding()? != self.binding {
+            return Err(Error::Denied);
+        }
+        Ok(self
+            .journal
+            .remote_request(task, attempt, &self.adapter(None))?)
+    }
     /// Exact active-resource lookup for the sole service owner, independent of historical task volume.
     pub fn service_resource_owner(&self, key: &str) -> Result<Option<RequestId>, Error> {
         if key.is_empty() || key.len() > 256 || self.host.service_binding()? != self.binding {
@@ -1220,8 +1317,15 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
             next: page.next,
         })
     }
-    /// Internal owner activity read; product ingress must additionally enforce current subject authorization.
-    pub fn service_recent_tasks(
+    /// Capture the original journal's discovery boundaries without creating a task.
+    pub fn service_task_watermarks(&self) -> Result<(u64, u64), Error> {
+        if self.host.service_binding()? != self.binding {
+            return Err(Error::Denied);
+        }
+        Ok(self.journal.task_watermarks()?)
+    }
+    /// Stable original-task discovery, ordered by first durable receipt rather than mutable activity.
+    pub fn service_task_page(
         &self,
         before: Option<u64>,
         limit: usize,
@@ -1231,8 +1335,7 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
         }
         let page = self
             .journal
-            .recent_requests(before, limit, &self.adapter(None))?;
-        let next = page.next.map(|value| value.to_string());
+            .task_requests(before, limit, &self.adapter(None))?;
         let items = page
             .items
             .into_iter()
@@ -1247,7 +1350,10 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
                 })
             })
             .collect::<Result<_, Error>>()?;
-        Ok(crate::RecentTaskPage { items, next })
+        Ok(crate::RecentTaskPage {
+            items,
+            next: page.next.map(|v| v.to_string()),
+        })
     }
     /// Authorized bounded task page for this exact actor and device.
     pub fn tasks(
@@ -1372,6 +1478,8 @@ impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
                 .collect(),
         };
         Ok(crate::ExecutionTaskDetails {
+            recorded_at_unix_ms: s.opened_at_unix_ms,
+            revision: s.revision,
             status,
             action: crate::FrozenExecutionSummary::from_input(execution.input()),
         })

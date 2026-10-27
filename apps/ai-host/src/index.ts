@@ -236,7 +236,7 @@ export async function startLocalApp(
           router: execution.router,
           authorize: async (request, budget) => {
             if (
-              request.proposal.name !== "execution_cancel" ||
+              request.proposal.name !== "execution_task_control" ||
               !permissionAccess ||
               !available(request.namespace) ||
               budget.signal.aborted
@@ -251,7 +251,7 @@ export async function startLocalApp(
                 sessionId: request.namespace.sessionId,
                 toolCall: {
                   toolCallId: request.operationId,
-                  title: "确认发送取消请求",
+                  title: "确认发送任务控制请求",
                   rawInput: request.proposal.arguments,
                 },
                 options: [

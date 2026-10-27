@@ -339,7 +339,11 @@ impl Data {
             descriptor: QueryDescriptor {
                 reference,
                 title: "Enterprise collection".into(),
-                kind: QueryKind::Native,
+                kind: if matches!(read.source, ReadSource::Periodic { .. }) {
+                    QueryKind::Telemetry
+                } else {
+                    QueryKind::Native
+                },
                 origin: QueryOrigin::Enterprise,
                 domains,
                 input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),

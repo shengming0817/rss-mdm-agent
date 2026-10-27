@@ -32,7 +32,10 @@ import {
   permissionPresentation,
   type AssistantController,
 } from "./controller";
-const emit = defineEmits<{ settings: []; tasks: [] }>();
+const emit = defineEmits<{
+  settings: [];
+  tasks: [reference: import("../self-service/types").TaskRef];
+}>();
 import QuestionCard from "./QuestionCard.vue";
 import ExecutionDetails from "./ExecutionDetails.vue";
 import OperationActivity from "./operation-ui/OperationActivity.vue";
@@ -449,7 +452,7 @@ async function copy(text: string) {
             :details-host="detailsHost"
             @open="openDetails"
             @close="openedOperation === row.key && closeDetails()"
-            @tasks="$emit('tasks')"
+            @tasks="$emit('tasks', $event)"
           />
           <QuestionCard
             v-else-if="row.interaction && !hasSurface(row)"

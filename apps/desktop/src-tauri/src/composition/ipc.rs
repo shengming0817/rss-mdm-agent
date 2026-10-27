@@ -38,9 +38,15 @@ macro_rules! commands {
     ($($name:ident($input:ty) -> $output:ty = $method:ident),+ $(,)?) => {
         $(#[tauri::command]
         pub async fn $name(state: State<'_, DesktopRuntime>, generation: String, input: serde_json::Value) -> Result<$output> {
-            let handle = state.execution_for(&generation).await?;
-            let output = handle.$method(decode::<$input>(input)?).await;
-            state.current(&generation)?;
+            let output: Result<$output> = async {
+                let handle = state.execution_for(&generation).await?;
+                let output = handle.$method(decode::<$input>(input)?).await;
+                state.current(&generation)?;
+                output
+            }.await;
+            if let Err(error) = &output {
+                eprintln!("RSS_NATIVE_COMMAND_FAILURE command={} code={}", stringify!($name), error.code);
+            }
             output
         })+
         pub fn wire_schema() -> schemars::Schema {
@@ -55,20 +61,23 @@ macro_rules! commands {
     }
 }
 commands! {
+    self_service_offers(()) -> Vec<execution_contract::BackendTask> = offers_ui,
+    task_list(execution_app::tasks::TaskQuery) -> execution_app::tasks::TaskPage = task_list,
+    task_detail(execution_app::tasks::TaskRef) -> execution_app::tasks::TaskDetail = task_detail,
+    task_control(execution_app::tasks::TaskControl) -> execution_app::tasks::TaskControlReceipt = task_control,
+    task_control_status(execution_app::tasks::TaskControlQuery) -> execution_app::tasks::TaskControlReceipt = task_control_status,
     network_check(execution_contract::NetworkCheckOperation) -> execution_app::NetworkCheckResponse = network_check,
     system_settings(execution_contract::SettingsOperation) -> execution_contract::SettingsResponse = system_settings,
     device_access(execution_ipc::device_access::Operation) -> execution_ipc::device_access::Response = device_access,
     software_prepare(execution_contract::LocalSoftwareChoice) -> execution_contract::LocalSoftwarePrepared = software_prepare,
     software_submit(execution_contract::LocalSoftwareSubmission) -> execution_app::LocalSoftwareStatus = software_submit,
     software_status(execution_contract::QueryRequest) -> execution_app::LocalSoftwareStatus = software_status,
-    software_cancel(execution_contract::QueryRequest) -> execution_app::LocalSoftwareStatus = software_cancel,
     software_history(execution_contract::SoftwareHistoryQuery) -> execution_app::LocalSoftwareHistory = software_history,
     software_read(execution_contract::SoftwareRead) -> execution_contract::SoftwarePage = software_read,
     query_directory(execution_contract::QueryDirectory) -> execution_contract::QueryPage = query_directory,
     data_read(execution_contract::DataRead) -> execution_contract::CollectedData = data_read,
     query_submit(execution_contract::QuerySubmit) -> execution_contract::QueryStatus = query_submit,
     query_status(execution_contract::QueryRequest) -> execution_contract::QueryStatus = query_status,
-    query_cancel(execution_contract::QueryRequest) -> execution_contract::QueryStatus = query_cancel,
     self_service_observe_software(execution_contract::SoftwareReadChoice) -> execution_contract::BackendRequest = observe_software,
     self_service_policy_resolve(rss_mdm_agent_wire::runtime::CapabilitySelector) -> rss_mdm_agent_wire::runtime::SelfServiceDirectoryItem = policy_resolve,
     self_service_policy_directory(PolicyDirectoryQuery) -> rss_mdm_agent_wire::runtime::SelfServiceDirectoryResponse = policy_directory,
@@ -76,27 +85,8 @@ commands! {
     ai_operation_submit(execution_contract::PolicySubmission) -> execution_contract::BackendRequest = submit_policy,
     self_service_policy_confirm(ActionRef) -> execution_contract::BackendRequest = confirm_policy,
     self_service_policy_status(ActionRef) -> PolicyStatus = policy_status,
-    self_service_recent_tasks(RecentTasksQuery) -> execution_app::RecentTaskPage = recent_tasks,
-    self_service_snapshot(SnapshotQuery) -> Snapshot = snapshot,
     self_service_execute(execution_contract::BackendSelection) -> execution_contract::TaskSubmission = execute_ui,
     self_service_confirm(execution_contract::BackendSelection) -> execution_contract::TaskSubmission = confirm_ui,
-    self_service_cancel(ActionRef) -> execution_app::BackendTaskView = cancel_ui,
-}
-#[tauri::command]
-pub async fn execution_task_details(
-    state: State<'_, DesktopRuntime>,
-    request_id: String,
-    generation: String,
-) -> Result<execution_app::BackendTaskView> {
-    let request = execution_contract::RequestId::new(request_id)
-        .map_err(|_| error("input", "无效任务编号"))?;
-    let handle = state.execution_for(&generation).await?;
-    let result = handle
-        .details(request)
-        .await
-        .map_err(|_| error("task_unavailable", "任务不存在或当前无权读取"));
-    state.current(&generation)?;
-    result
 }
 #[tauri::command]
 pub async fn ai_connect(state: State<'_, DesktopRuntime>, generation: String) -> Result<String> {
@@ -448,7 +438,6 @@ pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder
         data_read,
         query_submit,
         query_status,
-        query_cancel,
         self_service_observe_software,
         device_access,
         software_history,
@@ -458,19 +447,19 @@ pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder
         network_check,
         software_submit,
         software_status,
-        software_cancel,
         self_service_policy_directory,
         self_service_policy_resolve,
         self_service_policy_invoke,
         self_service_policy_confirm,
         ai_operation_submit,
         self_service_policy_status,
-        self_service_recent_tasks,
-        self_service_snapshot,
+        task_list,
+        task_detail,
+        task_control,
+        task_control_status,
+        self_service_offers,
         self_service_execute,
         self_service_confirm,
-        self_service_cancel,
-        execution_task_details,
         ai_connect,
         ai_receive,
         ai_send,
@@ -524,13 +513,38 @@ mod tests {
         ));
         platform_private_storage::directory(&root).unwrap();
         let root = root.canonicalize().unwrap();
-        let runtime = tauri::async_runtime::block_on(DesktopRuntime::start(
+        let mut runtime = tauri::async_runtime::block_on(DesktopRuntime::start(
             &root,
             &root.join("missing-artifact"),
             ai_session_contract::HostStatusSource::DevelopmentOverride,
         ))
         .unwrap();
         tauri::async_runtime::block_on(runtime.select_user("Alice")).unwrap();
+        runtime.execution = runtime.execution.clone().with_context_transport(|request| {
+            use execution_app::tasks::{TaskOperation, TaskPage, TaskResponse};
+            match request {
+                execution_ipc::host::Request::Task {
+                    input: TaskOperation::List(query),
+                    ..
+                } => {
+                    assert_eq!(query.limit, 32);
+                    Ok(execution_ipc::host::Reply::Task {
+                        value: TaskResponse::Page(TaskPage {
+                            items: vec![],
+                            next: None,
+                            scope: "original-owner".into(),
+                            as_of: 0,
+                            last_sync: None,
+                            remote_available: false,
+                            coverage: vec![],
+                            retained_from: None,
+                            complete: true,
+                        }),
+                    })
+                }
+                _ => Err(execution_app::Error::Unavailable),
+            }
+        });
         let app = register(mock_builder())
             .manage(runtime)
             .build(tauri::generate_context!())
@@ -541,18 +555,24 @@ mod tests {
         let other = tauri::WebviewWindowBuilder::new(&app, "other", Default::default())
             .build()
             .unwrap();
+        let page = call(
+            &main, "task_list", "tauri://localhost",
+            serde_json::json!({"input":execution_app::tasks::TaskQuery { limit:32, ..Default::default() }}),
+        ).unwrap().deserialize::<execution_app::tasks::TaskPage>().unwrap();
+        assert_eq!(page.scope, "original-owner");
+        assert!(page.items.is_empty());
         // Production has no private S1 catalog or journal fallback. The installed service
         // may be absent in this ACL test; either response must retain that boundary.
         match call(
             &main,
-            "self_service_snapshot",
+            "self_service_offers",
             "tauri://localhost",
-            serde_json::json!({"input":{"after":null}}),
+            serde_json::json!({"input":null}),
         ) {
             Ok(reply) => {
                 let snapshot = reply.deserialize::<serde_json::Value>().unwrap();
                 assert!(snapshot.get("catalog").is_none());
-                assert!(snapshot["available"].is_array());
+                assert!(snapshot.is_array());
             }
             Err(error) => assert_ne!(error["code"], "input"),
         }
@@ -596,18 +616,20 @@ mod tests {
             "network_check",
             "software_submit",
             "software_status",
-            "software_cancel",
+            "task_list",
+            "task_detail",
+            "task_control_status",
+            "task_control",
             "self_service_policy_directory",
             "self_service_policy_resolve",
             "self_service_policy_invoke",
             "self_service_policy_confirm",
             "ai_operation_submit",
             "self_service_policy_status",
-            "self_service_snapshot",
+            "self_service_offers",
             "self_service_execute",
             "self_service_confirm",
-            "self_service_cancel",
-            "execution_task_details",
+            "task_control",
             "save_connection",
             "ai_connect",
             "ai_send",
@@ -639,7 +661,7 @@ mod tests {
         for command in [
             "self_service_execute",
             "self_service_confirm",
-            "self_service_cancel",
+            "task_control",
         ] {
             let error = call(
                 &main,

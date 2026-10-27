@@ -124,25 +124,6 @@ pub struct OperationStatus {
     /// Authorized evidence references only.
     pub evidence: Vec<Id>,
 }
-/// Business cancellation acceptance, independent of RPC cancellation.
-#[derive(Debug, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub enum CancelDisposition {
-    /// Request recorded; does not assert process termination.
-    Requested,
-    /// Operation was already terminal.
-    AlreadyTerminal,
-}
-/// Service cancellation result, retaining the current authoritative status.
-#[derive(Debug, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct CancelResult {
-    /// Cancellation acceptance classification.
-    pub disposition: CancelDisposition,
-    /// Current operation fact projection.
-    pub operation: OperationStatus,
-}
-
 /// Protocol error payload; optional catalog diagnostic is produced only from static C03 errors.
 #[derive(Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]

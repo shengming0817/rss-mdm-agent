@@ -122,7 +122,7 @@ for (const provider of engines) {
           ),
           id = view.namespace.sessionId;
 
-        f.model.tool("execution_tasks", {}, "catalog-call");
+        f.model.tool("execution_offers", {}, "catalog-call");
         f.model.text("catalog read");
         await peer.client.submit(
           command(id, "catalog", "GOLDEN_INSTALL 安装办公套件"),
@@ -141,7 +141,7 @@ for (const provider of engines) {
         assert.equal(terminal.commands.catalog.outcome, "completed");
         const proposals = Object.values(terminal.tools);
         assert.equal(proposals.length, 1);
-        assert.equal(proposals[0].name, "execution_tasks");
+        assert.equal(proposals[0].name, "execution_offers");
         assert.equal(
           proposals[0].result.disposition,
           "returned",
@@ -197,9 +197,41 @@ for (const provider of engines) {
           ["deny-cancel", "reject_once"],
           ["allow-cancel", "allow_once"],
         ]) {
+          let detail;
+          if (choice !== "execute") {
+            const readId = `read-${commandId}`;
+            f.model.tool(
+              "execution_task_detail",
+              {
+                reference: {
+                  kind: "request",
+                  request: result.result[0].request,
+                },
+              },
+              readId,
+            );
+            f.model.text("original task read");
+            await peer.client.submit(command(id, readId));
+            await until(
+              () =>
+                peer.client.getSession(id)?.commands[readId]?.state ===
+                "terminal",
+              readId,
+            );
+            const read = Object.values(peer.client.getSession(id).tools).find(
+              (tool) =>
+                tool.toolCallId === readId ||
+                (tool.commandId === readId &&
+                  tool.name === "execution_task_detail"),
+            );
+            assert.equal(read.result.disposition, "returned");
+            detail = JSON.parse(read.result.text).result;
+          }
           permissionKind = choice;
           const method =
-            choice === "execute" ? "execution_execute" : "execution_cancel";
+            choice === "execute"
+              ? "execution_execute"
+              : "execution_task_control";
           f.model.tool(
             method,
             choice === "execute"
@@ -209,7 +241,16 @@ for (const provider of engines) {
                   attempt,
                   revision,
                 }))(result.result[0])
-              : { operationRequestId: result.result[0].request },
+              : {
+                  reference: {
+                    kind: "request",
+                    request: result.result[0].request,
+                  },
+                  id: `control-${commandId}`,
+                  scope: detail.scope,
+                  expectedRevision: detail.revision,
+                  action: "cancel",
+                },
             commandId,
           );
           f.model.text("execution decision recorded");
@@ -238,7 +279,7 @@ for (const provider of engines) {
               ["allow_once", "reject_once"],
             );
             assert.equal(
-              request.toolCall.rawInput.operationRequestId,
+              request.toolCall.rawInput.reference.request,
               result.result[0].request,
             );
           }

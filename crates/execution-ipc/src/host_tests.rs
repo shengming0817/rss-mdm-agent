@@ -25,7 +25,7 @@ fn only_current_envelope_calls_the_handler() {
     };
     for version in [0, 99] {
         let bytes = serde_json::to_vec(
-            &serde_json::json!({"version":version,"request":{"method":"status","request":"r"}}),
+            &serde_json::json!({"version":version,"request":{"method":"offers"}}),
         )
         .unwrap();
         assert_eq!(
@@ -36,7 +36,7 @@ fn only_current_envelope_calls_the_handler() {
         assert_eq!(spy.0, 0);
     }
     let current = serde_json::to_vec(
-        &serde_json::json!({"version":IPC_VERSION,"request":{"method":"status","request":"r"}}),
+        &serde_json::json!({"version":IPC_VERSION,"request":{"method":"offers"}}),
     )
     .unwrap();
     let reply: serde_json::Value =

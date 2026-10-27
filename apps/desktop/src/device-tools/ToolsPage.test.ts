@@ -158,12 +158,11 @@ it("keeps the original manual tool request across hidden-page navigation after a
       asOf: 1,
     }),
     policy_invoke: invoke,
-    snapshot: async () => snapshot(),
+    offers: async () => [],
     execute: vi.fn(),
     confirm: vi.fn(),
-    cancel: vi.fn(),
   };
-  const execution = createController(port);
+  const execution = createTaskCenter(taskPort(), port);
   const w = mount(ToolsPage, { props: { execution, active: true } });
   try {
     await flushPromises();
@@ -191,6 +190,6 @@ it("keeps the original manual tool request across hidden-page navigation after a
 import {
   policyRecord,
   policyFixturePort,
-  snapshot,
+  taskPort,
 } from "../../../../tests/self-service/support";
-import { createController } from "../self-service/controller";
+import { createTaskCenter } from "../task-center/controller";

@@ -122,6 +122,9 @@ impl RegistrationOwner {
     }
 }
 impl Handler for RegistrationOwner {
+    fn session_fence(&self) -> Option<std::sync::Arc<dyn execution_ipc::host::SessionFence>> {
+        self.owner.session_fence()
+    }
     fn peer_policy(&self) -> Option<PeerPolicy> {
         let mut policy = self
             .owner
@@ -200,5 +203,40 @@ impl Handler for RegistrationOwner {
     }
     fn stop(&mut self) -> Result<(), execution_app::Error> {
         self.owner.stop()
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod fence_tests {
+    use super::*;
+    #[tokio::test]
+    async fn production_registration_facade_retains_the_original_owners_fast_revocation_lane() {
+        let case = crate::service::product_gate_tests::Case::new(None).await;
+        let policy = PeerPolicy {
+            images: vec![case.service.core.config.interpreters[0].image.clone()],
+            subjects: vec!["0".into()],
+            interactive: false,
+        };
+        let network = case._server.config();
+        let handle = case.service.spawn(policy.clone(), None).unwrap();
+        let mut facade = RegistrationOwner {
+            network,
+            installer_format: None,
+            policy: policy.clone(),
+            registration_policy: policy,
+            owner: handle,
+        };
+        let lane = facade.session_fence();
+        let exposed = lane.is_some();
+        drop(lane);
+        // Stop the real owner even when the forwarding assertion fails.
+        tokio::task::spawn_blocking(move || facade.stop())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            exposed,
+            "the production facade must expose its owner's native fence"
+        );
     }
 }

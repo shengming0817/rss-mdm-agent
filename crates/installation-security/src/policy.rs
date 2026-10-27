@@ -153,6 +153,31 @@ pub(crate) fn path_type_allowed(leaf: bool, read: bool, kind: std::fs::FileType)
 #[cfg(test)]
 mod path_type_tests {
     use super::*;
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn protected_native_image_matches_an_independent_digest_and_rejects_wrong_pins() {
+        let path = PathBuf::from("/usr/bin/true");
+        let output = std::process::Command::new("/usr/bin/shasum")
+            .args(["-a", "256"])
+            .arg(&path)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let digest = String::from_utf8(output.stdout).unwrap();
+        let pin = Artifact {
+            path: path.clone(),
+            sha256: digest.split_whitespace().next().unwrap().into(),
+            cdhash: None,
+        };
+        pin.verify(&path).unwrap();
+        pin.verify(&path).unwrap();
+        let wrong = Artifact {
+            sha256: "0".repeat(64),
+            ..pin.clone()
+        };
+        assert!(wrong.verify(&path).is_err());
+        assert!(pin.verify(Path::new("/bin/sh")).is_err());
+    }
     #[test]
     fn protected_directory_is_not_a_readable_file_and_ancestors_must_be_directories() {
         let root = std::env::temp_dir().join(format!("installation-leaf-{}", std::process::id()));

@@ -6,6 +6,11 @@ import ts from "typescript";
 import { parse, compileTemplate } from "vue/compiler-sfc";
 
 const selfServiceCommands = [
+  "task_list",
+  "task_detail",
+  "task_control",
+  "task_control_status",
+  "self_service_offers",
   "device_access",
   "software_read",
   "software_prepare",
@@ -13,18 +18,13 @@ const selfServiceCommands = [
   "network_check",
   "software_submit",
   "software_status",
-  "software_cancel",
   "software_history",
   "query_directory",
   "data_read",
   "query_submit",
   "query_status",
-  "query_cancel",
-  "self_service_recent_tasks",
-  "self_service_snapshot",
   "self_service_execute",
   "self_service_confirm",
-  "self_service_cancel",
   "self_service_policy_directory",
   "self_service_policy_resolve",
   "self_service_policy_invoke",
@@ -37,12 +37,10 @@ const assistantCommands = [
   "self_service_policy_status",
   "self_service_policy_confirm",
   "self_service_confirm",
-  "self_service_cancel",
   "ai_connect",
   "ai_receive",
   "ai_send",
   "ai_disconnect",
-  "execution_task_details",
 ];
 const settingsCommands = [
   "personal_vault",
@@ -216,7 +214,7 @@ export function checkSource(file, source) {
       "@rss-mdm-agent/ai-client",
       "@rss-mdm-agent/ai-ui-bridge",
       "@rss-mdm-agent/execution-bindings",
-      "@rss-mdm-agent/execution-bindings/task-details",
+      "@rss-mdm-agent/execution-bindings/tasks",
     );
   const descriptor = extname(file) === ".vue" ? parse(source).descriptor : null;
   if (descriptor) {
@@ -396,7 +394,17 @@ export function checkSource(file, source) {
       "apps/desktop/src/workspace/identity.ts": ["JSON"],
       "apps/desktop/src/home/Home.vue": ["JSON"],
       "apps/desktop/src/self-service/directory.ts": ["Set", "Symbol", "JSON"],
-      "apps/desktop/src/self-service/activity.ts": ["Set", "Symbol"],
+      "apps/desktop/src/task-center/controller.ts": [
+        "Set",
+        "Symbol",
+        "JSON",
+        "Promise",
+        "crypto",
+        "document",
+        "setTimeout",
+        "clearTimeout",
+      ],
+      "apps/desktop/src/task-center/TaskCenter.vue": ["JSON", "document"],
       "apps/desktop/src/software/SoftwareManagement.vue": [
         "JSON",
         "document",
@@ -454,12 +462,14 @@ export function checkSource(file, source) {
       "apps/desktop/src/system-settings/SystemSettings.vue": ["JSON"],
       "apps/desktop/src/system-settings/presentation.ts": ["JSON"],
       "apps/desktop/src/device-tools/ConnectionCheck.vue": [
+        "document",
         "crypto",
         "setInterval",
         "clearInterval",
       ],
       "apps/desktop/src/settings/DiagnosticsPanel.vue": ["JSON", "Boolean"],
       "apps/desktop/src/software/controller.ts": [
+        "document",
         "setInterval",
         "clearInterval",
         "JSON",
@@ -469,6 +479,7 @@ export function checkSource(file, source) {
         "Symbol",
       ],
       "apps/desktop/src/software/LocalSoftwareAction.vue": [
+        "document",
         "setInterval",
         "clearInterval",
       ],
@@ -559,8 +570,10 @@ export function checkSource(file, source) {
             name === "../software/LocalSoftwareAction.vue") ||
           (file === "apps/desktop/src/assistant/ExecutionDetails.vue" &&
             name === "../self-service/RequestOrigin.vue") ||
-          (file === "apps/desktop/src/self-service/TaskDetail.vue" &&
-            name === "../assistant/ExecutionDetails.vue")
+          (file === "apps/desktop/src/self-service/PolicySelfService.vue" &&
+            name === "../task-center/controller") ||
+          (file === "apps/desktop/src/assistant/native.ts" &&
+            name === "../self-service/native")
         ) &&
         !resolve(dirname(resolve(root, file)), name)
           .replaceAll("\\", "/")
@@ -801,6 +814,15 @@ export function checkSource(file, source) {
         "_ctx.labels",
         "_ctx.effectLabels",
       ];
+      dataRoots["apps/desktop/src/task-center/TaskCenter.vue"] = [
+        "taskPhase",
+        "labels",
+        "reasons",
+        "_ctx.taskPhase",
+        "_ctx.labels",
+        "_ctx.reasons",
+      ];
+      dataRoots["apps/desktop/src/task-center/controller.ts"] = ["state.items"];
       const dataIndex =
         ts.isElementAccessExpression(node) &&
         (dataRoots[file] ?? []).includes(node.expression.getText(ast)) &&
@@ -848,6 +870,13 @@ export function checkSource(file, source) {
           "write",
           "writeln",
         ].includes(member) &&
+        !(
+          member === "parent" &&
+          file === "apps/desktop/src/task-center/TaskCenter.vue" &&
+          ts.isPropertyAccessExpression(node) &&
+          ["node", "_ctx.node"].includes(node.expression.getText(ast)) &&
+          !(ts.isCallExpression(node.parent) && node.parent.expression === node)
+        ) &&
         !(
           member === "open" &&
           uiFoundations.has(file) &&
@@ -1118,7 +1147,7 @@ export function checkTree(treeRoot = root, executable) {
     ipc
       .match(/commands!\s*\{([\s\S]*?)\}/)?.[1]
       .match(
-        /\b(?:self_service_\w+|software_\w+|query_\w+|data_read|device_access|system_settings|network_check)(?=\s*\()/g,
+        /\b(?:self_service_\w+|task_\w+|software_\w+|query_\w+|data_read|device_access|system_settings|network_check)(?=\s*\()/g,
       ) ?? [];
   if (
     JSON.stringify(commands.toSorted()) !==

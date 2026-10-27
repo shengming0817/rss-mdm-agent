@@ -1,7 +1,9 @@
 //! Agent V1 communication and bounded content delivery; execution remains journal-owned.
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
+mod activities;
 mod collected;
+pub use activities::ManagementCache;
 pub mod protocol;
 pub mod telemetry;
 pub use collected::CollectedStore;
@@ -42,6 +44,8 @@ pub use enrollment::{EnrollmentPhase, EnrollmentStatus, GrantImport};
 pub use tls::validate_public_ca;
 mod config;
 mod content;
+mod transfer;
+pub use transfer::{TransferObservation, Transfers};
 mod native_content;
 /// Bounded verification of the standard native source documents, without execution authority.
 pub mod native_source;
@@ -55,6 +59,9 @@ pub use store::{inspect_binding, validate_existing, validate_identity, validate_
 /// Closed errors, without secrets, response bodies or backend paths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
+    /// Original content preparation is durably paused; no dispatch has occurred.
+    #[error("content preparation paused")]
+    TransferPaused,
     /// Original employee invocation is not yet present.
     #[error("Agent operation not found")]
     NotFound,

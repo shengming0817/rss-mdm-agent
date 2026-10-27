@@ -1,7 +1,7 @@
 import type {
   ExecutionTaskDetails,
   SoftwareDiagnostic,
-} from "@rss-mdm-agent/execution-bindings/task-details";
+} from "@rss-mdm-agent/execution-bindings/tasks";
 type TaskPhase = ExecutionTaskDetails["status"]["phase"];
 export function executionPhase(value: TaskPhase): string {
   switch (value) {

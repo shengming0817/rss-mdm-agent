@@ -1489,3 +1489,415 @@ async fn noncomplete_collection_cannot_be_projected_as_complete_or_reexecuted_af
         assert_eq!(case.runner.inner.dispatch_count(), 1);
     }
 }
+
+#[tokio::test]
+async fn streamed_pause_is_durable_and_resume_uses_the_original_validated_range() {
+    let _budget = crate::scenario_budget::enter();
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    server.data.lock().unwrap().script();
+    let gate = std::sync::Arc::new(tokio::sync::Semaphore::new(0));
+    server.data.lock().unwrap().content_gate = Some(gate.clone());
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    let transfers = client.transfers();
+    let task = offer.task_id();
+    let attempt = offer.attempt_id();
+    {
+        let prepare = client.prepare(&offer);
+        tokio::pin!(prepare);
+        let mut paused = false;
+        let result=tokio::time::timeout(std::time::Duration::from_secs(10),async {
+        loop {
+            tokio::select! {
+                result=&mut prepare=>break result,
+                _=tokio::time::sleep(std::time::Duration::from_millis(10))=>{
+                    let current=transfers.observations(task,attempt).unwrap();
+                    if !paused&&current.iter().any(|v|v.bytes>=1024&&v.stage=="downloading") {
+                        let versions=current.iter().map(|v|(v.key.clone(),v.revision)).collect::<Vec<_>>();
+                        assert!(!transfers.control(task,attempt,"pause-original", 0, &versions,true).unwrap());
+                        paused=true;
+                    }
+                }
+            }
+        }
+    }).await.unwrap();
+        assert!(matches!(result, Err(Error::TransferPaused)));
+    }
+    assert_eq!(
+        transfers.receipt(task, attempt, "pause-original").unwrap(),
+        Some(true)
+    );
+    let offset = transfers.observations(task, attempt).unwrap()[0].bytes;
+    assert_eq!(offset, 1024);
+    // Drop all handles to release the original Client lease before reopening its database.
+    drop(transfers);
+    drop(client);
+    let mut client = server.client(&root, OpenMode::Existing);
+    let offer = client.offer(task).unwrap();
+    assert!(matches!(
+        client.prepare(&offer).await,
+        Err(Error::TransferPaused)
+    ));
+    let transfers = client.transfers();
+    let current = transfers.observations(task, attempt).unwrap();
+    assert!(current.iter().all(|v| v.paused));
+    let versions = current
+        .iter()
+        .map(|v| (v.key.clone(), v.revision))
+        .collect::<Vec<_>>();
+    assert!(transfers
+        .control(task, attempt, "resume-original", 0, &versions, false)
+        .unwrap());
+    assert_eq!(
+        transfers.receipt(task, attempt, "pause-original").unwrap(),
+        Some(true)
+    );
+    gate.add_permits(10000);
+    let materials = client.prepare(&offer).await.unwrap();
+    assert!(!materials.files().is_empty());
+    assert!(server
+        .data
+        .lock()
+        .unwrap()
+        .content_calls
+        .iter()
+        .any(|v| v.as_deref() == Some("bytes=1024-")));
+    assert!(transfers
+        .observations(task, attempt)
+        .unwrap()
+        .iter()
+        .all(|v| v.stage == "complete"));
+    let original = versions
+        .iter()
+        .map(|(key, revision)| (key.clone(), revision - 1))
+        .collect::<Vec<_>>();
+    assert!(transfers
+        .control(task, attempt, "pause-original", 0, &original, true)
+        .unwrap());
+    assert!(
+        transfers
+            .observations(task, attempt)
+            .unwrap()
+            .iter()
+            .all(|v| !v.paused),
+        "replaying a pause receipt cannot create a new pause intent"
+    );
+    assert!(matches!(
+        transfers.control(task, attempt, "pause-original", 0, &original, false),
+        Err(Error::Conflict)
+    ));
+    assert!(matches!(
+        transfers.control(task, attempt, "pause-original", 1, &original, true),
+        Err(Error::Conflict)
+    ));
+}
+
+#[tokio::test]
+async fn shared_content_consumer_pause_and_cancel_preserve_the_other_original_parent() {
+    let _budget = crate::scenario_budget::enter();
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    server.data.lock().unwrap().script();
+    let a = client.claim().await.unwrap().offer.unwrap();
+    {
+        let mut d = server.data.lock().unwrap();
+        d.task = Uuid::new_v4();
+        d.script();
+    }
+    let b = client.claim().await.unwrap().offer.unwrap();
+    assert_ne!(a.task_id(), b.task_id());
+    let gate = std::sync::Arc::new(tokio::sync::Semaphore::new(0));
+    server.data.lock().unwrap().content_gate = Some(gate.clone());
+    let transfers = client.transfers();
+    {
+        let prepare = client.prepare(&a);
+        tokio::pin!(prepare);
+        let mut stopped = false;
+        let result=tokio::time::timeout(std::time::Duration::from_secs(10),async {
+            loop {tokio::select! {
+                result=&mut prepare=>break result,
+                _=tokio::time::sleep(std::time::Duration::from_millis(10))=>{
+                    let first=transfers.observations(a.task_id(),a.attempt_id()).unwrap();
+                    if !stopped&&first.iter().any(|v|v.bytes>=1024) {
+                        let versions=first.iter().map(|v|(v.key.clone(),v.revision)).collect::<Vec<_>>();
+                        assert!(transfers.control(a.task_id(),a.attempt_id(),"a-pause", 0, &versions,true).unwrap());
+                        assert!(transfers.observations(a.task_id(),a.attempt_id()).unwrap()[0].shared_active);
+                        transfers.detach(a.task_id(),a.attempt_id()).unwrap();
+                        let second=transfers.observations(b.task_id(),b.attempt_id()).unwrap();
+                        let versions=second.iter().map(|v|(v.key.clone(),v.revision)).collect::<Vec<_>>();
+                        assert!(!transfers.control(b.task_id(),b.attempt_id(),"b-pause", 0, &versions,true).unwrap());
+                        stopped=true;
+                    }
+                }
+            }}
+        }).await.unwrap();
+        assert!(matches!(result, Err(Error::TransferPaused)));
+    }
+    let second = transfers.observations(b.task_id(), b.attempt_id()).unwrap();
+    assert_eq!(
+        transfers
+            .receipt(b.task_id(), b.attempt_id(), "b-pause")
+            .unwrap(),
+        Some(true)
+    );
+    let versions = second
+        .iter()
+        .map(|v| (v.key.clone(), v.revision))
+        .collect::<Vec<_>>();
+    transfers
+        .control(b.task_id(), b.attempt_id(), "b-resume", 0, &versions, false)
+        .unwrap();
+    gate.add_permits(10000);
+    let materials = client.prepare(&b).await.unwrap();
+    assert!(!materials.files().is_empty());
+    assert!(transfers
+        .observations(b.task_id(), b.attempt_id())
+        .unwrap()
+        .iter()
+        .all(|v| v.stage == "complete"));
+}
+
+#[tokio::test]
+async fn management_snapshot_checkpoint_scope_and_exact_detail_survive_restart_without_inventing_coverage(
+) {
+    let _budget = crate::scenario_budget::enter();
+    use rss_mdm_agent_wire::activities::*;
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let binding = client.registration().unwrap();
+    let activity:ManagementActivity=serde_json::from_value(serde_json::json!({"id":"execution:original","source":"execution","kind":"execution","phase":"received","recordedAt":1000,"observedAt":1000,"origin":"policy","target":{"device":"device-1","registration":binding.registration_id,"generation":binding.generation},"links":{"steps":[],"operations":[]},"delivery":"received","execution":"running","effect":"unknown","reporting":null,"decision":null,"auditOutcome":"recorded"})).unwrap();
+    let page = ManagementActivityPage {
+        items: vec![activity.clone()],
+        next_cursor: Some("snapshot-next".into()),
+        sync_cursor: "snapshot-anchor".into(),
+        as_of: 1000,
+        coverage: vec![ActivityCoverage {
+            source: "execution".into(),
+            complete: false,
+            reasons: vec!["more-visible-facts".into()],
+        }],
+        retained_from: Some(900),
+    };
+    server.data.lock().unwrap().management_page = Some(page.clone());
+    let first = client
+        .sync_management("os-alice-generation-1")
+        .await
+        .unwrap();
+    assert!(first.sync.is_none());
+    assert!(!first.complete);
+    assert_eq!(first.next.as_deref(), Some("snapshot-next"));
+    assert!(client
+        .current_management_cache("os-bob-generation-1")
+        .unwrap()
+        .items
+        .is_empty());
+    {
+        let mut d = server.data.lock().unwrap();
+        let next = d.management_page.as_mut().unwrap();
+        next.items.clear();
+        next.next_cursor = None;
+        next.coverage[0].complete = true;
+        next.coverage[0].reasons.clear();
+    }
+    let second = client
+        .sync_management("os-alice-generation-1")
+        .await
+        .unwrap();
+    assert_eq!(second.sync.as_deref(), Some("snapshot-anchor"));
+    assert!(second.complete);
+    server.data.lock().unwrap().management_detail = Some(ManagementActivityDetail {
+        activity: activity.clone(),
+        personal: false,
+        related: vec![],
+        related_cursor: Some("related-more".into()),
+        missing: vec!["effect-not-yet-observed".into()],
+        as_of: 1001,
+    });
+    let detail = client
+        .management_detail("os-alice-generation-1", &activity.id)
+        .await
+        .unwrap();
+    assert!(detail.details.contains_key(&activity.id));
+    drop(client);
+    let client = server.client(&root, OpenMode::Existing);
+    let cached = client
+        .current_management_cache("os-alice-generation-1")
+        .unwrap();
+    assert!(cached.complete);
+    assert_eq!(cached.items.len(), 1);
+    assert_eq!(
+        cached.details[&activity.id].missing,
+        vec!["effect-not-yet-observed"]
+    );
+    assert!(server
+        .data
+        .lock()
+        .unwrap()
+        .management_calls
+        .iter()
+        .any(|v| v.contains("cursor=snapshot-next")));
+    client.clear_management_cache().unwrap();
+    assert!(client
+        .current_management_cache("os-alice-generation-1")
+        .unwrap()
+        .items
+        .is_empty());
+}
+
+#[tokio::test]
+async fn replacing_an_expired_offer_retires_only_its_old_attempt_consumers_atomically() {
+    let _budget = crate::scenario_budget::enter();
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    server.data.lock().unwrap().script();
+    let original = client.claim().await.unwrap().offer.unwrap();
+    drop(client.prepare(&original).await.unwrap());
+    let read_retired = || {
+        let sql = rusqlite::Connection::open(root.path.join("communication.sqlite")).unwrap();
+        let body: Vec<u8> = sql
+            .query_row(
+                "SELECT body FROM state WHERE key LIKE ?1 LIMIT 1",
+                [format!(
+                    "transfer/{}/{}/%",
+                    original.task_id(),
+                    original.attempt_id()
+                )],
+                |r| r.get(0),
+            )
+            .unwrap();
+        serde_json::from_slice::<serde_json::Value>(&body).unwrap()["retired"]
+            .as_bool()
+            .unwrap()
+    };
+    server.data.lock().unwrap().script();
+    assert!(matches!(client.claim().await, Err(Error::Conflict)));
+    assert!(
+        !read_retired(),
+        "failed replacement cannot retire the current attempt"
+    );
+    server.time.set(original.payload().expires_at() + 120);
+    server.data.lock().unwrap().script();
+    let next = client.claim().await.unwrap().offer.unwrap();
+    assert_eq!(next.task_id(), original.task_id());
+    assert_ne!(next.attempt_id(), original.attempt_id());
+    assert!(read_retired());
+    drop(client);
+    let client = server.client(&root, OpenMode::Existing);
+    assert_eq!(
+        client.offer(next.task_id()).unwrap().attempt_id(),
+        next.attempt_id()
+    );
+    assert!(read_retired());
+}
+
+#[tokio::test]
+async fn management_byte_retention_does_not_pin_the_original_sync_checkpoint() {
+    let _budget = crate::scenario_budget::enter();
+    use rss_mdm_agent_wire::activities::*;
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut cfg = server.config();
+    cfg.limits.response_bytes = 16 * 1024;
+    let mut client = Client::open(
+        &root.path,
+        cfg,
+        OpenMode::Create,
+        server.secrets.clone(),
+        server.time.clone(),
+    )
+    .unwrap();
+    server.register(&mut client).await;
+    let binding = client.registration().unwrap();
+    let activity:ManagementActivity=serde_json::from_value(serde_json::json!({"id":"execution:original","source":"execution","kind":"execution","phase":"received","recordedAt":1000,"observedAt":1000,"origin":"policy","target":{"device":"device-1","registration":binding.registration_id,"generation":binding.generation},"links":{"steps":[],"operations":[]},"delivery":"received","execution":"running","effect":"unknown","reporting":null,"decision":null,"auditOutcome":"recorded"})).unwrap();
+    for page in 0..3 {
+        let mut items = Vec::new();
+        for index in 0..12 {
+            let mut value = activity.clone();
+            value.id = format!("execution:{page:02}-{index:02}-{}", "x".repeat(450));
+            items.push(value);
+        }
+        server.data.lock().unwrap().management_page = Some(ManagementActivityPage {
+            items,
+            next_cursor: (page < 2).then(|| format!("next-{page}")),
+            sync_cursor: "anchor".into(),
+            as_of: 1000,
+            coverage: vec![ActivityCoverage {
+                source: "execution".into(),
+                complete: true,
+                reasons: vec![],
+            }],
+            retained_from: Some(900),
+        });
+        let cache = client.sync_management("current-native").await.unwrap();
+        let sql = rusqlite::Connection::open(root.path.join("communication.sqlite")).unwrap();
+        let bytes: usize = sql
+            .query_row(
+                "SELECT length(body) FROM state WHERE key='management-cache'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(bytes <= 16 * 1024);
+        if page == 2 {
+            assert_eq!(cache.sync.as_deref(), Some("anchor"));
+            assert!(cache.next.is_none());
+            assert!(!cache.complete);
+            assert!(cache
+                .coverage
+                .iter()
+                .any(|v| v.source == "local-cache" && !v.complete));
+        }
+    }
+}
+
+#[tokio::test]
+async fn pause_closes_a_request_waiting_for_headers_and_confirms_the_original_control() {
+    let _budget = crate::scenario_budget::enter();
+    let server = Server::new().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    server.data.lock().unwrap().script();
+    let pause = std::sync::Arc::new(tokio::sync::Notify::new());
+    server.data.lock().unwrap().content_header_pause = Some(pause.clone());
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    let owner = client.transfers();
+    let task = offer.task_id();
+    let attempt = offer.attempt_id();
+    {
+        let prepare = client.prepare(&offer);
+        tokio::pin!(prepare);
+        let mut requested = false;
+        let outcome=tokio::time::timeout(std::time::Duration::from_secs(5),async {
+            loop {tokio::select! {
+                result=&mut prepare=>break result,
+                _=tokio::time::sleep(std::time::Duration::from_millis(10))=>{
+                    if !requested && server.data.lock().unwrap().content_header_waiting {
+                        let versions=owner.observations(task,attempt).unwrap().into_iter().map(|v|(v.key,v.revision)).collect::<Vec<_>>();
+                        assert!(!owner.control(task,attempt,"header-pause",0,&versions,true).unwrap());requested=true;
+                    }
+                }
+            }}
+        }).await.unwrap();
+        assert!(matches!(outcome, Err(Error::TransferPaused)));
+    }
+    assert_eq!(
+        owner.receipt(task, attempt, "header-pause").unwrap(),
+        Some(true)
+    );
+    assert!(owner
+        .observations(task, attempt)
+        .unwrap()
+        .iter()
+        .all(|v| v.paused && v.bytes == 0));
+    server.data.lock().unwrap().content_header_pause = None;
+    pause.notify_waiters();
+}

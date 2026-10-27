@@ -101,6 +101,11 @@ fn main() {
     }
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
         tauri_build::AppManifest::new().commands(&[
+            "task_list",
+            "task_detail",
+            "task_control",
+            "task_control_status",
+            "self_service_offers",
             "personal_vault",
             "self_service_policy_directory",
             "self_service_policy_resolve",
@@ -113,7 +118,6 @@ fn main() {
             "device_access",
             "query_submit",
             "query_status",
-            "query_cancel",
             "self_service_observe_software",
             "software_history",
             "software_read",
@@ -122,13 +126,8 @@ fn main() {
             "network_check",
             "software_submit",
             "software_status",
-            "software_cancel",
-            "self_service_recent_tasks",
-            "self_service_snapshot",
             "self_service_execute",
             "self_service_confirm",
-            "self_service_cancel",
-            "execution_task_details",
             "save_connection",
             "test_users",
             "select_device",

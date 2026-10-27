@@ -8,6 +8,7 @@ publish = false
 description = "Bounded MCP tools over a host-bound execution service"
 
 [dependencies]
+execution-app = { path = "../execution-app" }
 rss-mdm-agent-wire.workspace = true
 sha2.workspace = true
 execution-lifecycle = { path = "../execution-lifecycle" }

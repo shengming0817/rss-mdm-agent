@@ -39,22 +39,38 @@ it("requires every fixture port and sends AI confirmation/cancellation to the ex
       }),
     ).toThrow("incomplete");
   }
-  const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+  const fetch = vi.fn(async (url: string, ..._options: unknown[]) => ({
+    ok: true,
+    json: async () =>
+      url.endsWith("task-detail")
+        ? {
+            reference: { kind: "request", request: fixtures.offer.request },
+            scope: "fixture-scope",
+            revision: { owner: 1, transfers: [] },
+          }
+        : url.endsWith("task-control")
+          ? { disposition: "confirmed" }
+          : {},
+  }));
   vi.stubGlobal("fetch", fetch);
   try {
     const offer = fixtures.offer;
     await ports.assistantServices.confirmTask!(offer as never);
     expect(fetch.mock.calls[0][0]).toBe("/__fixture/confirm");
-    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
+    expect(JSON.parse((fetch.mock.calls[0] as any)[1].body)).toEqual({
       request: offer.request,
       task: offer.task,
       attempt: offer.attempt,
       revision: offer.revision,
     });
     await ports.assistantServices.cancelTask!(offer.request);
-    expect(fetch.mock.calls[1][0]).toBe("/__fixture/cancel");
-    expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({
-      requestId: offer.request,
+    expect(fetch.mock.calls[1][0]).toBe("/__fixture/task-detail");
+    expect(fetch.mock.calls[2][0]).toBe("/__fixture/task-control");
+    expect(JSON.parse((fetch.mock.calls[2] as any)[1].body)).toMatchObject({
+      reference: { kind: "request", request: offer.request },
+      scope: "fixture-scope",
+      expectedRevision: { owner: 1, transfers: [] },
+      action: "cancel",
     });
   } finally {
     vi.unstubAllGlobals();

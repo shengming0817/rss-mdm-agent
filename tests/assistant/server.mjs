@@ -180,19 +180,83 @@ export async function createFixture() {
           value: structuredClone(execution[executionState]),
         };
   }
-  function snapshot(input = {}) {
-    available();
+  const controlReceipts = new Map();
+  function taskDetail(reference) {
+    if (reference?.kind !== "request") throw Error("fixture task reference");
+    const original = details(reference.request);
+    const pending = original.kind === "pending";
+    const phase = pending ? original.value.state : original.value.status.phase;
     return {
-      available: [structuredClone(execution.offer)],
-      preparations: ["proposed", "denied"].includes(scenario)
-        ? [structuredClone(execution[scenario])]
-        : [],
-      selected: input.selected ? details(input.selected) : null,
-      requests: ["proposed", "denied", "ready"].includes(scenario)
-        ? []
-        : [structuredClone(execution[executionState])],
-      next: null,
+      reference,
+      scope: "fixture-native-scope",
+      revision: { owner: original.value.revision, transfers: [] },
+      recordedAt: 1000,
+      source: pending ? "ai" : "human",
+      taskKind: "policy",
+      stage: phase,
+      active: !["verified", "cancelled", "denied"].includes(phase),
+      facts: {
+        kind: pending ? "preparation" : "execution",
+        value: original.value,
+      },
+      nodes: [],
+      allowedActions: ["cancel"],
+      controlReason: null,
+      uploadAcknowledged: null,
+      collectionQuality: null,
+      collectionComplete: null,
+      softwareState: null,
+      policy: null,
+      policyRevision: null,
+      retryOf: null,
+      related: [],
+      selection: null,
+      missing: [],
+      parameterSummary: {},
+      humanConfirmation: pending && scenario === "proposed",
     };
+  }
+  function taskList(input) {
+    available();
+    const items = [
+      taskDetail({ kind: "request", request: execution.offer.request }),
+    ].filter(
+      (t) =>
+        (input?.view !== "active" || t.active) && input?.view !== "management",
+    );
+    return {
+      items,
+      next: null,
+      scope: "fixture-native-scope",
+      asOf: 1000,
+      lastSync: null,
+      remoteAvailable: false,
+      coverage: [],
+      retainedFrom: null,
+      complete: true,
+    };
+  }
+  function taskControl(input) {
+    const previous = controlReceipts.get(input.id);
+    if (previous) {
+      if (JSON.stringify(previous.input) !== JSON.stringify(input))
+        throw Error("fixture control conflict");
+      return previous.receipt;
+    }
+    const current = taskDetail(input.reference);
+    if (input.scope !== current.scope) throw Error("fixture control denied");
+    const disposition =
+      JSON.stringify(input.expectedRevision) !==
+      JSON.stringify(current.revision)
+        ? "stale"
+        : input.action !== "cancel"
+          ? "denied"
+          : "confirmed";
+    if (disposition === "confirmed")
+      cancel({ requestId: input.reference.request });
+    const receipt = { id: input.id, disposition, created: null };
+    controlReceipts.set(input.id, { input, receipt });
+    return receipt;
   }
   function execute(input) {
     available();
@@ -271,11 +335,13 @@ export async function createFixture() {
           "/__fixture/registration-request",
           "/__fixture/state",
           "/__fixture/scenario",
-          "/__fixture/recent_tasks",
-          "/__fixture/snapshot",
+          "/__fixture/offers",
+          "/__fixture/task-list",
+          "/__fixture/task-detail",
+          "/__fixture/task-control",
+          "/__fixture/task-control-status",
           "/__fixture/execute",
           "/__fixture/confirm",
-          "/__fixture/cancel",
         ].includes(url.pathname)
       ) {
         let input = {};
@@ -340,26 +406,34 @@ export async function createFixture() {
             selectScenario(input.scenario);
             value = {};
             break;
-          case "/__fixture/recent_tasks":
-            value = {
-              items: snapshot().requests.map((details) => ({
-                details,
-                recordedAtUnixMs: 1000,
-              })),
-              next: null,
+          case "/__fixture/offers":
+            available();
+            value = [structuredClone(execution.offer)];
+            break;
+          case "/__fixture/task-list":
+            value = taskList(input);
+            break;
+          case "/__fixture/task-detail":
+            value = taskDetail(input);
+            break;
+          case "/__fixture/task-control":
+            value = taskControl(input);
+            break;
+          case "/__fixture/task-control-status": {
+            if (input.scope !== "fixture-native-scope")
+              throw Error("fixture scope denied");
+            value = controlReceipts.get(input.id)?.receipt ?? {
+              id: input.id,
+              disposition: "unknown",
+              created: null,
             };
             break;
-          case "/__fixture/snapshot":
-            value = snapshot(input);
-            break;
+          }
           case "/__fixture/execute":
             value = execute(input);
             break;
           case "/__fixture/confirm":
             value = confirm(input);
-            break;
-          case "/__fixture/cancel":
-            value = cancel(input);
             break;
         }
         res.end(JSON.stringify(value));
@@ -428,10 +502,15 @@ export async function createFixture() {
   });
   const fixture = {
     plugin,
-    snapshot,
+    offers: () => {
+      available();
+      return [structuredClone(execution.offer)];
+    },
+    taskList,
+    taskDetail,
+    taskControl,
     execute,
     confirm,
-    cancel,
     details,
     serviceView,
     selectScenario,

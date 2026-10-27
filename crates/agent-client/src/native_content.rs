@@ -105,9 +105,19 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 "INSERT OR IGNORE INTO cache_refs VALUES(?1,?2)",
                 params![offer.task_id().to_string(), name],
             )?;
+            self.transfers.attach(
+                offer.task_id(),
+                offer.attempt_id(),
+                &format!("native/{index}"),
+                &name,
+                None,
+                false,
+            )?;
             if let Some(cached) = self.store.get(&format!("native/{name}"))? {
                 if root.join(format!("{name}.blob")).try_exists()? {
-                    files.push(load(root, &name, index, cached)?);
+                    let file = load(root, &name, index, cached)?;
+                    self.transfers.publish(&name, file.length, "complete")?;
+                    files.push(file);
                     continue;
                 }
                 // A prior unreferenced GC may have removed the file before deleting its receipt.
@@ -127,6 +137,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                     let info = self
                         .native_read(
                             offer,
+                            &name,
                             self.native_http
                                 .get(base.join("information").map_err(|_| Error::Protocol)?),
                             None,
@@ -148,7 +159,13 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                     url.query_pairs_mut()
                         .append_pair("Version", &step.action.version);
                     let body = self
-                        .native_read(offer, self.native_http.get(url), None, MAX_DOCUMENT_BYTES)
+                        .native_read(
+                            offer,
+                            &name,
+                            self.native_http.get(url),
+                            None,
+                            MAX_DOCUMENT_BYTES,
+                        )
                         .await?;
                     let body: serde_json::Value =
                         serde_json::from_slice(&body).map_err(|_| Error::Protocol)?;
@@ -188,6 +205,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                     let response = self
                         .native_read(
                             offer,
+                            &name,
                             self.native_http
                                 .post(url)
                                 .header("content-type", "application/x-git-upload-pack-request")
@@ -248,6 +266,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             };
             self.store.put(&format!("native/{name}"), &cached)?;
             FileExt::unlock(&file)?;
+            self.transfers.publish(&name, cached.length, "complete")?;
             files.push(load(root, &name, index, cached)?);
         }
         Ok(())
@@ -256,6 +275,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     async fn native_read(
         &self,
         offer: &Offer,
+        cache: &str,
         mut request: reqwest::RequestBuilder,
         token: Option<&str>,
         limit: usize,
@@ -305,7 +325,11 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 return Err(Error::Capacity);
             }
             bytes.extend_from_slice(&chunk);
+            self.transfers
+                .publish(cache, bytes.len() as u64, "downloading")?;
         }
+        self.transfers
+            .publish(cache, bytes.len() as u64, "verifying")?;
         Ok(bytes)
     }
 }

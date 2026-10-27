@@ -597,7 +597,8 @@ pub(crate) fn startup_failure(error: Error) -> execution_contract::ProcessFailur
         | Error::Clock
         | Error::Expired
         | Error::IssuanceUnknown
-        | Error::ActivationUnknown => K::Unavailable,
+        | Error::ActivationUnknown
+        | Error::TransferPaused => K::Unavailable,
     }
 }
 

@@ -39,29 +39,74 @@ test("query response loss reconciles the Host-owned original ID and never replay
     { capabilities: { tools: {} } },
   );
   const calls = [];
-  let cancelled = false;
-  peer.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
+  let cancelled = false,
+    malformed = false;
+  peer.setRequestHandler(ListToolsRequestSchema, async ({ params }) => {
+    const start = Number(params?.cursor ?? 0),
+      end = Math.min(start + 3, tools.length);
+    return {
+      tools: tools.slice(start, end),
+      ...(end < tools.length ? { nextCursor: String(end) } : {}),
+    };
+  });
   peer.setRequestHandler(CallToolRequestSchema, async ({ params }) => {
     calls.push(params);
     const failure = [
       "execution_query_submit",
-      "execution_query_cancel",
+      "execution_task_control",
     ].includes(params.name);
     const value = failure
       ? { status: "error", error: { code: "outcomeUnknown" } }
-      : {
-          status: "ok",
-          result: {
-            kind: "status",
-            value: {
-              request: params.arguments.request,
-              query: { id: "native:fixture", revision: "a".repeat(64) },
-              preparation: null,
-              phase: "running",
-              cancelRequested: cancelled,
+      : params.name === "execution_task_control_status"
+        ? {
+            status: "ok",
+            result: {
+              id: params.arguments.id,
+              disposition: cancelled ? "confirmed" : "unknown",
+              created: null,
             },
-          },
-        };
+          }
+        : {
+            status: "ok",
+            result: {
+              scope: "fixture-scope",
+              revision: { owner: 1, transfers: [] },
+              recordedAt: null,
+              source: "human",
+              taskKind: "query",
+              stage: "running",
+              active: true,
+              facts: {
+                kind: "execution",
+                value: (
+                  await import("../assistant/execution-fixtures.json", {
+                    with: { type: "json" },
+                  })
+                ).default.running,
+              },
+              nodes: [],
+              allowedActions: ["cancel"],
+              controlReason: null,
+              uploadAcknowledged: null,
+              collectionQuality: null,
+              collectionComplete: null,
+              softwareState: null,
+              policy: null,
+              policyRevision: null,
+              retryOf: null,
+              related: [],
+              selection: null,
+              missing: [],
+              parameterSummary: {},
+              humanConfirmation: false,
+              reference: {
+                kind: "request",
+                request: params.arguments.reference.request,
+              },
+            },
+          };
+    if (malformed && params.name === "execution_task_detail")
+      delete value.result.reference;
     return { content: [], structuredContent: value, isError: failure };
   });
   await peer.connect(new ParentTransport(incoming, outgoing));
@@ -100,15 +145,68 @@ test("query response loss reconciles the Host-owned original ID and never replay
     (await connection.router.reconcile(request, budget())).value.state,
     "committed",
   );
-  assert.equal(calls[1].name, "execution_query_status");
-  assert.equal(calls[1].arguments.request, prepared.value.operationId);
+  assert.equal(calls[1].name, "execution_task_detail");
+  assert.equal(
+    calls[1].arguments.reference.request,
+    prepared.value.operationId,
+  );
   assert.equal(
     calls.filter((c) => c.name === "execution_query_submit").length,
     1,
   );
+  // Task detail is on an earlier catalog page. A malformed original response
+  // must remain Unknown even after subsequent pages replace the SDK cache.
+  malformed = true;
+  assert.equal(
+    (await connection.router.reconcile(request, budget())).value.state,
+    "unknown",
+  );
+  assert.equal(
+    calls.filter((c) => c.name === "execution_query_submit").length,
+    1,
+  );
+  malformed = false;
+  for (const name of [
+    "execution_software_prepare",
+    "execution_operation_prepare",
+    "execution_policy_invoke",
+    "policy_fixture",
+  ]) {
+    const proposal = { name, callId: "original-policy-call", arguments: {} };
+    const intent = connection.router.prepare(
+      namespace,
+      proposal,
+      "original-policy-command",
+    );
+    assert.equal(intent.ok, true);
+    const original = {
+      ...request,
+      body: { type: "delivery_requested", ...intent.value, proposal },
+    };
+    assert.equal(
+      (await connection.router.reconcile(original, budget())).value.state,
+      "committed",
+    );
+    assert.equal(calls.at(-1).name, "execution_task_detail");
+    assert.equal(
+      calls.at(-1).arguments.reference.request,
+      intent.value.operationId,
+    );
+    assert.equal(
+      calls.filter((call) => call.name === name).length,
+      0,
+      "recovery only reads the original task",
+    );
+  }
   const cancelProposal = {
-    name: "execution_query_cancel",
-    arguments: { request: prepared.value.operationId },
+    name: "execution_task_control",
+    arguments: {
+      reference: { kind: "request", request: prepared.value.operationId },
+      id: "cancel-original",
+      scope: "fixture-scope",
+      expectedRevision: { owner: 0, transfers: [] },
+      action: "cancel",
+    },
   };
   const cancellation = connection.router.prepare(
     namespace,
@@ -128,6 +226,12 @@ test("query response loss reconciles the Host-owned original ID and never replay
   assert.equal(
     (await connection.router.reconcile(cancelRequest, budget())).value.state,
     "unknown",
+  );
+  assert.equal(calls.at(-1).name, "execution_task_control_status");
+  assert.equal(calls.at(-1).arguments.id, "cancel-original");
+  assert.equal(
+    calls.filter((c) => c.name === "execution_task_control").length,
+    0,
   );
   cancelled = true;
   assert.equal(

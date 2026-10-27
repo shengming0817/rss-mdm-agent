@@ -8,7 +8,7 @@ test("real workspace resolves all metadata and source/test bridges", () => {
   assert.ok(graph.rust.has("rss-mdm-desktop"));
   for (const [path, owner] of [
     ["packages/execution-bindings/src/tools.json", "execution-mcp"],
-    ["packages/execution-bindings/src/task-details.ts", "execution-app"],
+    ["packages/execution-bindings/src/tasks.ts", "execution-app"],
     ["tests/assistant/execution-fixtures.json", "execution-app"],
   ])
     assert.ok(

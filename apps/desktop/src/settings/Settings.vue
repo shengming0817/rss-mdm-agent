@@ -255,7 +255,7 @@ emit("navigation", reactive({ openSection, reset, section, sections, path }));
           :port="servicePort"
           :execution-port="selfServicePort"
           :fixture="fixture"
-          :active="active"
+          :active="active && section === 'registration'"
         />
       </section>
       <section
