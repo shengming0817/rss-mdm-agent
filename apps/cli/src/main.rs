@@ -805,6 +805,14 @@ fn main() -> std::process::ExitCode {
     }
 }
 fn result_exit(result: &serde_json::Value) -> u8 {
+    if result["kind"] == "task" && result["value"]["kind"] == "control" {
+        return match result["value"]["value"]["disposition"].as_str() {
+            Some("confirmed") => 0,
+            Some("denied") => 3,
+            Some("stale") => 5,
+            _ => 8,
+        };
+    }
     let status = if result["kind"] == "task" && result["value"]["kind"] == "detail" {
         &result["value"]["value"]
     } else {
@@ -818,6 +826,11 @@ fn result_exit(result: &serde_json::Value) -> u8 {
         if execution["phase"] == "admissionDenied"
             || execution["phase"] == "failedBeforeDispatch"
             || execution["assessment"] == "notSatisfied"
+            || (execution["phase"] == "verified"
+                && execution["assessment"] == "noEffect"
+                && execution["process"]["exitCode"]
+                    .as_i64()
+                    .is_some_and(|v| v != 0))
         {
             return 10;
         }
@@ -826,4 +839,56 @@ fn result_exit(result: &serde_json::Value) -> u8 {
         return 10;
     }
     0
+}
+
+#[cfg(test)]
+mod outcome_tests {
+    use super::*;
+
+    #[test]
+    fn original_control_receipts_preserve_non_success_dispositions() {
+        for (disposition, exit) in [
+            (ControlDisposition::Confirmed, 0),
+            (ControlDisposition::Denied, 3),
+            (ControlDisposition::Stale, 5),
+            (ControlDisposition::Unknown, 8),
+        ] {
+            let reply = Reply::Task {
+                value: TaskResponse::Control(TaskControlReceipt {
+                    id: Id::new("control-1").unwrap(),
+                    disposition,
+                    created: None,
+                }),
+            };
+            assert_eq!(result_exit(&serde_json::to_value(reply).unwrap()), exit);
+        }
+    }
+
+    #[test]
+    fn known_failure_keeps_process_and_effect_as_independent_facts() {
+        let original: execution_app::ExecutionStatus = serde_json::from_value(serde_json::json!({
+            "operationRequestId":"request-1", "contentDigest":"00".repeat(32),
+            "phase":"verified", "mode":"real", "attempts":1, "cancelRequested":false,
+            "assessment":"noEffect", "evidence":[],
+            "process":{"finished":true,"end":"exited",
+                "exitCode":1,"quality":"complete","quiescent":true,"totalOutputBytes":0,"failureKind":"none"}
+        })).unwrap();
+        for (assessment, exit_code, expected) in [
+            ("noEffect", Some(1), 10),
+            ("noEffect", Some(0), 0),
+            ("noEffect", None, 0),
+            ("satisfied", Some(1), 0),
+            ("unknown", Some(1), 8),
+            ("notSatisfied", Some(0), 10),
+        ] {
+            let mut status = serde_json::to_value(&original).unwrap();
+            status["assessment"] = serde_json::json!(assessment);
+            status["process"]["exitCode"] = serde_json::json!(exit_code);
+            let typed: execution_app::ExecutionStatus = serde_json::from_value(status).unwrap();
+            let reply = serde_json::json!({"kind":"task","value":{"kind":"detail","value":{
+                "facts":{"kind":"execution","value":{"status":typed}}
+            }}});
+            assert_eq!(result_exit(&reply), expected);
+        }
+    }
 }

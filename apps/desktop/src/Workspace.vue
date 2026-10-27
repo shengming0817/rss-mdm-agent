@@ -136,7 +136,19 @@ const pageNode = computed(() => {
 });
 let entryDraining = false,
   entryDisposed = false;
+const failedEntry = ref<string>();
 let stopEntry: (() => void) | undefined;
+async function discardEntry() {
+  if (!entryPort || !failedEntry.value || entryDraining) return;
+  try {
+    await entryPort({ kind: "ack", id: failedEntry.value });
+    failedEntry.value = undefined;
+    navigationError.value = "";
+    await drainEntries();
+  } catch {
+    navigationError.value = "当前目标暂时无法放弃，请重试。";
+  }
+}
 async function openEntryTask(request: string) {
   entrySelection.value = undefined;
   await nextTick();
@@ -188,11 +200,13 @@ async function drainEntries() {
   )
     return;
   entryDraining = true;
+  let resolving: Delivery | undefined;
   try {
     for (let i = 0; i < 16 && !entryDisposed; i++) {
       const pending = await entryPort({ kind: "next" });
       if (pending.kind !== "pending" || !pending.value) break;
       const delivery = pending.value;
+      resolving = delivery;
       const result = await entryPort({
         kind: "resolve",
         intent: delivery.intent,
@@ -234,12 +248,16 @@ async function drainEntries() {
           };
       } else throw Error("unavailable");
       await entryPort({ kind: "ack", id: delivery.id });
+      resolving = undefined;
+      failedEntry.value = undefined;
       navigationError.value = "";
     }
   } catch {
-    if (!entryDisposed)
+    if (!entryDisposed) {
+      failedEntry.value = resolving?.id;
       navigationError.value =
         "目标需要登录、版本已变化或当前不可访问；请核对当前账户后重试外部目标。";
+    }
   } finally {
     entryDraining = false;
   }
@@ -1192,6 +1210,9 @@ onBeforeUnmount(() => {
       <p v-if="navigationError" role="alert">{{ navigationError }}</p>
       <button v-if="entryPort && navigationError" @click="drainEntries">
         重试外部目标
+      </button>
+      <button v-if="entryPort && failedEntry" @click="discardEntry">
+        放弃此目标并继续
       </button>
       <EntryPanel
         v-if="entryPort && entrySelection"
