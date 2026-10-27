@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+pub(crate) mod contract;
 pub mod current_user;
 pub mod filevault;
 pub(crate) mod pki;
@@ -149,6 +150,7 @@ impl IdentityProvider for Secrets {
     }
 }
 pub struct Data {
+    pub invalid_contract_response: bool,
     pub connection_configuration: Option<rss_mdm_agent_wire::connections::SignedConfiguration>,
     pub connection_ack_calls: Vec<Value>,
     pub connection_failure_calls: Vec<Value>,
@@ -762,6 +764,7 @@ impl Server {
             started: false,
             received: false,
             content_calls: vec![],
+            invalid_contract_response: false,
             reports: BTreeMap::new(),
             collections: None,
             results: BTreeMap::new(),
@@ -1078,6 +1081,74 @@ fn native_enrollment_response(d: &mut Data, value: Value) -> Response {
 }
 
 async fn handler(
+    state: State<Arc<Mutex<Data>>>,
+    uri: Uri,
+    method: axum::http::Method,
+    headers: HeaderMap,
+    peer: Result<ConnectInfo<TlsIdentity>, axum::extract::rejection::ExtensionRejection>,
+    bytes: Bytes,
+) -> Response {
+    if !uri.path().starts_with("/api/v1/agent/") {
+        return handle(state, uri, method, headers, peer, bytes).await;
+    }
+    let contract = contract::fixed();
+    if contract
+        .request(method.as_str(), &uri, &headers, &bytes)
+        .is_err()
+    {
+        return runtime_error(StatusCode::BAD_REQUEST, ErrorCode::MalformedRequest);
+    }
+    // Fault overrides deliberately reach the client. All ordinary fixture replies
+    // must match the producer, rather than a second hand-written protocol.
+    let verify = {
+        let data = state.0.lock().unwrap();
+        !data.invalid_contract_response
+            && data.response_override.is_none()
+            && data.psso_status_override.is_none()
+    };
+    let endpoint = contract.endpoint(method.as_str(), uri.path()).unwrap();
+    let response = handle(state, uri, method, headers, peer, bytes).await;
+    if !verify {
+        return response;
+    }
+    if response
+        .headers()
+        .get("content-type")
+        .and_then(|h| h.to_str().ok())
+        .is_some_and(|h| h.starts_with("application/octet-stream"))
+    {
+        assert!(
+            contract
+                .response(
+                    endpoint,
+                    response.status().as_u16(),
+                    response.headers(),
+                    &[]
+                )
+                .is_ok(),
+            "binary response contract"
+        );
+        return response;
+    }
+    let (parts, body) = response.into_parts();
+    let bytes = match axum::body::to_bytes(body, 16 * 1024 * 1024).await {
+        Ok(bytes) => bytes,
+        // Preserve the existing transport fault rather than replacing it with a JSON error.
+        Err(_) => return interrupted_response(),
+    };
+    assert!(
+        contract
+            .response(endpoint, parts.status.as_u16(), &parts.headers, &bytes)
+            .is_ok(),
+        "{}",
+        contract
+            .response(endpoint, parts.status.as_u16(), &parts.headers, &bytes)
+            .unwrap_err()
+    );
+    Response::from_parts(parts, Body::from(bytes))
+}
+
+async fn handle(
     State(data): State<Arc<Mutex<Data>>>,
     uri: Uri,
     method: axum::http::Method,

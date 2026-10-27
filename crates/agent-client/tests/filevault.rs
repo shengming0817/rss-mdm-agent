@@ -200,6 +200,112 @@ async fn uncommitted_upload_restarts_by_replaying_the_frozen_operation_after_nul
     assert_eq!(d.filevault.receipts.len(), 1);
 }
 
+#[tokio::test]
+async fn renewed_device_certificate_replays_the_original_uncommitted_upload() {
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    let binding = server.register(&mut client).await;
+    let recipient = certificate(5);
+    let cms = carrier(&recipient, 5);
+    {
+        let mut data = server.data.lock().unwrap();
+        data.filevault.configuration = Some(configuration(&recipient));
+        data.filevault.fail_before_commit = true;
+    }
+    assert!(client.drive_filevault(|| Ok(cms)).await.is_err());
+    let original = server.data.lock().unwrap().filevault.uploads[0].clone();
+    server.time.set(4_070_908_700);
+    server.data.lock().unwrap().candidate_not_after = 4_071_000_000;
+    client.drive_pki().await.unwrap();
+    assert_eq!(client.registration().unwrap(), binding);
+    drop(client);
+    let mut client = server.client(&root, OpenMode::Existing);
+    assert_eq!(
+        client
+            .drive_filevault(|| panic!("renewal cannot replace frozen material"))
+            .await
+            .unwrap(),
+        Status::EscrowedUnverified
+    );
+    let data = server.data.lock().unwrap();
+    assert_eq!(data.filevault.status_reads, 1);
+    assert_eq!(data.filevault.uploads.len(), 2);
+    assert_eq!(
+        serde_json::to_value(&data.filevault.uploads[1]).unwrap(),
+        serde_json::to_value(original).unwrap()
+    );
+}
+
+#[tokio::test]
+async fn restored_registration_replacement_never_sends_the_old_pending_operation() {
+    for change_registration in [true, false] {
+        let server = Server::tls().await;
+        let root = Root::new();
+        let mut client = server.client(&root, OpenMode::Create);
+        server.register(&mut client).await;
+        let recipient = certificate(6);
+        {
+            let mut data = server.data.lock().unwrap();
+            data.filevault.configuration = Some(configuration(&recipient));
+            data.filevault.fail_before_commit = true;
+        }
+        assert!(client
+            .drive_filevault(|| Ok(carrier(&recipient, 6)))
+            .await
+            .is_err());
+        let original = server.data.lock().unwrap().filevault.uploads[0].operation_id;
+        drop(client);
+        // Restore a confirmed activation fixture with a different registration binding.
+        // This exercises the existing store/HTTP seam, not a new registration workflow.
+        let db = rusqlite::Connection::open(root.path.join("communication.sqlite")).unwrap();
+        let body: Vec<u8> = db
+            .query_row("SELECT body FROM state WHERE key='identity'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let mut state: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let runtime = &mut state["active"]["receipt"]["runtime"];
+        if change_registration {
+            runtime["registrationId"] = Uuid::new_v4().to_string().into();
+        } else {
+            runtime["generation"] = 2.into();
+        }
+        db.execute(
+            "UPDATE state SET body=?1 WHERE key='identity'",
+            [serde_json::to_vec(&state).unwrap()],
+        )
+        .unwrap();
+        drop(db);
+        let mut client = server.client(&root, OpenMode::Existing);
+        server.time.set(31);
+        assert_eq!(
+            client
+                .drive_filevault(|| Err(ReadError::Missing))
+                .await
+                .unwrap(),
+            Status::MissingMaterial
+        );
+        {
+            let data = server.data.lock().unwrap();
+            assert_eq!(data.filevault.status_reads, 0);
+            assert_eq!(data.filevault.uploads.len(), 1);
+        }
+        server.time.set(91);
+        assert_eq!(
+            client
+                .drive_filevault(|| Ok(carrier(&recipient, 6)))
+                .await
+                .unwrap(),
+            Status::EscrowedUnverified
+        );
+        let data = server.data.lock().unwrap();
+        assert_eq!(data.filevault.status_reads, 0);
+        assert_eq!(data.filevault.uploads.len(), 2);
+        assert_ne!(data.filevault.uploads[1].operation_id, original);
+    }
+}
+
 fn configuration(certificate: &[u8]) -> w::Configuration {
     w::Configuration {
         enabled: true,
