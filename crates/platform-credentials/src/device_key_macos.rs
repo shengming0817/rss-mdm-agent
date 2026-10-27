@@ -76,9 +76,6 @@ fn attribute(key: CFStringRef, value: CFType) -> (CFString, CFType) {
 impl Keychain {
     /// Reopen one exact existing key; absence never generates another key.
     pub fn open_device_key(&self, name: &str) -> io::Result<DeviceKey> {
-        self.without_interaction(|| DeviceKey::checked(self.device_key_item(name)?))
-    }
-    pub(crate) fn device_key_item(&self, name: &str) -> io::Result<SecKey> {
         reference(name)?;
         self.without_interaction(|| {
             // SAFETY: Constants are valid for the lifetime of the query; CF objects retain values.
@@ -135,7 +132,9 @@ impl Keychain {
                 return Err(denied());
             }
             // SAFETY: Type checked key retained under the get rule.
-            Ok(unsafe { SecKey::wrap_under_get_rule(key.as_CFTypeRef().cast_mut().cast()) })
+            DeviceKey::checked(unsafe {
+                SecKey::wrap_under_get_rule(key.as_CFTypeRef().cast_mut().cast())
+            })
         })
     }
     /// Remove only the exact private key selected by its application tag.
