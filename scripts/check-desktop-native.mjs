@@ -2532,9 +2532,9 @@ try {
       ),
     );
     result.checks.push("native-close-control-material-rebind");
-    await wait(() => browser.$(".composer textarea").isDisplayed());
     await wait(async () => !(await visibleText("正在读取或切换账户…")));
     await navigate("AI 助手");
+    await wait(() => browser.$(".composer textarea").isDisplayed());
     await text("GOLDEN_HELLO 查看办公套件");
     mark("restart Host through settings");
     rememberScopes(await readWorkerScopes(), hostPid());
