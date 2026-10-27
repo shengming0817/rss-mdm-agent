@@ -307,7 +307,7 @@ export type SelfServiceTask =
       /**
        * Full resolved parameter constraints owned by Resource.
        */
-      parameterSchema: unknown;
+      parameterSchema: {} | boolean;
       kind: "script";
     }
   | {
@@ -2731,11 +2731,11 @@ export interface CapabilityDescriptor {
   /**
    * Schema for caller-provided parameters.
    */
-  inputSchema: unknown;
+  inputSchema: {} | boolean;
   /**
    * Schema of the operation result.
    */
-  outputSchema: unknown;
+  outputSchema: {} | boolean;
 }
 /**
  * Authenticated product user; contains no session credential.
@@ -2771,9 +2771,7 @@ export interface SelfServiceMetadata {
   /**
    * Open directory presentation; never used as authorization or executable input.
    */
-  presentation: {
-    [k: string]: unknown;
-  };
+  presentation: {};
   /**
    * Effective administrator AI switch.
    */
@@ -5714,7 +5712,9 @@ export interface ScriptRunResult {
   /**
    * Resource-defined output, or null when retained only by reference.
    */
-  output: unknown;
+  output: {
+    [k: string]: unknown;
+  };
   /**
    * Digest and size when output is retained by reference.
    */
