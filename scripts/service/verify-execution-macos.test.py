@@ -625,6 +625,27 @@ class EvidenceTests(unittest.TestCase):
             proof['records'][0]['process']=None
             with self.assertRaises(AssertionError): acceptance.validate_journal_completion(proof,completion)
 
+    def test_quiescent_journal_proof_preserves_wal_and_never_creates_sidecars_after_checkpoint(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'journal.sqlite'
+            db=sqlite3.connect(path)
+            db.executescript('PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE executions(request_id TEXT,snapshot BLOB); CREATE TABLE process_evidence(attempt_id TEXT,body BLOB);')
+            db.execute('INSERT INTO executions VALUES(?,?)',('original',json.dumps({'attempts':1})))
+            db.commit()
+            wal=path.with_name(path.name+'-wal')
+            before={p:p.read_bytes() for p in (path,wal)}
+            proof=acceptance.journal_proof(path,quiescent=True)
+            self.assertEqual([r['request'] for r in proof['records']],['original'])
+            self.assertEqual({p:p.read_bytes() for p in before},before)
+            db.close()
+            self.assertFalse(wal.exists())
+            before=path.read_bytes()
+            proof=acceptance.journal_proof(path,quiescent=True)
+            self.assertEqual([r['request'] for r in proof['records']],['original'])
+            self.assertEqual(path.read_bytes(),before)
+            self.assertFalse(wal.exists())
+            self.assertFalse(path.with_name(path.name+'-shm').exists())
+
     def test_software_probe_uses_exact_selector_and_original_policy_binding(self):
         context=dict(id='native',generation='login')
         item=dict(policyId='policy')

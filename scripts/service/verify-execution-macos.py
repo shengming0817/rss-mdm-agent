@@ -1314,8 +1314,14 @@ def validate_desktop_completion(records, backend, effect, request):
     return {'request':request, 'record':record, 'backend':backend, 'effect':effect}
 
 
-def journal_proof(path):
-    db=sqlite3.connect('file:'+str(path)+'?mode=ro',uri=True)
+def journal_proof(path, *, quiescent=False):
+    # The installer has confirmed the original PID exited before requesting this
+    # proof. A checkpointed WAL database with no sidecars needs no SHM creation.
+    # Never ignore a retained WAL/rollback journal, or use immutable on a live owner.
+    sidecars=[path.with_name(path.name+suffix) for suffix in ('-wal','-journal')]
+    immutable=quiescent and not any(p.exists() or p.is_symlink() for p in sidecars)
+    uri=path.resolve().as_uri()+'?mode=ro'+('&immutable=1' if immutable else '')
+    db=sqlite3.connect(uri,uri=True)
     try:
         captures = {row[0]:json.loads(row[1]) for row in db.execute('SELECT attempt_id,body FROM process_evidence')}
         rows=[]
@@ -1685,7 +1691,7 @@ if plist.exists(): subprocess.run(expected,check=True)
 %s
 journal=Path(%r)
 if journal.exists():
-    proof=journal_proof(journal)
+    proof=journal_proof(journal,quiescent=True)
     diagnostic=journal.parent.parent/'service-stderr.log'
     if diagnostic.exists(): proof['driverDiagnostics']=diagnostic.read_text()[-32768:]
     print(json.dumps(proof))
