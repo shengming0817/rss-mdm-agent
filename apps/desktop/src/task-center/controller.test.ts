@@ -224,3 +224,28 @@ it("coalesces equivalent original references across IPC and provider property or
   expect(c.lookup(reordered)?.reference).toEqual(item.reference);
   c.dispose();
 });
+
+it("orders recent original tasks by recording time after a polling refresh", async () => {
+  const old = taskDetail("old"),
+    latest = taskDetail("latest");
+  old.recordedAt = 100;
+  latest.recordedAt = 200;
+  const port = {
+    ...taskPort(),
+    list: vi
+      .fn()
+      .mockResolvedValueOnce(taskPage([old]))
+      .mockResolvedValueOnce(taskPage([latest, old])),
+  };
+  const c = createTaskCenter(port, null);
+  try {
+    await c.loadRecent();
+    await c.loadRecent();
+    expect(c.recentItems.value.map((t) => t.reference)).toEqual([
+      latest.reference,
+      old.reference,
+    ]);
+  } finally {
+    c.dispose();
+  }
+});

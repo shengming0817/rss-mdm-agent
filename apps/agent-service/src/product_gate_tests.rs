@@ -6314,3 +6314,142 @@ async fn periodic_native_observation_is_discovered_as_one_read_only_sampling_tas
     };
     assert!(detail.allowed_actions.is_empty());
 }
+
+#[tokio::test]
+async fn task_history_first_page_merges_new_execution_and_latest_preparation_before_old_ids() {
+    use execution_app::tasks::*;
+    use execution_ipc::host::Request;
+    let _budget = crate::scenario_budget::enter();
+    let mut c = Case::new(Some(RiskLevel::Two)).await;
+    c.service.core.start_task(c.selection(false)).unwrap();
+    let original = c.record();
+    for n in 0..65 {
+        let mut record = original.clone();
+        let PreparedAction::Offered { offer } = &mut record.action else {
+            panic!("offered")
+        };
+        offer.request = RequestId::new(if n == 64 {
+            "z-latest".into()
+        } else {
+            format!("a-old-{n:03}")
+        })
+        .unwrap();
+        record.recorded_at_unix_ms =
+            original
+                .recorded_at_unix_ms
+                .saturating_sub(if n == 64 { 0 } else { 1000 });
+        c.service
+            .core
+            .app
+            .record_backend_request(&c.service.core.caller(), None, &record)
+            .unwrap();
+    }
+    let mut spec: ExecutionInput = serde_json::from_str(include_str!(
+        "../../../crates/execution-contract/tests/fixtures/plan.json"
+    ))
+    .unwrap();
+    spec.request.authority = c.service.core.host.binding.authority.clone();
+    spec.request.actor = c.service.core.caller().actor;
+    spec.request.target.device = c.service.core.host.binding.device.clone();
+    spec.request.request_id = RequestId::new("latest-execution").unwrap();
+    spec.request.initiator = Initiator::Backend {
+        task: plan::id("timeline-task").unwrap(),
+        attempt: plan::id("timeline-attempt").unwrap(),
+        trigger: BackendTrigger::Human {
+            os_session: OsSessionRef {
+                device: spec.request.target.device.clone(),
+                account: OsAccountRef {
+                    platform: Platform::Macos,
+                    subject: plan::id(&c.selection.subject).unwrap(),
+                },
+                session: c.selection.binding.clone(),
+            },
+        },
+    };
+    spec.request.delegation = None;
+    spec.run_as = RunAs::System {
+        platform: spec.request.target.platform,
+    };
+    spec.session_requirement = SessionRequirement::NotRequired {};
+    let input = FrozenExecution::freeze(spec, &plan::storage_limits().input).unwrap();
+    c.service
+        .core
+        .app
+        .stage_execution(&c.service.core.caller(), &input)
+        .unwrap();
+    let Reply::Task {
+        value: TaskResponse::Page(page),
+    } = c
+        .policy_call(Request::Task {
+            input: TaskOperation::List(TaskQuery {
+                limit: 8,
+                ..Default::default()
+            }),
+            origin: ClientOrigin::Desktop {},
+        })
+        .await
+    else {
+        panic!("task page")
+    };
+    let ids = page
+        .items
+        .iter()
+        .map(|t| match &t.reference {
+            TaskRef::Request { request } => request.as_str(),
+            _ => "",
+        })
+        .collect::<Vec<_>>();
+    assert!(ids[..3].contains(&"latest-execution"));
+    assert!(ids[..3].contains(&"z-latest"));
+    assert!(page
+        .items
+        .windows(2)
+        .all(|w| w[0].recorded_at >= w[1].recorded_at));
+    let mut inserted = original.clone();
+    let PreparedAction::Offered { offer } = &mut inserted.action else {
+        panic!("offered")
+    };
+    offer.request = RequestId::new("zz-after-watermark").unwrap();
+    c.service
+        .core
+        .app
+        .record_backend_request(&c.service.core.caller(), None, &inserted)
+        .unwrap();
+    let mut all = page.items;
+    let mut next = page.next;
+    for _ in 0..32 {
+        let Some(cursor) = next else { break };
+        let Reply::Task {
+            value: TaskResponse::Page(page),
+        } = c
+            .policy_call(Request::Task {
+                input: TaskOperation::List(TaskQuery {
+                    limit: 8,
+                    cursor: Some(cursor),
+                    ..Default::default()
+                }),
+                origin: ClientOrigin::Desktop {},
+            })
+            .await
+        else {
+            panic!("stable history continuation")
+        };
+        all.extend(page.items);
+        next = page.next;
+    }
+    assert!(next.is_none());
+    assert_eq!(all.len(), 67);
+    let unique = all
+        .iter()
+        .map(|item| serde_json::to_string(&item.reference).unwrap())
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(unique.len(), all.len());
+    assert!(!unique.contains(
+        &serde_json::to_string(&TaskRef::Request {
+            request: RequestId::new("zz-after-watermark").unwrap()
+        })
+        .unwrap()
+    ));
+    assert!(all.windows(2).all(|w| w[0].recorded_at >= w[1].recorded_at));
+    assert!(c._server.data.lock().unwrap().start_ops.is_empty());
+}

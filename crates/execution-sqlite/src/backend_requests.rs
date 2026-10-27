@@ -183,42 +183,104 @@ pub(crate) fn reserve_request(conn: &rusqlite::Connection, scope: &Scope) -> Res
 }
 
 impl Store {
-    pub(crate) fn sql_backend_request_page(
+    pub(crate) fn sql_task_history_page(
         &self,
         authority: &execution_contract::Authority,
         actor: &execution_contract::ActorId,
-        after: Option<&execution_contract::RequestId>,
-        watermark: u64,
-        limit: usize,
+        query: &TaskHistoryQuery,
         host: &impl JournalHost,
-    ) -> Result<Vec<BackendRequest>, Error> {
-        if !(1..=128).contains(&limit) {
+    ) -> Result<Vec<TaskHistoryPosition>, Error> {
+        if !(1..=128).contains(&query.limit) {
             return Err(Error::InvalidInput);
         }
-        crate::database::ensure_current(&self.conn, &self.authority, self.limits)?;
-        let mut query=self.conn.prepare("SELECT request_id FROM backend_requests WHERE actor=?1 AND request_id>?2 AND rowid<=?4 ORDER BY request_id LIMIT ?3")?;
-        let ids = query
-            .query_map(
-                params![
-                    actor.as_str(),
-                    after.map_or("", |v| v.as_str()),
-                    limit,
-                    integer(watermark)?
-                ],
-                |r| r.get::<_, String>(0),
-            )?
-            .collect::<Result<Vec<_>, _>>()?;
-        ids.into_iter()
-            .map(|id| {
+        let tx = self.conn.unchecked_transaction()?;
+        crate::database::ensure_current(&tx, &self.authority, self.limits)?;
+        // ref: sqlite.org/rowvalue.html#scrolling_window_queries. Both coordinates are
+        // immutable. UNION reads original tables; no materialized history or migration.
+        let sql = format!(
+            "WITH history AS (
+                SELECT request_id, scope, json_extract(CAST({} AS TEXT),'$.recordedAtUnixMs') AS at, 0 AS lane
+                FROM backend_requests WHERE actor=?1 AND rowid<=?2
+                UNION ALL
+                SELECT e.request_id,e.scope,json_extract(CAST({} AS TEXT),'$.occurredAtUnixMs') AS at,1 AS lane
+                FROM receipts r JOIN executions e ON e.scope=r.scope
+                WHERE r.sequence<=?3
+                  AND r.sequence=(SELECT MIN(first.sequence) FROM receipts first WHERE first.scope=r.scope)
+                  AND NOT EXISTS(SELECT 1 FROM backend_requests b WHERE b.scope=e.scope AND b.actor=?1)
+            ) SELECT request_id,scope,at,lane FROM history
+              WHERE at<=?4 AND (?5 IS NULL OR (at,request_id)<(?5,?6))
+              ORDER BY at DESC,request_id DESC LIMIT ?7",
+            bounded_blob("body", self.limits.max_record_bytes),
+            bounded_blob("r.body", self.limits.max_record_bytes));
+        let mut statement = tx.prepare(&sql)?;
+        let rows = statement.query_map(
+            params![
+                actor.as_str(),
+                integer(query.preparations)?,
+                integer(query.receipts)?,
+                integer(query.as_of)?,
+                query
+                    .after
+                    .as_ref()
+                    .map(|p| integer(p.recorded_at_unix_ms))
+                    .transpose()?,
+                query.after.as_ref().map(|p| p.request.as_str()),
+                query.limit as i64,
+            ],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, u64>(2)?,
+                    r.get::<_, u8>(3)?,
+                ))
+            },
+        )?;
+        let mut result = Vec::new();
+        for row in rows {
+            let (request, key, at, lane) = row?;
+            let request =
+                execution_contract::RequestId::new(request).map_err(|_| Error::Corrupt)?;
+            if lane == 0 {
                 let scope = Scope {
                     authority: authority.clone(),
                     actor: actor.clone(),
-                    request_id: execution_contract::RequestId::new(id)
-                        .map_err(|_| Error::Corrupt)?,
+                    request_id: request.clone(),
                 };
-                self.sql_backend_request(&scope, host)?
-                    .ok_or(Error::Corrupt)
-            })
-            .collect()
+                self.check_scope(&scope)?;
+                if scope.interaction_subject().as_str() != key {
+                    return Err(Error::Corrupt);
+                }
+                authorize(host, Access::ReadResult, &scope, None)?;
+                let record = read(&tx, &key, self.limits)?.ok_or(Error::Corrupt)?;
+                if record.action.request() != &request || record.recorded_at_unix_ms != at {
+                    return Err(Error::Corrupt);
+                }
+            } else {
+                let (plan_bytes,receipt_bytes):(Vec<u8>,Vec<u8>)=tx.query_row(&format!(
+                    "SELECT {},{} FROM executions e JOIN receipts r ON r.scope=e.scope WHERE e.scope=?1 ORDER BY r.sequence LIMIT 1",
+                    bounded_blob("e.plan",self.limits.input.max_input_bytes),bounded_blob("r.body",self.limits.max_record_bytes)),[&key],|r|Ok((r.get(0)?,r.get(1)?)))?;
+                let spec = execution_contract::decode_execution(&plan_bytes, &self.limits.input)
+                    .map_err(|_| Error::Corrupt)?;
+                let input = execution_contract::FrozenExecution::freeze(spec, &self.limits.input)
+                    .map_err(|_| Error::Corrupt)?;
+                let scope = Scope::from_input(&input);
+                let receipt: Receipt = decode(&receipt_bytes, self.limits.max_record_bytes)?;
+                self.check_scope(&scope)?;
+                if scope.request_id != request
+                    || scope.interaction_subject().as_str() != key
+                    || receipt.scope != scope
+                    || receipt.occurred_at_unix_ms != at
+                {
+                    return Err(Error::Corrupt);
+                }
+                authorize(host, Access::RunnerFact, &scope, None)?;
+            }
+            result.push(TaskHistoryPosition {
+                request,
+                recorded_at_unix_ms: at,
+            });
+        }
+        Ok(result)
     }
 }

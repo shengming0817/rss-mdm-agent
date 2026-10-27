@@ -19,6 +19,7 @@ struct Cursor {
     management: String,
     lane: u8,
     after: Option<String>,
+    position: Option<execution_app::TaskHistoryPosition>,
 }
 fn text<T: Serialize>(v: &T) -> Result<String, Error> {
     serde_json::to_string(v).map_err(|_| Error::Protocol)

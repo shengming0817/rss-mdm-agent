@@ -41,6 +41,7 @@ impl Core {
                 snapshot: self.host.clock.millis()?,
                 lane: if q.view == TaskView::Management { 3 } else { 0 },
                 after: None,
+                position: None,
             }
         };
         if cursor.definitions != definitions_hash
@@ -55,83 +56,35 @@ impl Core {
         let mut items = Vec::new();
         let mut next = None;
         if cursor.lane == 0 {
-            let after = cursor
-                .after
-                .as_ref()
-                .map(|v| RequestId::new(v).map_err(|_| Error::Protocol))
-                .transpose()?;
             let candidates = self
                 .app
-                .backend_request_page(
+                .service_task_history(
                     &self.caller(),
-                    after.as_ref(),
-                    cursor.preparations,
-                    usize::from(q.limit),
+                    &execution_app::TaskHistoryQuery {
+                        after: cursor.position.clone(),
+                        preparations: cursor.preparations,
+                        receipts: cursor.receipts,
+                        as_of: cursor.snapshot,
+                        limit: usize::from(q.limit),
+                    },
                 )
                 .map_err(map_app_error)?;
             let count = candidates.len();
-            for record in candidates {
-                cursor.after = Some(record.action.request().as_str().into());
-                if record.recorded_at_unix_ms > cursor.snapshot {
-                    continue;
-                }
-                let request = record.action.request();
-                if let Some(item) = self.visible_task_detail(
-                    command,
-                    &TaskRef::Request {
-                        request: request.clone(),
-                    },
-                )? {
-                    if matches_query(&item, q) {
-                        items.push(item);
-                    }
-                }
-            }
-            if count < usize::from(q.limit) {
-                cursor.lane = 1;
-                cursor.after = None;
-            }
-            next = Some(text(&cursor)?);
-        }
-        if cursor.lane == 1 && items.len() < usize::from(q.limit) {
-            next = None;
-            let before = cursor
-                .after
-                .as_ref()
-                .map(|v| v.parse::<u64>().map_err(|_| Error::Protocol))
-                .transpose()?
-                .or(Some(cursor.receipts.checked_add(1).ok_or(Error::Capacity)?));
-            let page = self
-                .app
-                .service_task_page(before, usize::from(q.limit) - items.len())
-                .map_err(map_app_error)?;
-            for record in page.items {
-                // A preparation retains its discovery lane after it starts execution.
-                if self
-                    .app
-                    .backend_request(&self.caller(), &record.details.action.request_id)
-                    .map_err(map_app_error)?
-                    .is_some()
-                {
-                    continue;
-                }
-                if record.recorded_at_unix_ms > cursor.snapshot {
-                    continue;
-                }
+            for position in candidates {
+                cursor.position = Some(position.clone());
                 if let Some(mut item) = self.visible_task_detail(
                     command,
                     &TaskRef::Request {
-                        request: record.details.action.request_id.clone(),
+                        request: position.request,
                     },
                 )? {
-                    item.recorded_at = Some(record.recorded_at_unix_ms);
+                    item.recorded_at = Some(position.recorded_at_unix_ms);
                     if matches_query(&item, q) {
-                        items.push(item);
+                        items.push(item)
                     }
                 }
             }
-            if let Some(before) = page.next {
-                cursor.after = Some(before);
+            if count == usize::from(q.limit) {
                 next = Some(text(&cursor)?);
             } else {
                 cursor.lane = 2;

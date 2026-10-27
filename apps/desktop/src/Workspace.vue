@@ -128,7 +128,7 @@ const taskPage = computed<PageNavigation>(() => ({
         },
       ]
     : [],
-  searchEntries: [...controller.state.byRef.values()].map((task) => ({
+  searchEntries: controller.recentItems.value.map((task) => ({
     id: taskKey(task.reference),
     title: taskTitle(task),
     revision: JSON.stringify(task.revision),
@@ -152,7 +152,10 @@ const taskPage = computed<PageNavigation>(() => ({
   },
   search: {
     loading: controller.state.recentLoading,
-    complete: controller.state.recentLoaded && !controller.state.recentNext,
+    complete:
+      controller.state.recentLoaded &&
+      !controller.state.recentNext &&
+      !controller.state.recentWindowed,
     hasMore: !!controller.state.recentNext,
     error: controller.state.recentError,
     loadMore: () => controller.loadRecent(true),
@@ -834,10 +837,12 @@ onBeforeUnmount(() => {
         :loading="searchState.loading"
         :complete="searchState.complete"
         :has-more="searchState.hasMore"
+        :restartable="controller.state.recentWindowed"
         :error="searchState.error"
         @visibility="searchVisibility"
         @more="searchMore()"
         @retry="searchMore(true)"
+        @restart="controller.restartRecent()"
         @select="openTarget"
       />
     </template>

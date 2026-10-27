@@ -70,16 +70,14 @@ pub trait JournalPort {
     fn authority(&self) -> &Authority;
     /// Immutable decoder/execution envelope selected when this journal was opened.
     fn input_limits(&self) -> ExecutionLimits;
-    /// Stable bounded preparation discovery without truncating retained history to one recovery batch.
-    fn backend_request_page(
+    /// Stable descending time/identity discovery across both original history tables.
+    fn task_history_page(
         &self,
         authority: &Authority,
         actor: &ActorId,
-        after: Option<&RequestId>,
-        watermark: u64,
-        limit: usize,
+        query: &TaskHistoryQuery,
         host: &impl JournalHost,
-    ) -> Result<Vec<BackendRequest>, JournalError>;
+    ) -> Result<Vec<TaskHistoryPosition>, JournalError>;
     /// List bounded preparation records without creating another task queue.
     fn backend_requests(
         &self,

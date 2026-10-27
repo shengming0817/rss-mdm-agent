@@ -22,24 +22,20 @@ pub struct ExecutionApp<H, R, J: JournalPort> {
     pub(crate) config: AppConfig,
 }
 impl<H: AppHost, R: RunnerPort, J: JournalPort> ExecutionApp<H, R, J> {
-    /// Stable caller-authorized preparation history, independently paged from execution facts.
-    pub fn backend_request_page(
+    /// Owner-only time-ordered discovery; each projected task still authorizes its reader.
+    pub fn service_task_history(
         &self,
         caller: &RequestContext,
-        after: Option<&RequestId>,
-        watermark: u64,
-        limit: usize,
-    ) -> Result<Vec<execution_contract::BackendRequest>, Error> {
+        query: &TaskHistoryQuery,
+    ) -> Result<Vec<TaskHistoryPosition>, Error> {
         if self.host.service_binding()? != self.binding {
             return Err(Error::Denied);
         }
-        Ok(self.journal.backend_request_page(
+        Ok(self.journal.task_history_page(
             &self.host.binding_for_actor(&caller.actor)?.authority,
             &caller.actor,
-            after,
-            watermark,
-            limit,
-            &self.adapter(Some(caller)),
+            query,
+            &self.adapter(None),
         )?)
     }
     /// Bounded pre-execution history for the same authenticated actor.

@@ -12,7 +12,11 @@ import {
   policyRecord,
   taskPage,
 } from "../../../../tests/self-service/support";
-import type { SelfServiceDirectoryItem } from "../self-service/types";
+import type {
+  SelfServiceDirectoryItem,
+  TaskQuery,
+  TaskRef,
+} from "../self-service/types";
 
 it("searches subsequent authorized pages through the same directory and opens the exact policy without executing", async () => {
   const item: SelfServiceDirectoryItem = {
@@ -107,6 +111,86 @@ it("searches subsequent authorized pages through the same directory and opens th
     await flushPromises();
     expect(w.text()).toContain("资源已撤回或版本已变化");
     expect(invoke).not.toHaveBeenCalled();
+  } finally {
+    w.unmount();
+  }
+});
+
+it("restores early task search results after the bounded window reaches the end", async () => {
+  const { taskPort, taskDetail } = await import(
+    "../../../../tests/self-service/support"
+  );
+  const tasks = {
+    ...taskPort(),
+    list: vi.fn(async (query: TaskQuery) => {
+      const page = Number(query.cursor ?? 0);
+      return {
+        ...taskPage(
+          Array.from({ length: 32 }, (_, i) =>
+            taskDetail(`search-${page}-${i}`),
+          ),
+        ),
+        next: page < 16 ? String(page + 1) : null,
+      };
+    }),
+    detail: vi.fn(async (reference: TaskRef) => {
+      if (reference.kind !== "request") throw Error("request fixture");
+      return taskDetail(reference.request);
+    }),
+    control: vi.fn(),
+  };
+  const w = mount(Workspace, {
+    attachTo: document.body,
+    props: {
+      ready: true,
+      busy: false,
+      fixture: true,
+      page: "home",
+      host: createHostSettings(undefined),
+      selfServicePort: {
+        ...policyFixturePort,
+        execute: vi.fn(),
+        confirm: vi.fn(),
+      },
+      localPorts: {
+        tasks,
+        data: null,
+        software: null,
+        settings: null,
+        network: null,
+      },
+      onNavigate: (page: string) => {
+        void w.setProps({ page });
+      },
+    },
+  });
+  try {
+    await flushPromises();
+    const search = w.getComponent(WorkspaceSearch);
+    for (let page = 0; page < 16; page++) {
+      search.vm.$emit("more");
+      await flushPromises();
+    }
+    expect(tasks.list).toHaveBeenCalledTimes(17);
+    expect(search.props("complete")).toBe(false);
+    expect(search.props("hasMore")).toBe(false);
+    expect(search.props("restartable")).toBe(true);
+    search.vm.$emit("restart");
+    await flushPromises();
+    const entry = search
+      .props("entries")
+      .find(
+        (e) =>
+          e.id === JSON.stringify({ kind: "request", request: "search-0-0" }),
+      );
+    expect(entry).toBeDefined();
+    search.vm.$emit("select", entry);
+    await flushPromises();
+    expect(tasks.detail).toHaveBeenCalledWith({
+      kind: "request",
+      request: "search-0-0",
+    });
+    expect(tasks.control).not.toHaveBeenCalled();
   } finally {
     w.unmount();
   }

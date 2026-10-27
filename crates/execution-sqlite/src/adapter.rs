@@ -9,16 +9,14 @@ impl JournalPort for Store {
         self.sql_task_watermarks().map_err(Into::into)
     }
 
-    fn backend_request_page(
+    fn task_history_page(
         &self,
-        authority: &execution_contract::Authority,
-        actor: &execution_contract::ActorId,
-        after: Option<&execution_contract::RequestId>,
-        watermark: u64,
-        limit: usize,
+        authority: &Authority,
+        actor: &ActorId,
+        query: &TaskHistoryQuery,
         host: &impl JournalHost,
-    ) -> Result<Vec<execution_contract::BackendRequest>, JournalError> {
-        self.sql_backend_request_page(authority, actor, after, watermark, limit, host)
+    ) -> Result<Vec<TaskHistoryPosition>, JournalError> {
+        self.sql_task_history_page(authority, actor, query, host)
             .map_err(Into::into)
     }
 

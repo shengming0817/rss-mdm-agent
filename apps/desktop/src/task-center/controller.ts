@@ -137,6 +137,8 @@ export function createTaskCenter(
     readAt.set(key, Date.now());
     while (state.byRef.size > 512) {
       const first = state.byRef.keys().next().value!;
+      if (state.recent.some((ref) => taskKey(ref) === first))
+        state.recentWindowed = true;
       state.byRef.delete(first);
       readAt.delete(first);
     }
@@ -255,10 +257,20 @@ export function createTaskCenter(
     }
   }
   const recentItems = computed(() =>
-    state.recent.flatMap((ref) => {
-      const item = state.byRef.get(taskKey(ref));
-      return item ? [item] : [];
-    }),
+    state.recent
+      .flatMap((ref) => {
+        const item = state.byRef.get(taskKey(ref));
+        return item ? [item] : [];
+      })
+      .sort(
+        (a, b) =>
+          (b.recordedAt ?? -1) - (a.recordedAt ?? -1) ||
+          (taskKey(a.reference) < taskKey(b.reference)
+            ? 1
+            : taskKey(a.reference) === taskKey(b.reference)
+              ? 0
+              : -1),
+      ),
   );
   async function loadRecent(append = false): Promise<void> {
     if (!tasks || !alive || (append && !state.recentNext)) return;
@@ -295,6 +307,17 @@ export function createTaskCenter(
       }
     })();
     return recentFlight;
+  }
+  async function restartRecent() {
+    const call = epoch;
+    await recentFlight;
+    if (!alive || call !== epoch) return;
+    state.recent = [];
+    state.recentNext = null;
+    state.recentLoaded = false;
+    state.recentWindowed = false;
+    recentBrowsing = false;
+    await loadRecent();
   }
   function forget(reference: TaskRef) {
     const key = taskKey(reference);
@@ -550,6 +573,7 @@ export function createTaskCenter(
   return {
     recentItems,
     loadRecent,
+    restartRecent,
     lookup,
     port,
     tasks,
