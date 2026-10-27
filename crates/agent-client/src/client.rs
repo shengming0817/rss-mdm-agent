@@ -489,7 +489,13 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             let task = signed.payload.task_id().to_string();
             let old:Option<Vec<u8>>=self.store.conn.query_row("SELECT CASE WHEN typeof(body)='blob' AND length(body)<=16777216 THEN body END FROM tasks WHERE id=?1",[&task],|r|r.get(0)).optional()?;
             if old.is_none() && count >= self.store.cfg.limits.pending_tasks as u64 {
-                return Err(Error::Capacity);
+                // A new offer must not hide cancellation of existing work at capacity.
+                // Keep the exact claim for replay after the host settles those tasks;
+                // neither acknowledge nor persist the unadmitted offer.
+                return Ok(Claim {
+                    offer: None,
+                    cancellations,
+                });
             }
             let old = old.as_deref().map(decode::<wire::SignedTask>).transpose()?;
             let retirement = old
