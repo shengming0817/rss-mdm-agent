@@ -1,9 +1,10 @@
 //! Fixed native MDM entry worker. It never registers an Agent or grants enterprise execution.
 //! ref: Microsoft Windows MDM enrollment URI; Apple profiles(1), open(1).
 use agent_client::{Error, NativeEnrollmentMaterial};
-use execution_contract::{Digest, RunAs, SessionRequirement};
+use execution_contract::{CollectionCompletion, Digest, RunAs, SessionRequirement};
 use rss_mdm_agent_wire::runtime as w;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest as _, Sha256};
 use std::{io::Write, path::Path};
 pub(crate) const TIMEOUT_MS: u64 = 600_000;
 pub(crate) const OUTPUT_BYTES: u64 = 4096;
@@ -35,8 +36,20 @@ pub fn run(path: &Path) -> Result<i32, Error> {
         .map_err(crate::error::app_error)?;
     execution_runner::staging::verify_worker_identity(&input.run_as, &input.session)
         .map_err(crate::error::app_error)?;
-    let result = open(&input, path).unwrap_or(w::EnrollmentEntryOutcome::Failed);
-    std::io::stdout().write_all(&serde_json::to_vec(&result).map_err(|_| Error::Protocol)?)?;
+    // Emit closure only after the fixed OS launcher has returned and its child was reaped.
+    // The enrollment UI is an OS handoff; opening it is not proof of MDM registration.
+    let result = open(&input, path)?;
+    execution_runner::staging::verify_worker_identity(&input.run_as, &input.session)
+        .map_err(crate::error::app_error)?;
+    let output = serde_json::to_vec(&result).map_err(|_| Error::Protocol)?;
+    let completion = CollectionCompletion {
+        native_output_bytes: 0,
+        input_sha256: format!("{:x}", Sha256::digest(&bytes)),
+        output_sha256: format!("{:x}", Sha256::digest(&output)),
+        closed: true,
+    };
+    std::io::stdout().write_all(&output)?;
+    std::io::stderr().write_all(&serde_json::to_vec(&completion).map_err(|_| Error::Protocol)?)?;
     Ok(0)
 }
 #[cfg(target_os = "macos")]
