@@ -471,10 +471,15 @@ export function checkSource(file, source) {
         "clearInterval",
         "setTimeout",
       ],
-      "apps/desktop/src/system-settings/SettingDetail.vue": ["JSON", "Boolean"],
+      "apps/desktop/src/system-settings/SettingDetail.vue": [
+        "JSON",
+        "Boolean",
+        "defineExpose",
+      ],
       "apps/desktop/src/system-settings/SystemSettings.vue": ["JSON"],
       "apps/desktop/src/system-settings/presentation.ts": ["JSON"],
       "apps/desktop/src/device-tools/ConnectionCheck.vue": [
+        "defineExpose",
         "document",
         "crypto",
         "setInterval",
