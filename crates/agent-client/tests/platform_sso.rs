@@ -110,4 +110,50 @@ async fn registration_distinguishes_rejection_from_unknown_and_malformed_success
             .source_id,
         receipt.source_id
     );
+    let mut oversized = input;
+    oversized.proof = "x".repeat(131073);
+    let calls = server.data.lock().unwrap().psso_calls.len();
+    assert!(client.psso_register(&oversized).await.unwrap().is_none());
+    assert_eq!(server.data.lock().unwrap().psso_calls.len(), calls);
+}
+
+#[tokio::test]
+#[should_panic(expected = "fixture HTTP contract violations")]
+async fn invalid_request_cannot_pass_as_an_expected_http_error() {
+    let server = Server::tls().await;
+    let http = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build()
+        .unwrap();
+    let response = http
+        .post(
+            server
+                .url
+                .join("api/v1/agent/runtime/filevault/configuration")
+                .unwrap(),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert!(response.status().is_client_error());
+    // The fixture's owning test thread must fail even though the caller expected an error.
+    drop(server);
+}
+
+#[tokio::test]
+#[should_panic(expected = "fixture HTTP contract violations")]
+async fn invalid_response_cannot_hide_in_an_unobserved_connection_task() {
+    let server = Server::tls().await;
+    server.data.lock().unwrap().trust = json!({});
+    let http = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build()
+        .unwrap();
+    let response = http
+        .get(server.url.join("api/v1/agent/enroll/trust").unwrap())
+        .send()
+        .await
+        .unwrap();
+    assert!(response.status().is_success());
+    drop(server);
 }

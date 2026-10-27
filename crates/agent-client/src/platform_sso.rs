@@ -23,6 +23,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             self.now()?;
             Ok(self
                 .call::<h::PssoRegister>(&[], None, Some(input))?
+                .body_limit(131072)?
                 .timeout(
                     self.store
                         .cfg

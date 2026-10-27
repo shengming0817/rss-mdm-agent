@@ -151,6 +151,7 @@ impl IdentityProvider for Secrets {
 }
 pub struct Data {
     pub invalid_contract_response: bool,
+    pub contract_violations: Arc<Mutex<Vec<String>>>,
     pub connection_configuration: Option<rss_mdm_agent_wire::connections::SignedConfiguration>,
     pub connection_ack_calls: Vec<Value>,
     pub connection_failure_calls: Vec<Value>,
@@ -642,6 +643,7 @@ pub struct Server {
 // tasks alive; a dedicated runtime owns and cancels the entire server together.
 // ref: axum 0.8.9 src/serve/mod.rs; tokio 1.53.1 src/runtime/runtime.rs.
 struct ServerRuntime {
+    contract_violations: Arc<Mutex<Vec<String>>>,
     stop: Option<tokio::sync::oneshot::Sender<()>>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -656,6 +658,13 @@ impl Drop for ServerRuntime {
                     std::panic::resume_unwind(panic);
                 }
             }
+        }
+        if !std::thread::panicking() {
+            let violations = self.contract_violations.lock().unwrap();
+            assert!(
+                violations.is_empty(),
+                "fixture HTTP contract violations: {violations:?}"
+            );
         }
     }
 }
@@ -765,6 +774,7 @@ impl Server {
             received: false,
             content_calls: vec![],
             invalid_contract_response: false,
+            contract_violations: Arc::default(),
             reports: BTreeMap::new(),
             collections: None,
             results: BTreeMap::new(),
@@ -874,6 +884,7 @@ impl Server {
             })
             .unwrap();
         let runtime = ServerRuntime {
+            contract_violations: data.lock().unwrap().contract_violations.clone(),
             stop: Some(stop),
             thread: Some(thread),
         };
@@ -1092,10 +1103,12 @@ async fn handler(
         return handle(state, uri, method, headers, peer, bytes).await;
     }
     let contract = contract::fixed();
-    if contract
-        .request(method.as_str(), &uri, &headers, &bytes)
-        .is_err()
-    {
+    let violations = state.0.lock().unwrap().contract_violations.clone();
+    if let Err(error) = contract.request(method.as_str(), &uri, &headers, &bytes) {
+        violations
+            .lock()
+            .unwrap()
+            .push(format!("request {} {}: {error}", method, uri.path()));
         return runtime_error(StatusCode::BAD_REQUEST, ErrorCode::MalformedRequest);
     }
     // Fault overrides deliberately reach the client. All ordinary fixture replies
@@ -1117,17 +1130,17 @@ async fn handler(
         .and_then(|h| h.to_str().ok())
         .is_some_and(|h| h.starts_with("application/octet-stream"))
     {
-        assert!(
-            contract
-                .response(
-                    endpoint,
-                    response.status().as_u16(),
-                    response.headers(),
-                    &[]
-                )
-                .is_ok(),
-            "binary response contract"
-        );
+        if let Err(error) = contract.response(
+            endpoint,
+            response.status().as_u16(),
+            response.headers(),
+            &[],
+        ) {
+            violations
+                .lock()
+                .unwrap()
+                .push(format!("response {}: {error}", endpoint["operationId"]));
+        }
         return response;
     }
     let (parts, body) = response.into_parts();
@@ -1136,15 +1149,12 @@ async fn handler(
         // Preserve the existing transport fault rather than replacing it with a JSON error.
         Err(_) => return interrupted_response(),
     };
-    assert!(
-        contract
-            .response(endpoint, parts.status.as_u16(), &parts.headers, &bytes)
-            .is_ok(),
-        "{}",
-        contract
-            .response(endpoint, parts.status.as_u16(), &parts.headers, &bytes)
-            .unwrap_err()
-    );
+    if let Err(error) = contract.response(endpoint, parts.status.as_u16(), &parts.headers, &bytes) {
+        violations
+            .lock()
+            .unwrap()
+            .push(format!("response {}: {error}", endpoint["operationId"]));
+    }
     Response::from_parts(parts, Body::from(bytes))
 }
 
