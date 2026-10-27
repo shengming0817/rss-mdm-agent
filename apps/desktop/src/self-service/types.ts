@@ -5726,9 +5726,7 @@ export interface ScriptRunResult {
   /**
    * Resource-defined output, or null when retained only by reference.
    */
-  output: {
-    [k: string]: unknown;
-  };
+  output: unknown;
   /**
    * Digest and size when output is retained by reference.
    */

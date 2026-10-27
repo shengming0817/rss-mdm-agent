@@ -11,6 +11,7 @@ export function typescriptSchema(schema) {
     "readOnly",
     "writeOnly",
     "deprecated",
+    "x-rss-extension",
   ]);
   const maps = new Set([
     "$defs",
