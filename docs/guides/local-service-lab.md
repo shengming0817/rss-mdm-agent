@@ -12,6 +12,8 @@
 
 开发与生产包均不强制发布者证书或公证：macOS 默认 ad-hoc，可使用自签名或 Apple Development；Windows 未提供签名材料时生成未签名包。`--release` 只标记包模式，不提高证书准入要求；该模式仍用于阻止 SIT 重置入口清理 release 安装。macOS 签名身份依次读取 `RSS_MACOS_APP_SIGNING_IDENTITY`、`RSS_MACOS_DEVELOPMENT_SIGNING_IDENTITY`，均缺失时使用 ad-hoc；`RSS_MACOS_INSTALLER_SIGNING_IDENTITY` 和已有的 `RSS_MACOS_NOTARY_PROFILE` Keychain 引用分别显式启用安装包签名、公证与 stapling。Windows 提供 `RSS_WINDOWS_SIGNING_THUMBPRINT` 才执行签名，可用 `RSS_SIGNTOOL` 指定工具。显式选择的签名或公证操作失败仍报错，构建不接收证书密码。固定路径、SHA-256/CDHash 和实际进程身份继续校验；系统加载、MDM、entitlement 和设备安全策略的实际接纳须独立取证。
 
+跨版本钥匙串访问要求稳定的代码身份。服务程序固定使用签名标识 `com.rss.mdmagent.execution-service`，CLI 使用 `com.rss.mdmagent.cli`，桌面容器使用 `com.rss.mdmagent`；运行时原生组件使用独立、由相对路径派生的标识，不能共享服务身份。自签名代码签名证书可以用于钥匙串的 designated requirement，但各版本必须复用适当的固定证书身份，并在构建机正确配置该签名身份。仅固定 Identifier 的 ad-hoc 签名仍不能建立跨版本身份连续性。已有 ad-hoc 凭据授权不会因换上证书自动迁移，不能清库或放宽为任意应用访问。钥匙串身份连续性与 Gatekeeper 分发、公证分别验收；见 [Apple TN2206](https://developer.apple.com/library/archive/technotes/tn2206/)。
+
 当前候选不再包含 `windows_publisher`，PSSO 配置不再包含 `teamId`。旧字段会被严格解码拒绝，不提供兼容读取或自动迁移；应使用当前构建/安装入口生成新候选和部署记录。旧格式失败不触发本机状态清理。不要手改受保护清单或其摘要，也不要把 SIT 重置当作保留原身份的升级。
 
 默认部署验收是首次安装、首次注册；重复验证全新安装时使用下述显式 SIT 清理脚本。每个安装包使用独立版本目录。检测到既有部署时会进入已有升级校验；凭据不可读或候选活动未确认停止时拒绝切换，不清库、重注册或自动放宽钥匙串授权。旧格式配置不迁移或兼容读取。
@@ -80,7 +82,15 @@ Windows 使用 PowerShell 7 运行 `scripts/service/execution-windows.ps1 -Actio
 安装配置使用 `execution.local_permissions.policyFile` 指向管理员保护的 `local-permissions.json`。显式安装创建以下初始权限限制；正常刷新保留现有有效文件。运行时缺失、格式错误或权限保护不成立时，修改操作拒绝执行，不自动创建允许规则。旧部署、IPC 和执行库格式直接拒绝并保留，不迁移、重置或另建日志。
 
 ```json
-{"version":2,"allowNativeUninstall":true,"allowLaunch":true,"allowDisplay":true,"allowProxy":false,"allowPower":false,"protected":["com.rss.mdmagent","com.rss-mdm.agent","RSS MDM Agent"]}
+{
+  "version": 2,
+  "allowNativeUninstall": true,
+  "allowLaunch": true,
+  "allowDisplay": true,
+  "allowProxy": false,
+  "allowPower": false,
+  "protected": ["com.rss.mdmagent", "com.rss-mdm.agent", "RSS MDM Agent"]
+}
 ```
 
 此文件只能限制代码内置能力，不能提供执行命令、材料路径或新增动作。`protected` 按原生身份忽略 ASCII 大小写比较；Apple 系统身份和本产品始终受保护。管理员可通过现有部署操作委派代理或电源修改，实际操作仍重新检查当前权限、登录会话、观察快照与目标身份。
@@ -330,7 +340,6 @@ Windows CPU 当前仅接纳单 processor group，多组系统报告 unsupported�
 远端输出 schema 只接纳有界的结构、类型、必填、枚举和数值/长度约束；
 不接纳引用、正则、组合分支或自定义关键字。复杂度或本地输出验证预算超限时拒绝采集结果并记录缺口。
 
-
 ## 连接配置发布、更新与离线恢复
 
 仅支持当前格式的全新安装；旧部署、旧持久格式和旧 origin 白名单明确拒绝，不自动转换或重注册。首次安装保护稳定服务身份、租户、独立验签公钥和 HTTPS CA，签名连接配置只改变 HTTPS 地址。通信 SQLite、凭据命名空间、执行 authority、内容缓存和遥测 spool 均绑定稳定身份。
@@ -351,10 +360,10 @@ Windows CPU 当前仅接纳单 processor group，多组系统报告 unsupported�
 
 Windows 登录增强使用单个 Credential Provider 和同一个受保护离线库。目标账号形态为本地 SAM、设备所属 AD 域账号、纯 Entra joined 账号；Hybrid joined、Workplace registered、MSA、信任域账号、RDP、UAC 和全入口强制 MFA 不在本次支持范围。真实支持结论须绑定目标 Windows 环境的人工验收记录；开发机测试不能证明 LogonUI 已加载或原生登录成功。
 
-| 账号形态 | 关联依据 | 原生凭据与账号管理边界 |
-|---|---|---|
-| 本地 SAM | 本机域 SID、用户 SID及当前登录会话 | Windows 验证密码；可受权建号、禁用或调整本机管理员资格 |
-| AD 域账号 | 本机域加入状态、域 SID、用户 SID及当前登录会话 | Windows 决定域在线/缓存登录；不创建目录账号、不修改域组 |
+| 账号形态     | 关联依据                                                     | 原生凭据与账号管理边界                                            |
+| ------------ | ------------------------------------------------------------ | ----------------------------------------------------------------- |
+| 本地 SAM     | 本机域 SID、用户 SID及当前登录会话                           | Windows 验证密码；可受权建号、禁用或调整本机管理员资格            |
+| AD 域账号    | 本机域加入状态、域 SID、用户 SID及当前登录会话               | Windows 决定域在线/缓存登录；不创建目录账号、不修改域组           |
 | Entra joined | 纯 Entra 加入身份、当前 CloudAP 控制台会话及其 SID/object ID | Windows 决定在线/缓存登录；不以邮件或加入设备者的姓名认领当前用户 |
 
 首次关联需有效员工会话、后台候选策略及当前已解锁的真实控制台会话。原生身份只能由 Agent 获取，前端不能指定 SID/租户。初次启用或设备加入身份发生变化后，Entra 用户须注销 Windows 再登录，使首次关联来自当前加入身份被观察之后的新会话。服务端接受关联、验证码准备完成、任务投递 ACK 与本机已应用分别显示。桌面另行读取当前组件状态与当前账号因子启用状态；服务端最近 Applied 回执不代表组件此刻可用。待重启时任务保留可重试状态，重启后继续同一任务；管理员维护停用须经维修入口恢复。首次 Entra 关联所需的注销重登与组件替换所需的电脑重启分别提示。
@@ -423,7 +432,6 @@ P6 可由 root 对固定安装的 Agent 调用：
 
 正式支持证据必须包含签名嵌入、系统识别、系统发起的设备/用户注册回调、已有账号与受控建号、注册/认证/修复/解绑、锁屏及会话切换、旧代/重放/取消/中断/回执丢失/换钥/撤销，以及 Desktop 或 Agent 停止时的本地登录。构建与协议测试不能替代这些证据；缺受管测试机、有效签名、配置或域关联时保留真实加载/回调阻塞。来源：[Apple 注册设备和用户](https://developer.apple.com/documentation/authenticationservices/registering-devices-and-users)，SDK 26.4 AuthenticationServices 头文件。
 
-
 Password 用户注册不登记用户签名密钥：注册与浏览器证明由当前设备密钥签署，并核对系统实际公钥。首次原生认证不等待 Applied。Password 的 Applied 表示实际 LoginManager 配置读回、设备／用户注册、当前 source/version、真实角色及所需系统权限满足；不表示 RSS 独立证明了密码或钥匙串同步。期望配置单独保留，不能代替系统读回。观察绑定认证 IPC 的实际用户／会话及原注册回调 generation；会话、配置或来源变化使旧观察不能用于完成。只读 refresh 在原 worker 完成后沿 prepared、access-result、journal 与 ACK 结算，不重复建号或权限修改。SE 的完成及首次认证条件、浏览器 Applied 门禁保持原语义。
 
 当前用户 helper 仅用 `SecKeychainGetStatus` 检查固定登录钥匙串的可访问状态，显示已解锁／已锁定／缺失／不可读。它不读取钥匙串项，不主动解锁、锁定或重置，也不把该诊断作为密码同步证明或登录门禁。
@@ -435,7 +443,6 @@ Password 用户注册不登记用户签名密钥：注册与浏览器证明由�
 正式平台预检复用现有候选与旅程入口：`native-candidate.mjs freeze` 可增加 `--platform-sso <扩展可执行文件>` 和 `--installer <公证PKG>`，与 service／backend／desktop 一起冻结。执行 `verify-execution-macos.py --binary <服务> --backend <后端探针> --candidate <固定候选JSON> --output <证据目录> --psso-preflight`，只读核对实际 OS、签名团队及固定安装包公证。预检输出 `psso-preflight.json`，状态保持 blocked、`systemAccepted:false`，不执行安装或注册，也不证明包内映像与独立冻结映像一致；真实安装后须按候选摘要核对实际组件。
 
 受管测试机按同一候选依次验收：匹配 Team／容器／扩展的 MDM profile 与 AASA → 系统设备注册 → 两种用户模式 → 真实登录与指定应用 SSO → 上游改密、本地离线改密、重新联网与冲突 → 登录钥匙串实际访问 → 双用户切换 → 登录窗口、锁屏和 FileVault 冷启动 → Agent／Desktop 停止 → 修复、升级中断与注销卸载。分别记录系统回调、source/version、绑定代际、实际操作及结果；禁止用 `app-sso --messages` 的样本密钥证明硬件持钥，也不将含令牌或密码的原始诊断输出写入证据。没有实际执行的场景保持 notExecuted；真实平台支持由独立平台验收取证，本轮实现与本地 CI 不代替这些证据。
-
 
 ### 独立 FileVault CMS 托管
 
@@ -515,7 +522,6 @@ EXE 签名。安装保留固定摘要和现有包身份归属校验，不强制 
 challenge、RP hash、userHandle、UP/UV 和签名；数据只驻留内存，重启后失效。该夹具只适用于
 一次受控本机验收，不是产品认证服务。服务器不记录凭据、挑战或用户标识。
 
-
 ## macOS Passkey Provider（#2930）
 
 独立的 Credential Provider 扩展嵌入现有 RSS Desktop，与 PSSO 分别声明身份和权限。
@@ -534,7 +540,6 @@ PSSO 自身系统版本要求不作为个人 Provider 的功能前置。
 本轮开发验证仅覆盖当前 Mac 的自动化检查、原生构建和 Chrome 开发 UI。浏览器真实创建/登录、
 第三方 RP、Safari/Edge 和 macOS 15 真机、正式签名公证及安装升级卸载旅程均后续统一安排，
 未运行不记通过。Provider 完成响应与网站接受断言是两个不同事实。
-
 
 ## CLI 与外部导航
 

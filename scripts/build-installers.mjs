@@ -13,9 +13,10 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, resolve, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash, randomUUID, X509Certificate } from "node:crypto";
+import { macosSigningArguments } from "./macos-signing.mjs";
 import { cargoTargetDir } from "./cargo-target.mjs";
 import { runtimeTreeSha256 } from "./ai-host-artifacts.mjs";
 import { sourceEvidence } from "./native-evidence.mjs";
@@ -148,7 +149,7 @@ const macosIdentity =
   process.env.RSS_MACOS_APP_SIGNING_IDENTITY ??
   process.env.RSS_MACOS_DEVELOPMENT_SIGNING_IDENTITY ??
   "-";
-const sign = (file, entitlements) => {
+const sign = (file, entitlements, identifier) => {
   if (windows) {
     if (process.env.RSS_WINDOWS_SIGNING_THUMBPRINT)
       run(process.env.RSS_SIGNTOOL ?? "signtool.exe", [
@@ -164,17 +165,16 @@ const sign = (file, entitlements) => {
         file,
       ]);
   } else {
-    run("/usr/bin/codesign", [
-      "--force",
-      "--sign",
-      macosIdentity,
-      ...(entitlements
-        ? ["--entitlements", entitlements]
-        : ["--preserve-metadata=entitlements"]),
-      ...(macosIdentity === "-" ? [] : ["--options", "runtime"]),
-      ...(process.env.RSS_MACOS_NOTARY_PROFILE ? ["--timestamp"] : []),
-      file,
-    ]);
+    run(
+      "/usr/bin/codesign",
+      macosSigningArguments({
+        file,
+        identity: macosIdentity,
+        identifier,
+        entitlements,
+        timestamp: Boolean(process.env.RSS_MACOS_NOTARY_PROFILE),
+      }),
+    );
   }
 };
 // Sign native resources before the runtime digest is embedded into DesktopHost.
@@ -197,7 +197,12 @@ function signNative(directory) {
             "cafebabf",
             "bfbafeca",
           ].includes(header.toString("hex"));
-      if (native) sign(file);
+      if (native)
+        sign(
+          file,
+          undefined,
+          `com.rss.mdmagent.runtime.${hash(Buffer.from(relative(runtime, file))).slice(0, 32)}`,
+        );
     }
   }
 }
@@ -253,10 +258,10 @@ cpSync(
   join(cargoTargetDir(root), "release/rss-execution-service" + suffix),
   service,
 );
-sign(service);
+sign(service, undefined, "com.rss.mdmagent.execution-service");
 const cli = join(payload, "rssmdm" + suffix);
 cpSync(join(cargoTargetDir(root), "release/rssmdm" + suffix), cli);
-sign(cli);
+sign(cli, undefined, "com.rss.mdmagent.cli");
 let windowsLogin;
 if (windows && format === "windows_exe" && process.arch === "x64") {
   run("cargo", [
@@ -288,7 +293,7 @@ if (windows) {
   );
   desktop = join(app, "Contents/MacOS/rss-mdm-desktop");
   packagedRuntime = join(app, "Contents/Resources/ai-host-runtime");
-  sign(app);
+  sign(app, undefined, "com.rss.mdmagent");
   const nativeExtensions = appleSigned(app);
   psso = nativeExtensions
     ? buildPlatformSso({
@@ -324,6 +329,7 @@ if (windows) {
       join(output, "container-entitlements.plist"),
       nativeExtensions,
     ),
+    "com.rss.mdmagent",
   );
 }
 if (windows) sign(desktop);
