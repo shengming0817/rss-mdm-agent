@@ -246,11 +246,16 @@ async function drainEntries() {
 }
 onMounted(async () => {
   if (!entryPort) return;
-  const stop = await listenNavigation(() => {
-    void drainEntries();
-  });
-  if (entryDisposed) stop();
-  else stopEntry = stop;
+  try {
+    const stop = await listenNavigation(() => {
+      void drainEntries();
+    });
+    if (entryDisposed) stop();
+    else stopEntry = stop;
+  } catch {
+    if (!entryDisposed)
+      navigationError.value = "外部导航接收未就绪，可点击重试读取已接收目标。";
+  }
   await drainEntries();
 });
 watch(

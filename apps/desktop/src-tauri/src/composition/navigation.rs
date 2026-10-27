@@ -108,8 +108,7 @@ fn denied() -> super::super::self_service::ServiceError {
         "目标不存在、版本已变化或当前账户无权访问",
     )
 }
-#[tauri::command]
-pub async fn navigation<R: tauri::Runtime>(
+pub async fn dispatch<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     generation: Option<String>,
     input: NavigationOperation,

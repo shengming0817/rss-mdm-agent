@@ -110,6 +110,7 @@ async function submitEvent() {
     <PolicySelfService
       v-if="policy"
       ref="form"
+      :kind="policy.task.kind"
       :target-policy="policy.policyId"
       :port="port"
       :records="original ? [original] : []"

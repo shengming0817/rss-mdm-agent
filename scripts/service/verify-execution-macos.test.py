@@ -319,7 +319,7 @@ class BackendLifecycleTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory);backend=root/'backend';pid=root/'pid';output=root/'output'
             backend.write_text('#!/usr/bin/python3\nimport os,time\nfrom pathlib import Path\nPath('+repr(str(pid))+').write_text(str(os.getpid()))\nprint("[]",flush=True)\ntime.sleep(60)\n');backend.chmod(0o700)
-            with absent_execution_registration(), patch.object(acceptance.sys,'argv',['verify','--binary','/bin/sh','--backend',str(backend),'--output',str(output)]), patch.object(acceptance,'AdministratorSession') as administrator:
+            with absent_execution_registration(), patch.object(acceptance.sys,'argv',['verify','--binary','/bin/sh','--cli','/bin/sh','--backend',str(backend),'--output',str(output)]), patch.object(acceptance,'AdministratorSession') as administrator:
                 with self.assertRaisesRegex(RuntimeError,'invalid controlled backend response'): acceptance.main()
                 administrator.assert_not_called()
             receipt=json.loads((output/'receipt.json').read_text())

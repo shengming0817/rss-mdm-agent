@@ -13,6 +13,14 @@ fn decode<T: serde::de::DeserializeOwned>(input: serde_json::Value) -> Result<T>
     }
     serde_json::from_value(input).map_err(|_| error("input", "请求结构无效"))
 }
+#[tauri::command]
+async fn navigation<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    generation: Option<String>,
+    input: serde_json::Value,
+) -> Result<super::navigation::NavigationResponse> {
+    super::navigation::dispatch(app, generation, decode(input)?).await
+}
 fn decode_connection(
     input: serde_json::Value,
     expected: Option<u64>,
@@ -409,7 +417,7 @@ pub async fn personal_vault<R: tauri::Runtime>(
 }
 pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder.invoke_handler(tauri::generate_handler![
-        super::navigation::navigation,
+        navigation,
         personal_vault,
         device_overview,
         appearance_snapshot,
@@ -683,7 +691,7 @@ mod tests {
 #[cfg(feature = "dev-fixture")]
 pub fn register_fixture<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder.invoke_handler(tauri::generate_handler![
-        super::navigation::navigation,
+        navigation,
         appearance_snapshot,
         development_assembly
     ])

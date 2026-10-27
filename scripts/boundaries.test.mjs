@@ -695,3 +695,22 @@ test("registration adapters admit only fixed native actions and scoped status po
     ).length,
   );
 });
+
+test("only the production main can register the fixed deep-link plugin", () => {
+  const source = "fn run() { builder.plugin(tauri_plugin_deep_link::init()); }";
+  assert.deepEqual(
+    checkRustSources({ "apps/desktop/src-tauri/src/main.rs": source }),
+    [],
+  );
+  assert.ok(
+    checkRustSources({
+      "apps/desktop/src-tauri/src/composition/navigation.rs": source,
+    }).length,
+  );
+  assert.ok(
+    checkRustSources({
+      "apps/desktop/src-tauri/src/main.rs":
+        "fn run() { builder.plugin(tauri_plugin_deep_link::init(input)); }",
+    }).length,
+  );
+});

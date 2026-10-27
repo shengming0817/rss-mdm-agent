@@ -2160,7 +2160,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         (lab / 'receipt.json').write_text(json.dumps(receipt, indent=2))
         if not cleanup_errors:
             # The original helper work root can hold unresolved recovery evidence.
-            for leaf in ['rss-execution-service','rss-mdm-desktop','security-probe','untrusted-probe','execution-macos.py','tls.pem']:
+            for leaf in ['rss-execution-service','rssmdm','rss-mdm-desktop','security-probe','untrusted-probe','execution-macos.py','tls.pem']:
                 (inputs / leaf).unlink(missing_ok=True)
         if cleanup_errors:
             raise RuntimeError('acceptance cleanup incomplete')

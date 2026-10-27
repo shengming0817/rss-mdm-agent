@@ -638,6 +638,12 @@ test("a hidden policy consumer does not load the shared catalog until it becomes
 test("a linked form keeps its exact target when the shared directory contains another compatible Policy", async () => {
   const original = directoryItem(record("original").action);
   original.selfService.presentation.displayName = "Linked Policy";
+  if (original.task.kind === "script")
+    original.task.parameterSchema = {
+      type: "object",
+      properties: { name: { type: "string" } },
+      required: ["name"],
+    };
   const other = structuredClone(original);
   other.policyId = "other-policy";
   other.selfService.presentation.displayName = "Other Policy";

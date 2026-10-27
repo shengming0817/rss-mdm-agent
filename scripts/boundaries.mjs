@@ -394,6 +394,7 @@ export function checkSource(file, source) {
     )
       globals.add("Error");
     const assistantGlobals = {
+      "packages/ui/src/components/AppShell.vue": ["document", "HTMLElement"],
       "apps/desktop/src/workspace/CopyEntry.vue": ["Error"],
       "apps/desktop/src/workspace/EntryPanel.vue": [
         "document",
@@ -967,6 +968,8 @@ export function checkTree(treeRoot = root, executable) {
             ...compositionCommands.map(
               (cmd) => `allow-${cmd.replaceAll("_", "-")}`,
             ),
+            "core:event:allow-listen",
+            "core:event:allow-unlisten",
             "core:window:allow-start-dragging",
             "core:window:allow-internal-toggle-maximize",
             "core:window:allow-minimize",
@@ -983,7 +986,8 @@ export function checkTree(treeRoot = root, executable) {
   if (
     JSON.stringify(config.app.security.capabilities) !== '["main"]' ||
     config.app.withGlobalTauri ||
-    Object.keys(config.plugins ?? {}).length
+    JSON.stringify(config.plugins) !==
+      JSON.stringify({ "deep-link": { desktop: { schemes: ["rssmdm"] } } })
   )
     errors.push("unexpected host registration");
   const policy = {
@@ -1181,7 +1185,6 @@ export function checkTree(treeRoot = root, executable) {
   const registered =
     ipc
       .match(/generate_handler!\s*\[([\s\S]*?)\]/)?.[1]
-      .replaceAll("super::navigation::", "")
       .match(/\b[a-z_][a-z0-9_]*\b/g) ?? [];
   if (
     JSON.stringify(registered.toSorted()) !==

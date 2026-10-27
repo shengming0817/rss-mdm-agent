@@ -1440,7 +1440,7 @@ mod tests {
     fn client_never_decodes_legacy_or_wrong_version_replies() {
         for bytes in [
             br#"{"kind":"unavailable"}"#.as_slice(),
-            br#"{"version":8,"reply":{"kind":"unavailable"}}"#,
+            br#"{"version":7,"reply":{"kind":"unavailable"}}"#,
             br#"{"version":9,"reply":{"kind":"unavailable"},"authority":"fake"}"#,
         ] {
             assert!(decode_reply(bytes).is_err());
