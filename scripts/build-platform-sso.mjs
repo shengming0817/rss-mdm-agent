@@ -113,7 +113,7 @@ export function buildPlatformSso({
   if (display.status !== 0) throw Error("PSSO signing inspection failed");
   return { binary, sdk, systemAccepted: false };
 }
-export function containerEntitlements(app, output) {
+export function containerEntitlements(app, output, enabled = true) {
   const display = spawnSync(
     "/usr/bin/codesign",
     ["-d", "--entitlements", ":-", app],
@@ -128,9 +128,11 @@ export function containerEntitlements(app, output) {
         { input: display.stdout, encoding: "utf8" },
       ),
     );
-  existing["com.apple.developer.associated-domains.mdm-managed"] = true;
-  existing["com.apple.developer.associated-domains"] ??= [];
-  writeFileSync(output, JSON.stringify(passkeyEntitlements(existing)));
+  if (enabled) {
+    existing["com.apple.developer.associated-domains.mdm-managed"] = true;
+    existing["com.apple.developer.associated-domains"] ??= [];
+  }
+  writeFileSync(output, JSON.stringify(passkeyEntitlements(existing, enabled)));
   execFileSync("/usr/bin/plutil", ["-convert", "xml1", output]);
   return output;
 }

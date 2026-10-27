@@ -148,13 +148,15 @@ export async function logoutAccount(): Promise<void> {
     await refreshAccount();
   }
 }
-export async function refreshAccount(): Promise<void> {
+export async function refreshAccount(
+  accept: () => boolean = () => true,
+): Promise<void> {
   const expected = currentUser.value?.generation;
   try {
     const status = parsed(await invoke("account_status"), "accountStatus");
+    if (!accept() || currentUser.value?.generation !== expected) return;
     const value = status.current;
     accountBinding.value = status.binding;
-    if (currentUser.value?.generation !== expected) return;
     if (status.failure)
       accountNotice.value = accountFailureMessage(status.failure);
     if (
@@ -167,6 +169,7 @@ export async function refreshAccount(): Promise<void> {
     currentUser.value = value ? parsed(value, "userContext") : undefined;
   } catch {
     if (
+      accept() &&
       currentUser.value?.generation === expected &&
       currentUser.value?.identity.mode === "user_device"
     ) {

@@ -252,14 +252,8 @@ fn attach(request: &WorkerRequest, dmg: &Dmg) -> Result<(i32, SoftwareWorkerResu
     let mount = request.resource_root.join("volume");
     fs::DirBuilder::new().mode(0o700).create(&mount)?;
     let image = request.material(&dmg.image)?;
-    if request
-        .action
-        .signatures
-        .iter()
-        .any(|signature| signature.artifact == dmg.image)
-    {
-        verify_code(request, &image, "open", Some(&dmg.image))?;
-    }
+    // The immutable image digest binds the selected payload. Publisher requirements
+    // apply to that app/PKG, rather than requiring a separately signed DMG container.
     let (code, output, error) = native(
         request,
         "hdiutil",
@@ -609,25 +603,45 @@ fn bundle_from(
         removal::same_entry(&macos, OsStr::new(executable), &executable_file)
     };
     recheck()?;
-    verify_code(request, path, "execute", None)?;
+    verify_code(
+        request,
+        path,
+        "execute",
+        Some(request.action.behavior.installer()),
+    )?;
     let binary = path.join("Contents/MacOS").join(executable);
-    let (code, architecture, _) = native(request, "lipo", &["-archs", text(&binary)?])?;
+    // ref: Apple, Building a universal macOS binary (file inspection).
+    // The system file utility also works without the lipo developer-tool shim.
+    let (code, architecture, _) = native(request, "file", &["-b", text(&binary)?])?;
     let expected = match request.architecture {
         wire::TaskArchitecture::Aarch64 => "arm64",
         wire::TaskArchitecture::X86_64 => "x86_64",
     };
-    if code != 0
-        || !std::str::from_utf8(&architecture)
-            .map_err(|_| Error::Protocol)?
-            .split_whitespace()
-            .any(|a| a == expected)
-    {
+    let description = std::str::from_utf8(&architecture).map_err(|_| Error::Protocol)?;
+    if code != 0 || !application_architecture(description, expected) {
         return Err(Error::Untrusted);
     }
     recheck()?;
     Ok(SoftwareState::Present {
         version: package_value(version)?,
     })
+}
+fn application_architecture(description: &str, expected: &str) -> bool {
+    description.starts_with("Mach-O ")
+        && description.lines().any(|line| {
+            // Universal output includes the path before the final description.
+            // A filename that mentions another architecture cannot authorize it.
+            let detail = if line.starts_with("Mach-O 64-bit executable ") {
+                line
+            } else if let Some((_, detail)) = line.rsplit_once("):\t") {
+                detail
+            } else {
+                return false;
+            };
+            detail
+                .split_whitespace()
+                .eq(["Mach-O", "64-bit", "executable", expected])
+        })
 }
 fn package_value(value: &str) -> Result<PackageValue, Error> {
     PackageValue::new(value).map_err(|_| Error::Protocol)
@@ -647,7 +661,7 @@ pub(super) fn verify_code(
     if requirements.is_empty() {
         return Ok(());
     }
-    if kind == "execute" || kind == "open" {
+    if kind == "execute" {
         if native(
             request,
             "codesign",
@@ -692,18 +706,7 @@ pub(super) fn verify_code(
             return Err(Error::Untrusted);
         }
     }
-    let args = if kind == "open" {
-        vec![
-            "--assess",
-            "--type",
-            "open",
-            "--context",
-            "context:primary-signature",
-            text(path)?,
-        ]
-    } else {
-        vec!["--assess", "--type", kind, text(path)?]
-    };
+    let args = vec!["--assess", "--type", kind, text(path)?];
     if native(request, "spctl", &args)?.0 != 0 {
         return Err(Error::Untrusted);
     }
@@ -1470,7 +1473,7 @@ pub(super) fn execute(
                         .as_str(),
                 )
             } else {
-                None
+                Some(dmg.image.as_str())
             };
             verify_code(request, &package, "install", artifact)?;
             let mut args = vec![
@@ -1707,6 +1710,77 @@ mod tests {
             .unwrap()
             .write_all(bytes)
             .unwrap();
+    }
+    #[test]
+    fn universal_architecture_description_does_not_trust_the_filename() {
+        let x86 = "Mach-O universal binary with 1 architecture: [x86_64]\n/Mach-O 64-bit executable arm64 (for architecture x86_64):\tMach-O 64-bit executable x86_64\n";
+        assert!(!application_architecture(x86, "arm64"));
+        assert!(application_architecture(x86, "x86_64"));
+        let universal =
+            format!("{x86}/app (for architecture arm64):\tMach-O 64-bit executable arm64\n");
+        assert!(application_architecture(&universal, "arm64"));
+    }
+    #[test]
+    fn app_payload_enforces_the_image_declared_publisher_requirement() {
+        let (parent, mut request) = image_request();
+        let path = parent.join("Unsigned.app");
+        fs::create_dir_all(path.join("Contents/MacOS")).unwrap();
+        fs::copy(
+            std::env::current_exe().unwrap(),
+            path.join("Contents/MacOS/tool"),
+        )
+        .unwrap();
+        let application = Application {
+            path: "Unsigned.app".into(),
+            bundle_id: "org.rss.dmg-regression".into(),
+            version: "1.0".into(),
+            target_name: "Unsigned.app".into(),
+        };
+        let info: plist::Value = plist::Dictionary::from_iter([
+            (
+                "CFBundleExecutable".to_owned(),
+                plist::Value::String("tool".into()),
+            ),
+            (
+                "CFBundleIdentifier".to_owned(),
+                plist::Value::String(application.bundle_id.clone()),
+            ),
+            (
+                "CFBundleShortVersionString".to_owned(),
+                plist::Value::String(application.version.clone()),
+            ),
+        ])
+        .into();
+        info.to_file_xml(path.join("Contents/Info.plist")).unwrap();
+        for (name, path) in [
+            ("codesign", "/usr/bin/codesign"),
+            ("file", "/usr/bin/file"),
+            ("spctl", "/usr/sbin/spctl"),
+        ] {
+            request.tools.insert(name.into(), material(Path::new(path)));
+        }
+        // The test bundle is a real architecture-matching binary but has no
+        // Developer ID publisher. An explicitly unsigned enterprise action allows it.
+        assert!(matches!(
+            bundle(&request, &path, &application).unwrap(),
+            SoftwareState::Present { .. }
+        ));
+        request.architecture = wire::TaskArchitecture::X86_64;
+        assert!(matches!(
+            bundle(&request, &path, &application),
+            Err(Error::Untrusted)
+        ));
+        request.architecture = wire::TaskArchitecture::Aarch64;
+        request.action.signatures.push(wire::SoftwareTaskSignature {
+            artifact: "image".into(),
+            mechanism: wire::SoftwareTaskSignatureMechanism::AppleDeveloperId,
+            publisher: "TESTTEAM00".into(),
+        });
+        assert!(matches!(
+            bundle(&request, &path, &application),
+            Err(Error::Untrusted)
+        ));
+        fs::remove_dir_all(parent).unwrap();
     }
     fn assert_image_cleanup(request: &WorkerRequest) {
         assert_eq!(execute(request, None).unwrap().0, 0);

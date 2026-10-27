@@ -44,6 +44,72 @@ pub fn arguments(
     args.push(query);
     Ok(args)
 }
+/// A frozen execution request can also retain non-executable journal metadata.
+/// Reconstruct SQL from its AST-named inputs; the producer still validates its
+/// separate SQL parameter map with `arguments`, including rejection of extras.
+pub(crate) fn request_arguments(
+    template: &[u8],
+    parameters: &BTreeMap<String, InputValue>,
+    max_rows: u16,
+    platform: Platform,
+) -> Result<Vec<String>, Error> {
+    let text = std::str::from_utf8(template).map_err(|_| Error::Denied)?;
+    let names = SqlTemplate::new(text)
+        .and_then(|template| template.parameters())
+        .map_err(|_| Error::Denied)?;
+    let sql = names
+        .into_iter()
+        .map(|name| {
+            parameters
+                .get(&name)
+                .cloned()
+                .map(|value| (name, value))
+                .ok_or(Error::Denied)
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    arguments(template, &sql, max_rows, platform)
+}
 pub(crate) fn prefix_matches(args: &[String]) -> bool {
     args.len() == PREFIX.len() + 1 && args.iter().zip(PREFIX).all(|(a, b)| a == b)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn frozen_collection_metadata_is_not_an_sql_parameter() {
+        let template = b"SELECT version FROM osquery_info";
+        let mut request = BTreeMap::from([(
+            "collection-metadata".into(),
+            InputValue::Literal {
+                value: serde_json::json!({"private": "must not enter SQL"}),
+            },
+        )]);
+        let args = request_arguments(template, &request, 1, Platform::Macos).unwrap();
+        assert_eq!(
+            args.last().unwrap(),
+            "SELECT version FROM osquery_info LIMIT 2"
+        );
+        assert!(arguments(template, &request, 1, Platform::Macos).is_err());
+        let named = b"SELECT version FROM osquery_info WHERE version = :version";
+        assert!(request_arguments(named, &request, 1, Platform::Macos).is_err());
+        request.insert(
+            "version".into(),
+            InputValue::Literal {
+                value: serde_json::json!("' OR 1=1 --"),
+            },
+        );
+        let args = request_arguments(named, &request, 1, Platform::Macos).unwrap();
+        assert_eq!(
+            args.last().unwrap(),
+            "SELECT version FROM osquery_info WHERE version = ''' OR 1=1 --' LIMIT 2"
+        );
+        request.insert(
+            "version".into(),
+            InputValue::Literal {
+                value: serde_json::json!({"not": "a scalar"}),
+            },
+        );
+        assert!(request_arguments(named, &request, 1, Platform::Macos).is_err());
+    }
 }

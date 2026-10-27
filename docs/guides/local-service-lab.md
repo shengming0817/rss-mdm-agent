@@ -109,7 +109,11 @@ Windows 原生路径支持经 Windows Installer 与受保护缓存重新核实�
 
 真实 osquery 接缝使用 `OSQUERY_TEST_BINARY=<已独立验证的官方二进制绝对路径> python3 scripts/build-run.py -- cargo test --locked -p execution-runner --test osquery -- --ignored`。macOS 必须保留官方 `.app` 完整结构以验证签名，单独复制 Mach-O 文件会破坏签名。该测试验证固定参数、字面量绑定和成功零行；不替代系统服务身份或完整平台部署验收。可复现候选为官方 5.23.1 的 `osquery-5.23.1_1.macos_arm64.tar.gz`，SHA-256 为 `5484f0b62e05a7b2fa9d6e43f038915ea2b7ce063d59bd671ede0cf8dd0552da`。
 
+系统服务使用的 osquery 完整 `.app` 及其路径链必须归 root 所有，且不可由组或其它用户写入；保留厂商签名，通过受保护的安装刷新登记路径和摘要。用户拥有的拷贝不会被宣告为可用执行器。
+
 执行上下文使用本机数值 OS 版本和认证 helper 的登录世代，待确认注册与 claim 保留原上下文。生产编译器消费当前远程 V1 的 MSI、PKG、Bundle、离线 EXE、MSIX、DMG，以及绑定实际 target/publication 的 WinGet/Brew 原生发布源。EXE 仅执行完整离线布局、显式参数和明确卸载入口；退出码与重启按源任务策略解释，不自动重启。EXE 的完成同时要求原进程退出、Windows Job 收敛和独立版本检测；未结束或检测不确定时保留 Unknown、材料与排他。MSIX 明确区分目标用户注册与未来用户设备 provisioning，后者不改写已有用户注册；只查询既有侧载/依赖，不导入证书、改策略或终止应用。DMG 用镜像的完整长度/SHA256 确认内容身份，只读挂载并精确选择 app/内含 PKG，不计算独立 app 目录摘要；app 保留内部链接与 quarantine，按后台声明执行签名/Gatekeeper 检查，再复制或原子替换。运行中应用拒绝替换/删除；普通 app 卸载直接核对声明的目标、Bundle ID、版本、上下文、签名与架构，不挂载镜像或比较镜像目录；删除使用本次尝试的短期对象快照和私有隔离，失败保留清理记录。卸载不清理用户数据。挂载、staging 和物理阶段在同一 attempt 中核算，Unknown 保留证据与排他，不重新执行安装。DMG 在原 invocation 内预留最多四分之一预算用于清理，取消/超时/重启后的恢复只使用原冻结 Cleanup 和递增日志序号；清理资源不改写未知安装事实，原活动未证明结束时仍保留排他。签名列表为空时，MSI、PKG、EXE、DMG 所选载荷及 Bundle 均允许企业未签名内容；存在要求时，对声明的材料核实对应机制和发布者。MSIX 的包身份、系统信任及显式 `allow_unsigned` 仍由原生部署 API 执行。
+
+DMG 的签名要求用于镜像中精确选择的 app 或 PKG；外层镜像由固定长度和 SHA-256 绑定，不要求另行签名。应用的 Developer ID、发布者和 Gatekeeper 检查覆盖复制前后的载荷及已安装应用；内含 PKG 和独立卸载包各自核实对应的安装器签名要求。
 
 WinGet/Brew 使用签名任务中的完整源绑定、文档摘要和物料集合；Offer 阶段只读取并缓存，Start 后才准备原生源并执行。WinGet 从实际 REST source 读取并核实固定发布文档，生成本次私有 singleton manifest 交给原生 `--manifest` 安装；包 ID、版本和安装器 SHA256 来自该固定文件，scope/架构由任务确定，不在线重新解析或写入全局源。设备须已允许 LocalManifestFiles，Agent 不修改该策略；Brew 仅在原登录用户 helper 下消费固定 parentless Git commit，使用完整 tap/package 名、固定 bottle/cask 缓存，并关闭自动更新、隐式依赖与源码构建。原生调用不接受尾随参数覆盖上述选择，仍允许协议批准的 RSS_PARAM 环境输入。版本与安装效果由独立检测核实，退出零不视为已安装；重启沿用当前格式的原材料与 journal，不重新下载安装。
 
@@ -399,7 +403,7 @@ Desktop 只能请求当前已核验控制台用户的系统登录选项及刷新
 
 候选只针对 macOS 26.4 / SDK 26.4、Apple silicon；实际系统加载和回调必须在已获授权的受管测试机验证。`crates/platform-sso` 持有协议组合与恢复决策，`apps/platform-sso-extension` 是 Apple 系统入口和本地 FFI；私钥、系统令牌及注册数据库由 Apple Framework 持有。PSSO 1.0 使用共享设备密钥，候选支持 `UserSecureEnclaveKey` 与 Password 注册／认证协议。Password 同步与登录策略由 Apple 系统执行；RSS 不持有密码权威或第二套同步引擎。SE 保留本地密码登录；Password 按签名任务消费登录窗口、锁屏、FileVault 各自的 Local／Attempt／Require，缺少独立维护账号时不得启用 Require。不提供 ADE/JIT 或 Authorization Plugin。
 
-使用现有构建 runner 执行 `node scripts/build-platform-sso.mjs --verify-abi`，生成原生 `.appex` 并运行 C/Rust/系统签名 ABI 测试（测试进程不执行系统注册）。默认 ad-hoc 可完成项目侧构建与代码身份检查；自签名和 Apple Development 不因缺 Team 被项目拒绝。可用 `RSS_MACOS_APP_SIGNING_IDENTITY` 或 `RSS_MACOS_DEVELOPMENT_SIGNING_IDENTITY` 选择已有材料。现有 installer builder 嵌入同一子产物并重签容器，缺 Team 不会省略 PSSO。受管 profile、entitlement、扩展 ID `com.rss.mdmagent.psso`、容器 `com.rss.mdmagent`、HTTPS AASA 和 IdP 的真实系统要求按目标环境独立验证；项目不要求关闭系统保护。构建及项目预检的 `systemAccepted: false` 不得改读为注册通过，缺签名材料及未执行旅程应如实记录。
+使用现有构建 runner 执行 `node scripts/build-platform-sso.mjs --verify-abi`，生成原生 `.appex` 并运行 C/Rust/系统签名 ABI 测试（测试进程不执行系统注册）。默认 ad-hoc 可完成项目侧构建与代码身份检查。可用 `RSS_MACOS_APP_SIGNING_IDENTITY` 或 `RSS_MACOS_DEVELOPMENT_SIGNING_IDENTITY` 选择已有材料。安装包仅在宿主签名通过 Apple 信任链要求时嵌入 PSSO；ad-hoc 和自签名安装包不嵌入受限扩展，也不声明其宿主权限，避免 macOS 在普通 Agent 启动前拒绝加载。Apple 信任链检查不证明 entitlement 已获授权；受管 profile、entitlement、扩展 ID `com.rss.mdmagent.psso`、容器 `com.rss.mdmagent`、HTTPS AASA 和 IdP 的真实系统要求按目标环境独立验证；项目不要求关闭系统保护。构建及项目预检的 `systemAccepted: false` 不得改读为注册通过，缺签名材料及未执行旅程应如实记录。
 
 部署的可选 `platform_sso` 配置仅包含固定扩展 artifact 和配置中的 console HTTPS `origin`。真实安装的受保护映像通过路径、SHA-256、CDHash 与精确平台核对后公布能力，无 Apple Team/发布者证书前置。扩展通过既有 XPC 服务调用有限注册操作，其实际进程身份不能调用 Desktop、AI 或通用执行入口。普通认证由系统直接处理，Desktop 可以退出。
 
@@ -519,11 +523,11 @@ Provider 运行不需要企业会话、Agent 服务或 AI Host。兼容目标为
 这不是已完成的平台支持矩阵。当前开发配置为 arm64、SDK 26.4。
 
 `node scripts/build-macos-passkey.mjs` 构建并检查 `.appex`；加 `--verify-abi` 可运行无 Vault、无系统认证的
-原生 ABI 检查。`pnpm desktop:build` 将扩展嵌入 Desktop 并合并宿主权限，现有安装包入口消费该应用。
+原生 ABI 检查。`pnpm desktop:build` 在宿主签名通过 Apple 信任链要求时将扩展嵌入 Desktop 并合并宿主权限，现有安装包入口消费该应用。
 宿主与扩展使用同一固定 App Group，并声明 AutoFill 及 Keychain 共享权限。PSSO 权限保留，
 PSSO 自身系统版本要求不作为个人 Provider 的功能前置。
 
-默认 ad-hoc，沿用现有显式签名身份和可选公证配置。构建成功或 `codesign --verify` 通过不说明
+默认 ad-hoc 包保留普通 Agent 功能，不嵌入 Provider 或声明其受限权限；沿用现有显式签名身份和可选公证配置。构建成功或 `codesign --verify` 通过不说明
 系统已接受受限 entitlement；实际共享容器/Keychain 访问失败明确报告，不回退到其他 Vault。
 无旧部署兼容路径，不提供旧目录迁移、旧安装升级或跨版本数据回退。
 

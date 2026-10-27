@@ -27,3 +27,15 @@ test("Passkey host capability merge preserves PSSO and deduplicates shared acces
     "group.other",
   ]);
 });
+test("ordinary host signing drops restricted credential claims while preserving runtime permissions", () => {
+  const result = passkeyEntitlements(
+    {
+      ...passkeyEntitlements({}),
+      "com.apple.developer.associated-domains.mdm-managed": true,
+      "com.apple.developer.associated-domains": ["webcredentials:example.test"],
+      "com.apple.security.cs.allow-jit": true,
+    },
+    false,
+  );
+  assert.deepEqual(result, { "com.apple.security.cs.allow-jit": true });
+});

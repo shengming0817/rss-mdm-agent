@@ -1,7 +1,7 @@
 // Native subartifact builder shared by the development shell and the existing installer.
 // ref: Apple Foundation.tbd NSExtensionMain; AuthenticationServices headers (SDK 26.4).
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { cargoTargetDir } from "./cargo-target.mjs";
@@ -115,7 +115,30 @@ export function buildMacosPasskey({
   return { binary, sdk, systemAccepted: false };
 }
 // Single host configuration used by the standalone app build and the installer.
-export function passkeyEntitlements(existing) {
+// Restricted capabilities require an Apple signing chain; a valid ad-hoc signature is insufficient.
+// ref: Apple TN3125; codesign(1), anchor apple generic requirement.
+export function appleSigned(app) {
+  return (
+    spawnSync(
+      "/usr/bin/codesign",
+      ["--verify", "--strict", "-R", "anchor apple generic", app],
+      { encoding: "utf8", timeout: 20000 },
+    ).status === 0
+  );
+}
+export function passkeyEntitlements(existing, enabled = true) {
+  if (!enabled) {
+    const result = { ...existing };
+    for (const key of [
+      "com.apple.developer.authentication-services.autofill-credential-provider",
+      "com.apple.security.application-groups",
+      "keychain-access-groups",
+      "com.apple.developer.associated-domains.mdm-managed",
+      "com.apple.developer.associated-domains",
+    ])
+      delete result[key];
+    return result;
+  }
   const group = "group.com.rss.mdmagent.personal-passkeys";
   return {
     ...existing,
@@ -136,25 +159,36 @@ export function assemblePasskeyHost({
   output,
   identity = "-",
   release = true,
+  enabled = false,
 }) {
-  buildMacosPasskey({
-    output: join(app, "Contents/PlugIns/RSSPasskeyProvider.appex"),
-    identity,
-    release,
-  });
-  return configurePasskeyHost(app, output);
+  if (enabled) {
+    buildMacosPasskey({
+      output: join(app, "Contents/PlugIns/RSSPasskeyProvider.appex"),
+      identity,
+      release,
+    });
+  } else {
+    for (const name of ["RSSPasskeyProvider.appex", "RSSPlatformSSO.appex"])
+      rmSync(join(app, "Contents/PlugIns", name), {
+        recursive: true,
+        force: true,
+      });
+  }
+  return configurePasskeyHost(app, output, enabled);
 }
-export function configurePasskeyHost(app, output) {
+export function configurePasskeyHost(app, output, enabled = true) {
   const infoPath = join(app, "Contents/Info.plist");
   const info = JSON.parse(
     execFileSync("/usr/bin/plutil", ["-convert", "json", "-o", "-", infoPath], {
       encoding: "utf8",
     }),
   );
-  info.ASCredentialProviderExtensionCapabilities = {
-    ...info.ASCredentialProviderExtensionCapabilities,
-    ProvidesPasskeys: true,
-  };
+  if (enabled) {
+    info.ASCredentialProviderExtensionCapabilities = {
+      ...info.ASCredentialProviderExtensionCapabilities,
+      ProvidesPasskeys: true,
+    };
+  } else delete info.ASCredentialProviderExtensionCapabilities;
   writeFileSync(infoPath, JSON.stringify(info));
   execFileSync("/usr/bin/plutil", ["-convert", "xml1", infoPath]);
   const displayed = spawnSync(
@@ -171,7 +205,7 @@ export function configurePasskeyHost(app, output) {
         ),
       )
     : {};
-  writeFileSync(output, JSON.stringify(passkeyEntitlements(existing)));
+  writeFileSync(output, JSON.stringify(passkeyEntitlements(existing, enabled)));
   execFileSync("/usr/bin/plutil", ["-convert", "xml1", output]);
   return output;
 }

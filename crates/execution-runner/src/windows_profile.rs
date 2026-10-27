@@ -17,6 +17,7 @@ pub(crate) fn profile(profile: &VersionedRef) -> Result<(), Error> {
             "native-collection-worker",
             "native-credential-worker",
             "native-device-access-worker",
+            "native-enrollment-worker",
         ]
         .contains(&profile.id.as_str()))
     {
@@ -42,6 +43,13 @@ pub(crate) fn arguments(
     let path = script.to_str().ok_or(Error::InvalidInput)?;
     if profile.id.as_str() == "native-collection-worker" {
         return if args == ["--collection-worker", path] {
+            Ok(())
+        } else {
+            Err(Error::Denied)
+        };
+    }
+    if profile.id.as_str() == "native-enrollment-worker" {
+        return if args == ["--enrollment-worker", path] {
             Ok(())
         } else {
             Err(Error::Denied)
@@ -107,6 +115,7 @@ mod tests {
         for (profile_id, flag) in [
             ("native-credential-worker", "--credential-worker"),
             ("native-device-access-worker", "--device-access-worker"),
+            ("native-enrollment-worker", "--enrollment-worker"),
         ] {
             let mut p = VersionedRef {
                 id: Id::new(profile_id).unwrap(),

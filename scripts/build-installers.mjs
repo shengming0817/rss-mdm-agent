@@ -1,4 +1,4 @@
-import { assemblePasskeyHost } from "./build-macos-passkey.mjs";
+import { assemblePasskeyHost, appleSigned } from "./build-macos-passkey.mjs";
 // Fixed organization packages contain only public trust. Device enrollment is a separate operation.
 // ref: Apple pkgbuild(1); NSIS 3.11 Docs/Chapter4.html (per-machine execution level).
 import { execFileSync, spawnSync } from "node:child_process";
@@ -276,16 +276,21 @@ if (windows) {
   );
   desktop = join(app, "Contents/MacOS/rss-mdm-desktop");
   packagedRuntime = join(app, "Contents/Resources/ai-host-runtime");
-  psso = buildPlatformSso({
-    output: join(app, "Contents/PlugIns/RSSPlatformSSO.appex"),
-    identity: macosIdentity,
-    release: true,
-  });
+  sign(app);
+  const nativeExtensions = appleSigned(app);
+  psso = nativeExtensions
+    ? buildPlatformSso({
+        output: join(app, "Contents/PlugIns/RSSPlatformSSO.appex"),
+        identity: macosIdentity,
+        release: true,
+      })
+    : null;
   assemblePasskeyHost({
     app,
     output: join(output, "passkey-container-entitlements.plist"),
     identity: macosIdentity,
     release: true,
+    enabled: nativeExtensions,
   });
   // Public installed resources must be readable by the actual login, including
   // codesign's resource verification under a restrictive build umask.
@@ -302,7 +307,11 @@ if (windows) {
   publicModes(app);
   sign(
     app,
-    containerEntitlements(app, join(output, "container-entitlements.plist")),
+    containerEntitlements(
+      app,
+      join(output, "container-entitlements.plist"),
+      nativeExtensions,
+    ),
   );
 }
 if (windows) sign(desktop);

@@ -53,7 +53,9 @@ if (process.platform === "darwin" && !native) {
   const { mkdirSync } = await import("node:fs");
   const { execFileSync } = await import("node:child_process");
   const { cargoTargetDir } = await import("./cargo-target.mjs");
-  const { assemblePasskeyHost } = await import("./build-macos-passkey.mjs");
+  const { assemblePasskeyHost, appleSigned } = await import(
+    "./build-macos-passkey.mjs"
+  );
   const root = fileURLToPath(new URL("../", import.meta.url));
   const app = join(
     cargoTargetDir(root),
@@ -65,11 +67,15 @@ if (process.platform === "darwin" && !native) {
     "-";
   const output = join(root, ".local-ci-runs/macos-passkey");
   mkdirSync(output, { recursive: true });
+  execFileSync("/usr/bin/codesign", ["--force", "--sign", identity, app], {
+    stdio: "inherit",
+  });
   const entitlements = assemblePasskeyHost({
     app,
     output: join(output, "host-entitlements.plist"),
     identity,
     release: true,
+    enabled: appleSigned(app),
   });
   execFileSync(
     "/usr/bin/codesign",

@@ -452,7 +452,7 @@ impl Artifacts {
             {
                 return Err(Error::Denied);
             }
-            let expected = crate::osquery::arguments(
+            let expected = crate::osquery::request_arguments(
                 &content,
                 &p.request.parameters,
                 max_rows,

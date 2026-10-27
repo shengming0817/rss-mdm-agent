@@ -31,7 +31,7 @@ import TestUsers from "./settings/TestUsers.vue";
 import Account from "./settings/Account.vue";
 import LoginScreen from "./account/LoginScreen.vue";
 import type { EnterpriseLogin } from "./account/types";
-import { nativeHost } from "./settings/native";
+import { nativeHost, nativeService } from "./settings/native";
 import { createHostSettings } from "./settings/controller";
 import { assertFixtureAssembly, type FixtureEnvironment } from "./assembly";
 import type { SelfServicePort } from "./self-service/types";
@@ -51,6 +51,25 @@ const users = ref<TestUser[]>([]),
   accountMessage = ref("");
 const page = ref("home");
 const loginOpen = ref(false);
+const registrationPending = ref(false);
+let registrationEpoch = 0;
+const service = props.environment ? undefined : nativeService();
+const servicePort = service && {
+  ...service,
+  async requestRegistration(input?: EnterpriseLogin) {
+    registrationEpoch += 1;
+    registrationPending.value = true;
+    try {
+      return await service.requestRegistration(input);
+    } catch (error) {
+      if (!selectedUser.value)
+        accountMessage.value = accountErrorMessage(error);
+      throw error;
+    } finally {
+      registrationPending.value = false;
+    }
+  },
+};
 const content = ref<HTMLElement>();
 const host = createHostSettings(
   props.environment ? props.environment.host : nativeHost(),
@@ -166,8 +185,19 @@ onMounted(() => {
     if (!document.hidden) void appearance.refresh();
     if (!document.hidden && page.value === "settings" && host.available)
       void host.refresh();
-    if (!props.environment && !loading.value && !!selectedUser.value)
-      void refreshAccount();
+    // Registration retires the preceding account before publishing the activated
+    // identity. A passive refresh must not remount and cancel its owning view.
+    if (
+      !props.environment &&
+      !loading.value &&
+      !registrationPending.value &&
+      !!selectedUser.value
+    ) {
+      const epoch = registrationEpoch;
+      void refreshAccount(
+        () => epoch === registrationEpoch && !registrationPending.value,
+      );
+    }
   }, 2000);
 });
 onBeforeUnmount(() => {
@@ -216,14 +246,15 @@ onBeforeUnmount(() => {
         :inert="loading ? true : undefined"
         :key="workspaceIdentity(selectedUser)"
         :ready="
-          environment ? !!selectedUser : !accountEnabled || !!selectedUser
+          !registrationPending &&
+          (environment ? !!selectedUser : !accountEnabled || !!selectedUser)
         "
         :busy="loading"
         :assistant-services="assistantServices"
         :self-service-port="selfServicePort"
         :page="page"
         :host="host"
-        :service-port="environment?.service"
+        :service-port="environment?.service ?? servicePort"
         :device-port="environment?.device"
         :local-ports="environment?.local"
         :identity="selectedUser"

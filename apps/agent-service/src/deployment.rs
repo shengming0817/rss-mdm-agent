@@ -552,7 +552,7 @@ impl Deployment {
                 "/usr/sbin/diskutil",
                 "/usr/bin/codesign",
                 "/usr/sbin/spctl",
-                "/usr/bin/lipo",
+                "/usr/bin/file",
             ]
             .iter()
             .all(|p| installation_security::protected(std::path::Path::new(p)).is_ok())
