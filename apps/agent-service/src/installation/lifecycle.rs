@@ -633,6 +633,9 @@ fn apply(candidate_path: &Path, profile: Option<&PathBuf>, config: &Path) -> Res
     let mut next = candidate.deployment(artifact, profile, config)?;
     if let Some(old) = old {
         next.installation_id = old.installation_id;
+        if let (Some(previous), Some(next_cli)) = (&old.cli, &mut next.cli) {
+            next_cli.machine_actions = previous.machine_actions.clone();
+        }
         next.software_read_grants = old.software_read_grants.clone();
         preserved(&old, &next)?;
         if let Some(ca) = &old.ca_file {

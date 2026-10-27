@@ -170,6 +170,7 @@ function fixture(t) {
       "service",
       "backend",
       "desktop",
+      "cli",
       "platformSso",
       "securityProbe",
       "untrustedProbe",

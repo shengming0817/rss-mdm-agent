@@ -179,6 +179,21 @@ pub struct PolicySubmission {
     deny_unknown_fields
 )]
 pub enum PreparedAction {
+    /// Explicit event acceptance, persisted in the same preparation journal as Policy calls.
+    Event {
+        /// Original stable business request.
+        request: RequestId,
+        /// Exact producer request; caller classification is native-attested.
+        input: rss_mdm_agent_wire::runtime::PolicyEventRequest,
+        /// Original exact registration coordinates.
+        namespace: crate::EntryNamespace,
+        /// Stable producer batch receipt; acceptance is not effect completion.
+        receipt: Option<rss_mdm_agent_wire::runtime::PolicyEventAccepted>,
+        /// Exact batch recovered from an authorized original-request activity; member count remains unknown.
+        batch: Option<Id>,
+        /// Original authorization deadline.
+        expires_at_unix_ms: u64,
+    },
     /// A bounded native observation authorized by an exact current signed software definition.
     SoftwareRead {
         /// Original read identity, independent of installation execution.
@@ -197,6 +212,8 @@ pub enum PreparedAction {
     },
     /// Policy invocation and its eventual exact Offer, held in the same journal record.
     Policy {
+        /// Original typed external address, absent for direct native directory selections.
+        address: Option<crate::EntrySelector>,
         /// Exact original published Policy ID/version, independent of its eventual task.
         definition: crate::VersionedRef,
         /// Original configuration revision.
@@ -231,6 +248,7 @@ impl PreparedAction {
     /// Original stable request, independent of the arrival of a task.
     pub fn request(&self) -> &RequestId {
         match self {
+            Self::Event { request, .. } => request,
             Self::SoftwareRead { choice, .. } => &choice.request,
             Self::Offered { offer } => &offer.request,
             Self::Policy { choice, .. } => &choice.request,
@@ -239,6 +257,7 @@ impl PreparedAction {
     /// Actual Offer only; absence cannot be treated as a fabricated task.
     pub fn offer(&self) -> Option<&BackendTask> {
         match self {
+            Self::Event { .. } => None,
             Self::SoftwareRead { .. } => None,
             Self::Offered { offer } => Some(offer),
             Self::Policy { offer, .. } => offer.as_deref(),
@@ -249,6 +268,10 @@ impl PreparedAction {
         let mut a = self.clone();
         let mut b = other.clone();
         for action in [&mut a, &mut b] {
+            if let Self::Event { receipt, batch, .. } = action {
+                *receipt = None;
+                *batch = None;
+            }
             if let Self::SoftwareRead { observation, .. } = action {
                 *observation = None;
             }
@@ -257,8 +280,24 @@ impl PreparedAction {
                 *offer = None;
             }
         }
+        let batch_preserved = match (self, other) {
+            (
+                Self::Event {
+                    batch: Some(old), ..
+                },
+                Self::Event { batch, .. },
+            ) => batch.as_ref() == Some(old),
+            _ => true,
+        };
         a == b
+            && batch_preserved
             && match (self, other) {
+                (
+                    Self::Event {
+                        receipt: Some(old), ..
+                    },
+                    Self::Event { receipt, .. },
+                ) => serde_json::to_value(old).ok() == serde_json::to_value(receipt).ok(),
                 (
                     Self::SoftwareRead {
                         observation: old, ..
@@ -291,6 +330,9 @@ impl PreparedAction {
     /// Preparation validity independent of transport lease changes.
     pub fn expires_at_unix_ms(&self) -> u64 {
         match self {
+            Self::Event {
+                expires_at_unix_ms, ..
+            } => *expires_at_unix_ms,
             Self::SoftwareRead {
                 expires_at_unix_ms, ..
             } => *expires_at_unix_ms,

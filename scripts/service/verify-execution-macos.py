@@ -1366,42 +1366,41 @@ def validate_desktop_finish(finish, evidence):
     assert evidence and finish.get('request') == evidence['request'], 'completion evidence missing or mismatched'
 
 
+def cli_query(binary, config, *command, timeout=15):
+    """The installed CLI is the only business-query client in this journey."""
+    cli = Path(binary).with_name('rssmdm')
+    result = subprocess.run([str(cli), '--json', '--config', str(config), *command], capture_output=True, text=True, timeout=timeout)
+    value = json.loads(result.stdout)
+    if value.get('ok'):
+        return {'reply': value['result']}
+    if result.returncode == 7:
+        return {'reply': {'kind': 'unavailable'}}
+    if result.returncode == 3:
+        return {'reply': {'kind': 'rejected'}}
+    raise RuntimeError('CLI read failed: ' + str(value.get('error', {}).get('code', 'unknown')))
+
+
 def wait_service_ready(binary, config, timeout=15):
-    # kickstart returns before the replacement XPC owner finishes registration.
-    # Retry only transport unavailability; authentication and diagnostic refusal
-    # must remain terminal, with the original process result retained.
     deadline = time.monotonic() + timeout
     while True:
-        try:
-            status = json.loads(run(str(binary), '--config', str(config), '--service-status').stdout)
-        except subprocess.CalledProcessError as error:
-            if 'agent_service: Agent transport unavailable' not in (error.stderr or '').splitlines() or time.monotonic() >= deadline:
-                raise
-        else:
-            reply = status['reply']
-            if reply['kind'] == 'serviceStatus' and reply['value']['readiness']['phase'] == 'ready':
-                return status
-            if reply['kind'] != 'serviceStatus' or reply['value']['readiness']['phase'] == 'notReady' or time.monotonic() >= deadline:
-                raise RuntimeError('authenticated service readiness failed: ' + json.dumps(reply))
+        response = cli_query(binary, config, 'status')
+        reply = response['reply']
+        if reply['kind'] == 'serviceStatus' and reply['value']['readiness']['phase'] == 'ready':
+            return response
+        if reply['kind'] != 'unavailable' or time.monotonic() >= deadline:
+            raise RuntimeError('authenticated service readiness failed')
         time.sleep(.2)
 
 
 def read_task_page(binary, config):
-    # Only a read may be retried after loss of its reply. Keep the complete read
-    # within the parent's 15s budget; never resend a prepare/submit/control here.
+    # Only this read may retry; mutation recovery retains its original request ID.
     deadline = time.monotonic() + 12
     while True:
-        try:
-            reply = json.loads(run(str(binary), '--config', str(config), '--query',
-                timeout=max(.01, deadline-time.monotonic())).stdout)['reply']
-        except subprocess.CalledProcessError as error:
-            if 'agent_service: Agent transport unavailable' not in (error.stderr or '').splitlines() or time.monotonic() >= deadline:
-                raise
-        else:
-            if reply['kind'] == 'task' and reply['value']['kind']=='page' and isinstance(reply['value']['value']['items'],list):
-                return reply['value']['value']
-            if reply['kind'] != 'unavailable' or time.monotonic() >= deadline:
-                raise RuntimeError('authenticated task query failed: ' + json.dumps(reply))
+        reply = cli_query(binary, config, 'tasks', 'list', timeout=max(.01, deadline-time.monotonic()))['reply']
+        if reply['kind'] == 'task' and reply['value']['kind'] == 'page' and isinstance(reply['value']['value']['items'], list):
+            return reply['value']['value']
+        if reply['kind'] != 'unavailable' or time.monotonic() >= deadline:
+            raise RuntimeError('authenticated task query failed')
         time.sleep(.2)
 
 
@@ -1456,11 +1455,13 @@ def candidate_identity(path):
 
 def rejected_image_probe(image, binary, config):
     # First show the exact authorized channel is healthy, then change only the client image path.
-    baseline = json.loads(run(str(binary), '--config', str(config), '--query').stdout)
+    baseline = cli_query(binary, config, 'tasks', 'list')
     if baseline['reply']['kind'] != 'task' or baseline['reply']['value']['kind']!='page':
         raise RuntimeError('security baseline unavailable; negative probe not executed')
-    rejected = subprocess.run([str(image), '--config', str(config), '--query'], capture_output=True, text=True, timeout=15)
-    try: reply = json.loads(rejected.stdout)['reply']
+    rejected = subprocess.run([str(image), '--json', '--config', str(config), 'tasks', 'list'], capture_output=True, text=True, timeout=15)
+    try:
+        response = json.loads(rejected.stdout)
+        reply = dict(kind='rejected') if rejected.returncode == 3 and response.get('error', {}).get('code') == 'denied' else response.get('result', {})
     except (ValueError, KeyError):
         raise RuntimeError('wrong-image probe did not reach a verifiable IPC reply') from None
     if reply['kind'] != 'rejected':
@@ -1482,6 +1483,7 @@ def main():
     parser.add_argument('--backend', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--desktop', type=Path)
+    parser.add_argument('--cli', type=Path, help='Fixed installed CLI candidate')
     parser.add_argument('--candidate', type=Path, help='Frozen prebuilt inputs; no rebuilding or resigning')
     parser.add_argument('--psso-preflight', action='store_true', help='Read-only PSSO candidate admission; no install, registration or login')
     parser.add_argument('--security', action='store_true', help='Run native attacks on this isolated fixed candidate')
@@ -1498,8 +1500,9 @@ def main():
         return psso_preflight(args, frozen)
     if args.login_phase:
         return login_security(args,frozen)
+    if args.cli is None: args.cli = args.binary.resolve().with_name('rssmdm')
     if frozen:
-        for name, field in [('service', 'binary'), ('backend', 'backend'), ('desktop', 'desktop')]:
+        for name, field in [('service', 'binary'), ('backend', 'backend'), ('desktop', 'desktop'), ('cli', 'cli')]:
             actual = getattr(args, field)
             expected = frozen['binaries'].get(name)
             if (actual is None) != (expected is None) or (actual is not None and str(actual.resolve()) != expected['path']):
@@ -1528,8 +1531,8 @@ def main():
     desktop_cleanup = True
     try:
         # Verify before copying. Installation must preserve these bytes and code identities.
-        receipt['inputArtifacts'] = {field: candidate_identity(value) for field in ['binary','desktop'] if (value := getattr(args,field)) is not None}
-        for field, leaf in [('binary', 'rss-execution-service'), ('desktop', 'rss-mdm-desktop')]:
+        receipt['inputArtifacts'] = {field: candidate_identity(value) for field in ['binary','desktop','cli'] if (value := getattr(args,field)) is not None}
+        for field, leaf in [('binary', 'rss-execution-service'), ('desktop', 'rss-mdm-desktop'), ('cli', 'rssmdm')]:
             value = getattr(args, field)
             if value is not None:
                 destination = inputs / leaf
@@ -1575,7 +1578,10 @@ root.mkdir(mode=0o755)
 binary=root/'rss-execution-service'
 copy_candidate(%r,binary,%r)
 subprocess.run(['/usr/bin/codesign','--verify','--strict',str(binary)],check=True)
-# Service-only acceptance uses the same fixed CLI as its registration client.
+cli=root/'rssmdm'
+copy_candidate(%r,cli,%r)
+subprocess.run(['/usr/bin/codesign','--verify','--strict',str(cli)],check=True)
+# Service-only acceptance uses the fixed diagnostic image as its registration client.
 # Native desktop acceptance copies the actual desktop candidate to this identity.
 desktop=root/'rss-mdm-desktop'
 copy_candidate(%r,desktop,%r)
@@ -1585,14 +1591,15 @@ def artifact(path):
     return dict(path=str(path),sha256=hashlib.sha256(Path(path).read_bytes()).hexdigest(),cdhash=re.search(r'CDHash=([0-9a-f]+)',identity)[1])
 config=%r
 config['service']=artifact(binary)
-config['clients']=dict(images=[config['service']],subjects=[%r],interactive=True)
+config['cli']=dict(image=artifact(cli),machineActions=[])
+config['clients']=dict(images=[artifact(cli)],subjects=[%r],interactive=True)
 config['registration_clients']=dict(images=[artifact(desktop)],subjects=[%r],interactive=True)
 config['execution']['interpreters']=[dict(profile='posix_sh',image=artifact('/bin/sh'))]
 config['execution']['managers']=[dict(executor='package_installer',image=artifact('/usr/sbin/installer'))]
 (root/'ca.pem').write_bytes(%r); os.chmod(root/'ca.pem',0o644)
 grant=json.loads(%r)
 candidate=dict(version=2,format='macos_pkg',product_version='controlled',target='macos-arm64',
-    root=str(root),service=config['service'],desktop=artifact(desktop),runtime_root=str(root/'runtime'),runtime_sha256='0'*64,
+    root=str(root),service=config['service'],desktop=artifact(desktop),cli=artifact(cli),runtime_root=str(root/'runtime'),runtime_sha256='0'*64,
     service_id=config['service_id'],connections=config['connections'],tenant=config['tenant'],signing_keys=config['signing_keys'],ca_pem=%r,signing_mode='development')
 manifest=(json.dumps(candidate,sort_keys=True)+'\\n').encode();(root/'candidate.json').write_bytes(manifest);os.chmod(root/'candidate.json',0o644)
 config['installation_artifact']=hashlib.sha256(manifest).hexdigest()
@@ -1601,7 +1608,7 @@ path=root/'execution.json';path.write_text(json.dumps(config));os.chmod(path,0o6
 subprocess.run([str(binary),'--installation','import','--config',str(path),'--configuration',str(root/'grant.json')],text=True,check=True)
 subprocess.run(%r,check=True)
 instrument_service_diagnostics(root,binary,path)
-''' % (str(protected), str(args.binary.resolve()), hashlib.sha256(args.binary.read_bytes()).hexdigest(), str(desktop_source), hashlib.sha256(desktop_source.read_bytes()).hexdigest(), deployment, str(os.geteuid()), str(os.geteuid()), (lab / 'tls.pem').read_bytes(), json.dumps(grant), info['caPem'], frozen_installer(system_installer_source, ['install','--scope','system','--binary',str(binary),'--config',str(config)])))
+''' % (str(protected), str(args.binary.resolve()), hashlib.sha256(args.binary.read_bytes()).hexdigest(), str(args.cli.resolve()), hashlib.sha256(args.cli.read_bytes()).hexdigest(), str(desktop_source), hashlib.sha256(desktop_source.read_bytes()).hexdigest(), deployment, str(os.geteuid()), str(os.geteuid()), (lab / 'tls.pem').read_bytes(), json.dumps(grant), info['caPem'], frozen_installer(system_installer_source, ['install','--scope','system','--binary',str(binary),'--config',str(config)])))
         if args.desktop:
             # Extend this same installation owner, retaining its protected binary/config checks.
             contents = setup.read_text()
@@ -1770,12 +1777,12 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         if args.desktop:
             deadline = time.monotonic() + 15
             while True:
-                probe = subprocess.run([str(binary), '--config', str(config), '--service-status'], capture_output=True, text=True)
+                probe = subprocess.run([str(binary.with_name('rssmdm')), '--json', '--config', str(config), 'status'], capture_output=True, text=True)
                 if probe.returncode == 0: break
                 if time.monotonic() >= deadline: raise RuntimeError('unregistered service diagnostic deadline exceeded')
                 time.sleep(.2)
-            status = json.loads(probe.stdout)
-            tasks = json.loads(run(str(binary), '--config', str(config), '--query').stdout)
+            status = {'reply': json.loads(probe.stdout)['result']}
+            tasks = cli_query(binary, config, 'tasks', 'list')
             receipt['scenarios']['local_owner_before_enterprise_registration'] = unregistered_local_evidence(status, tasks)
             administrator_session.command('initialize')
 
@@ -1787,7 +1794,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
         def query():
             return read_task_page(binary, config)
         def offers():
-            reply=json.loads(run(str(binary),'--config',str(config),'--offers').stdout)['reply']
+            reply=cli_query(binary, config, 'tasks', 'offers')['reply']
             assert reply['kind']=='offers','authenticated offer discovery failed'
             return reply['available']
         def completed(task, seconds=30):
@@ -1838,7 +1845,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
                 if method == 'query': value = query()
                 elif method == 'security':
                     security_begin(receipt['security'],'wrong_image_same_uid')
-                    value = rejected_image_probe(args.binary,binary,config)
+                    value = rejected_image_probe(args.cli,binary,config)
                     receipt['scenarios']['wrong_image_same_uid'] = value
                     security_result(receipt['security'], 'wrong_image_same_uid', value)
                     if native_probe: native_transport_security(native_probe, receipt['security'], query, command, administrator_session)
@@ -1897,7 +1904,7 @@ subprocess.run(['/bin/launchctl','kickstart','-k','system/com.rss-mdm.agent.exec
             return
         receipt['scenarios']['authenticated_ipc'] = query()
         security_begin(receipt['security'],'wrong_image_same_uid')
-        receipt['scenarios']['wrong_image_same_uid'] = rejected_image_probe(args.binary, binary, config)
+        receipt['scenarios']['wrong_image_same_uid'] = rejected_image_probe(args.cli, binary, config)
         security_result(receipt['security'], 'wrong_image_same_uid', receipt['scenarios']['wrong_image_same_uid'])
         system = completed(first['attempt'])
         validate_script(acknowledged_result(system, first['attempt']), 'system')

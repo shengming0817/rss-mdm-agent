@@ -22,6 +22,16 @@ import {
 } from "@rss-mdm-agent/ui";
 import AppShell from "./workspace/WorkspaceChrome.vue";
 import WorkspaceSearch from "./workspace/WorkspaceSearch.vue";
+import CopyEntry from "./workspace/CopyEntry.vue";
+import EntryPanel from "./workspace/EntryPanel.vue";
+import BatchDetails from "./workspace/BatchDetails.vue";
+import { nativeNavigation, listenNavigation } from "./workspace/entry";
+import type {
+  Delivery,
+  EntryIntent,
+  SelfServiceDirectoryItem,
+  ManagementActivityPage,
+} from "./self-service/types";
 import SettingsGlyph from "./system-settings/SettingsGlyph.vue";
 import AccountMenu from "./workspace/AccountMenu.vue";
 import ConversationShortcut from "./workspace/ConversationShortcut.vue";
@@ -102,6 +112,155 @@ const softwarePage = ref<PageNavigation>();
 const toolsPage = ref<PageNavigation>();
 const systemPage = ref<PageNavigation>();
 const settingsPage = ref<PageNavigation>();
+const entryPort = props.fixture ? undefined : nativeNavigation();
+const entrySelection = shallowRef<{
+  delivery: Delivery;
+  policy?: SelfServiceDirectoryItem;
+}>();
+const entryBatch = shallowRef<{
+  batch: string;
+  initial: ManagementActivityPage;
+}>();
+const pageNode = computed(() => {
+  const page =
+    (
+      {
+        "device-tools": "tools",
+        "software-management": "software",
+        "system-settings": "system",
+      } as Record<string, string>
+    )[props.page] ?? props.page;
+  const section = currentModule.value?.section;
+  return {
+    kind: "node" as const,
+    id: section && /^[a-z][a-z-]*$/.test(section) ? `${page}.${section}` : page,
+  };
+});
+let entryDraining = false,
+  entryDisposed = false;
+let stopEntry: (() => void) | undefined;
+async function openEntryNode(id: string) {
+  const [owner, section] = id.split(".");
+  const page =
+    (
+      {
+        tools: "device-tools",
+        software: "software-management",
+        system: "system-settings",
+      } as Record<string, string>
+    )[owner] ?? owner;
+  navigateMain(page);
+  await nextTick();
+  const module =
+    page === "device-tools"
+      ? toolsPage.value
+      : page === "software-management"
+        ? softwarePage.value
+        : page === "system-settings"
+          ? systemPage.value
+          : page === "settings"
+            ? settingsPage.value
+            : page === "tasks"
+              ? taskPage.value
+              : undefined;
+  if (section && module) {
+    if (module.openNode) {
+      if (!(await module.openNode(section))) throw Error("unavailable");
+    } else if (module.sections.some((v) => v.id === section))
+      module.openSection(section);
+    else throw Error("unavailable");
+  } else if (section) throw Error("unavailable");
+  await nextTick();
+  document
+    .querySelector<HTMLElement>(
+      ".workspace-page-header h1, .workspace-breadcrumb button",
+    )
+    ?.focus();
+}
+async function drainEntries() {
+  if (
+    !entryPort ||
+    entryDraining ||
+    entryDisposed ||
+    !props.ready ||
+    props.busy
+  )
+    return;
+  entryDraining = true;
+  try {
+    for (let i = 0; i < 16 && !entryDisposed; i++) {
+      const pending = await entryPort({ kind: "next" });
+      if (pending.kind !== "pending" || !pending.value) break;
+      const delivery = pending.value;
+      const result = await entryPort({
+        kind: "resolve",
+        intent: delivery.intent,
+      });
+      if (entryDisposed) return;
+      if (delivery.intent.selector.kind === "node")
+        await openEntryNode(delivery.intent.selector.id);
+      else if (delivery.intent.selector.kind === "localTool") {
+        const node = {
+          "network.check": "tools.network",
+          "system.settings": "system.overview",
+          "software.manage": "software.installed",
+        }[delivery.intent.selector.name];
+        await openEntryNode(node);
+      } else if (result.kind === "task")
+        await openTask(result.value, delivery.intent.step ?? "");
+      else if (
+        result.kind === "activities" &&
+        delivery.intent.selector.kind === "batch"
+      ) {
+        navigateMain("tasks");
+        entryBatch.value = {
+          batch: delivery.intent.selector.id,
+          initial: result.value,
+        };
+      } else if (
+        result.kind === "policy" ||
+        (result.kind === "event" && delivery.intent.selector.kind === "event")
+      ) {
+        // A duplicate delivery keeps the original form/request instead of creating another invocation.
+        if (
+          JSON.stringify(entrySelection.value?.delivery.intent) !==
+          JSON.stringify(delivery.intent)
+        )
+          entrySelection.value = {
+            delivery,
+            policy: result.kind === "policy" ? result.value : undefined,
+          };
+      } else throw Error("unavailable");
+      await entryPort({ kind: "ack", id: delivery.id });
+      navigationError.value = "";
+    }
+  } catch {
+    if (!entryDisposed)
+      navigationError.value =
+        "目标需要登录、版本已变化或当前不可访问；请核对当前账户后重试外部目标。";
+  } finally {
+    entryDraining = false;
+  }
+}
+onMounted(async () => {
+  if (!entryPort) return;
+  const stop = await listenNavigation(() => {
+    void drainEntries();
+  });
+  if (entryDisposed) stop();
+  else stopEntry = stop;
+  await drainEntries();
+});
+watch(
+  () => [props.ready, props.busy],
+  () => {
+    void drainEntries();
+  },
+);
+onBeforeUnmount(() => {
+  entryDisposed = true;
+  stopEntry?.();
+});
 const settingsExpanded = ref(false);
 const chromeNarrow = ref(false),
   searchRequest = ref(0);
@@ -827,6 +986,7 @@ onBeforeUnmount(() => {
                       : "首页"
           }}
         </h1>
+        <CopyEntry v-if="entryPort && ready" :selector="pageNode" />
       </div>
     </template>
     <template #search>
@@ -1023,6 +1183,28 @@ onBeforeUnmount(() => {
         />
       </aside>
       <p v-if="navigationError" role="alert">{{ navigationError }}</p>
+      <button v-if="entryPort && navigationError" @click="drainEntries">
+        重试外部目标
+      </button>
+      <EntryPanel
+        v-if="entryPort && entrySelection"
+        :key="entrySelection.delivery.id"
+        :delivery="entrySelection.delivery"
+        :policy="entrySelection.policy"
+        :port="controller.port"
+        :navigation="entryPort"
+        @close="entrySelection = undefined"
+        @task="openTask($event)"
+      />
+      <BatchDetails
+        v-if="entryPort && entryBatch"
+        :key="entryBatch.batch"
+        :batch="entryBatch.batch"
+        :initial="entryBatch.initial"
+        :port="entryPort"
+        @close="entryBatch = undefined"
+        @open="openTask({ kind: 'activity', id: $event })"
+      />
       <div class="workspace-page-surface">
         <div
           v-if="controller"

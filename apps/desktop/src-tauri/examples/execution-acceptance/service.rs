@@ -106,6 +106,7 @@ impl ExecutionServicePort for FixtureService {
                 policy_revision: None,
                 retry_of: None,
                 related: vec![],
+                related_cursor: None,
                 selection: None,
                 missing: vec![],
                 parameter_summary: Default::default(),

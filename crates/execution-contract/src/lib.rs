@@ -5,6 +5,8 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 mod audit;
+mod entry;
+pub use entry::*;
 mod query_schema;
 mod resources;
 pub use query_schema::*;

@@ -3,6 +3,9 @@
   "description": "Local main window: controlled execution service and private AI transport.",
   "windows": ["main"],
   "permissions": [
+    "allow-navigation",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
     "allow-personal-vault",
     "allow-query-directory",
     "allow-data-read",

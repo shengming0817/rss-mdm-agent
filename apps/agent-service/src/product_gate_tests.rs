@@ -6453,3 +6453,168 @@ async fn task_history_first_page_merges_new_execution_and_latest_preparation_bef
     assert!(all.windows(2).all(|w| w[0].recorded_at >= w[1].recorded_at));
     assert!(c._server.data.lock().unwrap().start_ops.is_empty());
 }
+
+#[tokio::test]
+async fn entry_event_freezes_before_transport_and_recovers_the_same_request() {
+    let _budget = crate::scenario_budget::enter();
+    use execution_contract::{EntryAction, EntryIntent, EntrySelector};
+    use execution_ipc::{entry::EntryOperation, host::Request};
+    let mut c = Case::new(None).await;
+    c.device("entry-device").await;
+    let Reply::EntryContext { value: attached } = c
+        .policy_call(Request::Entry {
+            input: EntryOperation::Attach,
+        })
+        .await
+    else {
+        panic!("attach")
+    };
+    let request = execution_contract::RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+    let intent = EntryIntent {
+        action: EntryAction::Invoke,
+        selector: EntrySelector::Event {
+            name: wire::PolicyEventName::parse("repair").unwrap(),
+        },
+        namespace: attached.namespace,
+        version: None,
+        revision: None,
+        step: None,
+        parameters: Default::default(),
+    };
+    c._server.data.lock().unwrap().policy_event_reply_lost = true;
+    let invoke = || Request::Entry {
+        input: EntryOperation::Invoke {
+            intent: intent.clone(),
+            request: request.clone(),
+        },
+    };
+    let first = c.policy_call(invoke()).await;
+    assert!(!matches!(first, Reply::PolicyRequest { .. }));
+    let frozen = c
+        .service
+        .core
+        .app
+        .backend_request(&c.service.core.caller(), &request)
+        .unwrap()
+        .unwrap();
+    assert_eq!(frozen.state, BackendRequestState::Submitting);
+    let accepted = c
+        ._server
+        .data
+        .lock()
+        .unwrap()
+        .policy_events
+        .values()
+        .next()
+        .unwrap()
+        .1
+        .clone();
+    // The authorized projection can lag. A successful empty read permits exact replay,
+    // while a failed read must leave the original operation untouched.
+    c._server.data.lock().unwrap().management_page =
+        Some(rss_mdm_agent_wire::activities::ManagementActivityPage {
+            items: vec![],
+            next_cursor: None,
+            sync_cursor: "sync".into(),
+            as_of: c._server.time.now().unwrap(),
+            retained_from: None,
+            coverage: vec![],
+        });
+    let Reply::PolicyRequest { value: record } = c.policy_call(invoke()).await else {
+        panic!("same-ID replay")
+    };
+    assert_eq!(record.state, BackendRequestState::Observed);
+    assert!(
+        matches!(&record.action,PreparedAction::Event{receipt:Some(receipt),..} if receipt.batch_id==accepted.batch_id)
+    );
+    assert!(matches!(
+        c.policy_call(invoke()).await,
+        Reply::PolicyRequest { .. }
+    ));
+    assert_eq!(c._server.data.lock().unwrap().policy_event_calls, 2);
+    let mut changed = intent.clone();
+    changed.selector = EntrySelector::Event {
+        name: wire::PolicyEventName::parse("different").unwrap(),
+    };
+    assert!(matches!(
+        c.policy_call(Request::Entry {
+            input: EntryOperation::Invoke {
+                intent: changed,
+                request
+            }
+        })
+        .await,
+        Reply::DataFailure {
+            reason: DataError::Conflict
+        }
+    ));
+    assert_eq!(c._server.data.lock().unwrap().policy_event_calls, 2);
+}
+
+#[tokio::test]
+async fn entry_policy_rechecks_registration_and_current_definition_before_journaling() {
+    let _budget = crate::scenario_budget::enter();
+    use execution_contract::{EntryAction, EntryIntent, EntrySelector};
+    use execution_ipc::{entry::EntryOperation, host::Request};
+    let mut c = Case::new(None).await;
+    c.device("entry-policy-device").await;
+    let mut directory = protocol::policy_directory_fixture(c.service.client.configuration().tenant);
+    directory.subject = wire::SelfServiceSubject::Device {};
+    c._server.data.lock().unwrap().self_service_directory = Some(protocol::Directory {
+        items: vec![directory.clone()],
+        next_cursor: None,
+        as_of: c._server.time.now().unwrap(),
+    });
+    let Reply::EntryContext { value: attached } = c
+        .policy_call(Request::Entry {
+            input: EntryOperation::Attach,
+        })
+        .await
+    else {
+        panic!("attach")
+    };
+    let request = execution_contract::RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+    let mut intent = EntryIntent {
+        action: EntryAction::Invoke,
+        selector: EntrySelector::parse("id", &directory.policy_id.to_string()).unwrap(),
+        namespace: attached.namespace,
+        version: Some(uuid::Uuid::new_v4().to_string()),
+        revision: Some(directory.policy_revision),
+        step: None,
+        parameters: Default::default(),
+    };
+    assert!(matches!(
+        c.policy_call(Request::Entry {
+            input: EntryOperation::Invoke {
+                intent: intent.clone(),
+                request: request.clone()
+            }
+        })
+        .await,
+        Reply::DataFailure {
+            reason: DataError::Conflict
+        }
+    ));
+    assert!(c
+        .service
+        .core
+        .app
+        .backend_request(&c.service.core.caller(), &request)
+        .unwrap()
+        .is_none());
+    intent.version = Some(directory.policy_version.to_string());
+    intent.namespace.as_mut().unwrap().generation += 1;
+    assert!(matches!(
+        c.policy_call(Request::Entry {
+            input: EntryOperation::Invoke {
+                intent,
+                request: request.clone()
+            }
+        })
+        .await,
+        Reply::DataFailure {
+            reason: DataError::Denied
+        }
+    ));
+    assert!(c._server.data.lock().unwrap().invocations.is_empty());
+}

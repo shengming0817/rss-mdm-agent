@@ -15,6 +15,7 @@ url.workspace = true
 uuid = "=1.26.0"
 
 [dependencies]
+tauri-plugin-deep-link = "=2.4.10"
 passkey-vault = { path = "../../../crates/passkey-vault" }
 rss-mdm-agent-wire.workspace = true
 platform-private-storage = { path = "../../../crates/platform-private-storage" }

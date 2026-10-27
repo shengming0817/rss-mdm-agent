@@ -210,6 +210,16 @@ const navigation = reactive({
     requested.value = request;
     await nextTick();
   },
+  async openNode(id: string) {
+    if (id === "enterprise") {
+      reset();
+      await nextTick();
+      return true;
+    }
+    if (!tools.some((tool) => tool.id === id)) return false;
+    await inspect(id);
+    return true;
+  },
   async openResource(id: string, revision: string) {
     if (
       tools.some((item) => item.id === id) &&

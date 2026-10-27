@@ -294,6 +294,14 @@ export function operationProjection(
       snapshot.presentation.title = action.offer.presentation.title;
       snapshot.logs = [JSON.stringify(action.offer.presentation.summary)];
       snapshot.presentation.source = `签名任务 ${action.offer.task} / ${action.offer.attempt}`;
+    } else if (action.kind === "event") {
+      snapshot.presentation.title = `事件 ${action.input.event}`;
+      snapshot.result = action.receipt
+        ? `批次 ${action.receipt.batchId}，已冻结 ${action.receipt.members} 个成员；执行结果需另查`
+        : action.batch
+          ? `批次 ${action.batch}；成员数量尚未确认`
+          : "受理结果尚未确认";
+      snapshot.allowed = ["refresh"];
     } else {
       snapshot.presentation.title = "可信软件状态观察";
       snapshot.result = action.observation

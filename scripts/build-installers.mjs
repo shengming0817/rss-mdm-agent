@@ -222,6 +222,15 @@ run("cargo", [
   "--bin",
   "rss-execution-service",
 ]);
+run("cargo", [
+  "build",
+  "--release",
+  "--locked",
+  "-p",
+  "rss-mdm-cli",
+  "--bin",
+  "rssmdm",
+]);
 pnpm(
   [
     "exec",
@@ -245,6 +254,9 @@ cpSync(
   service,
 );
 sign(service);
+const cli = join(payload, "rssmdm" + suffix);
+cpSync(join(cargoTargetDir(root), "release/rssmdm" + suffix), cli);
+sign(cli);
 let windowsLogin;
 if (windows && format === "windows_exe" && process.arch === "x64") {
   run("cargo", [
@@ -350,6 +362,7 @@ const candidate = {
   root: installed,
   service: image(service),
   desktop: image(desktop),
+  cli: image(cli),
   runtime_root: join(installed, packagedRuntime.slice(payload.length + 1)),
   runtime_sha256: runtimeTreeSha256(packagedRuntime),
   service_id: organization.service_id,

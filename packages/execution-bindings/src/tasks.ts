@@ -552,6 +552,33 @@ export type StopOutcome = "acknowledged" | "failed";
 export type PreparedAction =
   | {
       /**
+       * Exact batch recovered from an authorized original-request activity; member count remains unknown.
+       */
+      batch: Id | null;
+      /**
+       * Original authorization deadline.
+       */
+      expiresAtUnixMs: number;
+      /**
+       * Exact producer request; caller classification is native-attested.
+       */
+      input: PolicyEventRequest;
+      kind: "event";
+      /**
+       * Original exact registration coordinates.
+       */
+      namespace: EntryNamespace;
+      /**
+       * Stable producer batch receipt; acceptance is not effect completion.
+       */
+      receipt: PolicyEventAccepted | null;
+      /**
+       * Original stable business request.
+       */
+      request: RequestId;
+    }
+  | {
+      /**
        * Original read identity, independent of installation execution.
        */
       choice: SoftwareReadChoice;
@@ -581,6 +608,10 @@ export type PreparedAction =
        * Local continuation binding; enterprise identity is solely directory.subject.
        */
       access: PolicyAccess;
+      /**
+       * Original typed external address, absent for direct native directory selections.
+       */
+      address: EntrySelector | null;
       /**
        * Immutable employee choice.
        */
@@ -616,6 +647,61 @@ export type PreparedAction =
        * Prepared operation interface for display and input editing, never authorization.
        */
       task: SelfServiceTask;
+    };
+/**
+ * Tenant-local event name shared by any number of Policies; never an object alias.
+ *
+ * This interface was referenced by `TaskDetail`'s JSON-Schema
+ * via the `definition` "PolicyEventName".
+ */
+export type PolicyEventName = string;
+/**
+ * Stable Windows identity authority. Display names and email addresses are excluded.
+ *
+ * This interface was referenced by `TaskDetail`'s JSON-Schema
+ * via the `definition` "AccessWindowsAuthority".
+ */
+export type AccessWindowsAuthority =
+  | {
+      kind: "local";
+    }
+  | {
+      /**
+       * SID of the native AD domain, excluding the user's RID.
+       */
+      domainSid: string;
+      kind: "active_directory";
+    }
+  | {
+      kind: "entra";
+      /**
+       * Immutable user object identifier within that tenant.
+       */
+      objectId: string;
+      /**
+       * Tenant that owns the native directory account.
+       */
+      tenantId: string;
+    };
+/**
+ * Origin supplied by the authenticated service; Policy origins must reference a real parent run.
+ *
+ * This interface was referenced by `TaskDetail`'s JSON-Schema
+ * via the `definition` "PolicyEventSource".
+ */
+export type PolicyEventSource =
+  | {
+      kind: "human";
+    }
+  | {
+      kind: "ai";
+    }
+  | {
+      kind: "policy";
+      /**
+       * Parent execution identity.
+       */
+      runId: string;
     };
 /**
  * Independently observed software state; installer exit is never a value of this type.
@@ -713,6 +799,122 @@ export type PolicyAccess =
        */
       sessionBinding: NativeContextRef;
     };
+/**
+ * Explicit address kinds; display names are not exact selectors.
+ *
+ * This interface was referenced by `TaskDetail`'s JSON-Schema
+ * via the `definition` "EntrySelector".
+ */
+export type EntrySelector =
+  | {
+      kind: "localTool";
+      /**
+       * Stable tool name.
+       */
+      name: LocalTool;
+    }
+  | {
+      /**
+       * Explicit owner-registered ID.
+       */
+      id: string;
+      kind: "node";
+    }
+  | {
+      kind: "capability";
+      /**
+       * Canonical producer selector.
+       */
+      selector: CapabilitySelector;
+    }
+  | {
+      kind: "event";
+      /**
+       * Producer-normalized name.
+       */
+      name: PolicyEventName;
+    }
+  | {
+      kind: "request";
+      /**
+       * Original business request.
+       */
+      request: RequestId;
+    }
+  | {
+      kind: "sampling";
+      /**
+       * Original definition and revision.
+       */
+      query: QueryRef;
+    }
+  | {
+      /**
+       * Producer fact identity.
+       */
+      id: string;
+      kind: "activity";
+    }
+  | {
+      /**
+       * Canonical batch UUID.
+       */
+      id: string;
+      kind: "batch";
+    }
+  | {
+      /**
+       * Exact attempt UUID.
+       */
+      attempt: string;
+      kind: "task";
+      /**
+       * Backend task UUID.
+       */
+      task: string;
+    };
+/**
+ * Stable names for actual existing local operation owners.
+ *
+ * This interface was referenced by `TaskDetail`'s JSON-Schema
+ * via the `definition` "LocalTool".
+ */
+export type LocalTool = "network.check" | "system.settings" | "software.manage";
+/**
+ * Explicit exact address in the authenticated tenant's Policy namespace.
+ *
+ * This interface was referenced by `TaskDetail`'s JSON-Schema
+ * via the `definition` "CapabilitySelector".
+ */
+export type CapabilitySelector =
+  | {
+      /**
+       * Object ID.
+       */
+      id: string;
+      kind: "id";
+    }
+  | {
+      kind: "tool_name";
+      /**
+       * Complete canonical name.
+       */
+      name: string;
+    }
+  | {
+      /**
+       * Canonical tenant-local alias.
+       */
+      alias: PolicyAlias;
+      kind: "alias";
+    };
+/**
+ * Tenant-local canonical Policy alias.
+ *
+ * This interface was referenced by `TaskDetail`'s JSON-Schema
+ * via the `definition` "PolicyAlias".
+ */
+export type PolicyAlias = string;
 /**
  * One directory interface; software does not inherit script parameter semantics.
  *
@@ -1170,6 +1372,10 @@ export interface TaskDetail {
    * Independently authorized related producer identities.
    */
   related: TaskRef[];
+  /**
+   * Original producer continuation for this activity's related history.
+   */
+  relatedCursor: string | null;
   /**
    * Original request linked by an independently admitted retry.
    */
@@ -1685,6 +1891,167 @@ export interface BackendRequest {
   trigger: BackendTrigger;
 }
 /**
+ * Explicit event for one authenticated device, never a tenant or device selector.
+ *
+ * This interface was referenced by `TaskDetail`'s JSON-Schema
+ * via the `definition` "PolicyEventRequest".
+ */
+export interface PolicyEventRequest {
+  /**
+   * Canonical Policy trigger name.
+   */
+  event: PolicyEventName;
+  /**
+   * Local context attested by the authenticated Agent; absent for remote management.
+   */
+  executionContext: SoftwareExecutionContext | null;
+  /**
+   * Stable request identity reused after response loss.
+   */
+  operationId: string;
+  /**
+   * Real invocation origin, not authorization.
+   */
+  source: PolicyEventSource;
+}
+/**
+ * Complete current native execution environment reported by this registration.
+ *
+ * This interface was referenced by `TaskDetail`'s JSON-Schema
+ * via the `definition` "SoftwareExecutionContext".
+ */
+export interface SoftwareExecutionContext {
+  /**
+   * Exact live interactive session, when one exists.
+   */
+  interactiveUser: SoftwareInteractiveUser | null;
+  /**
+   * Current native Windows sideload policy.
+   */
+  msixSideload: boolean;
+  /**
+   * Current native API support for explicitly approved unsigned packages.
+   */
+  msixUnsigned: boolean;
+  /**
+   * Complete numeric OS version, not an inferred product/platform string.
+   *
+   * @minItems 4
+   * @maxItems 4
+   */
+  osVersion: [number, number, number, number, ...number[]];
+  /**
+   * Strictly increasing local context generation; retries retain the same value.
+   */
+  revision: number;
+  /**
+   * Source-scoped read credential references actually available locally.
+   *
+   * @maxItems 16
+   */
+  sourceCredentials: SoftwareReadCredential[];
+  /**
+   * Whether the native system broker is available in this Agent installation.
+   */
+  systemBroker: boolean;
+  /**
+   * Whether a helper is bound to this exact live interactive session.
+   */
+  userHelper: boolean;
+}
+/**
+ * One concrete live OS session.
+ *
+ * This interface was referenced by `TaskDetail`'s JSON-Schema
+ * via the `definition` "SoftwareInteractiveUser".
+ */
+export interface SoftwareInteractiveUser {
+  /**
+   * Privilege needed by the exact native profile, not a generic authorization grant.
+   */
+  administrator: boolean;
+  /**
+   * macOS GeneratedUID for this live account; Windows must explicitly report null.
+   */
+  generatedUid: string | null;
+  /**
+   * Windows SID or macOS numeric UID.
+   */
+  identity: string;
+  /**
+   * Changes on logoff/login; identical account names cannot reuse a previous session.
+   */
+  sessionId: string;
+  /**
+   * Native Windows account authority when known; required for Device Access admission.
+   */
+  windowsAuthority: AccessWindowsAuthority | null;
+}
+/**
+ * Availability of a particular source read credential in the local Agent.
+ *
+ * This interface was referenced by `TaskDetail`'s JSON-Schema
+ * via the `definition` "SoftwareReadCredential".
+ */
+export interface SoftwareReadCredential {
+  /**
+   * Host-provisioned opaque credential reference; never token bytes or a URL.
+   */
+  reference: string;
+  /**
+   * Exact source identity in the consuming tenant.
+   */
+  source: string;
+}
+/**
+ * Enterprise coordinates are compared with the active registration, never used to switch it.
+ *
+ * This interface was referenced by `TaskDetail`'s JSON-Schema
+ * via the `definition` "EntryNamespace".
+ */
+export interface EntryNamespace {
+  /**
+   * Exact device identity.
+   */
+  device: string;
+  /**
+   * Exact registration generation.
+   */
+  generation: number;
+  /**
+   * Product instance identity, not a server URL.
+   */
+  instance: string;
+  /**
+   * Exact registration UUID.
+   */
+  registration: string;
+  /**
+   * Exact tenant UUID.
+   */
+  tenant: string;
+}
+/**
+ * Stable batch receipt; acceptance does not mean its members executed successfully.
+ *
+ * This interface was referenced by `TaskDetail`'s JSON-Schema
+ * via the `definition` "PolicyEventAccepted".
+ */
+export interface PolicyEventAccepted {
+  /**
+   * Durable batch identity.
+   */
+  batchId: string;
+  /**
+   * Number of frozen members, including rejections.
+   */
+  members: number;
+  /**
+   * Original request identity.
+   */
+  operationId: string;
+}
+/**
  * Native human read input with its preallocated stable request.
  *
  * This interface was referenced by `TaskDetail`'s JSON-Schema
@@ -1840,6 +2207,22 @@ export interface BackendStepSummary {
    * Exact version; no implicit latest.
    */
   version: string;
+}
+/**
+ * Exact service-owned query definition.
+ *
+ * This interface was referenced by `TaskDetail`'s JSON-Schema
+ * via the `definition` "QueryRef".
+ */
+export interface QueryRef {
+  /**
+   * Stable resource identity.
+   */
+  id: Id;
+  /**
+   * Digest of the complete current definition.
+   */
+  revision: Digest;
 }
 /**
  * Employee input; caller source and confirmation are supplied only by trusted native code.
@@ -2010,22 +2393,6 @@ export interface PublishedQuery {
    * Immutable execution version.
    */
   policyVersion: Id;
-}
-/**
- * Exact service-owned query definition.
- *
- * This interface was referenced by `TaskDetail`'s JSON-Schema
- * via the `definition` "QueryRef".
- */
-export interface QueryRef {
-  /**
-   * Stable resource identity.
-   */
-  id: Id;
-  /**
-   * Digest of the complete current definition.
-   */
-  revision: Digest;
 }
 /**
  * Authorized, bounded observation projection.

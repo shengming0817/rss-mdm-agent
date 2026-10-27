@@ -13,6 +13,7 @@ const record = (id: string): BackendRequest => ({
   retryOf: null,
   action: {
     kind: "policy",
+    address: null,
     definition: { id: "policy", revision: "version" },
     policyRevision: 1,
 

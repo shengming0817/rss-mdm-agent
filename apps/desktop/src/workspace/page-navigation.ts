@@ -19,6 +19,8 @@ export interface PageNavigation {
   searchEntries?: { id: string; title: string; revision: string }[];
   openRequest?(request: string): Promise<void>;
   openResource?(id: string, revision: string): boolean | Promise<boolean>;
+  /** Explicit stable external node owned by this page; never a DOM/title lookup. */
+  openNode?(id: string): boolean | Promise<boolean>;
   search?: {
     loading: boolean;
     complete: boolean;

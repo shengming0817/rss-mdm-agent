@@ -41,11 +41,18 @@ impl Core {
         command: &Command,
     ) -> Result<Vec<QueryDescriptor>, Error> {
         self.data.install_local()?;
-        self.data.install_user(
-            &command.subject,
-            login_binding_id(command.binding.as_ref().ok_or(Error::Denied)?),
-        )?;
-        let items = self.data.directory(&command.subject)?;
+        if !command.request.is_machine() {
+            self.data.install_user(
+                &command.subject,
+                login_binding_id(command.binding.as_ref().ok_or(Error::Denied)?),
+            )?;
+        }
+        let mut items = self.data.directory(&command.subject)?;
+        if command.request.is_machine() {
+            items.retain(|v| {
+                matches!(v.scope, DataScope::Device) && !matches!(v.kind, QueryKind::Policy)
+            });
+        }
         Ok(items)
     }
 
@@ -585,20 +592,27 @@ impl<S: IdentityProvider> DeviceService<S> {
                         },
                         session: binding.clone(),
                     };
-                    let initiator = match origin {
-                        ClientOrigin::Desktop {} => Initiator::Human { os_session },
-                        ClientOrigin::Ai {
-                            config,
-                            conversation,
-                            tool_call,
-                            ..
-                        } => Initiator::Ai {
-                            provider: plan::id("local-ai-host")?,
-                            os_session,
-                            config: config.clone(),
-                            conversation: conversation.clone(),
-                            tool_call: tool_call.clone(),
-                        },
+                    let initiator = if command.request.is_machine() {
+                        // Deployment policy provenance; never fabricate an interactive OS login.
+                        Initiator::Policy {
+                            policy: plan::reference("installed-machine-cli", binding.as_str())?,
+                        }
+                    } else {
+                        match origin {
+                            ClientOrigin::Desktop {} => Initiator::Human { os_session },
+                            ClientOrigin::Ai {
+                                config,
+                                conversation,
+                                tool_call,
+                                ..
+                            } => Initiator::Ai {
+                                provider: plan::id("local-ai-host")?,
+                                os_session,
+                                config: config.clone(),
+                                conversation: conversation.clone(),
+                                tool_call: tool_call.clone(),
+                            },
+                        }
                     };
                     let helper = if read.execution.identity == wire::ExecutionIdentity::LoggedInUser
                     {

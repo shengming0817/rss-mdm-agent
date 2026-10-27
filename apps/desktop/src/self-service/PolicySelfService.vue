@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import CopyEntry from "../workspace/CopyEntry.vue";
 import { taskCenterKey } from "../task-center/controller";
 import PolicyExecutionContext from "./PolicyExecutionContext.vue";
 import { computed, inject, onBeforeUnmount, ref, watch, toRaw } from "vue";
@@ -154,13 +155,30 @@ const resource = computed(() =>
 );
 defineExpose({
   resource,
-  async openPolicy(id: string) {
+  async openPolicy(
+    id: string,
+    suggestions: Record<string, unknown> = {},
+    expected?: SelfServiceDirectoryItem,
+  ) {
     if (request.value || props.allowNewRequests === false) return false;
     const item =
       directory.value.find((item) => item.policyId === id) ??
       (await catalog.resolve(id));
     if (!item) return false;
+    if (
+      expected &&
+      (item.policyVersion !== expected.policyVersion ||
+        item.policyRevision !== expected.policyRevision)
+    )
+      return false;
     select(item);
+    for (const field of fields.value) {
+      if (field.name in suggestions)
+        inputs.value[field.name] =
+          field.schema.type === "string"
+            ? String(suggestions[field.name])
+            : JSON.stringify(suggestions[field.name]);
+    }
     return true;
   },
 });
@@ -404,6 +422,12 @@ function presentationText(value: unknown, fallback = "未提供"): string {
           :key="item.policyId"
           class="resource-card"
         >
+          <CopyEntry
+            :selector="{
+              kind: 'capability',
+              selector: { kind: 'id', id: item.policyId },
+            }"
+          />
           <button :disabled="busy || !!request" @click="select(item)">
             {{
               kind === "enrollment"
@@ -447,6 +471,12 @@ function presentationText(value: unknown, fallback = "未提供"): string {
             )
           }}
         </h3>
+        <CopyEntry
+          :selector="{
+            kind: 'capability',
+            selector: { kind: 'id', id: selected.policyId },
+          }"
+        />
         <label v-for="field in fields" :key="field.name"
           >{{ field.schema.title ?? field.name
           }}<span>{{ field.schema.description }}</span

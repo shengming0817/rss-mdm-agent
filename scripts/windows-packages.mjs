@@ -46,8 +46,14 @@ export function msiSource({ version, target, id, payload, files }) {
 <Shortcut Id="AgentStartMenu" Name="RSS MDM Agent" Target="[#${key("rss-mdm-desktop.exe")}]" WorkingDirectory="INSTALLROOT"/>
 <RegistryValue Root="HKLM" Key="Software\\RSS\\MDM Agent" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes"/>
 </Component>
+<Component Id="AgentProtocol" Directory="INSTALLROOT" Guid="*">
+<RegistryKey Root="HKLM" Key="Software\\Classes\\rssmdm">
+<RegistryValue Type="string" Value="URL:RSS MDM Agent" KeyPath="yes"/>
+<RegistryValue Name="URL Protocol" Type="string" Value=""/>
+<RegistryKey Key="shell\\open\\command"><RegistryValue Type="string" Value="&quot;[#${key("rss-mdm-desktop.exe")}]&quot; &quot;%1&quot;"/></RegistryKey>
+</RegistryKey></Component>
 <Binary Id="InstallationOwner" SourceFile="${xml(`${payload}/rss-execution-service.exe`)}"/>
-${components}<Feature Id="Agent" Level="1"><ComponentRef Id="AgentShortcut"/>${files.map((file) => `<ComponentRef Id="c${key(file)}"/>`).join("")}</Feature>
+${components}<Feature Id="Agent" Level="1"><ComponentRef Id="AgentShortcut"/><ComponentRef Id="AgentProtocol"/>${files.map((file) => `<ComponentRef Id="c${key(file)}"/>`).join("")}</Feature>
 <CustomAction Id="SaveAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-save" Execute="deferred" Impersonate="no" Return="check"/>
 <CustomAction Id="RollbackAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-rollback" Execute="rollback" Impersonate="no" Return="check"/>
 <CustomAction Id="CommitAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-commit" Execute="commit" Impersonate="no" Return="check"/>
@@ -75,6 +81,6 @@ export function msixManifest({ version, architecture, publisher }) {
 <Properties><DisplayName>RSS MDM Agent</DisplayName><PublisherDisplayName>RSS</PublisherDisplayName><Logo>Assets\\StoreLogo.png</Logo></Properties>
 <Dependencies><TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0"/></Dependencies><Resources><Resource Language="zh-CN"/></Resources>
 <Applications><Application Id="Agent" Executable="rss-mdm-desktop.exe" EntryPoint="Windows.FullTrustApplication"><uap:VisualElements DisplayName="RSS MDM Agent" Description="RSS MDM Agent" BackgroundColor="transparent" Square150x150Logo="Assets\\Logo.png" Square44x44Logo="Assets\\SmallLogo.png"/>
-<Extensions><desktop6:Extension Category="windows.service" Executable="rss-execution-service.exe" EntryPoint="Windows.FullTrustApplication"><desktop6:Service Name="RssExecution" StartupType="auto" StartAccount="localSystem" Arguments="--packaged-service"/></desktop6:Extension></Extensions>
+<Extensions><uap:Extension Category="windows.protocol"><uap:Protocol Name="rssmdm"><uap:DisplayName>RSS MDM Agent</uap:DisplayName></uap:Protocol></uap:Extension><desktop6:Extension Category="windows.service" Executable="rss-execution-service.exe" EntryPoint="Windows.FullTrustApplication"><desktop6:Service Name="RssExecution" StartupType="auto" StartAccount="localSystem" Arguments="--packaged-service"/></desktop6:Extension></Extensions>
 </Application></Applications><Capabilities><rescap:Capability Name="runFullTrust"/><rescap:Capability Name="packagedServices"/><rescap:Capability Name="localSystemServices"/></Capabilities></Package>\n`;
 }

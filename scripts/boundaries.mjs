@@ -73,11 +73,13 @@ const compositionCommands = [
   ...userCommands,
   ...settingsCommands,
   "appearance_snapshot",
+  "navigation",
   "device_overview",
   "development_assembly",
 ];
 const nativeAdapters = new Map([
   ["apps/desktop/src/workspace/window.ts", []],
+  ["apps/desktop/src/workspace/entry.ts", ["navigation"]],
   ["apps/desktop/src/home/native.ts", ["device_overview"]],
   ["apps/desktop/src/assembly.ts", ["development_assembly"]],
   ["apps/desktop/src/appearance.ts", ["appearance_snapshot"]],
@@ -207,6 +209,8 @@ export function checkSource(file, source) {
   if (file === "apps/desktop/src/self-service/PolicySelfService.vue")
     allowed.push("ajv");
   if (nativeAdapters.has(file)) allowed.push("@tauri-apps/api/core");
+  if (file === "apps/desktop/src/workspace/entry.ts")
+    allowed.push("@tauri-apps/api/event");
   if (file === "apps/desktop/src/workspace/window.ts")
     allowed.push("@tauri-apps/api/window");
   if (assistant)
@@ -390,6 +394,14 @@ export function checkSource(file, source) {
     )
       globals.add("Error");
     const assistantGlobals = {
+      "apps/desktop/src/workspace/CopyEntry.vue": ["Error"],
+      "apps/desktop/src/workspace/EntryPanel.vue": [
+        "document",
+        "Error",
+        "crypto",
+      ],
+      "apps/desktop/src/workspace/BatchDetails.vue": ["Error", "Date"],
+      "apps/desktop/src/workspace/RelatedActivities.vue": ["Error"],
       "apps/desktop/src/workspace/page-context.ts": ["JSON"],
       "apps/desktop/src/workspace/identity.ts": ["JSON"],
       "apps/desktop/src/home/Home.vue": ["JSON"],
@@ -545,6 +557,10 @@ export function checkSource(file, source) {
         !(
           file === "apps/desktop/src/workspace/window.ts" &&
           name === "@tauri-apps/api/window"
+        ) &&
+        !(
+          file === "apps/desktop/src/workspace/entry.ts" &&
+          name === "@tauri-apps/api/event"
         )
       )
         errors.push(`${file}: host dependency ${name}`);
@@ -1056,6 +1072,7 @@ export function checkTree(treeRoot = root, executable) {
         'tokio = { workspace = true, features = ["process", "net", "rt-multi-thread"] }',
         "tokio-util.workspace = true",
         "futures-util.workspace = true",
+        'tauri-plugin-deep-link = "=2.4.10"',
         'tauri-plugin-wdio-webdriver = { path = "../../../vendor/tauri-plugin-wdio-webdriver", version = "=1.4.0", optional = true }',
         "tauri-build.workspace = true",
         // Build-only compiler for the fixed LocalAuthentication presence bridge.
@@ -1152,7 +1169,7 @@ export function checkTree(treeRoot = root, executable) {
   if (
     JSON.stringify(commands.toSorted()) !==
       JSON.stringify(selfServiceCommands.toSorted()) ||
-    (main.match(/app\.manage\(/g) ?? []).length !== 3 ||
+    (main.match(/app\.manage\(/g) ?? []).length !== 5 ||
     (ipc.match(/\.invoke_handler\(/g) ?? []).length !== 2
   )
     errors.push(
@@ -1161,6 +1178,7 @@ export function checkTree(treeRoot = root, executable) {
   const registered =
     ipc
       .match(/generate_handler!\s*\[([\s\S]*?)\]/)?.[1]
+      .replaceAll("super::navigation::", "")
       .match(/\b[a-z_][a-z0-9_]*\b/g) ?? [];
   if (
     JSON.stringify(registered.toSorted()) !==

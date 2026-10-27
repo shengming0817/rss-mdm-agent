@@ -59,7 +59,7 @@ node scripts/agent-organization.mjs --config /private/execution-template.json --
 
 首次注册使用上文的 Agent 内企业登录或完整签名配置。机器请求、CSR、公钥引用与签发/激活操作由系统服务持久保存；重试使用原操作。人工换证仍保持原 Registration、存储位置和 journal。初始化遇到不支持的数据库或缺失的原状态时保留原文件并拒绝，不通过清库或换目录绕过未决任务。
 
-macOS 系统注册：`python3 scripts/service/execution-macos.py install --scope system --binary <root 拥有的绝对产物路径> --config <受保护配置>`，需要管理员执行。安装 owner 同时登记用户 LaunchAgent；程序参数固定为 `--user-helper`，由对应 GUI 登录会话运行。`--config` 可省略以使用默认部署路径。状态查询用 `rss-execution-service --config <配置> --query`，客户端和服务必须互相匹配真实 OS 身份与程序 pin。
+macOS 系统注册：`python3 scripts/service/execution-macos.py install --scope system --binary <root 拥有的绝对产物路径> --config <受保护配置>`，需要管理员执行。安装 owner 同时登记用户 LaunchAgent；程序参数固定为 `--user-helper`，由对应 GUI 登录会话运行。`--config` 可省略以使用默认部署路径。状态查询用同一安装目录的 `rssmdm --config <配置> --json status`，客户端和服务必须互相匹配真实 OS 身份与程序 pin。
 
 Windows 使用 PowerShell 7 运行 `scripts/service/execution-windows.ps1 -Action Install -Scope System -Binary <绝对 exe 路径> -Config <受保护配置>`，SCM 使用 LocalSystem。安装 owner 同时登记用户登录任务，以对应用户的非提升权限令牌启动 helper。跨会话不继承系统进程句柄，使用认证命名管道派发。
 
@@ -530,3 +530,20 @@ PSSO 自身系统版本要求不作为个人 Provider 的功能前置。
 本轮开发验证仅覆盖当前 Mac 的自动化检查、原生构建和 Chrome 开发 UI。浏览器真实创建/登录、
 第三方 RP、Safari/Edge 和 macOS 15 真机、正式签名公证及安装升级卸载旅程均后续统一安排，
 未运行不记通过。Provider 完成响应与网站接受断言是两个不同事实。
+
+
+## CLI 与外部导航
+
+安装包同时交付 `rssmdm`；macOS 位于受保护版本目录的 `payload/rssmdm`，Windows 位于服务程序旁。运行实际安装产物，复制出来的同名程序不会取得服务权限。CLI 不保存账户、业务日志或待发送队列，`--config` 仅选择管理员保护的部署 pin。原服务程序不再提供 `--query`、`--offers` 或 `--service-status` 查询入口。
+
+交互登录中可使用 `rssmdm --json status`、`rssmdm nodes list`、`rssmdm capabilities list`，并通过 `inspect` / `schema` 查看精确目标。目标采用 `node:settings.account`、`tool:network.check`、`id:<Policy UUID>`、`tool:<生产者 tool name>`、`alias:<别名>`、`event:<事件名>` 等明确类型，不按显示名称猜测。远程目录离线时返回本地能力及明确的远程失败信息。
+
+`rssmdm invoke <目标> --request-id <UUID> --input-stdin` 从有界标准输入读取原 schema 参数，避免值进入命令行。软件管理继续先 prepare，再使用其原请求和摘要 submit；风险确认、当前用户和本地委派限制仍由原 owner 检查。调用前将请求 ID 写入 stderr；响应丢失时保留该 ID，先用 `tasks show request:<UUID>` 查询，再以相同 ID 和完全相同内容恢复，不能另建请求猜测重试成功。事件提交返回原批次受理，不代表成员执行成功。
+
+`tasks list/show/wait/watch/control/control-status` 使用同一任务中心 owner，控制需要新读的 scope/revision；watch 使用 NDJSON，Ctrl-C 只结束观察。`query list` 的 `--after` 与 `--policy-after` 是各自目录的独立游标；`data read <请求> --snapshot <前页摘要> --offset <位置>` 继续同一快照。读取不会隐式采集；`query submit` 与 `assets refresh` 只提交现有授权定义。`batches list/show/related` 保留原生产者分页、覆盖范围和时间。
+
+JSON 输出为版本化 envelope，业务结果在 result，诊断写 stderr。退出码：0 已确认响应、2 输入无效、3 拒绝、4 不存在、5 冲突或过期、6 不支持、7 服务不可用、8 结果未知、9 等待超时、10 已知任务失败、130 观察中断。0 不表示任务执行或效果成功。
+
+无人值守只接受管理员在受保护部署文档 `cli.machineActions` 中显式授予的有限动作，默认空数组；授权绑定安装 CLI 镜像和服务 OS 主体。机器模式不借用 GUI 会话，不取得企业用户权限，不提交 Human Policy 或确认。
+
+外部导航唯一 scheme 为 `rssmdm`，语法由共享 Rust 契约持有，例如 `rssmdm://view/v1/node/settings.account`。页面与任务详情可复制链接或 `rssmdm open` 命令。企业目标链接携带 instance、tenant、device、registration、generation，接收端只核对当前注册，不据链接切换身份。`invoke` 链接只打开精确原表单，必须由用户再次点击提交；链接不承载凭据、确认票据或秘密字段。首次启动与已启动桌面均经当前真实 OS 登录会话交接，队列有界、过期丢弃，登录后重新解析授权；旧 scheme、未知字段和旧格式直接拒绝。

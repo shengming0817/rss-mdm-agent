@@ -51,6 +51,7 @@ pub struct Candidate {
     pub root: PathBuf,
     pub service: Artifact,
     pub desktop: Artifact,
+    pub cli: Artifact,
     pub runtime_root: PathBuf,
     pub runtime_sha256: String,
     pub service_id: uuid::Uuid,
@@ -97,6 +98,11 @@ impl Candidate {
             || serde_json::to_value(&candidate.platform_sso).ok()
                 != serde_json::to_value(&deployment.platform_sso).ok()
             || candidate.service.path != deployment.service.path
+            || deployment.cli.as_ref().is_none_or(|cli| {
+                cli.image.path != candidate.cli.path
+                    || cli.image.sha256 != candidate.cli.sha256
+                    || cli.image.cdhash != candidate.cli.cdhash
+            })
             || candidate.service_id != deployment.service_id
             || candidate.connections != deployment.connections
             || candidate.tenant != deployment.tenant
@@ -140,8 +146,11 @@ impl Candidate {
             || !digest_valid(&self.runtime_sha256)
             || !self.service.path.starts_with(&self.root)
             || !self.desktop.path.starts_with(&self.root)
+            || !self.cli.path.starts_with(&self.root)
             || !self.runtime_root.starts_with(&self.root)
             || self.service.path == self.desktop.path
+            || self.cli.path == self.desktop.path
+            || self.cli.path == self.service.path
             || self.signing_keys.is_empty()
         {
             return Err(Error::Configuration);
@@ -189,7 +198,7 @@ impl Candidate {
     }
     pub(crate) fn validate(&self) -> Result<(), Error> {
         self.validate_trust()?;
-        for image in [&self.service, &self.desktop]
+        for image in [&self.service, &self.desktop, &self.cli]
             .into_iter()
             .chain(self.windows_login.iter())
             .chain(self.platform_sso.iter().map(|psso| &psso.extension))
@@ -257,11 +266,15 @@ impl Candidate {
         let mut managers = vec![];
         platform::execution_resources(&mut interpreters, &mut managers)?;
         let clients = execution_ipc::host::PeerPolicy {
-            images: vec![self.desktop.clone(), self.service.clone()],
+            images: vec![self.desktop.clone(), self.cli.clone()],
             subjects: profile.subjects.clone(),
             interactive: true,
         };
         Ok(Deployment {
+            cli: Some(execution_ipc::entry::CliPolicy {
+                image: self.cli.clone(),
+                machine_actions: vec![],
+            }),
             platform_sso: self.platform_sso.clone(),
             service_id: self.service_id,
             connections: self.connections.clone(),
@@ -344,6 +357,11 @@ impl Candidate {
             || candidate.connections != deployment.connections
             || candidate.tenant != deployment.tenant
             || candidate.service.path != deployment.service.path
+            || deployment.cli.as_ref().is_none_or(|cli| {
+                cli.image.path != candidate.cli.path
+                    || cli.image.sha256 != candidate.cli.sha256
+                    || cli.image.cdhash != candidate.cli.cdhash
+            })
             || candidate.signing_keys != deployment.signing_keys
         {
             return Err(Error::Identity);
