@@ -137,11 +137,13 @@ const taskPage = computed<PageNavigation>(() => ({
     controller.closeTask();
   },
   openSection: (id) => {
-    if (["active", "history", "management"].includes(id))
+    if (["active", "history", "management"].includes(id)) {
+      controller.closeTask();
       void controller.setQuery({
         ...controller.state.query,
         view: id as "active" | "history" | "management",
       });
+    }
   },
   openResource: async (id, revision) => {
     const item = controller.state.byRef.get(id);

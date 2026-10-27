@@ -151,7 +151,7 @@ function time(event: Event, key: "from" | "until") {
         :key="tab[0]"
         :aria-current="s.query.view === tab[0] ? 'page' : undefined"
         @click="
-          s.selected = null;
+          c.closeTask();
           c.setQuery({ ...s.query, view: tab[0] });
         "
       >

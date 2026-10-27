@@ -2719,7 +2719,7 @@ try {
           ?.querySelector('[role="alert"]')
           ?.textContent?.trim();
         if (failure) throw Error(failure);
-        return users?.textContent?.includes("当前用户：Golden Alice");
+        return users?.textContent?.includes("当前用户：Golden Bob");
       }),
     );
     mark("open connection settings for the acknowledged local workspace");

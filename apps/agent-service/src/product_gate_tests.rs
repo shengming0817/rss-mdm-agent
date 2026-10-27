@@ -6228,3 +6228,89 @@ async fn native_local_query_is_projected_under_its_original_device_after_enterpr
     );
     complete_material_gc(&mut c.service).unwrap();
 }
+
+#[tokio::test]
+async fn periodic_native_observation_is_discovered_as_one_read_only_sampling_task() {
+    use execution_app::tasks::{
+        TaskFacts, TaskKind, TaskOperation, TaskQuery, TaskRef, TaskResponse,
+    };
+    use execution_ipc::host::Request;
+    let _budget = crate::scenario_budget::enter();
+    let mut c = Case::new(None).await;
+    let configuration = protocol::telemetry::native_performance_configuration(
+        &c._server,
+        &c.service.client.registration().unwrap(),
+    )
+    .configuration;
+    let at = c.service.core.host.clock.millis().unwrap();
+    // Failed native evidence still represents the original periodic session;
+    // this fixture asserts discovery/authorization, never a successful OS sample.
+    let evidence = ProcessEvidence {
+        content_digest: execution_contract::Digest::new("a".repeat(64)).unwrap(),
+        attempt_id: AttemptId::new("sample-fixture").unwrap(),
+        runner: plan::id("native-fixture").unwrap(),
+        scope: ProcessScope::NotStarted {},
+        finished: true,
+        quiescent: true,
+        exit_code: Some(1),
+        end: ProcessEnd::Exited,
+        failure_kind: ProcessFailureKind::None,
+        total_output_bytes: 0,
+        stdout: vec![],
+        stderr: vec![],
+        quality: OutputQuality::Complete,
+    };
+    c.service
+        .core
+        .periodic_data(&configuration, &evidence, (at * 1000) as i64, None)
+        .unwrap();
+    let reference = TaskRef::Sampling {
+        query: c
+            .service
+            .core
+            .data
+            .periodic_reference(&configuration)
+            .unwrap(),
+    };
+    let reply = c
+        .policy_call(Request::Task {
+            input: TaskOperation::List(TaskQuery {
+                limit: 32,
+                ..Default::default()
+            }),
+            origin: ClientOrigin::Desktop {},
+        })
+        .await;
+    let Reply::Task {
+        value: TaskResponse::Page(page),
+    } = reply
+    else {
+        panic!("sampling task page")
+    };
+    let item = page
+        .items
+        .iter()
+        .find(|item| item.reference == reference)
+        .expect("original periodic definition must be discoverable");
+    assert_eq!(item.task_kind, TaskKind::Sampling);
+    assert_eq!(item.source, execution_app::tasks::TaskSource::Policy);
+    assert!(item.allowed_actions.is_empty());
+    let TaskFacts::Sampling { latest, .. } = &item.facts else {
+        panic!("sampling facts")
+    };
+    assert_eq!(latest.collected_at, Some(at / 1000));
+    assert_ne!(latest.quality, DataQuality::Complete);
+    assert!(latest.fields.is_empty());
+    let Reply::Task {
+        value: TaskResponse::Detail(detail),
+    } = c
+        .policy_call(Request::Task {
+            input: TaskOperation::Detail(reference),
+            origin: ClientOrigin::Desktop {},
+        })
+        .await
+    else {
+        panic!("original sampling detail")
+    };
+    assert!(detail.allowed_actions.is_empty());
+}

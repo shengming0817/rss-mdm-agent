@@ -73,9 +73,14 @@ it("keeps empty visible pages pageable and labels cached coverage without claimi
   c.dispose();
 });
 
-it.each([false, true])(
-  "keeps a closed detail closed when its earlier refresh settles (failure=%s)",
-  async (failure) => {
+it.each([
+  [false, false],
+  [false, true],
+  [true, false],
+  [true, true],
+])(
+  "keeps a closed detail closed after tab=%s and earlier read failure=%s",
+  async (tab, failure) => {
     const item = taskDetail("closing-original");
     let finish!: (value: typeof item) => void;
     let reject!: (error: Error) => void;
