@@ -94,3 +94,33 @@ test("dirty native launcher selects real Host packaging", async (t) => {
     true,
   );
 });
+
+test("TypeScript bindings preserve open metadata and closed core objects", async () => {
+  const { typescriptSchema } = await import("./typescript-schema.mjs");
+  const { compile } = await import("json-schema-to-typescript");
+  const source = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      presentation: { type: "object" },
+      definition: { type: ["object", "boolean"] },
+      core: {
+        type: "object",
+        additionalProperties: false,
+        properties: { id: { type: "string" } },
+        required: ["id"],
+      },
+    },
+    required: ["presentation", "definition", "core"],
+  };
+  const projected = typescriptSchema(source);
+  assert.equal(source.properties.presentation.additionalProperties, undefined);
+  assert.equal(projected.properties.presentation.additionalProperties, true);
+  assert.equal(projected.properties.definition.additionalProperties, true);
+  assert.equal(projected.properties.core.additionalProperties, false);
+  const binding = await compile(projected, "Consumer", {
+    additionalProperties: false,
+  });
+  assert.match(binding, /\[k: string\]: unknown/);
+  assert.match(binding, /id: string/);
+});

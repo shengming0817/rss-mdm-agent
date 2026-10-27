@@ -204,41 +204,51 @@ export type NavigationResponse =
   | {
       kind: "pending";
       value: Delivery | null;
+      [k: string]: unknown;
     }
   | {
       kind: "done";
+      [k: string]: unknown;
     }
   | {
       kind: "uri";
       value: string;
+      [k: string]: unknown;
     }
   | {
       kind: "nodes";
       value: string[];
+      [k: string]: unknown;
     }
   | {
       kind: "policy";
       value: SelfServiceDirectoryItem;
+      [k: string]: unknown;
     }
   | {
       kind: "task";
       value: TaskRef;
+      [k: string]: unknown;
     }
   | {
       kind: "activities";
       value: ManagementActivityPage;
+      [k: string]: unknown;
     }
   | {
       kind: "event";
       value: EntryIntent;
+      [k: string]: unknown;
     }
   | {
       kind: "localTool";
       value: LocalPreparation;
+      [k: string]: unknown;
     }
   | {
       kind: "request";
       value: BackendRequest;
+      [k: string]: unknown;
     };
 /**
  * Enterprise objects currently exposed through this contract.
@@ -307,7 +317,11 @@ export type SelfServiceTask =
       /**
        * Full resolved parameter constraints owned by Resource.
        */
-      parameterSchema: {} | boolean;
+      parameterSchema:
+        | {
+            [k: string]: unknown;
+          }
+        | boolean;
       kind: "script";
     }
   | {
@@ -566,6 +580,7 @@ export type LocalPreparation =
   | {
       target: NetworkTarget | null;
       kind: "network";
+      [k: string]: unknown;
     }
   | {
       section: SettingsSection;
@@ -573,11 +588,13 @@ export type LocalPreparation =
       patch: SettingsPatch | null;
       expected: Digest | null;
       kind: "settings";
+      [k: string]: unknown;
     }
   | {
       software: SoftwareRef | null;
       action: LocalSoftwareAction | null;
       kind: "software";
+      [k: string]: unknown;
     };
 /**
  * Product setting page and fixed native destination.
@@ -1422,9 +1439,11 @@ export type ExecutionSummary =
        */
       steps: SoftwareStepSummary[];
       kind: "softwareProgram";
+      [k: string]: unknown;
     }
   | {
       kind: "process";
+      [k: string]: unknown;
     };
 /**
  * The supported software adapters. No plugin names or command strings are accepted.
@@ -1518,6 +1537,7 @@ export type SessionRequirement =
 export type AccessSummary =
   | {
       kind: "osIdentity";
+      [k: string]: unknown;
     }
   | {
       /**
@@ -1545,6 +1565,7 @@ export type AccessSummary =
        */
       requireSandbox: boolean;
       kind: "restricted";
+      [k: string]: unknown;
     };
 /**
  * Physical source, distinct from caller identity and execution permission.
@@ -2362,14 +2383,17 @@ export type QueryPhase =
 export type PolicyStatus =
   | {
       kind: "absent";
+      [k: string]: unknown;
     }
   | {
       value: BackendRequest;
       kind: "preparation";
+      [k: string]: unknown;
     }
   | {
       value: SelfServiceStatus;
       kind: "run";
+      [k: string]: unknown;
     };
 /**
  * Public delivery observation, independent of the server reducer implementation.
@@ -2546,6 +2570,7 @@ export interface SelfServiceCommands {
   diagnostics_discard: Command30;
   appearance_snapshot: Command31;
   device_overview: Command32;
+  [k: string]: unknown;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -2554,6 +2579,7 @@ export interface SelfServiceCommands {
 export interface Command {
   input: NavigationOperation;
   output: NavigationResponse;
+  [k: string]: unknown;
 }
 /**
  * One bounded navigation intent; neither origin nor confirmation is accepted here.
@@ -2644,6 +2670,7 @@ export interface EntryNamespace {
 export interface Delivery {
   id: string;
   intent: EntryIntent;
+  [k: string]: unknown;
 }
 /**
  * One currently authorized script and its Resource-owned parameter schema.
@@ -2731,11 +2758,19 @@ export interface CapabilityDescriptor {
   /**
    * Schema for caller-provided parameters.
    */
-  inputSchema: {} | boolean;
+  inputSchema:
+    | {
+        [k: string]: unknown;
+      }
+    | boolean;
   /**
    * Schema of the operation result.
    */
-  outputSchema: {} | boolean;
+  outputSchema:
+    | {
+        [k: string]: unknown;
+      }
+    | boolean;
 }
 /**
  * Authenticated product user; contains no session credential.
@@ -2771,7 +2806,9 @@ export interface SelfServiceMetadata {
   /**
    * Open directory presentation; never used as authorization or executable input.
    */
-  presentation: {};
+  presentation: {
+    [k: string]: unknown;
+  };
   /**
    * Effective administrator AI switch.
    */
@@ -3560,6 +3597,7 @@ export interface BackendConfirmation {
 export interface Command2 {
   input: PersonalVaultOperation;
   output: PersonalVaultStatus;
+  [k: string]: unknown;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -3572,6 +3610,7 @@ export interface PersonalVaultStatus {
   revision: number;
   entries: PersonalVaultEntry[];
   provider: ProviderStatus | null;
+  [k: string]: unknown;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -3593,6 +3632,7 @@ export interface PersonalVaultEntry {
 export interface ProviderStatus {
   enabled: boolean | null;
   indexPending: boolean;
+  [k: string]: unknown;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -3601,6 +3641,7 @@ export interface ProviderStatus {
 export interface Command3 {
   input: null;
   output: BackendTask[];
+  [k: string]: unknown;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -3609,6 +3650,7 @@ export interface Command3 {
 export interface Command4 {
   input: TaskQuery;
   output: TaskPage;
+  [k: string]: unknown;
 }
 /**
  * Bounded server-filtered task selection.
@@ -3835,6 +3877,7 @@ export interface ExecutionTaskDetails {
    * Redacted frozen plan bound to that lifecycle.
    */
   action: FrozenExecutionSummary;
+  [k: string]: unknown;
 }
 /**
  * Authorized value-only task projection. Never includes launch, parameters or raw output.
@@ -3899,6 +3942,7 @@ export interface ExecutionStatus {
    * Authorized evidence references only.
    */
   evidence: EvidenceRef[];
+  [k: string]: unknown;
 }
 /**
  * Ordinary result projection. No raw output, paths, process identifiers or secrets.
@@ -4031,6 +4075,7 @@ export interface FrozenExecutionSummary {
    * Restrictions summarized without individual private values.
    */
   access: AccessSummary;
+  [k: string]: unknown;
 }
 /**
  * Safe software-step projection from the frozen program.
@@ -4059,6 +4104,7 @@ export interface SoftwareStepSummary {
    * Actual execution identity for the step.
    */
   runAs: RunAs;
+  [k: string]: unknown;
 }
 /**
  * Explicit device, platform and scope bound into the plan digest.
@@ -4358,6 +4404,7 @@ export interface TaskNode {
 export interface Command5 {
   input: TaskRef;
   output: TaskDetail;
+  [k: string]: unknown;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -4366,6 +4413,7 @@ export interface Command5 {
 export interface Command6 {
   input: TaskControl;
   output: TaskControlReceipt;
+  [k: string]: unknown;
 }
 /**
  * One explicit control; retain its identity after a lost reply.
@@ -4422,6 +4470,7 @@ export interface TaskControlReceipt {
 export interface Command7 {
   input: TaskControlQuery;
   output: TaskControlReceipt;
+  [k: string]: unknown;
 }
 /**
  * Read the original owner's control receipt without resubmitting.
@@ -4450,6 +4499,7 @@ export interface TaskControlQuery {
 export interface Command8 {
   input: NetworkCheckOperation;
   output: NetworkCheckResponse;
+  [k: string]: unknown;
 }
 /**
  * Original execution status plus bounded fixed-worker diagnostic evidence.
@@ -4518,6 +4568,7 @@ export interface NetworkProbe {
 export interface Command9 {
   input: SettingsOperation;
   output: SettingsResponse;
+  [k: string]: unknown;
 }
 /**
  * Read-only projection of the original settings operation.
@@ -4666,6 +4717,7 @@ export interface SettingsOption {
 export interface Command10 {
   input: Operation2;
   output: Response;
+  [k: string]: unknown;
 }
 /**
  * Business configuration compiled into one device-wide System profile. No deployment secrets.
@@ -4991,6 +5043,7 @@ export interface SetupTask {
 export interface Command11 {
   input: LocalSoftwareChoice;
   output: LocalSoftwarePrepared;
+  [k: string]: unknown;
 }
 /**
  * Original local software intent. The service derives all executable inputs.
@@ -5059,6 +5112,7 @@ export interface LocalSoftwarePrepared {
 export interface Command12 {
   input: LocalSoftwareSubmission;
   output: LocalSoftwareStatus;
+  [k: string]: unknown;
 }
 /**
  * Submit or query the exact service-frozen preparation.
@@ -5103,6 +5157,7 @@ export interface LocalSoftwareStatus {
 export interface Command13 {
   input: QueryRequest;
   output: LocalSoftwareStatus;
+  [k: string]: unknown;
 }
 /**
  * Original query lookup or cancellation.
@@ -5123,6 +5178,7 @@ export interface QueryRequest {
 export interface Command14 {
   input: SoftwareHistoryQuery;
   output: LocalSoftwareHistory;
+  [k: string]: unknown;
 }
 /**
  * Bounded history of local software intents in the existing execution journal.
@@ -5163,6 +5219,7 @@ export interface LocalSoftwareHistory {
 export interface Command15 {
   input: SoftwareRead;
   output: SoftwarePage;
+  [k: string]: unknown;
 }
 /**
  * Bounded read of collected software; it never performs a new inventory scan.
@@ -5319,6 +5376,7 @@ export interface SoftwareActionView {
 export interface Command16 {
   input: QueryDirectory;
   output: QueryPage;
+  [k: string]: unknown;
 }
 /**
  * Bounded query directory.
@@ -5371,6 +5429,7 @@ export interface QueryPage {
 export interface Command17 {
   input: DataRead;
   output: CollectedData;
+  [k: string]: unknown;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -5379,6 +5438,7 @@ export interface Command17 {
 export interface Command18 {
   input: QuerySubmit;
   output: QueryStatus;
+  [k: string]: unknown;
 }
 /**
  * Explicit new query; OS identity, target and origin come from authenticated IPC.
@@ -5453,6 +5513,7 @@ export interface QueryPreparationRef {
 export interface Command19 {
   input: QueryRequest;
   output: QueryStatus;
+  [k: string]: unknown;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -5461,6 +5522,7 @@ export interface Command19 {
 export interface Command20 {
   input: SoftwareReadChoice;
   output: BackendRequest;
+  [k: string]: unknown;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -5469,6 +5531,7 @@ export interface Command20 {
 export interface Command21 {
   input: CapabilitySelector;
   output: SelfServiceDirectoryItem;
+  [k: string]: unknown;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -5477,6 +5540,7 @@ export interface Command21 {
 export interface Command22 {
   input: PolicyDirectoryQuery;
   output: SelfServiceDirectoryResponse;
+  [k: string]: unknown;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -5548,6 +5612,7 @@ export interface SelfServiceDirectoryProjection {
 export interface Command23 {
   input: PolicyInvocation;
   output: BackendRequest;
+  [k: string]: unknown;
 }
 /**
  * Local invocation envelope. Navigation is separate from the immutable business choice.
@@ -5568,6 +5633,7 @@ export interface PolicyInvocation {
 export interface Command24 {
   input: PolicySubmission;
   output: BackendRequest;
+  [k: string]: unknown;
 }
 /**
  * Authenticated desktop submission of the currently displayed policy parameters.
@@ -5598,6 +5664,7 @@ export interface PolicySubmission {
 export interface Command25 {
   input: ActionRef;
   output: BackendRequest;
+  [k: string]: unknown;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -5613,6 +5680,7 @@ export interface ActionRef {
 export interface Command26 {
   input: ActionRef;
   output: PolicyStatus;
+  [k: string]: unknown;
 }
 /**
  * Status of an invocation by this device and authenticated employee.
@@ -5764,6 +5832,7 @@ export interface TaskDiagnostics {
 export interface Command27 {
   input: BackendSelection;
   output: TaskSubmission;
+  [k: string]: unknown;
 }
 /**
  * Selection acknowledgement, distinct from persisted execution or effect completion.
@@ -5788,6 +5857,7 @@ export interface TaskSubmission {
 export interface Command28 {
   input: Scopes;
   output: Preview;
+  [k: string]: unknown;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -5807,6 +5877,7 @@ export interface Preview {
   snapshot: string;
   content: unknown;
   bytes: number;
+  [k: string]: unknown;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -5815,6 +5886,7 @@ export interface Preview {
 export interface Command29 {
   input: Selection;
   output: boolean;
+  [k: string]: unknown;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -5830,6 +5902,7 @@ export interface Selection {
 export interface Command30 {
   input: Selection;
   output: null;
+  [k: string]: unknown;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -5838,6 +5911,7 @@ export interface Command30 {
 export interface Command31 {
   input: null;
   output: AppearanceSnapshot;
+  [k: string]: unknown;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -5847,6 +5921,7 @@ export interface AppearanceSnapshot {
   materialEnabled: boolean;
   reducedMotion: boolean;
   highContrast: boolean;
+  [k: string]: unknown;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -5855,6 +5930,7 @@ export interface AppearanceSnapshot {
 export interface Command32 {
   input: null;
   output: DeviceOverview;
+  [k: string]: unknown;
 }
 /**
  * Bounded local device facts for the authenticated desktop session; never an execution grant.
