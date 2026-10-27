@@ -1,8 +1,5 @@
 //! Exact accepted retirement authority, persisted in the existing communication store.
-use crate::{
-    store::{decode, encode},
-    wire, Client, Clock, Error, IdentityProvider, Start,
-};
+use crate::{store::decode, wire, Client, Clock, Error, IdentityProvider, Start};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -55,7 +52,8 @@ impl UnmanagePermit {
 /// It cannot authorize work or create a replacement identity.
 pub struct UnmanageTransport {
     http: reqwest::Client,
-    url: url::Url,
+    origin: url::Url,
+    task: Uuid,
     max: usize,
     timeout: std::time::Duration,
     attempt: Uuid,
@@ -156,7 +154,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         }
         Ok(UnmanageTransport {
             http: self.http.clone(),
-            url: self.url(&format!("tasks/{}/events", permit.task().task_id))?,
+            origin: self.connection_origin()?,
+            task: permit.task().task_id,
             max: self.store.cfg.limits.response_bytes,
             timeout: self.store.cfg.limits.request_timeout,
             attempt: permit.task().attempt_id,
@@ -267,14 +266,15 @@ impl UnmanageTransport {
             wire::TaskEvent::UnmanageResult { outcome },
             self.context,
         )?;
-        let (status, body) = crate::client::json_transport(
-            self.http
-                .post(self.url)
-                .timeout(self.timeout)
-                .header("content-type", "application/json")
-                .body(encode(&request)?),
-            self.max,
-        )
+        let (status, body) = crate::http::Call::<crate::http::Event>::new(
+            &self.http,
+            &self.origin,
+            &[&self.task.to_string()],
+            None,
+            Some(&request),
+        )?
+        .timeout(self.timeout)
+        .json(self.max)
         .await
         .map_err(|error| {
             if error == Error::Network {

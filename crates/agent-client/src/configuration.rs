@@ -1,4 +1,5 @@
 //! Signed configuration admission and durable exchange, owned by the existing enrollment state.
+use crate::http::{self as h, Call};
 use crate::identity::{Pending, Purpose};
 use crate::{Client, Clock, Config, Error, IdentityProvider};
 use base64::Engine;
@@ -134,7 +135,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 secret: self.secrets.resolve(&p.secret_reference)?,
             };
             match self
-                .enrollment_response(http, "configurations/status", &status, false)
+                .enrollment_response::<h::ExchangeStatus>(http, &status, false)
                 .await
             {
                 Ok(grant) => return Ok(grant),
@@ -150,13 +151,10 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         };
         verify_configuration(&file, &self.store.cfg, self.now()?)?;
         if c.installation.is_none() {
-            let url = self
-                .connection_origin()?
-                .join("api/v1/agent/enroll/packages")
-                .map_err(|_| Error::Configuration)?;
             let (status, bytes) = self
                 .agent_json_transport(
-                    http.get(url).timeout(self.store.cfg.limits.request_timeout),
+                    Call::<h::Packages>::new(http, &self.connection_origin()?, &[], None, None)?
+                        .timeout(self.store.cfg.limits.request_timeout),
                     self.store.cfg.limits.response_bytes,
                 )
                 .await?;
@@ -175,9 +173,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         state.pending = Some(p.clone());
         self.store.put("identity", &state)?;
         let outcome = self
-            .enrollment_outcome(
+            .enrollment_outcome::<h::Exchange>(
                 http,
-                "configurations/exchange",
                 &wire::Exchange {
                     file,
                     operation_id: p.operation,

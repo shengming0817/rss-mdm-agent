@@ -1,11 +1,12 @@
+use crate::http::{self as h, Call, Endpoint};
 use crate::protocol::*;
 use crate::{
     store::{decode, encode, Store},
     wire, *,
 };
-use reqwest::{Method, Response, StatusCode};
+use reqwest::{Response, StatusCode};
 use rusqlite::{params, OptionalExtension};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use uuid::Uuid;
 /// A verified offer; public callers cannot deserialize or invent this wrapper.
@@ -237,10 +238,13 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         Ok(())
     }
 
-    pub(crate) fn url(&self, path: &str) -> Result<url::Url, Error> {
-        self.connection_origin()?
-            .join(&format!("api/v1/agent/runtime/{path}"))
-            .map_err(|_| Error::Configuration)
+    pub(crate) fn call<E: Endpoint>(
+        &self,
+        params: &[&str],
+        query: Option<&str>,
+        input: Option<&E::Input>,
+    ) -> Result<Call<E>, Error> {
+        Call::new(&self.http, &self.connection_origin()?, params, query, input)
     }
     pub(crate) async fn checked_response(&self, response: Response) -> Result<Response, Error> {
         if response.status().is_success() {
@@ -282,25 +286,34 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         };
         Err(error)
     }
-    pub(crate) async fn json<T: DeserializeOwned>(
+    pub(crate) async fn runtime_json<E: Endpoint>(
         &self,
-        method: Method,
-        path: &str,
-        body: Option<&[u8]>,
-    ) -> Result<T, Error> {
+        params: &[&str],
+        input: Option<&E::Input>,
+    ) -> Result<E::Output, Error> {
+        self.runtime_reply(self.call::<E>(params, None, input)?)
+            .await
+    }
+    pub(crate) async fn runtime_frozen_json<E: Endpoint>(
+        &self,
+        params: &[&str],
+        bytes: &[u8],
+    ) -> Result<E::Output, Error> {
+        self.runtime_reply(Call::<E>::frozen(
+            &self.http,
+            &self.connection_origin()?,
+            params,
+            bytes,
+        )?)
+        .await
+    }
+    async fn runtime_reply<E: Endpoint>(&self, call: Call<E>) -> Result<E::Output, Error> {
         self.active()?;
         self.now()?;
-        let mut request = self
-            .http
-            .request(method, self.url(path)?)
-            .timeout(self.store.cfg.limits.request_timeout);
-        if let Some(body) = body {
-            request = request
-                .header("content-type", "application/json")
-                .body(body.to_owned());
-        }
-        let max = self.store.cfg.limits.response_bytes;
-        let (status, bytes) = self.agent_json_transport(request, max).await?;
+        let request = call.timeout(self.store.cfg.limits.request_timeout);
+        let (status, bytes) = self
+            .agent_json_transport(request, self.store.cfg.limits.response_bytes)
+            .await?;
         if !status.is_success() {
             self.runtime_error(&bytes)?;
         }
@@ -364,7 +377,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         };
         let mut sent = 0;
         for (id, body) in reports {
-            let ack: wire::ReportAck = self.json(Method::POST, "reports", Some(&body)).await?;
+            let ack: wire::ReportAck = self.runtime_frozen_json::<h::Report>(&[], &body).await?;
             if ack.report_id.to_string() != id {
                 return Err(Error::Protocol);
             }
@@ -378,7 +391,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     /// Persistent intake/projection status is separate from delivery acknowledgement.
     pub async fn report_status(&self, id: Uuid) -> Result<wire::ReportStatus, Error> {
         let result: wire::ReportStatus = self
-            .json(Method::GET, &format!("reports/{id}"), None)
+            .runtime_json::<h::ReportStatus>(&[&id.to_string()], None)
             .await?;
         if result.ack.report_id != id {
             return Err(Error::Protocol);
@@ -478,7 +491,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         };
         let body = encode(&state.request)?;
         let result: wire::TaskClaimResponse =
-            self.json(Method::POST, "tasks/claim", Some(&body)).await?;
+            self.runtime_frozen_json::<h::Claim>(&[], &body).await?;
         let cancellations = result.cancellations().to_owned();
         let offer = if let Some(signed) = result.into_task() {
             self.verify(&signed, wire::TaskPermit::Offer)?;
@@ -724,12 +737,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         task: Uuid,
         request: &wire::TaskEventRequest,
     ) -> Result<wire::TaskEventAck, Error> {
-        self.json(
-            Method::POST,
-            &format!("tasks/{task}/events"),
-            Some(&encode(request)?),
-        )
-        .await
+        self.runtime_json::<h::Event>(&[&task.to_string()], Some(request))
+            .await
     }
     /// Acknowledgement of an authenticated offer never grants execution.
     pub async fn received(&mut self, offer: &Offer) -> Result<(), Error> {

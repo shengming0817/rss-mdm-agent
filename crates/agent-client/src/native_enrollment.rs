@@ -1,8 +1,5 @@
 //! One durable native handoff per signed task attempt; OS effects remain with the execution journal.
-use crate::{
-    store::{decode, encode},
-    wire, Client, Clock, Error, IdentityProvider, Start,
-};
+use crate::{store::decode, wire, Client, Clock, Error, IdentityProvider, Start};
 use rss_mdm_agent_wire::enroll::{NativeEnrollmentReceipt, NativeEnrollmentRequest};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -63,10 +60,11 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 password: password.clone(),
             };
             let response = self
-                .http
-                .post(self.url(&format!("tasks/{}/enrollment", task.task_id))?)
-                .header("content-type", "application/json")
-                .body(encode(&request)?)
+                .call::<crate::http::NativeEnrollment>(
+                    &[&task.task_id.to_string()],
+                    None,
+                    Some(&request),
+                )?
                 .timeout(self.store.cfg.limits.request_timeout);
             let (status, bytes) = self
                 .agent_json_transport(response, self.store.cfg.limits.response_bytes)

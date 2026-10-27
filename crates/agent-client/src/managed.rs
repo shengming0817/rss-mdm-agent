@@ -159,9 +159,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         ));
         certified.keys_match().map_err(|_| Error::Identity)?;
         let http = crate::tls::client_identity(&self.store.cfg, Some(certified))?;
-        self.enrollment_json(
+        self.enrollment_json::<crate::http::NativeGrant>(
             &http,
-            "native-grants",
             &enroll::NativeGrantRequest {
                 wire_version: enroll::API_VERSION,
                 operation_id: pending.operation,

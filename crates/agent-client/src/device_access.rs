@@ -1,23 +1,13 @@
 //! Device Access uses the existing device-authenticated runtime and event journal.
+use crate::http as h;
 use crate::{store::encode, wire, Client, Clock, Error, IdentityProvider};
-use reqwest::Method;
 use uuid::Uuid;
 impl<S: IdentityProvider, C: Clock> Client<S, C> {
     /// Upload a durable offline usage fact; transport acknowledgement never grants login access.
     pub async fn access_recovery_use(&self, input: &wire::AccessRecoveryUse) -> Result<(), Error> {
         input.validate()?;
-        #[derive(serde::Deserialize)]
-        #[serde(deny_unknown_fields)]
-        struct Ack {
-            accepted: bool,
-        }
-        let ack: Ack = self
-            .self_service_json(
-                None,
-                Method::POST,
-                "device-access/recovery-uses",
-                Some(encode(input)?),
-            )
+        let ack = self
+            .employee_json::<h::AccessUse>(None, &[], None, Some(input))
             .await?;
         if !ack.accepted {
             return Err(Error::Protocol);
@@ -30,18 +20,18 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         proof: &str,
         cursor: Option<&str>,
     ) -> Result<wire::AccessDirectory, Error> {
-        let mut path = "device-access?limit=100".to_owned();
+        let mut query = "limit=100".to_owned();
         if let Some(cursor) = cursor {
             if cursor.is_empty() || cursor.len() > 4096 || cursor.chars().any(char::is_control) {
                 return Err(Error::Protocol);
             }
-            let query = url::form_urlencoded::Serializer::new(String::new())
+            let encoded = url::form_urlencoded::Serializer::new(String::new())
                 .append_pair("cursor", cursor)
                 .finish();
-            path.push('&');
-            path.push_str(&query);
+            query.push('&');
+            query.push_str(&encoded);
         }
-        self.self_service_json(Some(proof), Method::GET, &path, None)
+        self.employee_json::<h::AccessDirectory>(Some(proof), &[], Some(&query), None)
             .await
     }
     /// Begin first self-enrollment. The server chooses the account from native-session evidence.
@@ -50,13 +40,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         proof: &str,
         input: &wire::AccessBegin,
     ) -> Result<wire::AccessChallenge, Error> {
-        self.self_service_json(
-            Some(proof),
-            Method::POST,
-            "device-access/begin",
-            Some(encode(input)?),
-        )
-        .await
+        self.employee_json::<h::AccessBegin>(Some(proof), &[], None, Some(input))
+            .await
     }
     /// Confirm only after the native host rechecks the exact live console login.
     pub async fn access_confirm(
@@ -65,13 +50,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         input: &wire::AccessConfirm,
     ) -> Result<wire::AccessBindingStatus, Error> {
         input.local_session.validate()?;
-        self.self_service_json(
-            Some(proof),
-            Method::POST,
-            "device-access/confirm",
-            Some(encode(input)?),
-        )
-        .await
+        self.employee_json::<h::AccessConfirm>(Some(proof), &[], None, Some(input))
+            .await
     }
     /// Persist and replay an actual native account observation without claiming Applied.
     pub async fn access_prepared(

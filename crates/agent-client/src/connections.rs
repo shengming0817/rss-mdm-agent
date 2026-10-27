@@ -1,5 +1,6 @@
 //! The communication owner persists signed locations before selecting them or reporting installation.
 //! ref: ring src/ec/curve25519/ed25519/verification.rs; rusqlite src/transaction.rs.
+use crate::http as h;
 use crate::{Client, Clock, Config, Error, IdentityProvider, Transport};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use rss_mdm_agent_wire::connections::{
@@ -228,12 +229,12 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     }
     // Never replay a write here. Its existing business owner retains the exact operation and
     // performs its own status lookup/retry on a later drive through the newly selected address.
-    pub(crate) async fn agent_json_transport(
+    pub(crate) async fn agent_json_transport<E: crate::http::Endpoint>(
         &self,
-        request: reqwest::RequestBuilder,
+        request: crate::http::Call<E>,
         max: usize,
     ) -> Result<(reqwest::StatusCode, Vec<u8>), Error> {
-        match crate::client::json_transport(request, max).await {
+        match request.json(max).await {
             Err(Error::Network) => {
                 self.network_failed()?;
                 Err(Error::Unavailable)
@@ -241,11 +242,11 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             result => result,
         }
     }
-    pub(crate) async fn agent_send(
+    pub(crate) async fn agent_send<E: crate::http::Endpoint>(
         &self,
-        request: reqwest::RequestBuilder,
+        request: crate::http::Call<E>,
     ) -> Result<reqwest::Response, Error> {
-        match request.send().await.map_err(crate::client::transport_error) {
+        match request.send().await {
             Err(Error::Network) => {
                 self.network_failed()?;
                 Err(Error::Unavailable)
@@ -284,15 +285,16 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             self.persist_connections(&state)?;
         }
         if self.now()? >= state.refresh_at {
-            let url = self
-                .connection_origin()?
-                .join("api/v1/agent/enroll/connections")
-                .map_err(|_| Error::Configuration)?;
             let (status, bytes) = self
                 .agent_json_transport(
-                    self.http
-                        .get(url)
-                        .timeout(self.store.cfg.limits.request_timeout),
+                    crate::http::Call::<h::Connections>::new(
+                        &self.http,
+                        &self.connection_origin()?,
+                        &[],
+                        None,
+                        None,
+                    )?
+                    .timeout(self.store.cfg.limits.request_timeout),
                     MAX_FILE_BYTES,
                 )
                 .await?;
@@ -332,17 +334,16 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 state.registration = Some(binding);
                 self.persist_connections(&state)?;
             }
-            let url = self
-                .connection_origin()?
-                .join("api/v1/agent/enroll/connections/acknowledgements")
-                .map_err(|_| Error::Configuration)?;
             let (status, bytes) = self
                 .agent_json_transport(
-                    self.http
-                        .post(url)
-                        .header("content-type", "application/json")
-                        .body(crate::store::encode(&state.ack)?)
-                        .timeout(self.store.cfg.limits.request_timeout),
+                    crate::http::Call::<h::ConnectionsAck>::new(
+                        &self.http,
+                        &self.connection_origin()?,
+                        &[],
+                        None,
+                        Some(&state.ack),
+                    )?
+                    .timeout(self.store.cfg.limits.request_timeout),
                     MAX_FILE_BYTES,
                 )
                 .await?;
@@ -359,17 +360,16 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let Some(failure) = &state.failure else {
             return Ok(());
         };
-        let url = self
-            .connection_origin()?
-            .join("api/v1/agent/enroll/connections/failures")
-            .map_err(|_| Error::Configuration)?;
         let (status, bytes) = self
             .agent_json_transport(
-                self.http
-                    .post(url)
-                    .header("content-type", "application/json")
-                    .body(crate::store::encode(failure)?)
-                    .timeout(self.store.cfg.limits.request_timeout),
+                crate::http::Call::<h::ConnectionsFailure>::new(
+                    &self.http,
+                    &self.connection_origin()?,
+                    &[],
+                    None,
+                    Some(failure),
+                )?
+                .timeout(self.store.cfg.limits.request_timeout),
                 MAX_FILE_BYTES,
             )
             .await?;

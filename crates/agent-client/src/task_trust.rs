@@ -1,5 +1,6 @@
 //! One durable task authority in the communication owner's existing SQLite state.
 //! ref: rusqlite 0.32.1 src/transaction.rs; reqwest 0.13.5 src/async_impl/client.rs.
+use crate::http as h;
 use crate::{Client, Clock, Error, IdentityProvider};
 use base64::Engine;
 use rss_mdm_agent_wire::task_trust::{
@@ -108,11 +109,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             return Ok(());
         };
         let reply: Observation = self
-            .json(
-                reqwest::Method::POST,
-                "task-trust/observations",
-                Some(&crate::store::encode(pending)?),
-            )
+            .runtime_json::<h::TaskObservation>(&[], Some(pending))
             .await?;
         if &reply != pending {
             return Err(Error::Protocol);
@@ -138,13 +135,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         if state.confirmed {
             return Ok(());
         }
-        let reply: Acknowledgement = self
-            .json(
-                reqwest::Method::POST,
-                "task-trust",
-                Some(&crate::store::encode(ack)?),
-            )
-            .await?;
+        let reply: Acknowledgement = self.runtime_json::<h::TaskTrustAck>(&[], Some(ack)).await?;
         if &reply != ack {
             return Err(Error::Protocol);
         }
@@ -160,7 +151,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         Ok(())
     }
     async fn refresh_task_trust(&self) -> Result<(), Error> {
-        let trust: Trust = self.json(reqwest::Method::GET, "task-trust", None).await?;
+        let trust: Trust = self.runtime_json::<h::TaskTrust>(&[], None).await?;
         self.bind_task_trust(&trust)?;
         let mut state = self.task_trust_state()?;
         if let Some(installed) = &state.document {
