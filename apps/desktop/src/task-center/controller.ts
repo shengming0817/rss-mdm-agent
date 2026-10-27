@@ -346,6 +346,11 @@ export function createTaskCenter(
     detailFlights.set(key, promise);
     return promise;
   }
+  function closeTask() {
+    selectionEpoch++;
+    state.selected = null;
+    state.node = "";
+  }
   async function openTask(reference: TaskRef, node = "") {
     const call = epoch,
       selection = ++selectionEpoch;
@@ -381,8 +386,9 @@ export function createTaskCenter(
       state.node = node;
       return "ready" as const;
     } catch {
-      if (alive && call === epoch)
-        state.error = "原任务不可访问或状态未确认，请重试读取";
+      if (!alive || call !== epoch || selection !== selectionEpoch)
+        return "stale" as const;
+      state.error = "原任务不可访问或状态未确认，请重试读取";
       return "unknown" as const;
     }
   }
@@ -556,6 +562,7 @@ export function createTaskCenter(
     refresh,
     detail,
     openTask,
+    closeTask,
     openNode: openTask,
     control,
     cancel,

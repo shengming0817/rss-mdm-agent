@@ -105,9 +105,8 @@ async function selectTask(key: string) {
   }
 }
 async function back() {
+  c.closeTask();
   emit("back");
-  s.selected = null;
-  s.node = "";
   await nextTick();
   if (list.value) {
     list.value.scrollTop = s.listScroll;

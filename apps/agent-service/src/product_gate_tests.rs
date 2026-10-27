@@ -6159,7 +6159,6 @@ async fn native_local_query_is_projected_under_its_original_device_after_enterpr
         .materials
         .register(&frozen, materials)
         .unwrap();
-    c.service.core.data.remember(&request, read).unwrap();
     c.service
         .core
         .app
@@ -6227,4 +6226,5 @@ async fn native_local_query_is_projected_under_its_original_device_after_enterpr
             .attempts,
         0
     );
+    complete_material_gc(&mut c.service).unwrap();
 }

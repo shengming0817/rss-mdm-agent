@@ -134,7 +134,7 @@ const taskPage = computed<PageNavigation>(() => ({
     revision: JSON.stringify(task.revision),
   })),
   reset: () => {
-    controller.state.selected = null;
+    controller.closeTask();
   },
   openSection: (id) => {
     if (["active", "history", "management"].includes(id))
@@ -364,7 +364,7 @@ async function openTask(request: string | TaskRef, node = "") {
     typeof request === "string" ? requestRef(request) : request,
     node,
   );
-  if (result !== "ready")
+  if (result !== "ready" && result !== "stale")
     navigationError.value = "原任务不可访问或状态尚未确认";
   await nextTick();
   if (result === "ready") {
@@ -383,21 +383,12 @@ async function returnFromTask() {
   taskReturn = undefined;
   navigateMain(previous.page);
   await nextTick();
-  if (previous.focus?.isConnected) previous.focus.focus();
-  else if (previous.reference) {
-    const target = [
-      ...document.querySelectorAll<HTMLElement>("[data-task-ref]"),
-    ].find((item) => item.dataset.taskRef === taskKey(previous.reference));
-    if (target) {
-      target.focus();
-      return;
-    }
-    document
-      .querySelector<HTMLElement>(
-        ".workspace-page-header h1,.workspace-breadcrumb button",
-      )
-      ?.focus();
-  } else
+  const target = [
+    ...document.querySelectorAll<HTMLElement>("[data-task-ref]"),
+  ].find((item) => item.dataset.taskRef === taskKey(previous.reference));
+  if (target) target.focus();
+  else if (previous.focus?.isConnected) previous.focus.focus();
+  else
     document
       .querySelector<HTMLElement>(
         ".workspace-page-header h1,.workspace-breadcrumb button",

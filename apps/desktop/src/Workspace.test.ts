@@ -4,7 +4,11 @@ import { it, expect, vi } from "vitest";
 import Workspace from "./Workspace.vue";
 import Assistant from "./assistant/Assistant.vue";
 import Tasks from "./task-center/TaskCenter.vue";
-import { taskPort } from "../../../tests/self-service/support";
+import {
+  taskPort,
+  taskDetail,
+  taskPage,
+} from "../../../tests/self-service/support";
 import { createHostSettings } from "./settings/controller";
 
 it("attaches the current page to one shared assistant and preserves question text when the sidebar closes", async () => {
@@ -392,6 +396,66 @@ it("starts one shared task read for the visible software consumer and keeps devi
     await flushPromises();
     expect(tasks.list).toHaveBeenCalledTimes(1);
     expect(readDevice).not.toHaveBeenCalled();
+  } finally {
+    w.unmount();
+  }
+});
+
+it("returns from a Home task to its stable reference when a mouse click leaves header focus", async () => {
+  const detail = taskDetail("home-original");
+  const tasks = {
+    ...taskPort(),
+    list: vi.fn(async () => taskPage([detail])),
+    detail: vi.fn(async () => detail),
+    control: vi.fn(),
+  };
+  const w = mount(Workspace, {
+    attachTo: document.body,
+    props: {
+      ready: true,
+      busy: false,
+      fixture: true,
+      page: "home",
+      host: createHostSettings(undefined),
+      devicePort: {
+        read: async () => ({
+          attributes: { computerName: "Mac", ipAddresses: [], loginUser: null },
+          filevault: "unavailable" as const,
+        }),
+      },
+      selfServicePort: {
+        ...policyFixturePort,
+        execute: vi.fn(),
+        confirm: vi.fn(),
+      },
+      localPorts: {
+        tasks,
+        data: null,
+        software: null,
+        settings: null,
+        network: null,
+      },
+      onNavigate: (page: string) => {
+        void w.setProps({ page });
+      },
+    },
+  });
+  try {
+    await flushPromises();
+    const header = w.get("h1").element as HTMLElement;
+    header.tabIndex = -1;
+    header.focus();
+    const origin = w.get(".home-activity button[data-task-ref]");
+    await origin.trigger("click");
+    await flushPromises();
+    expect(w.props("page")).toBe("tasks");
+    await w.get(".task-center-detail > button").trigger("click");
+    await flushPromises();
+    expect(w.props("page")).toBe("home");
+    expect(document.activeElement?.getAttribute("data-task-ref")).toBe(
+      JSON.stringify(detail.reference),
+    );
+    expect(tasks.control).not.toHaveBeenCalled();
   } finally {
     w.unmount();
   }

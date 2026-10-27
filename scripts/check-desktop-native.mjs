@@ -662,8 +662,8 @@ const taskButton = (reference) =>
 const openNativeTask = async (detail) => {
   await navigate("请求与任务");
   const filters = await browser.$$(".task-filters select");
-  await filters[0].selectByAttribute("value", "");
-  await filters[1].selectByAttribute("value", "");
+  await selectValue(filters[0], "");
+  await selectValue(filters[1], "");
   let selectedView;
   let readRetried = false;
   await wait(async () => {
@@ -2380,17 +2380,20 @@ try {
           !beforeCollection.has(item.reference.request),
       ),
     );
-    mark("explicit local collection: original detail and Home return focus");
+    mark("explicit local collection: open original detail");
     await openNativeTask(collected);
+    mark("explicit local collection: Home activity entry");
     await navigate("首页");
     const recent = browser.$(
       `//button[@data-task-ref='${JSON.stringify(collected.reference)}']`,
     );
     await wait(() => recent.isDisplayed());
+    mark("explicit local collection: reopen original detail from Home");
     await recent.click();
     await wait(() =>
       browser.$('.task-center-detail[aria-label="任务详情"]').isDisplayed(),
     );
+    mark("explicit local collection: return Home focus");
     await click("返回任务列表", '//*[@aria-label="任务详情"]');
     await wait(() =>
       browser.execute(

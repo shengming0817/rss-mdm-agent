@@ -141,7 +141,17 @@ impl Core {
                             .starts_with("local-software.")
                         {
                             TaskKind::Software
-                        } else if self.data.remembered(request)?.is_some() {
+                        } else if v.action.interpreter.profile.id.as_str()
+                            == crate::collection_worker::PROFILE
+                            || self
+                                .app
+                                .service_frozen_input(request)
+                                .map_err(map_app_error)?
+                                .spec()
+                                .request
+                                .parameters
+                                .contains_key(crate::backend::plan::SCRIPT_PROJECTION)
+                        {
                             TaskKind::Query
                         } else {
                             TaskKind::Policy

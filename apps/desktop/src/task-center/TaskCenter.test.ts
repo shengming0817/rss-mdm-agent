@@ -72,3 +72,44 @@ it("keeps empty visible pages pageable and labels cached coverage without claimi
   wrapper.unmount();
   c.dispose();
 });
+
+it.each([false, true])(
+  "keeps a closed detail closed when its earlier refresh settles (failure=%s)",
+  async (failure) => {
+    const item = taskDetail("closing-original");
+    let finish!: (value: typeof item) => void;
+    let reject!: (error: Error) => void;
+    const pending = new Promise<typeof item>((resolve, fail) => {
+      finish = resolve;
+      reject = fail;
+    });
+    const port = {
+      ...taskPort(),
+      list: async () => taskPage([item]),
+      detail: vi.fn().mockResolvedValueOnce(item).mockReturnValueOnce(pending),
+      control: vi.fn(),
+    };
+    const c = createTaskCenter(port, null);
+    await c.load();
+    await c.openTask(item.reference);
+    const wrapper = mount(TaskCenter, {
+      props: { controller: c },
+      attachTo: document.body,
+    });
+    try {
+      const refreshing = c.openTask(item.reference);
+      await wrapper.get(".task-center-detail > button").trigger("click");
+      if (failure) reject(Error("late read failure"));
+      else finish(item);
+      expect(await refreshing).toBe("stale");
+      await flushPromises();
+      expect(wrapper.find(".task-center-detail").exists()).toBe(false);
+      expect(c.state.selected).toBeNull();
+      expect(c.state.error).toBe("");
+      expect(port.control).not.toHaveBeenCalled();
+    } finally {
+      wrapper.unmount();
+      c.dispose();
+    }
+  },
+);
