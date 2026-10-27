@@ -168,6 +168,7 @@ async fn invalid_complete_trust_set_blocks_runtime_without_replacing_registratio
         let root = Root::new();
         let mut client = server.client(&root, OpenMode::Create);
         let binding = server.register(&mut client).await;
+        server.data.lock().unwrap().invalid_contract_response = true; // Deliberately malformed trust input must reach the verifier.
         let identity = state(&root, "identity");
         let accepted = state(&root, "pki")["document"].clone();
         {
