@@ -477,6 +477,9 @@ impl Core {
     }
     pub(super) fn enqueue_policy(&mut self, command: Command) {
         if let Some(Request::RevokeContext {}) = command.request.as_operation() {
+            self.management = None;
+            self.management_online = false;
+            self.management_clear = true;
             let _ = SessionKey::command(&command).and_then(|scope| self.fences.revoke(&scope));
             if let Ok(key) = peer_key(&command) {
                 if let Some(context) = self.contexts.get_mut(&key) {
@@ -500,6 +503,10 @@ impl<S: IdentityProvider> DeviceService<S> {
         commands: &mut tokio::sync::mpsc::Receiver<Command>,
     ) -> Result<(), Error> {
         // Only this owner performs HTTP or journal IO. Native callbacks merely enqueue.
+        if self.core.management_clear {
+            self.client.clear_management_cache()?;
+            self.core.management_clear = false;
+        }
         while let Some(command) = self.core.policy_commands.pop_front() {
             if command.reply.is_closed() {
                 continue;
@@ -520,7 +527,8 @@ impl<S: IdentityProvider> DeviceService<S> {
                     if matches!(
                         command.request.as_operation(),
                         Some(
-                            Request::Data { .. }
+                            Request::Task { .. }
+                                | Request::Data { .. }
                                 | Request::LocalSoftware { .. }
                                 | Request::Settings { .. }
                                 | Request::NetworkCheck { .. }
@@ -631,6 +639,252 @@ impl<S: IdentityProvider> DeviceService<S> {
         )
         .await
     }
+    async fn retry_task(
+        &mut self,
+        command: &Command,
+        control: &execution_app::tasks::TaskControl,
+        origin: &ClientOrigin,
+        commands: &mut tokio::sync::mpsc::Receiver<Command>,
+    ) -> Result<Reply, Error> {
+        use execution_app::tasks::*;
+        let detail = self.core.task_detail(command, &control.reference)?;
+        if control.scope != detail.scope {
+            return Err(Error::Denied);
+        }
+        let TaskRef::Request { request: original } = &control.reference else {
+            return Err(Error::Denied);
+        };
+        let new_request =
+            RequestId::new(uuid(control.id.as_str())?.to_string()).map_err(|_| Error::Protocol)?;
+        if let Some(previous) = self
+            .core
+            .app
+            .backend_request(&self.core.caller(), &new_request)
+            .map_err(map_app_error)?
+        {
+            if previous.retry_of.as_ref() != Some(original)
+                || previous.retry_expected_revision.as_ref() != Some(&control.expected_revision)
+            {
+                return Err(Error::Conflict);
+            }
+            return self.core.task_operation(
+                command,
+                &TaskOperation::ControlStatus(TaskControlQuery {
+                    reference: control.reference.clone(),
+                    id: control.id.clone(),
+                    scope: control.scope.clone(),
+                }),
+                origin,
+            );
+        }
+        if self
+            .core
+            .task_control_id_used(command, &control.reference, &control.id)?
+        {
+            return Err(Error::Conflict);
+        }
+        if detail.revision != control.expected_revision
+            || !detail.allowed_actions.contains(&TaskAction::Retry)
+        {
+            return Err(Error::Conflict);
+        }
+        let prior = self
+            .core
+            .app
+            .backend_request(&self.core.caller(), original)
+            .map_err(map_app_error)?
+            .ok_or(Error::Denied)?;
+        let PreparedAction::Policy {
+            choice,
+            definition,
+            policy_revision,
+            ..
+        } = &prior.action
+        else {
+            return Err(Error::Unsupported);
+        };
+        let bound = self.core.context(command)?.clone();
+        let current = self
+            .current_policy(&bound, origin, choice, commands)
+            .await?;
+        if current.policy_id.to_string() != definition.id.as_str()
+            || current.policy_version.to_string() != definition.revision.as_str()
+            || current.policy_revision != *policy_revision
+        {
+            return Err(Error::Conflict);
+        }
+        let mut choice = choice.clone();
+        choice.request = new_request;
+        self.invoke_task_policy(
+            command,
+            &bound,
+            origin,
+            &choice,
+            false,
+            Some((original.clone(), control.expected_revision.clone())),
+            commands,
+        )
+        .await?;
+        self.core.task_operation(
+            command,
+            &TaskOperation::ControlStatus(TaskControlQuery {
+                reference: control.reference.clone(),
+                id: control.id.clone(),
+                scope: control.scope.clone(),
+            }),
+            origin,
+        )
+    }
+    #[allow(clippy::too_many_arguments)] // The original invocation's actor, immutable choice and retry association are explicit.
+    async fn invoke_task_policy(
+        &mut self,
+        command: &Command,
+        bound: &NativeContext,
+        origin: &ClientOrigin,
+        choice: &execution_contract::PolicyChoice,
+        draft: bool,
+        retry: Option<(RequestId, execution_app::tasks::TaskRevision)>,
+        commands: &mut tokio::sync::mpsc::Receiver<Command>,
+    ) -> Result<Reply, Error> {
+        let retry_of = retry.as_ref().map(|v| v.0.clone());
+        if draft && !matches!(origin, ClientOrigin::Ai { .. }) {
+            return Err(Error::Denied);
+        }
+        uuid(choice.request.as_str())?;
+        let caller = self.core.caller();
+        let bound_trigger = trigger(&self.core, command, origin)?;
+        let result = if let Some(previous) = self
+            .core
+            .app
+            .backend_request(&caller, &choice.request)
+            .map_err(map_app_error)?
+        {
+            let PreparedAction::Policy {
+                choice: original, ..
+            } = &previous.action
+            else {
+                return Err(Error::Conflict);
+            };
+            if previous.retry_of != retry_of
+                || original != choice
+                || previous.trigger != bound_trigger
+                || (!draft && previous.state == BackendRequestState::Draft)
+            {
+                return Err(Error::Conflict);
+            }
+            self.core.policy_context(&previous)?;
+            Reply::PolicyRequest {
+                value: Box::new(self.send_policy(previous, bound, commands).await?),
+            }
+        } else {
+            let directory = self.current_policy(bound, origin, choice, commands).await?;
+            if !directory.self_service.published
+                || (source(origin) == wire::SelfServiceCaller::Ai
+                    && !directory.self_service.allow_ai)
+            {
+                return Err(Error::Denied);
+            }
+            if matches!(directory.task, wire::SelfServiceTask::Enrollment { .. })
+                && self.core.mdm.state != wire::MdmEnrollmentState::Unenrolled
+            {
+                return Err(Error::Denied);
+            }
+            if draft {
+                operation_parameters_supported(&directory)?;
+            }
+            if !draft {
+                parameters(&directory, &choice.parameters)?;
+            } else if choice.parameters.keys().any(|key| {
+                let wire::SelfServiceTask::Script {
+                    parameter_sources, ..
+                } = &directory.task
+                else {
+                    return true;
+                };
+                !matches!(
+                    parameter_sources.get(key),
+                    Some(wire::ScriptParameterSource::Input {})
+                )
+            }) {
+                return Err(Error::Protocol);
+            }
+            let (access, until) = match &directory.subject {
+                wire::SelfServiceSubject::Device {} => {
+                    (PolicyAccess::Device {}, bound.expires_at_unix_ms)
+                }
+                wire::SelfServiceSubject::User { user } if Some(user) == bound.user() => (
+                    PolicyAccess::User {
+                        session_binding: bound.context.clone(),
+                    },
+                    bound.expires_at_unix_ms,
+                ),
+                _ => return Err(Error::Identity),
+            };
+            let risk = if source(origin) == wire::SelfServiceCaller::Ai {
+                Some(ExecutionRisk {
+                    level: match directory.self_service.risk_level {
+                        1 => RiskLevel::One,
+                        2 => RiskLevel::Two,
+                        _ => return Err(Error::Denied),
+                    },
+                    source: RiskSource::Policy {
+                        policy: plan::reference(
+                            directory.policy_id.to_string(),
+                            directory.policy_revision.to_string(),
+                        )?,
+                    },
+                    expires_at_unix_ms: until,
+                })
+            } else {
+                None
+            };
+            let record = BackendRequest {
+                retry_of: retry_of.clone(),
+                retry_expected_revision: retry.as_ref().map(|v| v.1.clone()),
+                recorded_at_unix_ms: self.core.host.clock.millis()?,
+                cancellation_control: None,
+                cancellation_expected_revision: None,
+                action: PreparedAction::Policy {
+                    definition: plan::reference(
+                        directory.policy_id.to_string(),
+                        directory.policy_version.to_string(),
+                    )?,
+                    policy_revision: directory.policy_revision,
+                    choice: choice.clone(),
+                    task: Box::new(directory.task),
+                    presentation: directory.self_service.presentation,
+                    run_id: None,
+                    offer: None,
+                    access,
+                    expires_at_unix_ms: until,
+                },
+                trigger: bound_trigger,
+                risk: risk.clone(),
+                confirmation: None,
+                revision: 1,
+                state: if draft {
+                    BackendRequestState::Draft
+                } else if risk.is_some_and(|r| r.level == RiskLevel::Two) {
+                    BackendRequestState::AwaitingConfirmation
+                } else {
+                    BackendRequestState::Ready
+                },
+                failure: None,
+            };
+            let current = self.core.context(command)?;
+            if current.context != bound.context {
+                return Err(Error::Identity);
+            }
+            self.core
+                .app
+                .record_backend_request(&caller, None, &record)
+                .map_err(map_app_error)?;
+            Reply::PolicyRequest {
+                value: Box::new(self.send_policy(record, bound, commands).await?),
+            }
+        };
+        Ok(result)
+    }
     async fn policy_command(
         &mut self,
         command: &Command,
@@ -662,6 +916,95 @@ impl<S: IdentityProvider> DeviceService<S> {
                 });
             }
             _ => {}
+        }
+        if let Request::Task { input, origin } = request {
+            if let execution_app::tasks::TaskOperation::Control(control) = input {
+                if control.action == execution_app::tasks::TaskAction::Retry {
+                    return self.retry_task(command, control, origin, commands).await;
+                }
+            }
+            let remote = matches!(input,execution_app::tasks::TaskOperation::List(q) if q.view == execution_app::tasks::TaskView::Management)
+                || matches!(
+                    input,
+                    execution_app::tasks::TaskOperation::Detail(
+                        execution_app::tasks::TaskRef::Activity { .. }
+                    )
+                );
+            if !remote {
+                return self.core.task_operation(command, input, origin);
+            }
+            let scope = self.core.task_scope(command)?;
+            // Continuations read the same cached snapshot; a fresh list explicitly advances synchronization.
+            if matches!(input,execution_app::tasks::TaskOperation::List(q) if q.cursor.is_some()) {
+                return self.core.task_operation(command, input, origin);
+            }
+            // A failed refresh retains only the same authorized scope's cache and its old coverage.
+            self.core.management = self.client.current_management_cache(&scope).ok();
+            self.core.management_online = false;
+            match network(
+                self.client.sync_management(&scope),
+                &mut self.core,
+                commands,
+            )
+            .await
+            {
+                Ok(cache) => {
+                    self.core.management = Some(cache);
+                    self.core.management_online = true;
+                }
+                Err(
+                    Error::Denied
+                    | Error::Identity
+                    | Error::CredentialRevoked
+                    | Error::CredentialRetired,
+                ) => {
+                    self.client.clear_management_cache()?;
+                    self.core.management = None;
+                    return Err(Error::Denied);
+                }
+                Err(_) => {}
+            }
+            if let execution_app::tasks::TaskOperation::Detail(
+                execution_app::tasks::TaskRef::Activity { id },
+            ) = input
+            {
+                match network(
+                    self.client.management_detail(&scope, id),
+                    &mut self.core,
+                    commands,
+                )
+                .await
+                {
+                    Ok(cache) => {
+                        self.core.management = Some(cache);
+                        self.core.management_online = true;
+                    }
+                    Err(
+                        Error::Denied
+                        | Error::Identity
+                        | Error::CredentialRevoked
+                        | Error::CredentialRetired,
+                    ) => {
+                        self.core.management = None;
+                        self.client.clear_management_cache()?;
+                        return Err(Error::Denied);
+                    }
+                    Err(_) => self.core.management_online = false,
+                }
+            }
+            if command.binding.is_none()
+                || self
+                    .core
+                    .fences
+                    .current(&SessionKey::command(command)?)
+                    .ok()
+                    != Some(command.fence_epoch)
+            {
+                self.core.management = None;
+                self.client.clear_management_cache()?;
+                return Err(Error::Denied);
+            }
+            return self.core.task_operation(command, input, origin);
         }
         if let Request::DeviceAccess {
             context,
@@ -749,6 +1092,8 @@ impl<S: IdentityProvider> DeviceService<S> {
         } = request
         {
             let key = peer_key(command)?;
+            self.client.clear_management_cache()?;
+            self.core.management = None;
             // Retiring a renderer context and settling its relation are different facts.
             self.core.fences.revoke(&SessionKey::command(command)?)?;
             let stored = self.client.current_user_owner()?;
@@ -799,16 +1144,19 @@ impl<S: IdentityProvider> DeviceService<S> {
             });
         }
         if let Request::BindContext { value, expected } = request {
-            if value.user().is_some_and(|user| {
-                user.tenant_id != self.client.configuration().tenant
-                    || user.instance_id != self.client.configuration().service_id
-                    || user.principal_id.is_nil()
-            }) || value.credential().is_some_and(|secret| {
-                secret.len() != 64
-                    || !secret
-                        .bytes()
-                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-            }) || value.expires_at_unix_ms <= self.core.host.clock.millis()?
+            if value.expires_at_unix_ms > execution_contract::MAX_SAFE_INTEGER
+                || value.user().is_some_and(|user| {
+                    user.tenant_id != self.client.configuration().tenant
+                        || user.instance_id != self.client.configuration().service_id
+                        || user.principal_id.is_nil()
+                })
+                || value.credential().is_some_and(|secret| {
+                    secret.len() != 64
+                        || !secret
+                            .bytes()
+                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                })
+                || value.expires_at_unix_ms <= self.core.host.clock.millis()?
             {
                 return Err(Error::Identity);
             }
@@ -888,6 +1236,8 @@ impl<S: IdentityProvider> DeviceService<S> {
                     self.core.current_user_context = None;
                 }
             }
+            self.client.clear_management_cache()?;
+            self.core.management = None;
             self.core.contexts.insert(
                 key,
                 NativeContext {
@@ -947,134 +1297,16 @@ impl<S: IdentityProvider> DeviceService<S> {
             }
             Request::InvokePolicy { choice, origin, .. }
             | Request::PreparePolicy { choice, origin, .. } => {
-                let draft = matches!(request, Request::PreparePolicy { .. });
-                if draft && !matches!(origin, ClientOrigin::Ai { .. }) {
-                    return Err(Error::Denied);
-                }
-                uuid(choice.request.as_str())?;
-                let caller = self.core.caller();
-                let bound_trigger = trigger(&self.core, command, origin)?;
-                if let Some(previous) = self
-                    .core
-                    .app
-                    .backend_request(&caller, &choice.request)
-                    .map_err(map_app_error)?
-                {
-                    let PreparedAction::Policy {
-                        choice: original, ..
-                    } = &previous.action
-                    else {
-                        return Err(Error::Conflict);
-                    };
-                    if original != choice
-                        || previous.trigger != bound_trigger
-                        || (!draft && previous.state == BackendRequestState::Draft)
-                    {
-                        return Err(Error::Conflict);
-                    }
-                    self.core.policy_context(&previous)?;
-                    Reply::PolicyRequest {
-                        value: Box::new(self.send_policy(previous, &bound, commands).await?),
-                    }
-                } else {
-                    let directory = self
-                        .current_policy(&bound, origin, choice, commands)
-                        .await?;
-                    if !directory.self_service.published
-                        || (source(origin) == wire::SelfServiceCaller::Ai
-                            && !directory.self_service.allow_ai)
-                    {
-                        return Err(Error::Denied);
-                    }
-                    if matches!(directory.task, wire::SelfServiceTask::Enrollment { .. })
-                        && self.core.mdm.state != wire::MdmEnrollmentState::Unenrolled
-                    {
-                        return Err(Error::Denied);
-                    }
-                    if draft {
-                        operation_parameters_supported(&directory)?;
-                    }
-                    if !draft {
-                        parameters(&directory, &choice.parameters)?;
-                    } else if choice.parameters.keys().any(|key| {
-                        let wire::SelfServiceTask::Script {
-                            parameter_sources, ..
-                        } = &directory.task
-                        else {
-                            return true;
-                        };
-                        !matches!(
-                            parameter_sources.get(key),
-                            Some(wire::ScriptParameterSource::Input {})
-                        )
-                    }) {
-                        return Err(Error::Protocol);
-                    }
-                    let (access, until) = match &directory.subject {
-                        wire::SelfServiceSubject::Device {} => {
-                            (PolicyAccess::Device {}, bound.expires_at_unix_ms)
-                        }
-                        wire::SelfServiceSubject::User { user } if Some(user) == bound.user() => (
-                            PolicyAccess::User {
-                                session_binding: bound.context.clone(),
-                            },
-                            bound.expires_at_unix_ms,
-                        ),
-                        _ => return Err(Error::Identity),
-                    };
-                    let risk = if source(origin) == wire::SelfServiceCaller::Ai {
-                        Some(ExecutionRisk {
-                            level: match directory.self_service.risk_level {
-                                1 => RiskLevel::One,
-                                2 => RiskLevel::Two,
-                                _ => return Err(Error::Denied),
-                            },
-                            source: RiskSource::Policy {
-                                policy: plan::reference(
-                                    directory.policy_id.to_string(),
-                                    directory.policy_revision.to_string(),
-                                )?,
-                            },
-                            expires_at_unix_ms: until,
-                        })
-                    } else {
-                        None
-                    };
-                    let record = BackendRequest {
-                        action: PreparedAction::Policy {
-                            choice: choice.clone(),
-                            task: Box::new(directory.task),
-                            presentation: directory.self_service.presentation,
-                            run_id: None,
-                            offer: None,
-                            access,
-                            expires_at_unix_ms: until,
-                        },
-                        trigger: bound_trigger,
-                        risk: risk.clone(),
-                        confirmation: None,
-                        revision: 1,
-                        state: if draft {
-                            BackendRequestState::Draft
-                        } else if risk.is_some_and(|r| r.level == RiskLevel::Two) {
-                            BackendRequestState::AwaitingConfirmation
-                        } else {
-                            BackendRequestState::Ready
-                        },
-                        failure: None,
-                    };
-                    let current = self.core.context(command)?;
-                    if current.context != bound.context {
-                        return Err(Error::Identity);
-                    }
-                    self.core
-                        .app
-                        .record_backend_request(&caller, None, &record)
-                        .map_err(map_app_error)?;
-                    Reply::PolicyRequest {
-                        value: Box::new(self.send_policy(record, &bound, commands).await?),
-                    }
-                }
+                self.invoke_task_policy(
+                    command,
+                    &bound,
+                    origin,
+                    choice,
+                    matches!(request, Request::PreparePolicy { .. }),
+                    None,
+                    commands,
+                )
+                .await?
             }
             Request::SubmitPolicy { input, .. } => {
                 let previous = self
@@ -1237,6 +1469,21 @@ impl<S: IdentityProvider> DeviceService<S> {
                 let current = self
                     .current_policy(&bound, &origin, choice, commands)
                     .await?;
+                if let PreparedAction::Policy {
+                    definition,
+                    policy_revision,
+                    ..
+                } = &previous.action
+                {
+                    if current.policy_id.to_string() != definition.id.as_str()
+                        || current.policy_version.to_string() != definition.revision.as_str()
+                        || current.policy_revision != *policy_revision
+                    {
+                        return Ok(Reply::OperationRejected {
+                            reason: execution_contract::OperationRejection::Conflict,
+                        });
+                    }
+                }
                 parameters(&current, &choice.parameters)?;
                 self.core.context(command)?;
                 self.core.current_policy_access(&previous)?;
@@ -1292,7 +1539,9 @@ impl<S: IdentityProvider> DeviceService<S> {
                     value: Box::new(self.send_policy(next, &bound, commands).await?),
                 }
             }
-            Request::PolicyStatus { request, .. } => {
+            Request::PolicyStatus {
+                request, origin, ..
+            } => {
                 let Some(previous) = self
                     .core
                     .app
@@ -1301,6 +1550,16 @@ impl<S: IdentityProvider> DeviceService<S> {
                 else {
                     return Ok(Reply::PolicyAbsent);
                 };
+                self.core.require_origin_context(
+                    &command.subject,
+                    command.binding.as_ref().ok_or(Error::Denied)?,
+                    origin,
+                )?;
+                if matches!(origin, ClientOrigin::Ai { .. })
+                    && !matches!(previous.trigger, BackendTrigger::Ai { .. })
+                {
+                    return Err(Error::Denied);
+                }
                 let PreparedAction::Policy { access, .. } = &previous.action else {
                     return Err(Error::Denied);
                 };
@@ -1559,10 +1818,10 @@ impl<S: IdentityProvider> DeviceService<S> {
             ..
         } = &mut next.action
         {
-            if bound.as_ref().is_some_and(|old| old != &current) {
+            if bound.as_deref().is_some_and(|old| old != &current) {
                 return Err(Error::Conflict);
             }
-            *bound = Some(current);
+            *bound = Some(Box::new(current));
             *run_id = Some(plan::id(task_id.to_string())?);
         }
         self.core
@@ -1698,6 +1957,11 @@ impl<S: IdentityProvider> DeviceService<S> {
             expires_at_unix_ms: until,
         });
         let record = BackendRequest {
+            retry_of: None,
+            retry_expected_revision: None,
+            recorded_at_unix_ms: self.core.host.clock.millis()?,
+            cancellation_control: None,
+            cancellation_expected_revision: None,
             action: PreparedAction::SoftwareRead {
                 choice: choice.clone(),
                 definition,

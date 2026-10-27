@@ -12,7 +12,10 @@ use core_foundation::{
 };
 use security_framework::{
     key::{Algorithm, SecKey},
-    os::macos::access::SecAccess,
+    os::macos::{
+        access::SecAccess,
+        code_signing::{Flags, SecCode, SecRequirement},
+    },
 };
 use security_framework_sys::{base::SecAccessRef, item::*, key::SecKeyCreateRandomKey};
 use std::{ffi::CString, io};
@@ -44,9 +47,9 @@ extern "C" {
         description: *mut CFStringRef,
         prompt: *mut PromptSelector,
     ) -> i32;
-    fn SecTrustedApplicationValidateWithPath(
+    fn SecTrustedApplicationCopyRequirement(
         application: *const std::ffi::c_void,
-        path: *const std::ffi::c_char,
+        requirement: *mut security_framework_sys::code_signing::SecRequirementRef,
     ) -> i32;
     fn SecAccessCreate(
         description: CFStringRef,
@@ -316,13 +319,10 @@ impl DeviceKey {
         if acls.is_empty() {
             return Err(denied());
         }
-        let path = CString::new(
-            std::env::current_exe()?
-                .canonicalize()?
-                .as_os_str()
-                .as_encoded_bytes(),
-        )
-        .map_err(|_| denied())?;
+        // SecCode.h: dynamic validation authenticates the running process and
+        // its host against the stored requirement, without a full static executable scan.
+        // Keep this fresh on every key open; neither ACLs nor authorization are cached.
+        let current = SecCode::for_self(Flags::NONE).map_err(|_| denied())?;
         for acl in acls.iter() {
             let mut applications = std::ptr::null();
             let mut description = std::ptr::null();
@@ -351,14 +351,20 @@ impl DeviceKey {
                 return Err(denied());
             }
             let application = applications.get(0).ok_or_else(denied)?;
-            // SAFETY: OS-owned trusted application and NUL-terminated current image path.
-            // Validate the original code requirement, rather than its informational path.
+            let mut requirement = std::ptr::null_mut();
+            // SAFETY: OS-owned trusted application and valid retained-requirement out pointer.
+            // Apple Security/SecTrustedApplication.cpp bridges the original ACL requirement.
             let status = unsafe {
-                SecTrustedApplicationValidateWithPath(application.as_CFTypeRef(), path.as_ptr())
+                SecTrustedApplicationCopyRequirement(application.as_CFTypeRef(), &mut requirement)
             };
-            if status != 0 {
+            if status != 0 || requirement.is_null() {
                 return Err(denied());
             }
+            // SAFETY: Successful copy transfers one retained, typed SecRequirement object.
+            let requirement = unsafe { SecRequirement::wrap_under_create_rule(requirement) };
+            current
+                .check_validity(Flags::NONE, &requirement)
+                .map_err(|_| denied())?;
         }
         Ok(())
     }

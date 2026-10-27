@@ -17,7 +17,7 @@ platform-credentials 仅持有 OS 凭据机制；设备秘密命名空间与不�
 安装完整性与私有数据保密采用不同策略；native-process 仅持有进程生命周期。
 SQLite 仍按受保护路径打开，不承诺所有 I/O 使用预先检查的文件句柄，也不提供同用户应用沙箱。
 
-本地采集数据由同一服务提供 `query_directory`、`data_read`、`query_submit`、`query_status`、`query_cancel`。
+本地采集数据由同一服务提供 `query_directory`、`data_read`、`query_submit`、`query_status`、`task_control`。
 Native 的 `nativeDataPort` 与 AI 的 `execution_query_*` / `execution_data_read` 使用同一 Rust 契约。
 目录默认读取本地；只有显式设置 `refreshPolicies` 才刷新已发布策略。读取结果从不启动采集。
 提交使用稳定 UUID，响应丢失后查询原请求；同一登录中的相同查询仍未结束时返回 `inProgress`。

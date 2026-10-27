@@ -144,7 +144,7 @@ pnpm check:assistant
 
 AI 文本不能覆盖设备任务事实；执行详情来自 Rust 的授权读取。普通回答与 A2UI 动作均不能签发批准。未知接纳重试保留原命令和期限，回执不等于模型终态。过期、旧 generation 和删除卡片禁止继续提交；渲染失败保留只读内容。
 
-`execution_execute` 与三个读工具在 Host 投递前不请求通用许可；`execution_cancel` 保留“允许一次 / 拒绝一次”。相同待决提案共用一次询问，已有持久投递恢复不重问。许可过期、会话/命令结束或用户切换后不能写新执行意图。取消许可仅允许 AI 发起取消请求；Rust 在实际执行前验证后台授权和按风险要求的具体动作确认。时间线的设备卡只从 Host 投递事件定位，再核对 Rust 返回的请求、会话和工具身份；模型文字不能生成可信设备卡。
+`execution_execute` 与三个读工具在 Host 投递前不请求通用许可；`execution_task_control` 保留“允许一次 / 拒绝一次”。相同待决提案共用一次询问，已有持久投递恢复不重问。许可过期、会话/命令结束或用户切换后不能写新执行意图。取消许可仅允许 AI 发起取消请求；Rust 在实际执行前验证后台授权和按风险要求的具体动作确认。时间线的设备卡只从 Host 投递事件定位，再核对 Rust 返回的请求、会话和工具身份；模型文字不能生成可信设备卡。
 
 交互参考复核基于 Codex 与 Claude 官方使用文档，未声称实机体验：
 [Codex/ChatGPT 项目与对话](https://learn.chatgpt.com/docs/projects)、[队列与 steer 设置](https://learn.chatgpt.com/docs/reference/settings)、[批准与沙箱](https://learn.chatgpt.com/docs/agent-approvals-security)、[Claude Desktop 导航](https://academy.claude.com/tutorials/navigating-the-claude-desktop-app)、[Claude 连接器](https://support.claude.com/en/articles/11176164-use-connectors-to-extend-claude-s-capabilities)。借鉴聊天入口、连接设置和动作许可分层；本产品的设备执行权威仍在 Rust。
@@ -237,3 +237,13 @@ Windows 与 macOS Provider 分别适配各自正式系统入口；macOS 构建�
 [本地运行指南](local-service-lab.md#macos-passkey-provider2930)。
 凭据允许未来备份，但尚未实际备份；#2931 另行实现同步、新设备授权及恢复，不将 OS 保护材料
 上传服务器，不允许普通账号会话或企业管理员直接取得个人解密根。
+
+## 任务中心
+
+主导航“任务中心”统一显示正在进行、历史记录和管理活动。首页、搜索、软件/工具记录与 AI 卡片进入原请求；返回保留当前筛选和位置。切页或关闭聊天不取消设备工作。进程结束、效果核实、取消请求/终止证据和上传接收分别显示，未知结果先查询原请求，不创建替代尝试。
+
+服务按当前主体和阶段声明可用控制。普通内容下载支持暂停/恢复，暂停意图在当前格式重启后保留；恢复仍须通过原授权及期限检查。共享材料可以继续为其他任务下载，暂停或取消一个父任务不影响其他消费者。Winget/Brew 原生源准备不提供 Range 暂停续传，界面显示原因。已知启动前失败的受支持 Policy 可明确创建关联的新请求，重新检查原策略版本并重新准入。
+
+管理活动展示设备可见的脱敏来源事实及其关联，标明最近同步、保留起点和 coverage。离线缓存、部分页和未覆盖关联不代表即时全量历史；审计记录与上传 ACK 均不证明设备效果。任务投影仅提供参数类别摘要，处理原准备请求须进入独立人工交互。AI 不具有该人工确认入口。
+
+本次替换要求桌面、系统服务与 AI Host 使用同一当前接口；旧 IPC 或旧数据库格式原样保留并拒绝，不自动迁移、清库、重新注册或替换 journal。

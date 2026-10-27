@@ -13,12 +13,15 @@ const props = defineProps<{
   loading: boolean;
   complete: boolean;
   hasMore: boolean;
+  restartable?: boolean;
   error: string;
 }>();
 const emit = defineEmits<{
   select: [entry: NavigationTarget];
   more: [];
   retry: [];
+  restart: [];
+  visibility: [visible: boolean];
 }>();
 const searchOpen = ref(false),
   query = ref(""),
@@ -69,6 +72,7 @@ watch(query, () => {
   active.value = 0;
 });
 watch(searchOpen, async (open) => {
+  emit("visibility", open);
   if (!open) return;
   query.value = "";
   active.value = 0;
@@ -169,6 +173,9 @@ watch(searchOpen, async (open) => {
       </p>
       <button v-if="hasMore" :disabled="loading" @click="emit('more')">
         继续查找
+      </button>
+      <button v-if="restartable" :disabled="loading" @click="emit('restart')">
+        重新读取任务
       </button>
       <footer class="workspace-search-hint">
         <span><kbd>↑</kbd> <kbd>↓</kbd> 选择</span><span><kbd>↵</kbd> 打开</span

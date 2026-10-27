@@ -276,11 +276,6 @@ pub enum SettingsOperation {
         /// Original UUID.
         request: RequestId,
     },
-    /// Request cancellation; restoration remains a separate fact.
-    Cancel {
-        /// Original UUID.
-        request: RequestId,
-    },
     /// Keep the exact preview, before its independent fifteen-second deadline.
     KeepDisplay {
         /// Original UUID.

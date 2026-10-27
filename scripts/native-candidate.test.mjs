@@ -1,4 +1,6 @@
 import { test } from "node:test";
+import { Window } from "happy-dom";
+import { nativeReplyComplete, sampledNativeTask } from "./native-evidence.mjs";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
@@ -76,12 +78,15 @@ test("native model oracle requires the original software request to await human 
             type: "function_call_output",
             call_id: "REVIEW-status",
             output: result({
-              kind: "preparation",
-              value: {
-                action: { kind: "policy", choice: { request } },
-                state,
-                risk: { level: "two" },
-                confirmation,
+              reference: { kind: "request", request: "review-request" },
+              facts: {
+                kind: "preparation",
+                value: {
+                  action: { kind: "policy", choice: { request } },
+                  state,
+                  risk: { level: "two" },
+                  confirmation,
+                },
               },
             }),
           },
@@ -96,6 +101,63 @@ test("native model oracle requires the original software request to await human 
       expectedStatus === 200 ? ["REVIEW"] : [],
     );
   }
+});
+
+test("native review reads the original request through a registered task tool", async (t) => {
+  const fixture = await startModelFixture();
+  t.after(() => fixture.close());
+  fixture.accept();
+  fixture.facts.request = "human-original";
+  const output = (step, result) => ({
+    type: "function_call_output",
+    call_id: `REVIEW-${step}`,
+    output: JSON.stringify({
+      content: [
+        { type: "text", text: JSON.stringify({ status: "ok", result }) },
+      ],
+    }),
+  });
+  const response = await fetch(fixture.url + "/responses", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${fixture.secret}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      model: "native-golden-model",
+      input: [
+        { role: "user", content: "GOLDEN_REVIEW" },
+        output("tools", {
+          tools: [
+            {
+              name: "registered-policy",
+              inputSchema: { properties: { parameters: { type: "object" } } },
+            },
+          ],
+        }),
+        output("invoke", { operationRequestId: "ai-original" }),
+      ],
+    }),
+  });
+  assert.equal(response.status, 200);
+  const events = (await response.text())
+    .split("\n")
+    .filter((line) => line.startsWith("data: {"))
+    .map((line) => JSON.parse(line.slice(6)));
+  const proposal = events.find(
+    (event) => event.item?.type === "function_call",
+  ).item;
+  assert.equal(proposal.name, "execution_task_detail");
+  assert.deepEqual(JSON.parse(proposal.arguments), {
+    reference: { kind: "request", request: "ai-original" },
+  });
+  const tools = JSON.parse(
+    readFileSync(
+      new URL("../packages/execution-bindings/src/tools.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  assert.ok(tools.some((tool) => tool.name === proposal.name));
 });
 
 function fixture(t) {
@@ -331,3 +393,59 @@ test(
       await assert.rejects(import(url), { code: "ERR_MODULE_NOT_FOUND" });
   },
 );
+
+test("native completion waits for the original new turn rather than older matching text", () => {
+  const window = new Window();
+  try {
+    const doc = window.document;
+    doc.body.innerHTML = `<div class="assistant-timeline">
+      <article data-message-key="prompt:old"></article>
+      <article data-message-key="message:old">完成 READ</article>
+      <article data-message-key="prompt:new"><p class="command-state">处理中</p></article>
+    </div><form class="composer"></form>`;
+    assert.equal(nativeReplyComplete("prompt:new", "完成 READ", doc), false);
+    const timeline = doc.querySelector(".assistant-timeline");
+    timeline.insertAdjacentHTML(
+      "beforeend",
+      '<article data-message-key="message:new">完成 READ</article>',
+    );
+    assert.equal(nativeReplyComplete("prompt:new", "完成 READ", doc), false);
+    doc.querySelector(".command-state").remove();
+    doc.querySelector(".composer").innerHTML =
+      '<button data-action="cancel">停止回复</button>';
+    assert.equal(nativeReplyComplete("prompt:new", "完成 READ", doc), false);
+    doc.querySelector(".composer").innerHTML = "";
+    assert.equal(nativeReplyComplete("prompt:new", "完成 READ", doc), true);
+    doc.querySelector('[data-message-key="message:new"]').remove();
+    timeline.insertAdjacentHTML(
+      "beforeend",
+      '<article data-message-key="prompt:future"></article><article data-message-key="message:future">完成 READ</article>',
+    );
+    assert.equal(nativeReplyComplete("prompt:new", "完成 READ", doc), false);
+  } finally {
+    window.happyDOM.abort();
+  }
+});
+
+test("native periodic evidence reads the Rust facts envelope and never infers collection from process exit", () => {
+  const empty = {
+    reference: { kind: "sampling", query: { id: "native", revision: "1" } },
+    facts: { kind: "sampling", value: { latest: { collectedAt: null } } },
+  };
+  const collected = {
+    ...empty,
+    facts: { kind: "sampling", value: { latest: { collectedAt: 123 } } },
+  };
+  const exited = {
+    reference: { kind: "request", request: "exited" },
+    facts: {
+      kind: "execution",
+      value: { status: { process: { finished: true, exitCode: 0 } } },
+    },
+  };
+  assert.equal(sampledNativeTask({ items: [exited, empty] }), undefined);
+  assert.equal(
+    sampledNativeTask({ items: [exited, empty, collected] }),
+    collected,
+  );
+});

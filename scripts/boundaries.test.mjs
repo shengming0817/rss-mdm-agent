@@ -517,8 +517,8 @@ test("only the narrow native adapter can call literal fixture commands", () => {
   const file = "apps/desktop/src/self-service/native.ts";
   for (const source of [
     `import { invoke } from '@tauri-apps/api/core'; invoke('run_shell')`,
-    `import { invoke } from '@tauri-apps/api/core'; const name = 'self_service_snapshot'; invoke(name)`,
-    `import { invoke as call } from '@tauri-apps/api/core'; call('self_service_snapshot')`,
+    `import { invoke } from '@tauri-apps/api/core'; const name = 'task_list'; invoke(name)`,
+    `import { invoke as call } from '@tauri-apps/api/core'; call('task_list')`,
     `import { invoke } from '@tauri-apps/api/core'; export const call = invoke`,
     `import * as native from '@tauri-apps/api/core'; native.invoke('run_shell')`,
   ])
@@ -526,7 +526,7 @@ test("only the narrow native adapter can call literal fixture commands", () => {
   assert.deepEqual(
     checkSource(
       file,
-      `import { invoke } from '@tauri-apps/api/core'; invoke('self_service_snapshot')`,
+      `import { invoke } from '@tauri-apps/api/core'; invoke('task_list')`,
     ),
     [],
   );

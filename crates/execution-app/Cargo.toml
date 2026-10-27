@@ -12,6 +12,7 @@ default = []
 test-support = []
 
 [dependencies]
+rss-mdm-agent-wire.workspace = true
 execution-contract = { path = "../execution-contract" }
 execution-lifecycle = { path = "../execution-lifecycle" }
 execution-interaction = { path = "../execution-interaction" }

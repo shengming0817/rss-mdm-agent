@@ -648,13 +648,14 @@ impl<S: IdentityProvider> DeviceService<S> {
                     DataResponse::Status(self.core.native_query_status(&submit.request, &a)?)
                 }
             }
-            DataOperation::Status(query) | DataOperation::Cancel(query) => {
+            DataOperation::Status(query) => {
                 let a = self
                     .core
                     .data
                     .association(&query.request, &command.subject, binding)?;
                 if a.kind == QueryKind::Policy {
                     let request = Request::PolicyStatus {
+                        origin: origin.clone(),
                         context: context.clone(),
                         request: query.request.clone(),
                     };
@@ -673,39 +674,9 @@ impl<S: IdentityProvider> DeviceService<S> {
                         }
                         self.core.data.policy_result(&a, value)?;
                     }
-                    let mut status = policy_status(reply, &a, &query.request)?;
-                    if matches!(input, DataOperation::Cancel(_)) {
-                        if let Some(pending) =
-                            self.core.pending(&query.request, &command.subject)?
-                        {
-                            status.preparation = self
-                                .core
-                                .transition(
-                                    pending.action.request(),
-                                    BackendRequestState::Cancelled,
-                                    None,
-                                )?
-                                .map(|p| QueryPreparationRef {
-                                    request: p.action.request().clone(),
-                                    revision: p.revision,
-                                });
-                            status.phase = QueryPhase::Cancelled;
-                        } else {
-                            self.core
-                                .app
-                                .cancel(&self.core.caller(), &query.request)
-                                .map_err(map_app_error)?;
-                            status.cancel_requested = true;
-                        }
-                    }
+                    let status = policy_status(reply, &a, &query.request)?;
                     DataResponse::Status(status)
                 } else {
-                    if matches!(input, DataOperation::Cancel(_)) {
-                        self.core
-                            .app
-                            .cancel(&self.core.local_caller(), &query.request)
-                            .map_err(map_app_error)?;
-                    }
                     self.core
                         .app
                         .reconcile(&query.request)

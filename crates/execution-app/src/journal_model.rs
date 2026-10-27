@@ -520,6 +520,29 @@ pub struct ServiceMaterialChanges<C> {
     pub complete: bool,
 }
 
+/// Immutable first-record coordinate in the original journal, never an array offset.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TaskHistoryPosition {
+    /// Original request identity breaks equal-time ties.
+    pub request: RequestId,
+    /// Immutable preparation time or first execution receipt time.
+    pub recorded_at_unix_ms: u64,
+}
+/// Bounded discovery over the original preparation and execution tables.
+pub struct TaskHistoryQuery {
+    /// Exclusive descending time/identity coordinate.
+    pub after: Option<TaskHistoryPosition>,
+    /// Inclusive preparation insertion watermark.
+    pub preparations: u64,
+    /// Inclusive execution receipt watermark.
+    pub receipts: u64,
+    /// Inclusive wall-clock snapshot bound.
+    pub as_of: u64,
+    /// Maximum raw candidates, including subsequently invisible records.
+    pub limit: usize,
+}
+
 /// Internal owner-only activity cursor, authenticated before exposure to product callers.
 pub struct RecentRequest {
     /// Original business request.

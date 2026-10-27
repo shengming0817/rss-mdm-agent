@@ -1,5 +1,6 @@
-import { operationRequestId } from "@rss-mdm-agent/execution-bindings";
+import { operationRequestId, tools } from "@rss-mdm-agent/execution-bindings";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 import {
   ReadBuffer,
   serializeMessage,
@@ -89,27 +90,7 @@ export class ParentTransport implements Transport {
     this.onclose?.();
   }
 }
-const methods = new Set([
-  "execution_query_directory",
-  "execution_data_read",
-  "execution_query_submit",
-  "execution_query_status",
-  "execution_query_cancel",
-  "execution_software_read",
-  "execution_software_prepare",
-  "execution_software_status",
-  "execution_software_cancel",
-  "execution_policy_invoke",
-  "execution_software_observe",
-  "execution_policy_tools",
-  "execution_operation_prepare",
-  "execution_policy_status",
-  "execution_tasks",
-  "execution_capabilities",
-  "execution_execute",
-  "execution_status",
-  "execution_cancel",
-]);
+const methods = new Set<string>(tools.map((tool) => tool.name));
 /** MCP owns validation; this mapper supplies stage identity and reconciles against Rust. */
 export async function connectExecution(
   input: Readable,
@@ -130,20 +111,78 @@ export async function connectExecution(
     contextBinding: string;
   }>,
 ) {
-  const client = new Client({ name: "rss-ai-host", version: "0.1.0" });
+  const client = new Client(
+    { name: "rss-ai-host", version: "0.1.0" },
+    { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
+  );
   const transport = new ParentTransport(input, output);
+  let outputValidators = new Map<
+    string,
+    ReturnType<CfWorkerJsonSchemaValidator["getValidator"]>
+  >();
+  async function catalog(b?: Budget) {
+    const schemas = new CfWorkerJsonSchemaValidator(),
+      validators = new Map<
+        string,
+        ReturnType<CfWorkerJsonSchemaValidator["getValidator"]>
+      >();
+    const result: Awaited<ReturnType<Client["listTools"]>>["tools"] = [],
+      found = new Set<string>(),
+      seen = new Set<string>();
+    const deadline = Date.now() + Math.min(10000, b?.timeoutMs ?? 10000);
+    let cursor: string | undefined,
+      complete = false;
+    for (let page = 0; page < methods.size; page++) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw Error("execution catalog timeout");
+      const response = await client.listTools(cursor ? { cursor } : {}, {
+        timeout: remaining,
+        ...(b ? { signal: b.signal } : {}),
+      });
+      for (const tool of response.tools) {
+        if (!methods.has(tool.name) || found.has(tool.name))
+          throw Error("execution tools mismatch");
+        if (tool.outputSchema)
+          validators.set(tool.name, schemas.getValidator(tool.outputSchema));
+        found.add(tool.name);
+        result.push(tool);
+      }
+      if (!response.nextCursor) {
+        complete = true;
+        break;
+      }
+      if (seen.has(response.nextCursor))
+        throw Error("execution catalog did not advance");
+      seen.add(response.nextCursor);
+      cursor = response.nextCursor;
+    }
+    if (!complete || found.size !== methods.size)
+      throw Error("execution tools mismatch");
+    outputValidators = validators;
+    return result;
+  }
+  // The SDK retains only the latest listTools page. Keep validation for the
+  // complete bounded catalog, using its public validator and Rust schemas.
+  async function callTool(
+    params: Parameters<Client["callTool"]>[0],
+    options: Parameters<Client["callTool"]>[2],
+  ) {
+    const reply = await client.callTool(params, undefined, options);
+    boundedJson(reply, defaultLimits);
+    const validate = outputValidators.get(params.name);
+    if (validate && (!reply.isError || reply.structuredContent)) {
+      if (!reply.structuredContent || !validate(reply.structuredContent).valid)
+        throw Error("invalid execution structured output");
+    }
+    return reply;
+  }
   try {
     await client.connect(transport, { timeout: 10000 });
-    const catalog = await client.listTools({}, { timeout: 10000 });
-    if (
-      catalog.tools.length !== methods.size ||
-      catalog.tools.some((t) => !methods.has(t.name))
-    )
-      throw new Error("execution tools mismatch");
+    await catalog();
   } catch {
     await client.close();
     await transport.close();
-    throw new Error("execution connection unavailable");
+    throw Error("execution connection unavailable");
   }
   const call = async (
     request: DeliveryRequest,
@@ -169,7 +208,7 @@ export async function connectExecution(
       provider: binding.provider as ExecutionOrigin["provider"],
       config: binding.config,
     };
-    const reply = await client.callTool(
+    const reply = await callTool(
       {
         name,
         arguments: args,
@@ -177,7 +216,6 @@ export async function connectExecution(
           "com.rss-mdm/ai-origin": origin,
         },
       },
-      undefined,
       { signal: b.signal, timeout: b.timeoutMs, maxTotalTimeout: b.timeoutMs },
     );
     boundedJson(reply, defaultLimits);
@@ -222,13 +260,12 @@ export async function connectExecution(
           config: binding.config,
         };
         stage = "policy-tools";
-        const value = await client.callTool(
+        const value = await callTool(
           {
             name: "execution_policy_tools",
             arguments: { after: null },
             _meta: { "com.rss-mdm/ai-origin": origin },
           },
-          undefined,
           { signal: b.signal, timeout: b.timeoutMs },
         );
         stage = "projection";
@@ -239,14 +276,11 @@ export async function connectExecution(
           return fail("unavailable");
         }
         stage = "catalog";
-        const catalog = await client.listTools(
-          {},
-          { signal: b.signal, timeout: b.timeoutMs },
-        );
+        const staticTools = await catalog(b);
         // Providers consume invocation interfaces. MCP retains its result validators;
         // duplicating output schemas in every worker catalog exceeds transport budgets.
         return ok(
-          [...catalog.tools, ...body.result.tools].map(
+          [...staticTools, ...body.result.tools].map(
             ({ name, description, inputSchema, annotations }) => ({
               name,
               description,
@@ -263,19 +297,9 @@ export async function connectExecution(
     prepare: (namespace, proposal, commandId) => {
       if (!methods.has(proposal.name) && !proposal.name.startsWith("policy_"))
         return fail("unsupported_capability");
-      const read = [
-        "execution_query_directory",
-        "execution_data_read",
-        "execution_software_read",
-        "execution_software_status",
-        "execution_query_status",
-        "execution_software_observe",
-        "execution_policy_tools",
-        "execution_policy_status",
-        "execution_tasks",
-        "execution_capabilities",
-        "execution_status",
-      ].includes(proposal.name);
+      const read =
+        tools.find((tool) => tool.name === proposal.name)?.annotations
+          ?.readOnlyHint === true;
       const id =
         proposal.name.startsWith("policy_") ||
         proposal.name === "execution_operation_prepare" ||
@@ -285,11 +309,7 @@ export async function connectExecution(
           ? proposal.callId
           : read
             ? randomUUID()
-            : ["execution_query_cancel", "execution_software_cancel"].includes(
-                  proposal.name,
-                )
-              ? proposal.arguments.request
-              : operationRequestId(proposal.name, proposal.arguments);
+            : operationRequestId(proposal.name, proposal.arguments);
       if (!isId(id)) return fail("invalid_input");
       const digest = createHash("sha256")
         .update(JSON.stringify([namespace, commandId, proposal.name, id]))
@@ -306,7 +326,7 @@ export async function connectExecution(
       return ok({
         operationId,
         target: "rust-execution",
-        permission: proposal.name === "execution_cancel" ? "ask" : "none",
+        permission: proposal.name === "execution_task_control" ? "ask" : "none",
       });
     },
     send: async (request, b) => {
@@ -334,71 +354,34 @@ export async function connectExecution(
     reconcile: async (request, b) => {
       const { name, arguments: args } = request.body.proposal;
       try {
+        if (name === "execution_task_control") {
+          const status = await call(
+            request,
+            "execution_task_control_status",
+            { reference: args.reference, id: args.id, scope: args.scope },
+            b,
+          );
+          if (
+            status.status === "error" ||
+            status.result?.disposition == null ||
+            status.result.disposition === "unknown"
+          )
+            return ok({ state: "unknown" });
+          return ok({ state: "committed", receipt: receipt(request, status) });
+        }
         if (
           name === "execution_software_prepare" ||
-          name === "execution_software_cancel"
-        ) {
-          const original =
-            name === "execution_software_prepare"
-              ? request.body.operationId
-              : args.request;
-          const status = await call(
-            request,
-            "execution_software_status",
-            { request: original },
-            b,
-          );
-          if (status.status === "error")
-            return ok({
-              state:
-                status.error?.code === "notFound" ? "not_submitted" : "unknown",
-            });
-          if (
-            name === "execution_software_cancel" &&
-            status.result?.operation?.cancelRequested !== true &&
-            status.result?.operation?.phase !== "cancelled"
-          )
-            return ok({ state: "unknown" });
-          return ok({ state: "committed", receipt: receipt(request, status) });
-        }
-        if (
           name === "execution_query_submit" ||
-          name === "execution_query_cancel"
-        ) {
-          const original =
-            name === "execution_query_submit"
-              ? request.body.operationId
-              : args.request;
-          const status = await call(
-            request,
-            "execution_query_status",
-            { request: original },
-            b,
-          );
-          if (status.status === "error")
-            return ok({
-              state:
-                status.error?.code === "notFound" ? "not_submitted" : "unknown",
-            });
-          if (
-            name === "execution_query_cancel" &&
-            status.result?.value?.cancelRequested !== true &&
-            !["cancelled", "completed", "failed"].includes(
-              status.result?.value?.phase,
-            )
-          )
-            return ok({ state: "unknown" });
-          return ok({ state: "committed", receipt: receipt(request, status) });
-        }
-        if (
           name.startsWith("policy_") ||
           name === "execution_operation_prepare" ||
           name === "execution_policy_invoke"
         ) {
           const status = await call(
             request,
-            "execution_policy_status",
-            { operationRequestId: request.body.operationId },
+            "execution_task_detail",
+            {
+              reference: { kind: "request", request: request.body.operationId },
+            },
             b,
           );
           if (status.status === "error")
@@ -406,22 +389,27 @@ export async function connectExecution(
               state:
                 status.error?.code === "notFound" ? "not_submitted" : "unknown",
             });
+          if (
+            status.result?.reference?.kind !== "request" ||
+            status.result.reference.request !== request.body.operationId
+          )
+            return ok({ state: "unknown" });
           return ok({ state: "committed", receipt: receipt(request, status) });
         }
         // Reads and exact immutable registrations are receiver-idempotent.
-        if (!["execution_execute", "execution_cancel"].includes(name))
+        if (name !== "execution_execute")
           return ok({
             state: "committed",
             receipt: receipt(request, await call(request, name, args, b)),
           });
         const status = await call(
           request,
-          "execution_status",
+          "execution_task_detail",
           {
-            operationRequestId: operationRequestId(
-              request.body.proposal.name,
-              request.body.proposal.arguments,
-            ),
+            reference: {
+              kind: "request",
+              request: operationRequestId(name, args),
+            },
           },
           b,
         );
@@ -430,12 +418,6 @@ export async function connectExecution(
             state:
               status.error?.code === "notFound" ? "not_submitted" : "unknown",
           });
-        if (
-          name === "execution_cancel" &&
-          status.result.cancelRequested !== true &&
-          !["cancelled", "verified", "failed"].includes(status.result.phase)
-        )
-          return ok({ state: "unknown" });
         return ok({ state: "committed", receipt: receipt(request, status) });
       } catch {
         return ok({ state: "unknown" });

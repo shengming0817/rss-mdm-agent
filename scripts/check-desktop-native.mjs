@@ -2,6 +2,7 @@
 // ref: webdriverio/desktop-mobile packages/tauri-plugin-webdriver@1.4.0;
 // webdriverio/webdriverio packages/webdriverio/src/index.ts@v9.32.0.
 import assert from "node:assert/strict";
+import { isDeepStrictEqual } from "node:util";
 import { unwrap } from "../packages/ai-contract/dist/testing/index.js";
 import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
@@ -36,6 +37,8 @@ import {
   toolchainEvidence,
   sha256,
   waitForAppearance,
+  nativeReplyComplete,
+  sampledNativeTask,
 } from "./native-evidence.mjs";
 import {
   verifyCandidate,
@@ -401,10 +404,9 @@ const navigate = async (name) => {
         select.value = "tasks";
         select.dispatchEvent(new Event("change", { bubbles: true }));
       });
-      await wait(() => browser.$(".task-records").isDisplayed());
+      await wait(() => browser.$(".task-center").isDisplayed());
     } else {
-      await openAgentSettings("运行与诊断");
-      await click("执行服务记录");
+      await click("任务中心");
     }
     return;
   }
@@ -417,7 +419,25 @@ const navigate = async (name) => {
       ),
   );
 };
+let lastPromptKey;
+const completedReply = async (value) => {
+  assert.ok(lastPromptKey, "an original submitted prompt is required");
+  await wait(() => browser.execute(nativeReplyComplete, lastPromptKey, value));
+  await browser.execute(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      ),
+  );
+};
 const prompt = async (value) => {
+  const prior = await browser.execute(() =>
+    [
+      ...document.querySelectorAll(
+        '.assistant-timeline article[data-message-key^="prompt:"]',
+      ),
+    ].map((row) => row.getAttribute("data-message-key")),
+  );
   await browser.$(".composer textarea").click();
   await browser.$(".composer textarea").setValue(value);
   assert.equal(
@@ -436,6 +456,24 @@ const prompt = async (value) => {
     browser.execute(
       (value) => document.querySelector(".composer textarea").value !== value,
       value,
+    ),
+  );
+  lastPromptKey = await wait(() =>
+    browser.execute(
+      (value, prior) => {
+        const row = [
+          ...document.querySelectorAll(
+            '.assistant-timeline article[data-message-key^="prompt:"]',
+          ),
+        ].find(
+          (row) =>
+            !prior.includes(row.getAttribute("data-message-key")) &&
+            row.textContent.includes(value),
+        );
+        return row?.getAttribute("data-message-key");
+      },
+      value,
+      prior,
     ),
   );
 };
@@ -614,10 +652,65 @@ const originalRequest = (row) =>
     ? row.action.choice.request
     : row.action.offer.request;
 const originalRequests = (reply) =>
-  new Set([
-    ...reply.value.items.map((row) => row.action.requestId),
-    ...reply.preparations.map(originalRequest),
-  ]);
+  new Set(
+    reply.items
+      .filter((item) => item.reference.kind === "request")
+      .map((item) => item.reference.request),
+  );
+const taskButton = (reference) =>
+  browser.$(`//button[@data-task='${JSON.stringify(reference)}']`);
+const openNativeTask = async (detail) => {
+  await navigate("请求与任务");
+  const filters = await browser.$$(".task-filters select");
+  await selectValue(filters[0], "");
+  await selectValue(filters[1], "");
+  let selectedView;
+  let readRetried = false;
+  await wait(async () => {
+    if (await taskButton(detail.reference).isDisplayed()) return true;
+    const alert = await browser.$('.task-center [role="alert"]');
+    const refresh = await browser.$(".task-center > header button");
+    if (
+      selectedView &&
+      (await alert.isExisting()) &&
+      (await refresh.isEnabled())
+    ) {
+      if (readRetried)
+        throw Error(`original task read failed: ${await alert.getText()}`);
+      readRetried = true;
+      await refresh.click(); // Explicit read recovery; never resubmit the retained request.
+    }
+    const current =
+      detail.reference.kind === "activity"
+        ? detail
+        : (await serviceCall("query")).items.find((item) =>
+            isDeepStrictEqual(item.reference, detail.reference),
+          );
+    assert.ok(current, "the authenticated owner must retain the original task");
+    const view =
+      current.reference.kind === "activity"
+        ? "管理活动"
+        : current.active
+          ? "正在进行"
+          : "历史记录";
+    if (view !== selectedView) {
+      await click(view, '//*[@aria-label="任务视图"]');
+      selectedView = view;
+    }
+    return false;
+  });
+  await taskButton(detail.reference).click();
+  await wait(() =>
+    browser.$('.task-center-detail[aria-label="任务详情"]').isDisplayed(),
+  );
+  assert.ok(
+    (await browser.$(".task-center-detail").getText()).includes(
+      detail.reference.request ??
+        detail.reference.id ??
+        detail.reference.query.id,
+    ),
+  );
+};
 const openPageAssistant = async () => {
   await browser
     .$('.workspace-assistant-entry[aria-label="打开电脑助手"]')
@@ -627,14 +720,22 @@ const openPageAssistant = async () => {
   );
   await wait(() => browser.$(".resource-context").isDisplayed());
 };
+const taskExecutions = (page) =>
+  page.items
+    .filter((item) => item.facts.kind === "execution")
+    .map((item) => item.facts.value);
+const taskPreparations = (page) =>
+  page.items
+    .filter((item) => item.facts.kind === "preparation")
+    .map((item) => item.facts.value);
 const task = async () => {
   const reply = await serviceCall("query");
   const request = fixture.facts.request;
-  const existing = reply.value.items.find(
+  const existing = taskExecutions(reply).find(
     (row) => row.status.operationRequestId === request,
   );
   if (existing) return { plan: existing.action, snapshot: existing.status };
-  const pending = reply.preparations.find(
+  const pending = taskPreparations(reply).find(
     (row) => originalRequest(row) === request,
   );
   return (
@@ -1703,10 +1804,48 @@ try {
     mark("account and saved unverified connection");
     if (await browser.$('[aria-label="登录工作空间"]').isExisting())
       await click("设置与诊断");
+    // A ready local owner opens Home. Enter settings through the visible product navigation.
+    await openAgentSettings("账号与组织");
+    mark("select the fixed native local test workspace");
     await browser.$(".account-local-workspaces > summary").click();
     await browser.$('[aria-label="测试用户名"]').setValue("Golden Alice");
     await click("进入");
-    await wait(() => browser.$('[aria-label="测试用户名"]').isEnabled());
+    await wait(() =>
+      browser.execute(() => {
+        const users = document.querySelector('[aria-label="测试用户"]');
+        const failure = users
+          ?.querySelector('[role="alert"]')
+          ?.textContent?.trim();
+        if (failure) throw Error(failure);
+        return users?.textContent?.includes("当前用户：Golden Alice");
+      }),
+    );
+    await wait(() =>
+      browser.execute(
+        () => document.querySelector(".shell")?.hasAttribute("inert") === false,
+      ),
+    );
+    mark("native task port reads before model setup or any execution");
+    await navigate("请求与任务");
+    let taskReadRetried = false;
+    await wait(async () => {
+      const alert = await browser.$('.task-center [role="alert"]');
+      if (await alert.isExisting()) {
+        const reason = await alert.getText();
+        if (taskReadRetried)
+          throw Error(`native task list rejected: ${reason}`);
+        taskReadRetried = true;
+        await click("刷新原记录", '//*[@aria-label="任务中心"]');
+      }
+      return (
+        (await browser.$$(".task-center-list [data-task]")).length > 0 ||
+        (await browser.$(".task-center-list").getText()).includes(
+          "没有匹配的保留记录",
+        )
+      );
+    });
+    result.checks.push("native-task-read-before-model-or-execution");
+    mark("open connection settings for the acknowledged local workspace");
     await navigate("设置");
     await text("个人 AI 连接（0）");
     const personalVault = await browser.$('[aria-label="个人 Passkey Vault"]');
@@ -1835,19 +1974,55 @@ try {
     await click("核对执行参数", '//*[contains(@class,"software-production")]');
     await click("确认并执行", '//*[contains(@class,"software-production")]');
     await wait(async () =>
-      (await serviceCall("query")).value.items.some(
+      taskExecutions(await serviceCall("query")).some(
         (row) => row.status.attempts === 1,
       ),
     );
-    await navigate("AI 助手");
-    fixture.facts.request = (await serviceCall("query")).value.items.find(
+    fixture.facts.request = taskExecutions(await serviceCall("query")).find(
       (row) => row.status.attempts === 1,
     ).action.requestId;
+    mark(
+      "human task is visible without an AI conversation, with stable return focus",
+    );
+    const humanTask = (await serviceCall("query")).items.find(
+      (item) =>
+        item.reference.kind === "request" &&
+        item.reference.request === fixture.facts.request,
+    );
+    assert.equal(humanTask.source, "human");
+    await openNativeTask(humanTask);
+    assert.ok(
+      (await browser.$$("[aria-label='父子步骤'] [data-node]")).length > 0,
+    );
+    await click("返回任务列表", '//*[@aria-label="任务详情"]');
+    await wait(() =>
+      browser.execute(
+        (reference) =>
+          document.activeElement?.getAttribute("data-task") ===
+          JSON.stringify(reference),
+        humanTask.reference,
+      ),
+    );
+    await browser.setWindowSize(480, 400);
+    assert.equal(
+      await browser.execute(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+      true,
+    );
+    await browser.setWindowSize(1100, 760);
+    assert.equal(originalRequests(await serviceCall("query")).size, 1);
+    result.checks.push(
+      "human-task-without-ai",
+      "task-list-native-return-focus",
+      "task-center-narrow",
+    );
+    await navigate("AI 助手");
     mark(
       "first send and read the original human task without a generic permission",
     );
     await prompt("GOLDEN_HELLO 查看办公套件");
-    await text("完成 HELLO");
+    await completedReply("完成 HELLO");
     await browser.$('[aria-label="复制代码"]').click();
     await wait(
       async () =>
@@ -1867,33 +2042,27 @@ try {
     );
     await prompt("GOLDEN_CANCEL_REJECT 拒绝取消");
     await permission(false);
-    await text("完成 CANCEL_REJECT");
+    await completedReply("完成 CANCEL_REJECT");
     assert.equal((await task()).snapshot.cancelRequested, false);
     assert.equal(originalRequests(await serviceCall("query")).size, 1);
     mark("read the original executed task through its product card");
     await prompt("GOLDEN_READ 读取状态");
-    await text("完成 READ");
-    await navigate("请求与任务");
-    await wait(() =>
-      browser.$(".task-records .execution-records > button").isDisplayed(),
-    );
-    await browser.$(".task-records .execution-records > button").click();
-    await wait(() =>
-      browser.$('.task-detail[aria-label="任务详情"]').isDisplayed(),
-    );
-    assert.ok(
-      (await browser.$(".task-detail").getText()).includes(
-        fixture.facts.request,
+    await completedReply("完成 READ");
+    await openNativeTask(
+      (await serviceCall("query")).items.find(
+        (item) =>
+          item.reference.kind === "request" &&
+          item.reference.request === fixture.facts.request,
       ),
     );
     assert.equal(originalRequests(await serviceCall("query")).size, 1);
     await navigate("AI 助手");
     await prompt("GOLDEN_CANCEL_ALLOW 允许取消请求");
     await permission(true);
-    await text("完成 CANCEL_ALLOW");
+    await completedReply("完成 CANCEL_ALLOW");
     await wait(async () => (await task())?.snapshot.cancelRequested === true);
     await prompt("GOLDEN_READ 读取状态");
-    await text("完成 READ");
+    await completedReply("完成 READ");
     assert.equal(
       await browser.$('[aria-label="AI 工具权限请求"]').isExisting(),
       false,
@@ -1917,7 +2086,7 @@ try {
       () => document.querySelector(".assistant-timeline").scrollTop,
     );
     await prompt("GOLDEN_HELLO 保留阅读位置");
-    await text("完成 HELLO");
+    await completedReply("完成 HELLO");
     assert.ok(
       Math.abs(
         (await browser.execute(
@@ -2068,12 +2237,12 @@ try {
       "a distinct software request requires human confirmation before any Start",
     );
     await prompt("GOLDEN_REVIEW 新操作必须等待本人确认");
-    await text("完成 REVIEW");
+    await completedReply("完成 REVIEW");
     assert.notEqual(fixture.facts.reviewRequest, fixture.facts.request);
     const afterReview = await serviceCall("query");
     assert.equal(originalRequests(afterReview).size, 2);
     assert.equal((await task()).snapshot.attempts, 1);
-    const pendingReview = afterReview.preparations.find(
+    const pendingReview = taskPreparations(afterReview).find(
       (row) => originalRequest(row) === fixture.facts.reviewRequest,
     );
     assert.equal(pendingReview?.state, "awaitingConfirmation");
@@ -2175,7 +2344,7 @@ try {
       );
     }
     await prompt("GOLDEN_CONTEXT 解释这个软件的版本与限制");
-    await text("完成 CONTEXT");
+    await completedReply("完成 CONTEXT");
     assert.equal(fixture.facts.contexts.length, 1);
     assert.equal(
       fixture.facts.proposals.length,
@@ -2187,6 +2356,96 @@ try {
       "page-context-same-session",
       "page-context-provider-payload",
       "page-context-three-sizes",
+    );
+    mark(
+      "explicit local collection and background history share the native task center",
+    );
+    const beforeCollection = originalRequests(await serviceCall("query"));
+    const proposalsBeforeCollection = fixture.facts.proposals.length;
+    await navigate("软件管理");
+    await click("已安装", '//*[@aria-label="软件视图"]');
+    await browser.$(".software-sources summary").click();
+    const collect = browser.$(
+      '//button[normalize-space(.)="采集最新结果" and not(@disabled)]',
+    );
+    mark("explicit local collection: available native source");
+    await wait(() => collect.isDisplayed());
+    await collect.click();
+    mark("explicit local collection: original query in unified task page");
+    const collected = await wait(async () =>
+      (await serviceCall("query")).items.find(
+        (item) =>
+          item.taskKind === "query" &&
+          item.reference.kind === "request" &&
+          !beforeCollection.has(item.reference.request),
+      ),
+    );
+    mark("explicit local collection: open original detail");
+    await openNativeTask(collected);
+    mark("explicit local collection: Home activity entry");
+    await navigate("主页");
+    const recent = browser.$(
+      `//button[@data-task-ref='${JSON.stringify(collected.reference)}']`,
+    );
+    await wait(() => recent.isDisplayed());
+    mark("explicit local collection: reopen original detail from Home");
+    await recent.click();
+    await wait(() =>
+      browser.$('.task-center-detail[aria-label="任务详情"]').isDisplayed(),
+    );
+    mark("explicit local collection: return Home focus");
+    await click("返回任务列表", '//*[@aria-label="任务详情"]');
+    await wait(() =>
+      browser.execute(
+        (reference) =>
+          document.activeElement?.getAttribute("data-task-ref") ===
+          JSON.stringify(reference),
+        collected.reference,
+      ),
+    );
+    mark("background history: a collected periodic definition");
+    const sampling = await wait(
+      async () => sampledNativeTask(await serviceCall("query")),
+      90000,
+    );
+    assert.equal(sampling.source, "policy");
+    assert.deepEqual(sampling.allowedActions, []);
+    await openNativeTask(sampling);
+    assert.equal((await browser.$$(".task-actions button")).length, 0);
+    mark("background history: management coverage and read-only detail");
+    await navigate("请求与任务");
+    await click("管理活动", '//*[@aria-label="任务视图"]');
+    const managementRef = {
+      kind: "activity",
+      id: serviceReady.history.activity,
+    };
+    await wait(() => taskButton(managementRef).isDisplayed());
+    await taskButton(managementRef).click();
+    await wait(() =>
+      browser.$('.task-center-detail[aria-label="任务详情"]').isDisplayed(),
+    );
+    assert.ok(
+      (await browser.$('[aria-label="同步覆盖"]').getText()).includes("部分"),
+    );
+    assert.ok(
+      (await browser.$(".task-center-detail").getText()).includes(
+        "effect-not-observed",
+      ),
+    );
+    assert.equal((await browser.$$(".task-actions button")).length, 0);
+    const retainedRequests = originalRequests(await serviceCall("query"));
+    await navigate("AI 助手");
+    assert.deepEqual(
+      originalRequests(await serviceCall("query")),
+      retainedRequests,
+    );
+    assert.equal(fixture.facts.proposals.length, proposalsBeforeCollection);
+    result.checks.push(
+      "native-explicit-query-original-task",
+      "native-home-task-focus",
+      "native-background-sampling-read-only",
+      "native-management-coverage-read-only",
+      "task-navigation-without-ai-or-resubmit",
     );
     const readAppearance = () =>
       browser.execute(() => ({
@@ -2273,9 +2532,9 @@ try {
       ),
     );
     result.checks.push("native-close-control-material-rebind");
-    await wait(() => browser.$(".composer textarea").isDisplayed());
     await wait(async () => !(await visibleText("正在读取或切换账户…")));
     await navigate("AI 助手");
+    await wait(() => browser.$(".composer textarea").isDisplayed());
     await text("GOLDEN_HELLO 查看办公套件");
     mark("restart Host through settings");
     rememberScopes(await readWorkerScopes(), hostPid());
@@ -2303,7 +2562,7 @@ try {
     await text("GOLDEN_HELLO 查看办公套件");
     await click("新会话");
     await prompt("GOLDEN_HELLO 重启后新对话");
-    await text("完成 HELLO");
+    await completedReply("完成 HELLO");
     result.checks.push(
       "window-reopen-history",
       "host-restart-credential-reuse",
@@ -2453,7 +2712,17 @@ try {
       await browser.$(".account-local-workspaces > summary").click();
     await browser.$('[aria-label="测试用户名"]').setValue("Golden Bob");
     await click("进入");
-    await wait(() => browser.$('[aria-label="测试用户名"]').isEnabled());
+    await wait(() =>
+      browser.execute(() => {
+        const users = document.querySelector('[aria-label="测试用户"]');
+        const failure = users
+          ?.querySelector('[role="alert"]')
+          ?.textContent?.trim();
+        if (failure) throw Error(failure);
+        return users?.textContent?.includes("当前用户：Golden Bob");
+      }),
+    );
+    mark("open connection settings for the acknowledged local workspace");
     await navigate("设置");
     await text("个人 AI 连接（0）");
     await click("稍后配置，前往 AI");
@@ -2463,7 +2732,16 @@ try {
       await browser.$(".account-local-workspaces > summary").click();
     await browser.$('[aria-label="测试用户名"]').setValue("Golden Alice");
     await click("进入");
-    await wait(() => browser.$('[aria-label="测试用户名"]').isEnabled());
+    await wait(() =>
+      browser.execute(() => {
+        const users = document.querySelector('[aria-label="测试用户"]');
+        const failure = users
+          ?.querySelector('[role="alert"]')
+          ?.textContent?.trim();
+        if (failure) throw Error(failure);
+        return users?.textContent?.includes("当前用户：Golden Alice");
+      }),
+    );
     await navigate("设置");
     await text("个人 AI 连接（1）");
     await click("删除");

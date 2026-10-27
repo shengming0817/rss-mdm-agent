@@ -7,6 +7,66 @@ use ring::signature::KeyPair;
 use rss_mdm_agent_wire::runtime as wire;
 use std::io::{BufRead, Write};
 
+/// Protocol fixtures consumed by the real installed owner's native task views.
+fn task_history(server: &protocol::Server) -> serde_json::Value {
+    use rss_mdm_agent_wire::activities::*;
+    let binding = server
+        .data
+        .lock()
+        .unwrap()
+        .binding
+        .clone()
+        .expect("registered native owner");
+    let signed = protocol::telemetry::native_performance_configuration(server, &binding);
+    let policy = signed.configuration.policy;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let activity: ManagementActivity = serde_json::from_value(serde_json::json!({
+        "id":"execution:native-background", "source":"execution", "kind":"execution",
+        "phase":"received", "recordedAt":now, "observedAt":now, "origin":"policy",
+        "target":{"device":binding.device_id,"registration":binding.registration_id,"generation":binding.generation},
+        "links":{"steps":[],"operations":[]}, "delivery":"received", "execution":"running",
+        "effect":"unknown", "reporting":null, "decision":null, "auditOutcome":"recorded"
+    })).unwrap();
+    let mut data = server.data.lock().unwrap();
+    data.telemetry.configuration = Some(signed);
+    data.management_page = Some(ManagementActivityPage {
+        items: vec![activity.clone()],
+        next_cursor: None,
+        sync_cursor: "native-history-anchor".into(),
+        as_of: now,
+        retained_from: Some(now - 60),
+        coverage: vec![ActivityCoverage {
+            source: "execution".into(),
+            complete: false,
+            reasons: vec!["fixture-partial-source".into()],
+        }],
+    });
+    data.management_detail = Some(ManagementActivityDetail {
+        activity: activity.clone(),
+        personal: false,
+        related: vec![],
+        related_cursor: None,
+        missing: vec!["effect-not-observed".into()],
+        as_of: now,
+    });
+    serde_json::json!({"policy":policy,"activity":activity.id})
+}
+
+// The producer renews the same bounded grant, preserving the original definition
+// identity while the real UI journey runs. No consumer expiry bypass is involved.
+fn renew_task_history(server: &protocol::Server, now: i64) {
+    let mut data = server.data.lock().unwrap();
+    if let Some(signed) = &data.telemetry.configuration {
+        let mut configuration = signed.configuration.clone();
+        configuration.issued_at = now;
+        configuration.expires_at = now + 300;
+        data.telemetry.configuration = Some(protocol::telemetry::sign(&data, configuration));
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let server = protocol::Server::tls().await;
@@ -27,18 +87,24 @@ async fn main() {
         }
     });
     loop {
-        server.time.set(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64,
-        );
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        server.time.set(now);
+        renew_task_history(&server, now);
         tokio::select! {
+            _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
             line = rx.recv() => {
                 let Some(line) = line else { break };
                 let command: serde_json::Value = serde_json::from_str(&line).unwrap();
                 if command["kind"] == "configuration" {
                     println!("{}", serde_json::to_string(&server.configuration()).unwrap());
+                    std::io::stdout().flush().unwrap();
+                    continue;
+                }
+                if command["kind"] == "task-history" {
+                    println!("{}", task_history(&server));
                     std::io::stdout().flush().unwrap();
                     continue;
                 }
@@ -123,5 +189,39 @@ async fn main() {
             }
             _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => (),
         }
+    }
+}
+
+#[cfg(test)]
+mod task_history_tests {
+    use super::*;
+    #[tokio::test]
+    async fn signed_history_renews_time_without_splitting_the_original_policy() {
+        let server = protocol::Server::new().await;
+        let root = protocol::Root::new();
+        let mut client = server.client(&root, agent_client::OpenMode::Create);
+        server.register(&mut client).await;
+        task_history(&server);
+        let before = server
+            .data
+            .lock()
+            .unwrap()
+            .telemetry
+            .configuration
+            .clone()
+            .unwrap()
+            .configuration;
+        assert!(before.signing_bytes("test").is_ok());
+        renew_task_history(&server, before.issued_at + 250);
+        let data = server.data.lock().unwrap();
+        let after = &data.telemetry.configuration.as_ref().unwrap().configuration;
+        assert_eq!(after.policy, before.policy);
+        assert_eq!(after.policy_version, before.policy_version);
+        assert_eq!(after.resource_digest, before.resource_digest);
+        assert_eq!(after.expires_at - after.issued_at, 300);
+        assert!(after.signing_bytes("test").is_ok());
+        assert!(data.management_page.as_ref().unwrap().items[0]
+            .execution
+            .is_some());
     }
 }

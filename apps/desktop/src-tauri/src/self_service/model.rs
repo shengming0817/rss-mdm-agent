@@ -1,4 +1,4 @@
-use execution_contract::{BackendTask, RequestId};
+use execution_contract::RequestId;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, JsonSchema)]
@@ -21,21 +21,6 @@ pub fn error(code: &'static str, message: impl Into<String>) -> ServiceError {
     }
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SnapshotQuery {
-    pub after: Option<RequestId>,
-    pub selected: Option<RequestId>,
-}
-#[derive(Clone, Serialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct Snapshot {
-    pub available: Vec<BackendTask>,
-    pub preparations: Vec<execution_contract::BackendRequest>,
-    pub selected: Option<execution_app::BackendTaskView>,
-    pub requests: Vec<execution_app::ExecutionTaskDetails>,
-    pub next: Option<RequestId>,
-}
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ActionRef {
@@ -57,10 +42,4 @@ pub enum PolicyStatus {
     Run {
         value: Box<rss_mdm_agent_wire::runtime::SelfServiceStatus>,
     },
-}
-
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct RecentTasksQuery {
-    pub before: Option<String>,
 }

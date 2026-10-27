@@ -228,14 +228,21 @@ impl DesktopRuntime {
             .lock()
             .map_err(|_| unavailable())?
             .prepare(name)?;
+        eprintln!("RSS_NATIVE_USER_SWITCH stage=retire-start");
         let retired = self.retire_locked().await;
+        eprintln!(
+            "RSS_NATIVE_USER_SWITCH stage=retire-end ok={}",
+            retired.is_ok()
+        );
         if let Err(error) = &retired {
             if error.code != "logout_unconfirmed" {
                 return Err(error.clone());
             }
         }
         let context = self.users.lock().map_err(|_| unavailable())?.commit(page)?;
+        eprintln!("RSS_NATIVE_USER_SWITCH stage=activate-start");
         let context = self.activate_context(context).await?;
+        eprintln!("RSS_NATIVE_USER_SWITCH stage=activate-end");
         self.account_result(retired.map(|()| context))
     }
     async fn retry_cleanup(&self) -> ui::Result<()> {
@@ -370,12 +377,10 @@ impl DesktopRuntime {
                 .ok_or_else(unavailable)?
                 .native_session(next.generation.as_str())?,
             ai_session_contract::AccountIdentity::Device { .. } => {
-                execution_ipc::host::NativeContextSession {
-                    access: execution_ipc::host::NativeAccess::Device {},
-                    generation: execution_contract::Id::new(next.generation.as_str())
+                execution_ipc::host::NativeContextSession::device(
+                    execution_contract::Id::new(next.generation.as_str())
                         .map_err(|_| unavailable())?,
-                    expires_at_unix_ms: u64::MAX,
-                }
+                )
             }
         };
         let expected = next
@@ -531,12 +536,10 @@ impl DesktopRuntime {
             let result = self
                 .execution
                 .bind_context(
-                    execution_ipc::host::NativeContextSession {
-                        access: execution_ipc::host::NativeAccess::Device {},
-                        generation: execution_contract::Id::new(before.generation.as_str())
+                    execution_ipc::host::NativeContextSession::device(
+                        execution_contract::Id::new(before.generation.as_str())
                             .map_err(|_| unavailable())?,
-                        expires_at_unix_ms: u64::MAX,
-                    },
+                    ),
                     Some(
                         execution_contract::Id::new(expected.as_str())
                             .map_err(|_| unavailable())?,

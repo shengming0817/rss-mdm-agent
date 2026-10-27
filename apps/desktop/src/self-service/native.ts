@@ -7,14 +7,13 @@ import type {
   SettingsResponse,
   SoftwarePort,
   DataAccessPort,
-  Snapshot,
   TaskSubmission,
-  BackendTaskView,
 } from "./types";
 export function nativePort(): SelfServicePort | null {
   if (!isTauri()) return null;
   const generation = userGeneration();
   return {
+    offers: () => invoke("self_service_offers", { input: null, generation }),
     policy_resolve: (input) =>
       invoke("self_service_policy_resolve", { input, generation }),
     policy_directory: (input) =>
@@ -27,16 +26,10 @@ export function nativePort(): SelfServicePort | null {
       invoke("self_service_policy_status", { input, generation }),
     observe_software: (input) =>
       invoke("self_service_observe_software", { input, generation }),
-    recent_tasks: (input) =>
-      invoke("self_service_recent_tasks", { input, generation }),
-    snapshot: (input) =>
-      invoke<Snapshot>("self_service_snapshot", { input, generation }),
     execute: (input) =>
       invoke<TaskSubmission>("self_service_execute", { input, generation }),
     confirm: (input) =>
       invoke<TaskSubmission>("self_service_confirm", { input, generation }),
-    cancel: (input) =>
-      invoke<BackendTaskView>("self_service_cancel", { input, generation }),
   };
 }
 
@@ -50,7 +43,6 @@ export function nativeDataPort(): DataAccessPort | null {
     data_read: (input) => invoke("data_read", { input, generation }),
     query_submit: (input) => invoke("query_submit", { input, generation }),
     query_status: (input) => invoke("query_status", { input, generation }),
-    query_cancel: (input) => invoke("query_cancel", { input, generation }),
   };
 }
 
@@ -64,7 +56,6 @@ export function nativeSoftwarePort(): SoftwarePort | null {
     prepare: (input) => invoke("software_prepare", { input, generation }),
     submit: (input) => invoke("software_submit", { input, generation }),
     status: (input) => invoke("software_status", { input, generation }),
-    cancel: (input) => invoke("software_cancel", { input, generation }),
   };
 }
 
@@ -96,4 +87,22 @@ export function nativeNetworkCheckPort(): NetworkCheckPort | null {
   if (!isTauri()) return null;
   const generation = userGeneration();
   return (input) => invoke("network_check", { input, generation });
+}
+
+/** Same authenticated task port used by desktop, home and AI cards. */
+export function nativeTaskPort(): import("./types").TaskPort | null {
+  if (!isTauri()) return null;
+  const generation = userGeneration();
+  const current = async <T>(pending: Promise<T>): Promise<T> => {
+    const result = await pending;
+    if (generation !== userGeneration()) throw Error("native scope changed");
+    return result;
+  };
+  return {
+    list: (input) => current(invoke("task_list", { input, generation })),
+    detail: (input) => current(invoke("task_detail", { input, generation })),
+    control: (input) => current(invoke("task_control", { input, generation })),
+    controlStatus: (input) =>
+      current(invoke("task_control_status", { input, generation })),
+  };
 }

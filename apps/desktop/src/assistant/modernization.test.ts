@@ -1,3 +1,4 @@
+import { taskFromFacts } from "../../../../tests/self-service/support";
 import { mount, flushPromises } from "@vue/test-utils";
 import { expect, it, vi } from "vitest";
 import { computed, shallowRef } from "vue";
@@ -8,9 +9,9 @@ import { copyText } from "./clipboard";
 import { offer } from "../../../../tests/self-service/support";
 import fixtures from "../../../../tests/assistant/execution-fixtures.json";
 import type {
-  BackendTaskView,
+  TaskDetail,
   ExecutionTaskDetails,
-} from "@rss-mdm-agent/execution-bindings/task-details";
+} from "@rss-mdm-agent/execution-bindings/tasks";
 
 function assistant() {
   const c = createAssistant(undefined, () => "id");
@@ -71,7 +72,9 @@ it("refreshes a card and its open drawer from one authorized snapshot and invali
   c.state.selected = "session";
   const read = vi
     .spyOn(c, "executionDetails")
-    .mockResolvedValue({ kind: "execution", value: task("running") });
+    .mockResolvedValue(
+      taskFromFacts({ kind: "execution", value: task("running") }),
+    );
   const wrapper = mount(ExecutionActivity, {
     props: {
       controller: c,
@@ -93,10 +96,12 @@ it("refreshes a card and its open drawer from one authorized snapshot and invali
       .find((b) => b.text() === "查看设备操作")!
       .trigger("click");
     await wrapper.setProps({ detailsOpen: true });
-    read.mockResolvedValueOnce({
-      kind: "execution",
-      value: task("verified", "satisfied"),
-    });
+    read.mockResolvedValueOnce(
+      taskFromFacts({
+        kind: "execution",
+        value: task("verified", "satisfied"),
+      }),
+    );
     await wrapper
       .findAll("button")
       .find((b) => b.text() === "查询原任务")!
@@ -123,7 +128,7 @@ it("refreshes a card and its open drawer from one authorized snapshot and invali
 
 it("discards a late task read after the view has been hidden", async () => {
   const c = assistant();
-  let finish!: (value: BackendTaskView) => void;
+  let finish!: (value: TaskDetail) => void;
   vi.spyOn(c, "executionDetails").mockImplementation(
     () =>
       new Promise((resolve) => {
@@ -142,7 +147,12 @@ it("discards a late task read after the view has been hidden", async () => {
   });
   try {
     await wrapper.setProps({ visible: false });
-    finish({ kind: "execution", value: task("verified", "satisfied") });
+    finish(
+      taskFromFacts({
+        kind: "execution",
+        value: task("verified", "satisfied"),
+      }),
+    );
     await flushPromises();
     expect(wrapper.find(".execution-activity").exists()).toBe(false);
   } finally {
@@ -159,7 +169,7 @@ it("keeps one pending task read while conversation snapshots stream in the same 
     namespace: c.view.value!.namespace,
   } as NonNullable<typeof c.view.value>);
   const controller = { ...c, view: computed(() => snapshot.value) };
-  let finish!: (value: BackendTaskView) => void;
+  let finish!: (value: TaskDetail) => void;
   const read = vi.spyOn(controller, "executionDetails").mockImplementation(
     () =>
       new Promise((resolve) => {
@@ -183,7 +193,7 @@ it("keeps one pending task read while conversation snapshots stream in the same 
     }
     expect(read).toHaveBeenCalledTimes(1);
     expect(read.mock.calls[0][1].aborted).toBe(false);
-    finish({ kind: "execution", value: task("running") });
+    finish(taskFromFacts({ kind: "execution", value: task("running") }));
     await flushPromises();
     expect(wrapper.find(".execution-activity").exists()).toBe(true);
   } finally {
@@ -205,21 +215,28 @@ it("reports clipboard rejection without a native fallback or clipboard read", as
 it("keeps preparation actions and revocation visible in the modern task card", async () => {
   const c = assistant();
   const request = offer();
-  const read = vi.spyOn(c, "executionDetails").mockResolvedValue({
-    kind: "pending",
-    value: {
-      action: { kind: "offered", offer: request },
-      revision: 1,
-      state: "awaitingConfirmation",
-      risk: null,
-      confirmation: null,
-      failure: null,
-      trigger: structuredClone(fixtures.proposed.trigger) as Extract<
-        BackendTaskView,
-        { kind: "pending" }
-      >["value"]["trigger"],
-    },
-  });
+  const read = vi.spyOn(c, "executionDetails").mockResolvedValue(
+    taskFromFacts({
+      kind: "preparation",
+      value: {
+        retryExpectedRevision: null,
+        cancellationExpectedRevision: null,
+        recordedAtUnixMs: 1000,
+        cancellationControl: null,
+        retryOf: null,
+        action: { kind: "offered", offer: request },
+        revision: 1,
+        state: "awaitingConfirmation",
+        risk: null,
+        confirmation: null,
+        failure: null,
+        trigger: structuredClone(fixtures.proposed.trigger) as Extract<
+          TaskDetail["facts"],
+          { kind: "preparation" }
+        >["value"]["trigger"],
+      },
+    }),
+  );
   const confirm = vi
     .spyOn(c, "confirmPreparation")
     .mockResolvedValue(undefined);
@@ -243,21 +260,28 @@ it("keeps preparation actions and revocation visible in the modern task card", a
       .trigger("click");
     await flushPromises();
     expect(confirm).toHaveBeenCalledWith(request);
-    read.mockResolvedValueOnce({
-      kind: "pending",
-      value: {
-        action: { kind: "offered", offer: request },
-        revision: 2,
-        state: "failed",
-        risk: null,
-        confirmation: null,
-        failure: "revoked",
-        trigger: structuredClone(fixtures.proposed.trigger) as Extract<
-          BackendTaskView,
-          { kind: "pending" }
-        >["value"]["trigger"],
-      },
-    });
+    read.mockResolvedValueOnce(
+      taskFromFacts({
+        kind: "preparation",
+        value: {
+          retryExpectedRevision: null,
+          cancellationExpectedRevision: null,
+          recordedAtUnixMs: 1000,
+          cancellationControl: null,
+          retryOf: null,
+          action: { kind: "offered", offer: request },
+          revision: 2,
+          state: "failed",
+          risk: null,
+          confirmation: null,
+          failure: "revoked",
+          trigger: structuredClone(fixtures.proposed.trigger) as Extract<
+            TaskDetail["facts"],
+            { kind: "preparation" }
+          >["value"]["trigger"],
+        },
+      }),
+    );
     await wrapper
       .findAll("button")
       .find((b) => b.text() === "查询原任务")!
@@ -282,7 +306,9 @@ it("opens execution details only through the parent selection without requerying
   c.state.selected = "session";
   const read = vi
     .spyOn(c, "executionDetails")
-    .mockResolvedValue({ kind: "execution", value: task("running") });
+    .mockResolvedValue(
+      taskFromFacts({ kind: "execution", value: task("running") }),
+    );
   const host = document.createElement("div");
   document.body.append(host);
   const w = mount(ExecutionActivity, {

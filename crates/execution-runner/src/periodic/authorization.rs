@@ -149,7 +149,8 @@ fn verify_binding(
         || p.budget.total_output_bytes > u64::from(c.output_bytes)
         || p.budget.max_attempts != 1
         || !matches!(&p.request.authority, Authority::Enterprise { tenant, .. } if tenant.as_str() == c.tenant_id.to_string())
-        || p.request.actor.as_str() != format!("registration:{}", c.registration_id)
+        || p.request.actor.as_str()
+            != format!("registration:{}:{}", c.registration_id, c.generation)
         || p.request.target.device.as_str() != c.device_id
         || !matches!(p.request.target.scope, TargetScope::Device {})
         || p.request.delegation.is_some()
@@ -226,7 +227,7 @@ mod tests {
             tenant: Id::new(id).unwrap(),
             id: Id::new("enterprise").unwrap(),
         };
-        p.request.actor = ActorId::new(format!("registration:{id}")).unwrap();
+        p.request.actor = ActorId::new(format!("registration:{id}:{}", c.generation)).unwrap();
         p.request.target.device = DeviceId::new(&c.device_id).unwrap();
         p.request.target.scope = TargetScope::Device {};
         p.request.delegation = None;
@@ -263,6 +264,26 @@ mod tests {
             fixture_owned: true,
         };
         (c, p, artifacts)
+    }
+    #[test]
+    fn periodic_actor_is_bound_to_the_original_registration_generation() {
+        let (c, mut p, artifacts) = baseline();
+        p.request.actor = ActorId::new(format!(
+            "registration:{}:{}",
+            c.registration_id, c.generation
+        ))
+        .unwrap();
+        assert_eq!(verify_binding(&c, &p, &artifacts, 150000), Ok(()));
+        p.request.actor = ActorId::new(format!(
+            "registration:{}:{}",
+            c.registration_id,
+            c.generation + 1
+        ))
+        .unwrap();
+        assert_eq!(
+            verify_binding(&c, &p, &artifacts, 150000),
+            Err(Error::Denied)
+        );
     }
     #[test]
     fn policy_binding_is_rejected_from_an_otherwise_valid_baseline() {

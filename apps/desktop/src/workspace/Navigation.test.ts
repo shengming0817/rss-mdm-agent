@@ -146,13 +146,14 @@ it("restores each module subsection and category, while ancestor breadcrumbs exp
       "AI 助手",
       "软件管理",
       "工具中心",
+      "任务中心",
       "系统设置",
     ]);
     expect(
       w
-        .find(
-          ".workspace-rail .ui-navigation > ol > li:nth-child(5) .module-navigation",
-        )
+        .findAll(".workspace-rail .ui-navigation > ol > li")
+        .find((item) => item.find("button").text() === "系统设置")!
+        .find(".module-navigation")
         .exists(),
     ).toBe(true);
     await root("工具中心").trigger("click");

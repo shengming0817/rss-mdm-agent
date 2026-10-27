@@ -187,6 +187,11 @@ impl Case {
     }
     fn selection(&self, human: bool) -> Selection {
         let mut selection = Selection::from_record(&BackendRequest {
+            retry_of: None,
+            retry_expected_revision: None,
+            recorded_at_unix_ms: 1,
+            cancellation_control: None,
+            cancellation_expected_revision: None,
             action: execution_contract::PreparedAction::Offered {
                 offer: offered(&self.offer).unwrap(),
             },
@@ -1363,7 +1368,50 @@ impl Case {
             self.selection.binding.clone(),
         )
     }
-    async fn recent_call(&mut self, before: Option<String>) -> Reply {
+    async fn cancel_task(&mut self, request: &RequestId) {
+        use execution_app::tasks::*;
+        let reference = TaskRef::Request {
+            request: request.clone(),
+        };
+        let reply = self
+            .policy_call(execution_ipc::host::Request::Task {
+                input: TaskOperation::Detail(reference.clone()),
+                origin: ClientOrigin::Desktop {},
+            })
+            .await;
+        let Reply::Task {
+            value: TaskResponse::Detail(detail),
+        } = reply
+        else {
+            panic!("task detail: {}", serde_json::to_string(&reply).unwrap())
+        };
+        let reply = self
+            .policy_call(execution_ipc::host::Request::Task {
+                input: TaskOperation::Control(TaskControl {
+                    reference,
+                    id: plan::id(uuid::Uuid::new_v4().to_string()).unwrap(),
+                    scope: detail.scope,
+                    expected_revision: detail.revision,
+                    action: TaskAction::Cancel,
+                }),
+                origin: ClientOrigin::Desktop {},
+            })
+            .await;
+        assert!(
+            matches!(
+                reply,
+                Reply::Task {
+                    value: TaskResponse::Control(TaskControlReceipt {
+                        disposition: ControlDisposition::Confirmed,
+                        ..
+                    })
+                }
+            ),
+            "task cancel: {}",
+            serde_json::to_string(&reply).unwrap()
+        );
+    }
+    pub(crate) async fn recent_call(&mut self, before: Option<String>) -> Reply {
         let (reply, receive) = tokio::sync::oneshot::channel();
         self.service.core.handle(Command {
             fence_epoch: self.service.core.fences.current(&self.scope()).unwrap(),
@@ -1371,7 +1419,14 @@ impl Case {
             session: self.selection.session,
             binding: Some(self.selection.binding.clone()),
             reply,
-            request: LocalRequest::operation(execution_ipc::host::Request::RecentTasks { before }),
+            request: LocalRequest::operation(execution_ipc::host::Request::Task {
+                input: execution_app::tasks::TaskOperation::List(execution_app::tasks::TaskQuery {
+                    cursor: before,
+                    limit: 32,
+                    ..Default::default()
+                }),
+                origin: ClientOrigin::Desktop {},
+            }),
         });
         receive.await.unwrap()
     }
@@ -1550,6 +1605,7 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
     assert!(c._server.data.lock().unwrap().invocations.is_empty());
     assert!(matches!(
         c.policy_call(Request::PolicyStatus {
+            origin: ClientOrigin::Desktop {},
             context: c.context(),
             request: choice.request.clone()
         })
@@ -1588,6 +1644,7 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
     }
     let Reply::PolicyStatus { value: status } = c
         .policy_call(Request::PolicyStatus {
+            origin: ClientOrigin::Desktop {},
             context: c.context(),
             request: choice.request.clone(),
         })
@@ -1600,6 +1657,7 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
     c.policy_call(Request::RevokeContext {}).await;
     assert!(matches!(
         c.policy_call(Request::PolicyStatus {
+            origin: ClientOrigin::Desktop {},
             context: c.context(),
             request: choice.request
         })
@@ -1982,6 +2040,11 @@ async fn settled_software_observation_replays_the_original_fact_and_never_create
         };
         let now = c.service.core.host.clock.millis().unwrap();
         let record = BackendRequest {
+            retry_of: None,
+            retry_expected_revision: None,
+            recorded_at_unix_ms: 1,
+            cancellation_control: None,
+            cancellation_expected_revision: None,
             action: PreparedAction::SoftwareRead {
                 choice: choice.clone(),
                 definition: definition.clone(),
@@ -2152,6 +2215,7 @@ async fn durable_ready_policy_resumes_original_uuid_from_each_native_entrypoint(
                 origin: c.selection.origin.clone(),
             },
             1 => Request::PolicyStatus {
+                origin: ClientOrigin::Desktop {},
                 context: c.context(),
                 request: original.clone(),
             },
@@ -2194,7 +2258,7 @@ fn select_pki_refresh(root: &std::path::Path) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn device_context_binding_does_not_wait_for_background_pki_http() {
-    use execution_ipc::host::{Handler, NativeAccess, NativeContextSession, PeerPolicy, Request};
+    use execution_ipc::host::{Handler, NativeContextSession, PeerPolicy, Request};
     let _budget = crate::scenario_budget::enter();
     let mut c = Case::new(None).await;
     c.service.waiting = None;
@@ -2235,11 +2299,9 @@ async fn device_context_binding_does_not_wait_for_background_pki_http() {
         ));
         let reply = owner.call(
             LocalRequest::operation(Request::BindContext {
-                value: NativeContextSession {
-                    access: NativeAccess::Device {},
-                    generation: plan::id("device-during-background-http").unwrap(),
-                    expires_at_unix_ms: u64::MAX,
-                },
+                value: NativeContextSession::device(
+                    plan::id("device-during-background-http").unwrap(),
+                ),
                 expected: None,
             }),
             subject,
@@ -2595,16 +2657,12 @@ async fn software_self_service_binds_signed_policy_and_native_context() {
 
 impl Case {
     async fn device(&mut self, generation: &str) {
-        use execution_ipc::host::{NativeAccess, NativeContextSession, Request};
+        use execution_ipc::host::{NativeContextSession, Request};
         self.policy_call(Request::RevokeContext {}).await;
         let Reply::ContextBound { value } = self
             .policy_call(Request::BindContext {
                 expected: None,
-                value: NativeContextSession {
-                    access: NativeAccess::Device {},
-                    generation: plan::id(generation).unwrap(),
-                    expires_at_unix_ms: u64::MAX,
-                },
+                value: NativeContextSession::device(plan::id(generation).unwrap()),
             })
             .await
         else {
@@ -2826,6 +2884,7 @@ async fn unknown_device_submission_queries_original_before_any_repeat_post_after
         };
         let reply = c
             .policy_call(Request::PolicyStatus {
+                origin: ClientOrigin::Desktop {},
                 context: c.context(),
                 request: choice.request.clone(),
             })
@@ -2892,6 +2951,7 @@ async fn fences_isolate_os_sessions_and_user_requests_never_downgrade() {
     let calls = c._server.data.lock().unwrap().employee_calls.len();
     assert!(matches!(
         c.policy_call(Request::PolicyStatus {
+            origin: ClientOrigin::Desktop {},
             context: c.context(),
             request: choice.request.clone()
         })
@@ -3499,6 +3559,7 @@ async fn operation_draft_freezes_current_parameters_once_and_queries_do_not_exec
         for _ in 0..2 {
             let Reply::PolicyRequest { value } = c
                 .policy_call(Request::PolicyStatus {
+                    origin: ClientOrigin::Desktop {},
                     context: c.context(),
                     request: choice.request.clone(),
                 })
@@ -4648,6 +4709,20 @@ async fn successful_local_software_assessment_confirms_receipts_and_releases_mat
                 execution_lifecycle::EffectAssessment::NoEffect
             })
         );
+        // Cancellation is the original owner's durable request fact, even after
+        // verified completion. It must not rewrite effect or imply redispatch.
+        c.cancel_task(&choice.request).await;
+        let cancelled = c
+            .service
+            .core
+            .app
+            .status(&c.service.core.local_caller(), &choice.request)
+            .unwrap();
+        assert!(cancelled.cancel_requested);
+        assert_eq!(cancelled.phase, execution_app::TaskPhase::Verified);
+        assert_eq!(cancelled.process, status.process);
+        assert_eq!(cancelled.assessment, status.assessment);
+        assert_eq!(cancelled.attempts, 1);
         let consumer = plan::id(RESULT_CONSUMER).unwrap();
         c.service.core.finish_local_result(&choice.request).unwrap();
         assert!(c
@@ -4758,9 +4833,10 @@ async fn local_software_api_stages_no_attempt_and_replays_the_original_after_los
         .items
         .iter()
         .any(|i| i.prepared.request == choice.request));
+    c.cancel_task(&choice.request).await;
     let Reply::SoftwareStatus { value: cancel } = c
         .local_software_call(
-            LocalSoftwareOperation::Cancel(QueryRequest {
+            LocalSoftwareOperation::Status(QueryRequest {
                 request: choice.request.clone(),
             }),
             false,
@@ -5062,6 +5138,11 @@ async fn installation_owner_exists_before_registration_and_preserves_both_scopes
     // Preparation also reserves the global UUID, before an execution exists.
     let prepared_id = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
     let record = BackendRequest {
+        retry_of: None,
+        retry_expected_revision: None,
+        recorded_at_unix_ms: 1,
+        cancellation_control: None,
+        cancellation_expected_revision: None,
         action: PreparedAction::Offered {
             offer: BackendTask {
                 request: prepared_id.clone(),
@@ -5311,8 +5392,9 @@ async fn settings_retained_task_survives_same_account_reconnection() {
         .await,
         Reply::DataFailure { .. }
     ));
+    c.cancel_task(&request).await;
     assert!(
-        matches!(c.policy_call(call(c.context(),ClientOrigin::Desktop{},SettingsOperation::Cancel{request:request.clone()})).await,Reply::Settings{value} if value.finished && value.effect==SettingsEffect::Cancelled)
+        matches!(c.policy_call(call(c.context(),ClientOrigin::Desktop{},SettingsOperation::Status{request:request.clone()})).await,Reply::Settings{value} if value.finished && value.effect==SettingsEffect::Cancelled)
     );
     assert!(
         matches!(c.policy_call(call(c.context(),ClientOrigin::Desktop{},SettingsOperation::Refresh{request:request.clone(),section:SettingsSection::Network})).await,Reply::Settings{value} if value.finished && value.digest.as_ref()==Some(frozen.digest()))
@@ -5495,15 +5577,17 @@ async fn network_check_replay_and_cancel_keep_the_original_sqlite_plan_and_login
         .app
         .stage_execution(&c.service.core.local_caller(), &frozen)
         .unwrap();
-    let Reply::RecentTasks { value } = c.recent_call(None).await else {
+    let Reply::Task {
+        value: execution_app::tasks::TaskResponse::Page(value),
+    } = c.recent_call(None).await
+    else {
         panic!("recent tasks");
     };
     assert!(
         value
             .items
             .iter()
-            .any(|item| item.details.action.request_id == request
-                && item.details.status.attempts == 0)
+            .any(|item| matches!(&item.facts,execution_app::tasks::TaskFacts::Execution(details) if details.action.request_id==request && details.status.attempts==0))
     );
     use execution_ipc::host::Request;
     let call = |context, input| Request::NetworkCheck {
@@ -5532,19 +5616,22 @@ async fn network_check_replay_and_cancel_keep_the_original_sqlite_plan_and_login
             reason: DataError::Conflict
         }
     ));
+    c.cancel_task(&request).await;
     assert!(
-        matches!(c.policy_call(call(c.context(),NetworkCheckOperation::Cancel {request:request.clone()})).await,Reply::NetworkCheck {value} if value.status.phase==execution_app::TaskPhase::Cancelled && value.status.attempts==0)
+        matches!(c.policy_call(call(c.context(),NetworkCheckOperation::Status {request:request.clone()})).await,Reply::NetworkCheck {value} if value.status.phase==execution_app::TaskPhase::Cancelled && value.status.attempts==0)
     );
     c.employee("network-retired-owner").await;
-    let Reply::RecentTasks { value } = c.recent_call(None).await else {
+    let Reply::Task {
+        value: execution_app::tasks::TaskResponse::Page(value),
+    } = c.recent_call(None).await
+    else {
         panic!("recent tasks");
     };
     assert!(
         value
             .items
             .iter()
-            .any(|item| item.details.action.request_id == request
-                && item.details.status.attempts == 0)
+            .any(|item| matches!(&item.facts,execution_app::tasks::TaskFacts::Execution(details) if details.action.request_id==request && details.status.attempts==0))
     );
 
     assert!(matches!(
@@ -5559,12 +5646,14 @@ async fn recent_activity_rejects_invalid_cursors_without_creating_work() {
     let _budget = crate::scenario_budget::enter();
     let mut c = Case::new(None).await;
     assert!(
-        matches!(c.recent_call(None).await, Reply::RecentTasks{value} if value.items.is_empty() && value.next.is_none())
+        matches!(c.recent_call(None).await, Reply::Task { value: execution_app::tasks::TaskResponse::Page(value) } if value.items.is_empty() && value.next.is_none())
     );
     for cursor in ["0", "-1", "01", "not-a-cursor"] {
         assert!(matches!(
             c.recent_call(Some(cursor.into())).await,
-            Reply::Rejected
+            Reply::DataFailure {
+                reason: DataError::InvalidInput
+            }
         ));
     }
     assert!(c
@@ -5635,4 +5724,732 @@ async fn slow_access_refresh_services_psso_callbacks_and_joins_before_returning(
     result.unwrap();
     assert!(joined.load(Ordering::Acquire));
     assert!(c.service.core.psso.commands.is_empty());
+}
+
+#[tokio::test]
+async fn unified_preparation_controls_keep_original_cas_receipts_and_fence_retired_native_scopes() {
+    let _budget = crate::scenario_budget::enter();
+    use execution_app::tasks::*;
+    use execution_ipc::host::Request;
+    let mut c = Case::new(Some(RiskLevel::Two)).await;
+    c.service.core.start_task(c.selection(false)).unwrap();
+    let original = c.record();
+    let reference = TaskRef::Request {
+        request: original.action.request().clone(),
+    };
+    let read = Request::Task {
+        input: TaskOperation::Detail(reference.clone()),
+        origin: ClientOrigin::Desktop {},
+    };
+    let Reply::Task {
+        value: TaskResponse::Detail(detail),
+    } = c.policy_call(read).await
+    else {
+        panic!("task detail")
+    };
+    assert_eq!(detail.source, TaskSource::Ai);
+    assert!(detail.human_confirmation);
+    assert!(detail.allowed_actions.contains(&TaskAction::Cancel));
+    let control = TaskControl {
+        reference: reference.clone(),
+        id: plan::id("preparation-control").unwrap(),
+        scope: detail.scope.clone(),
+        expected_revision: detail.revision.clone(),
+        action: TaskAction::Cancel,
+    };
+    let mut stale = control.clone();
+    stale.id = plan::id("stale-preparation").unwrap();
+    stale.expected_revision.owner += 1;
+    assert!(matches!(
+        c.policy_call(Request::Task {
+            input: TaskOperation::Control(stale),
+            origin: ClientOrigin::Desktop {}
+        })
+        .await,
+        Reply::Task {
+            value: TaskResponse::Control(TaskControlReceipt {
+                disposition: ControlDisposition::Stale,
+                ..
+            })
+        }
+    ));
+    assert_eq!(c.record(), original);
+    for _ in 0..2 {
+        assert!(matches!(
+            c.policy_call(Request::Task {
+                input: TaskOperation::Control(control.clone()),
+                origin: ClientOrigin::Desktop {}
+            })
+            .await,
+            Reply::Task {
+                value: TaskResponse::Control(TaskControlReceipt {
+                    disposition: ControlDisposition::Confirmed,
+                    ..
+                })
+            }
+        ));
+    }
+    assert_eq!(c.record().revision, original.revision + 1);
+    let query = TaskControlQuery {
+        reference,
+        id: control.id,
+        scope: detail.scope,
+    };
+    assert!(matches!(
+        c.policy_call(Request::Task {
+            input: TaskOperation::ControlStatus(query.clone()),
+            origin: ClientOrigin::Desktop {}
+        })
+        .await,
+        Reply::Task {
+            value: TaskResponse::Control(TaskControlReceipt {
+                disposition: ControlDisposition::Confirmed,
+                ..
+            })
+        }
+    ));
+    c.employee("changed-native-generation").await;
+    assert!(matches!(
+        c.policy_call(Request::Task {
+            input: TaskOperation::ControlStatus(query),
+            origin: ClientOrigin::Desktop {}
+        })
+        .await,
+        Reply::DataFailure {
+            reason: DataError::Denied
+        }
+    ));
+    assert!(c._server.data.lock().unwrap().start_ops.is_empty());
+}
+
+#[tokio::test]
+async fn unified_preparation_pages_bind_owner_watermarks_filters_and_session_authorization() {
+    let _budget = crate::scenario_budget::enter();
+    use execution_app::tasks::*;
+    use execution_ipc::host::Request;
+    let mut c = Case::new(Some(RiskLevel::Two)).await;
+    c.service.core.start_task(c.selection(false)).unwrap();
+    let original = c.record();
+    let insert = |c: &mut Case, name: &str| {
+        let mut record = original.clone();
+        let PreparedAction::Offered { offer } = &mut record.action else {
+            panic!("offered")
+        };
+        offer.request = RequestId::new(name).unwrap();
+        c.service
+            .core
+            .app
+            .record_backend_request(&c.service.core.caller(), None, &record)
+            .unwrap();
+    };
+    insert(&mut c, "a-original");
+    insert(&mut c, "c-original");
+    let query = TaskQuery {
+        limit: 1,
+        ..Default::default()
+    };
+    let Reply::Task {
+        value: TaskResponse::Page(first),
+    } = c
+        .policy_call(Request::Task {
+            input: TaskOperation::List(query.clone()),
+            origin: ClientOrigin::Desktop {},
+        })
+        .await
+    else {
+        panic!("task page")
+    };
+    assert_eq!(first.items.len(), 1);
+    let mut next = query.clone();
+    next.cursor = first.next.clone();
+    insert(&mut c, "b-after-watermark");
+    let mut found = first
+        .items
+        .iter()
+        .map(|v| v.reference.clone())
+        .collect::<Vec<_>>();
+    for _ in 0..16 {
+        let Reply::Task {
+            value: TaskResponse::Page(page),
+        } = c
+            .policy_call(Request::Task {
+                input: TaskOperation::List(next.clone()),
+                origin: ClientOrigin::Desktop {},
+            })
+            .await
+        else {
+            panic!("continuation")
+        };
+        found.extend(page.items.into_iter().map(|v| v.reference));
+        next.cursor = page.next;
+        if next.cursor.is_none() {
+            break;
+        }
+    }
+    assert!(found.contains(&TaskRef::Request {
+        request: RequestId::new("c-original").unwrap()
+    }));
+    assert!(!found.contains(&TaskRef::Request {
+        request: RequestId::new("b-after-watermark").unwrap()
+    }));
+    let mut changed = query;
+    changed.cursor = first.next;
+    changed.source = Some(TaskSource::Human);
+    assert!(matches!(
+        c.policy_call(Request::Task {
+            input: TaskOperation::List(changed),
+            origin: ClientOrigin::Desktop {}
+        })
+        .await,
+        Reply::DataFailure {
+            reason: DataError::Conflict
+        }
+    ));
+    assert!(c._server.data.lock().unwrap().start_ops.is_empty());
+}
+
+#[tokio::test]
+async fn retry_control_replay_preserves_the_original_complete_revision_without_a_second_invocation()
+{
+    let _budget = crate::scenario_budget::enter();
+    use execution_app::tasks::*;
+    use execution_ipc::host::Request;
+    let mut c = Case::new(Some(RiskLevel::Two)).await;
+    let (original, _offer) = c.accepted_policy_offer(true).await;
+    let original_request = original.action.request().clone();
+    let id = plan::id(uuid::Uuid::new_v4().to_string()).unwrap();
+    let reference = TaskRef::Request {
+        request: original_request.clone(),
+    };
+    let Reply::Task {
+        value: TaskResponse::Detail(detail),
+    } = c
+        .policy_call(Request::Task {
+            input: TaskOperation::Detail(reference.clone()),
+            origin: ClientOrigin::Desktop {},
+        })
+        .await
+    else {
+        panic!("original detail")
+    };
+    let mut retry = original.clone();
+    let PreparedAction::Policy {
+        choice,
+        run_id,
+        offer,
+        ..
+    } = &mut retry.action
+    else {
+        panic!("policy")
+    };
+    choice.request = RequestId::new(id.as_str()).unwrap();
+    *run_id = None;
+    *offer = None;
+    retry.state = BackendRequestState::AwaitingConfirmation;
+    retry.confirmation = None;
+    retry.revision = 1;
+    retry.retry_of = Some(original_request);
+    retry.retry_expected_revision = Some(detail.revision.clone());
+    c.service
+        .core
+        .app
+        .record_backend_request(&c.service.core.caller(), None, &retry)
+        .unwrap();
+    let calls = c._server.data.lock().unwrap().invocations.len();
+    let mut control = TaskControl {
+        reference,
+        id,
+        scope: detail.scope,
+        expected_revision: detail.revision,
+        action: TaskAction::Retry,
+    };
+    assert!(matches!(
+        c.policy_call(Request::Task {
+            input: TaskOperation::Control(control.clone()),
+            origin: ClientOrigin::Desktop {}
+        })
+        .await,
+        Reply::Task {
+            value: TaskResponse::Control(TaskControlReceipt {
+                disposition: ControlDisposition::Confirmed,
+                created: Some(_),
+                ..
+            })
+        }
+    ));
+    control.expected_revision.owner += 1;
+    assert!(matches!(
+        c.policy_call(Request::Task {
+            input: TaskOperation::Control(control),
+            origin: ClientOrigin::Desktop {}
+        })
+        .await,
+        Reply::DataFailure {
+            reason: DataError::Conflict
+        }
+    ));
+    assert_eq!(c._server.data.lock().unwrap().invocations.len(), calls);
+}
+
+#[tokio::test]
+async fn device_policy_preparation_is_readable_through_native_task_port_and_safe_for_ai_json() {
+    let _budget = crate::scenario_budget::enter();
+    use execution_app::tasks::{TaskOperation, TaskRef, TaskResponse};
+    use execution_ipc::host::Request;
+    let mut c = Case::new(None).await;
+    let mut directory = protocol::policy_directory_fixture(c.service.client.configuration().tenant);
+    directory.subject = wire::SelfServiceSubject::Device {};
+    directory.self_service.risk_level = 2;
+    c._server.data.lock().unwrap().self_service_directory = Some(protocol::Directory {
+        items: vec![directory.clone()],
+        next_cursor: None,
+        as_of: c._server.time.now().unwrap(),
+    });
+    c.device("native-task-device").await;
+    let choice = c.policy_choice(&directory);
+    assert!(matches!(
+        c.policy_call(Request::InvokePolicy {
+            context: c.context(),
+            choice: choice.clone(),
+            origin: c.selection.origin.clone(),
+        })
+        .await,
+        Reply::PolicyRequest { .. }
+    ));
+    fn safe(value: &serde_json::Value) {
+        match value {
+            serde_json::Value::Number(n) => {
+                if let Some(n) = n.as_u64() {
+                    assert!(n <= 9_007_199_254_740_991, "unsafe native integer: {n}");
+                }
+            }
+            serde_json::Value::Array(a) => a.iter().for_each(safe),
+            serde_json::Value::Object(o) => o.values().for_each(safe),
+            _ => (),
+        }
+    }
+    for origin in [ClientOrigin::Desktop {}, c.selection.origin.clone()] {
+        let (reply, receive) = tokio::sync::oneshot::channel();
+        c.service.core.handle(Command {
+            fence_epoch: c.service.core.fences.current(&c.scope()).unwrap(),
+            subject: c.selection.subject.clone(),
+            session: c.selection.session,
+            binding: Some(c.selection.binding.clone()),
+            reply,
+            request: LocalRequest::operation(Request::Task {
+                input: TaskOperation::Detail(TaskRef::Request {
+                    request: choice.request.clone(),
+                }),
+                origin,
+            }),
+        });
+        let response = receive.await.unwrap();
+        if !matches!(
+            response,
+            Reply::Task {
+                value: TaskResponse::Detail(_)
+            }
+        ) {
+            panic!(
+                "original detail failed: {}",
+                serde_json::to_string(&response).unwrap()
+            );
+        }
+        if let Reply::Task {
+            value: TaskResponse::Detail(detail),
+        } = &response
+        {
+            let execution_app::tasks::TaskFacts::Preparation(record) = &detail.facts else {
+                panic!("preparation facts");
+            };
+            assert_eq!(record.state, BackendRequestState::AwaitingConfirmation);
+            assert_eq!(record.risk.as_ref().unwrap().level, RiskLevel::Two);
+            assert!(record.confirmation.is_none());
+            assert!(detail.human_confirmation);
+        }
+        safe(&serde_json::to_value(response).unwrap());
+    }
+    assert!(c._server.data.lock().unwrap().start_ops.is_empty());
+}
+
+#[tokio::test]
+async fn native_context_rejects_inexact_json_deadlines_before_publishing_a_binding() {
+    let _budget = crate::scenario_budget::enter();
+    use execution_ipc::host::{NativeAccess, NativeContextSession, Request};
+    let mut c = Case::new(None).await;
+    c.policy_call(Request::RevokeContext {}).await;
+    for expiry in [execution_contract::MAX_SAFE_INTEGER + 1, u64::MAX] {
+        assert!(matches!(
+            c.policy_call(Request::BindContext {
+                expected: None,
+                value: NativeContextSession {
+                    generation: plan::id("inexact-context").unwrap(),
+                    access: NativeAccess::Device {},
+                    expires_at_unix_ms: expiry,
+                },
+            })
+            .await,
+            Reply::Rejected
+        ));
+    }
+    c.device("exact-context").await;
+}
+
+#[tokio::test]
+async fn native_local_query_is_projected_under_its_original_device_after_enterprise_registration() {
+    use execution_app::tasks::{TaskFacts, TaskOperation, TaskQuery, TaskRef, TaskResponse};
+    use execution_ipc::host::Request;
+    let _budget = crate::scenario_budget::enter();
+    let mut c = Case::new(None).await;
+    c.service.core.config.worker_image_fixture = Some(fixture_worker_image);
+    assert_ne!(
+        c.service.core.host.root.device,
+        c.service.core.host.binding.device
+    );
+    let definition = c
+        .service
+        .core
+        .data
+        .directory(&c.selection.subject)
+        .unwrap()
+        .into_iter()
+        .find(|d| d.domains.contains(&"hardware.memory".into()))
+        .unwrap();
+    let mut read = c
+        .service
+        .core
+        .data
+        .local_definition(&definition.reference, &c.selection.subject)
+        .unwrap()
+        .read;
+    read.deadline = (c.service.core.host.clock.millis().unwrap() / 1000 + 90) as i64;
+    let request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+    let root = c.service.core.host.root.clone();
+    let (frozen, materials) = backend::collection::compile_read(
+        &read,
+        request.clone(),
+        Initiator::Human {
+            os_session: OsSessionRef {
+                device: root.device.clone(),
+                account: OsAccountRef {
+                    platform: Platform::Macos,
+                    subject: plan::id(&c.selection.subject).unwrap(),
+                },
+                session: c.selection.binding.clone(),
+            },
+        },
+        Operation {
+            action: plan::id("local-query").unwrap(),
+            resource: plan::reference(
+                definition.reference.id.as_str(),
+                definition.reference.revision.as_str(),
+            )
+            .unwrap(),
+        },
+        plan::reference("local-native-query", "1").unwrap(),
+        &root,
+        &c.service.core.host.local_actor,
+        (&c.service.core.config, &mut c.service.core.material_root),
+        None,
+    )
+    .unwrap();
+    c.service
+        .core
+        .host
+        .materials
+        .register(&frozen, materials)
+        .unwrap();
+    c.service
+        .core
+        .app
+        .stage_execution(&c.service.core.local_caller(), &frozen)
+        .unwrap();
+    let reference = TaskRef::Request {
+        request: request.clone(),
+    };
+    let reply = c
+        .policy_call(Request::Task {
+            input: TaskOperation::Detail(reference.clone()),
+            origin: ClientOrigin::Desktop {},
+        })
+        .await;
+    let Reply::Task {
+        value: TaskResponse::Detail(detail),
+    } = reply
+    else {
+        panic!(
+            "native local detail failed: {}",
+            serde_json::to_string(&reply).unwrap()
+        );
+    };
+    assert_eq!(detail.task_kind, execution_app::tasks::TaskKind::Query);
+    assert!(matches!(detail.facts, TaskFacts::Execution(_)));
+    let Reply::Task {
+        value: TaskResponse::Page(page),
+    } = c
+        .policy_call(Request::Task {
+            input: TaskOperation::List(TaskQuery {
+                limit: 32,
+                ..Default::default()
+            }),
+            origin: ClientOrigin::Desktop {},
+        })
+        .await
+    else {
+        panic!("task page");
+    };
+    assert!(page.items.iter().any(|item| item.reference == reference));
+    let foreign = policy::SessionKey::new("90001".into(), c.selection.binding.clone());
+    let (reply, _) = tokio::sync::oneshot::channel();
+    let command = Command {
+        fence_epoch: c.service.core.fences.current(&foreign).unwrap(),
+        subject: "90001".into(),
+        session: c.selection.session,
+        binding: Some(c.selection.binding.clone()),
+        reply,
+        request: LocalRequest::operation(Request::ServiceStatus {}),
+    };
+    assert!(matches!(
+        c.service.core.task_operation(
+            &command,
+            &TaskOperation::Detail(reference),
+            &ClientOrigin::Desktop {}
+        ),
+        Err(Error::Denied)
+    ));
+    assert_eq!(
+        c.service
+            .core
+            .app
+            .status(&c.service.core.local_caller(), &request)
+            .unwrap()
+            .attempts,
+        0
+    );
+    complete_material_gc(&mut c.service).unwrap();
+}
+
+#[tokio::test]
+async fn periodic_native_observation_is_discovered_as_one_read_only_sampling_task() {
+    use execution_app::tasks::{
+        TaskFacts, TaskKind, TaskOperation, TaskQuery, TaskRef, TaskResponse,
+    };
+    use execution_ipc::host::Request;
+    let _budget = crate::scenario_budget::enter();
+    let mut c = Case::new(None).await;
+    let configuration = protocol::telemetry::native_performance_configuration(
+        &c._server,
+        &c.service.client.registration().unwrap(),
+    )
+    .configuration;
+    let at = c.service.core.host.clock.millis().unwrap();
+    // Failed native evidence still represents the original periodic session;
+    // this fixture asserts discovery/authorization, never a successful OS sample.
+    let evidence = ProcessEvidence {
+        content_digest: execution_contract::Digest::new("a".repeat(64)).unwrap(),
+        attempt_id: AttemptId::new("sample-fixture").unwrap(),
+        runner: plan::id("native-fixture").unwrap(),
+        scope: ProcessScope::NotStarted {},
+        finished: true,
+        quiescent: true,
+        exit_code: Some(1),
+        end: ProcessEnd::Exited,
+        failure_kind: ProcessFailureKind::None,
+        total_output_bytes: 0,
+        stdout: vec![],
+        stderr: vec![],
+        quality: OutputQuality::Complete,
+    };
+    c.service
+        .core
+        .periodic_data(&configuration, &evidence, (at * 1000) as i64, None)
+        .unwrap();
+    let reference = TaskRef::Sampling {
+        query: c
+            .service
+            .core
+            .data
+            .periodic_reference(&configuration)
+            .unwrap(),
+    };
+    let reply = c
+        .policy_call(Request::Task {
+            input: TaskOperation::List(TaskQuery {
+                limit: 32,
+                ..Default::default()
+            }),
+            origin: ClientOrigin::Desktop {},
+        })
+        .await;
+    let Reply::Task {
+        value: TaskResponse::Page(page),
+    } = reply
+    else {
+        panic!("sampling task page")
+    };
+    let item = page
+        .items
+        .iter()
+        .find(|item| item.reference == reference)
+        .expect("original periodic definition must be discoverable");
+    assert_eq!(item.task_kind, TaskKind::Sampling);
+    assert_eq!(item.source, execution_app::tasks::TaskSource::Policy);
+    assert!(item.allowed_actions.is_empty());
+    let TaskFacts::Sampling { latest, .. } = &item.facts else {
+        panic!("sampling facts")
+    };
+    assert_eq!(latest.collected_at, Some(at / 1000));
+    assert_ne!(latest.quality, DataQuality::Complete);
+    assert!(latest.fields.is_empty());
+    let Reply::Task {
+        value: TaskResponse::Detail(detail),
+    } = c
+        .policy_call(Request::Task {
+            input: TaskOperation::Detail(reference),
+            origin: ClientOrigin::Desktop {},
+        })
+        .await
+    else {
+        panic!("original sampling detail")
+    };
+    assert!(detail.allowed_actions.is_empty());
+}
+
+#[tokio::test]
+async fn task_history_first_page_merges_new_execution_and_latest_preparation_before_old_ids() {
+    use execution_app::tasks::*;
+    use execution_ipc::host::Request;
+    let _budget = crate::scenario_budget::enter();
+    let mut c = Case::new(Some(RiskLevel::Two)).await;
+    c.service.core.start_task(c.selection(false)).unwrap();
+    let original = c.record();
+    for n in 0..65 {
+        let mut record = original.clone();
+        let PreparedAction::Offered { offer } = &mut record.action else {
+            panic!("offered")
+        };
+        offer.request = RequestId::new(if n == 64 {
+            "z-latest".into()
+        } else {
+            format!("a-old-{n:03}")
+        })
+        .unwrap();
+        record.recorded_at_unix_ms =
+            original
+                .recorded_at_unix_ms
+                .saturating_sub(if n == 64 { 0 } else { 1000 });
+        c.service
+            .core
+            .app
+            .record_backend_request(&c.service.core.caller(), None, &record)
+            .unwrap();
+    }
+    let mut spec: ExecutionInput = serde_json::from_str(include_str!(
+        "../../../crates/execution-contract/tests/fixtures/plan.json"
+    ))
+    .unwrap();
+    spec.request.authority = c.service.core.host.binding.authority.clone();
+    spec.request.actor = c.service.core.caller().actor;
+    spec.request.target.device = c.service.core.host.binding.device.clone();
+    spec.request.request_id = RequestId::new("latest-execution").unwrap();
+    spec.request.initiator = Initiator::Backend {
+        task: plan::id("timeline-task").unwrap(),
+        attempt: plan::id("timeline-attempt").unwrap(),
+        trigger: BackendTrigger::Human {
+            os_session: OsSessionRef {
+                device: spec.request.target.device.clone(),
+                account: OsAccountRef {
+                    platform: Platform::Macos,
+                    subject: plan::id(&c.selection.subject).unwrap(),
+                },
+                session: c.selection.binding.clone(),
+            },
+        },
+    };
+    spec.request.delegation = None;
+    spec.run_as = RunAs::System {
+        platform: spec.request.target.platform,
+    };
+    spec.session_requirement = SessionRequirement::NotRequired {};
+    let input = FrozenExecution::freeze(spec, &plan::storage_limits().input).unwrap();
+    c.service
+        .core
+        .app
+        .stage_execution(&c.service.core.caller(), &input)
+        .unwrap();
+    let Reply::Task {
+        value: TaskResponse::Page(page),
+    } = c
+        .policy_call(Request::Task {
+            input: TaskOperation::List(TaskQuery {
+                limit: 8,
+                ..Default::default()
+            }),
+            origin: ClientOrigin::Desktop {},
+        })
+        .await
+    else {
+        panic!("task page")
+    };
+    let ids = page
+        .items
+        .iter()
+        .map(|t| match &t.reference {
+            TaskRef::Request { request } => request.as_str(),
+            _ => "",
+        })
+        .collect::<Vec<_>>();
+    assert!(ids[..3].contains(&"latest-execution"));
+    assert!(ids[..3].contains(&"z-latest"));
+    assert!(page
+        .items
+        .windows(2)
+        .all(|w| w[0].recorded_at >= w[1].recorded_at));
+    let mut inserted = original.clone();
+    let PreparedAction::Offered { offer } = &mut inserted.action else {
+        panic!("offered")
+    };
+    offer.request = RequestId::new("zz-after-watermark").unwrap();
+    c.service
+        .core
+        .app
+        .record_backend_request(&c.service.core.caller(), None, &inserted)
+        .unwrap();
+    let mut all = page.items;
+    let mut next = page.next;
+    for _ in 0..32 {
+        let Some(cursor) = next else { break };
+        let Reply::Task {
+            value: TaskResponse::Page(page),
+        } = c
+            .policy_call(Request::Task {
+                input: TaskOperation::List(TaskQuery {
+                    limit: 8,
+                    cursor: Some(cursor),
+                    ..Default::default()
+                }),
+                origin: ClientOrigin::Desktop {},
+            })
+            .await
+        else {
+            panic!("stable history continuation")
+        };
+        all.extend(page.items);
+        next = page.next;
+    }
+    assert!(next.is_none());
+    assert_eq!(all.len(), 67);
+    let unique = all
+        .iter()
+        .map(|item| serde_json::to_string(&item.reference).unwrap())
+        .collect::<std::collections::HashSet<_>>();
+    assert_eq!(unique.len(), all.len());
+    assert!(!unique.contains(
+        &serde_json::to_string(&TaskRef::Request {
+            request: RequestId::new("zz-after-watermark").unwrap()
+        })
+        .unwrap()
+    ));
+    assert!(all.windows(2).all(|w| w[0].recorded_at >= w[1].recorded_at));
+    assert!(c._server.data.lock().unwrap().start_ops.is_empty());
 }

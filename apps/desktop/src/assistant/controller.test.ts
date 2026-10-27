@@ -1,3 +1,4 @@
+import { taskFromFacts } from "../../../../tests/self-service/support";
 import { mount, flushPromises } from "@vue/test-utils";
 import SessionConnection from "./SessionConnection.vue";
 import Assistant from "./Assistant.vue";
@@ -14,9 +15,9 @@ import { createAssistant, operationMessage } from "./controller";
 import { fixtureSession } from "@rss-mdm-agent/ai-contract/testing";
 import fixtures from "../../../../tests/assistant/execution-fixtures.json";
 import type {
-  BackendTaskView,
+  TaskDetail,
   ExecutionTaskDetails,
-} from "@rss-mdm-agent/execution-bindings/task-details";
+} from "@rss-mdm-agent/execution-bindings/tasks";
 function setup(now = () => 100) {
   let next = 0,
     listener: (view: SessionView) => void = () => {},
@@ -354,7 +355,7 @@ describe("assistant application ownership", () => {
   });
   it("retains only the latest authorized execution read and clears it on a failed read", async () => {
     const t = setup();
-    let release: (v: BackendTaskView) => void = () => {};
+    let release: (v: TaskDetail) => void = () => {};
     t.taskDetails
       .mockImplementationOnce(
         () =>
@@ -362,17 +363,21 @@ describe("assistant application ownership", () => {
             release = resolve;
           }),
       )
-      .mockResolvedValueOnce({
-        kind: "execution",
-        value: fixtures.outcomeUnknown,
-      })
+      .mockResolvedValueOnce(
+        taskFromFacts({
+          kind: "execution",
+          value: fixtures.outcomeUnknown as ExecutionTaskDetails,
+        }),
+      )
       .mockRejectedValueOnce(new Error("secret server text"));
     const old = t.c.taskDetails("old");
     await t.c.taskDetails("current");
-    release({
-      kind: "execution",
-      value: fixtures.running as ExecutionTaskDetails,
-    });
+    release(
+      taskFromFacts({
+        kind: "execution",
+        value: fixtures.running as ExecutionTaskDetails,
+      }),
+    );
     await old;
     expect(t.c.state.task?.status.phase).toBe("outcomeUnknown");
     await t.c.taskDetails("forbidden");
@@ -508,7 +513,7 @@ it("bounds connection and detail waits and closes a late connection", async () =
         finish = resolve;
       }),
   );
-  const details = vi.fn(() => new Promise<BackendTaskView>(() => {}));
+  const details = vi.fn(() => new Promise<TaskDetail>(() => {}));
   const c = createAssistant({ connect, taskDetails: details }, () => "id");
   try {
     const connecting = c.connect(),
@@ -1130,7 +1135,9 @@ it("execution cards require a Host delivery and matching Rust conversation and t
     },
   };
   t.emit();
-  t.taskDetails.mockResolvedValue({ kind: "execution", value: details });
+  t.taskDetails.mockResolvedValue(
+    taskFromFacts({ kind: "execution", value: details }),
+  );
   await expect(t.c.executionDetails("op", signal)).rejects.toThrow();
   details.action.initiator = {
     kind: "ai",
@@ -1142,10 +1149,9 @@ it("execution cards require a Host delivery and matching Rust conversation and t
       ...(details.action.initiator as { osSession: object }).osSession,
     },
   } as Extract<ExecutionTaskDetails["action"]["initiator"], { kind: "ai" }>;
-  await expect(t.c.executionDetails("op", signal)).resolves.toEqual({
-    kind: "execution",
-    value: details,
-  });
+  await expect(t.c.executionDetails("op", signal)).resolves.toEqual(
+    taskFromFacts({ kind: "execution", value: details }),
+  );
   // An ambiguous union is not an execution request, even if one field has an ID.
   t.view.deliveries.op.proposal.arguments.script = {
     operationRequestId: "other",
@@ -1191,11 +1197,12 @@ it("later-page Policy cards read the original native request and keep conversati
     },
   };
   t.emit();
-  t.taskDetails.mockResolvedValue({ kind: "execution", value: details });
-  await expect(t.c.executionDetails("op", signal)).resolves.toEqual({
-    kind: "execution",
-    value: details,
-  });
+  t.taskDetails.mockResolvedValue(
+    taskFromFacts({ kind: "execution", value: details }),
+  );
+  await expect(t.c.executionDetails("op", signal)).resolves.toEqual(
+    taskFromFacts({ kind: "execution", value: details }),
+  );
   expect(t.taskDetails).toHaveBeenLastCalledWith("op", expect.any(AbortSignal));
   details.status.operationRequestId = "model-suggested-id";
   await expect(t.c.executionDetails("op", signal)).rejects.toThrow();

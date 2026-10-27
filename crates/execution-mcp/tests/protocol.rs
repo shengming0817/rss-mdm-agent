@@ -26,6 +26,29 @@ struct Wire {
     stop: CancellationToken,
 }
 impl Wire {
+    async fn tools(&mut self, id: u64) -> Vec<Value> {
+        let mut found = Vec::new();
+        let mut cursor = Value::Null;
+        for _ in 0..32 {
+            self.send(
+                json!({"jsonrpc":"2.0","id":id,"method":"tools/list","params":{"cursor":cursor}}),
+            )
+            .await;
+            let response = self.recv().await;
+            found.extend(
+                response["result"]["tools"]
+                    .as_array()
+                    .expect("bounded tool page")
+                    .iter()
+                    .cloned(),
+            );
+            cursor = response["result"]["nextCursor"].clone();
+            if cursor.is_null() {
+                return found;
+            }
+        }
+        panic!("tool metadata did not advance")
+    }
     async fn open(service: Arc<TestService>, limits: McpLimits) -> Self {
         let (client, server) = tokio::io::duplex(1024);
         let (r, w) = tokio::io::split(server);
@@ -90,8 +113,18 @@ fn call(id: u64, name: &str, args: Value) -> Value {
 fn selection(_: &TestService, id: &str, _: Value) -> Value {
     json!({"task":"test-task","attempt":"test-attempt","revision":"a".repeat(64),"request":id})
 }
+fn control_args(request: &str) -> Value {
+    json!({"reference":{"kind":"request","request":request},"id":"original-control","scope":"test-scope","expectedRevision":{"owner":0,"transfers":[]},"action":"cancel"})
+}
 fn value(reply: &Value) -> &Value {
-    &reply["result"]["structuredContent"]["result"]
+    let result = &reply["result"]["structuredContent"]["result"];
+    if result.get("facts").is_some() {
+        return &result["facts"]["value"]["status"];
+    }
+    if result["kind"] == "control" {
+        return &result["value"];
+    }
+    result
 }
 fn error(reply: &Value) -> &Value {
     &reply["result"]["structuredContent"]["error"]
@@ -104,16 +137,13 @@ async fn action_input(_: &mut Wire, s: &TestService, id: &str) -> Value {
 async fn discovery_exposes_backend_references_and_rejects_old_script_and_catalog_inputs() {
     let s = service();
     let mut w = Wire::open(s.clone(), limits()).await;
-    w.send(json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}))
-        .await;
-    let list = w.recv().await;
-    let tools = list["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 19);
-    for tool in tools {
+    let tools = w.tools(2).await;
+    assert_eq!(tools.len(), 18);
+    for tool in &tools {
         jsonschema::draft202012::new(&tool["inputSchema"]).unwrap();
         jsonschema::draft202012::new(&tool["outputSchema"]).unwrap();
     }
-    let tasks = w.call(3, "execution_tasks", json!({})).await;
+    let tasks = w.call(3, "execution_offers", json!({})).await;
     assert_eq!(value(&tasks)[0]["task"], "test-task");
     for old in [
         json!({"script":{"sourceUtf8":"private-script","operationRequestId":"new","interpreter":{}}}),
@@ -157,13 +187,15 @@ async fn trusted_context_cannot_be_forged_and_query_authorization_is_rechecked()
     assert_eq!(s.attempts.load(Ordering::SeqCst), 1);
     s.denied.store(true, Ordering::SeqCst);
     for name in [
-        "execution_tasks",
+        "execution_offers",
         "execution_capabilities",
-        "execution_status",
-        "execution_cancel",
+        "execution_task_detail",
+        "execution_task_control",
     ] {
-        let args = if name.ends_with("status") || name.ends_with("cancel") {
-            json!({"operationRequestId":"owned"})
+        let args = if name == "execution_task_control" {
+            control_args("owned")
+        } else if name == "execution_task_detail" {
+            json!({"reference":{"kind":"request","request":"owned"}})
         } else {
             json!({})
         };
@@ -189,7 +221,11 @@ async fn accepted_response_loss_reconnect_and_concurrent_retry_preserve_one_atte
     s.submit_delay_ms.store(0, Ordering::SeqCst);
     let mut w = Wire::open(s.clone(), l).await;
     let status = w
-        .call(2, "execution_status", json!({"operationRequestId":"retry"}))
+        .call(
+            2,
+            "execution_task_detail",
+            json!({"reference":{"kind":"request","request":"retry"}}),
+        )
         .await;
     assert_eq!(value(&status)["phase"], "accepted");
     for id in 30..34 {
@@ -234,8 +270,8 @@ async fn bound_namespace_prevents_cross_actor_tenant_device_and_delegation_repla
                 &alien
                     .call(
                         2,
-                        "execution_status",
-                        json!({"operationRequestId":"same-id"})
+                        "execution_task_detail",
+                        json!({"reference":{"kind":"request","request":"same-id"}})
                     )
                     .await
             )["code"],
@@ -271,20 +307,16 @@ async fn protocol_cancellation_releases_wait_and_does_not_cancel_business_operat
     let status = w
         .call(
             21,
-            "execution_status",
-            json!({"operationRequestId":"cancel-wait"}),
+            "execution_task_detail",
+            json!({"reference":{"kind":"request","request":"cancel-wait"}}),
         )
         .await;
     assert_eq!(value(&status)["phase"], "accepted");
     let cancelled = w
-        .call(
-            22,
-            "execution_cancel",
-            json!({"operationRequestId":"cancel-wait"}),
-        )
+        .call(22, "execution_task_control", control_args("cancel-wait"))
         .await;
-    assert_eq!(value(&cancelled)["disposition"], "requested");
-    assert_eq!(value(&cancelled)["operation"]["phase"], "accepted");
+    assert_eq!(value(&cancelled)["disposition"], "confirmed");
+    assert_eq!(value(&cancelled)["id"], "original-control");
     w.close().await;
 }
 
@@ -386,16 +418,25 @@ async fn official_rmcp_client_can_consume_the_bounded_service() {
         CancellationToken::new(),
     ));
     let client = ().serve(client).await.unwrap();
-    assert_eq!(
-        client
+    let mut found = Vec::new();
+    let mut cursor = None;
+    loop {
+        let page = client
             .peer()
-            .list_tools(Default::default())
+            .list_tools(cursor.clone().map(|cursor| {
+                let mut p = rmcp::model::PaginatedRequestParams::default();
+                p.cursor = Some(cursor);
+                p
+            }))
             .await
-            .unwrap()
-            .tools
-            .len(),
-        19
-    );
+            .unwrap();
+        found.extend(page.tools);
+        cursor = page.next_cursor;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    assert_eq!(found.len(), 18);
     client.cancel().await.unwrap();
     timeout(Duration::from_secs(2), task)
         .await
@@ -434,15 +475,22 @@ async fn stale_catalog_and_terminal_test_evidence_remain_distinct() {
     w.call(20, "execution_execute", p.clone()).await;
     s.complete_test_result("terminal");
     let result = w
+        .call(21, "execution_task_control", control_args("terminal"))
+        .await;
+    assert_eq!(value(&result)["disposition"], "confirmed");
+    let original = w
         .call(
-            21,
-            "execution_cancel",
-            json!({"operationRequestId":"terminal"}),
+            22,
+            "execution_task_detail",
+            json!({"reference":{"kind":"request","request":"terminal"}}),
         )
         .await;
-    assert_eq!(value(&result)["disposition"], "alreadyTerminal");
-    assert_eq!(value(&result)["operation"]["phase"], "verified");
-    assert_eq!(value(&result)["operation"]["evidence"][0], "test-result");
+    assert_eq!(value(&original)["phase"], "verified");
+    assert_eq!(value(&original)["mode"], "test");
+    assert_eq!(
+        value(&original)["evidence"][0]["reference"]["id"],
+        "test-result"
+    );
     w.close().await;
 }
 
@@ -552,11 +600,7 @@ async fn every_tool_advertises_and_times_out_according_to_its_effects() {
         value(&w.call(11, "execution_execute", submit.clone()).await)["confirmationRequired"],
         true
     );
-    w.send(json!({"jsonrpc":"2.0","id":12,"method":"tools/list","params":{}}))
-        .await;
-    let list = w.recv().await;
-    let tools = list["result"]["tools"].as_array().unwrap();
-    let operation = json!({"operationRequestId":"original-id"});
+    let tools = w.tools(12).await;
     let cases = [
         (
             "execution_policy_invoke",
@@ -583,10 +627,10 @@ async fn every_tool_advertises_and_times_out_according_to_its_effects() {
             "unavailable",
         ),
         (
-            "execution_software_cancel",
-            json!({"request":"original-id"}),
-            false,
-            "outcomeUnknown",
+            "execution_task_list",
+            json!({"view":"history","source":null,"taskKind":null,"status":null,"from":null,"until":null,"subject":null,"policy":null,"cursor":null,"limit":16}),
+            true,
+            "unavailable",
         ),
         (
             "execution_query_directory",
@@ -613,10 +657,10 @@ async fn every_tool_advertises_and_times_out_according_to_its_effects() {
             "unavailable",
         ),
         (
-            "execution_query_cancel",
-            json!({"request":"original-id"}),
-            false,
-            "outcomeUnknown",
+            "execution_task_control_status",
+            json!({"reference":{"kind":"request","request":"original-id"},"id":"original-control","scope":"test-scope"}),
+            true,
+            "unavailable",
         ),
         (
             "execution_operation_prepare",
@@ -631,22 +675,26 @@ async fn every_tool_advertises_and_times_out_according_to_its_effects() {
             "unavailable",
         ),
         (
-            "execution_policy_status",
-            operation.clone(),
-            true,
-            "unavailable",
-        ),
-        (
             "execution_software_observe",
             json!({"selection": p, "step": 0}),
             true,
             "unavailable",
         ),
-        ("execution_tasks", json!({}), true, "unavailable"),
+        ("execution_offers", json!({}), true, "unavailable"),
         ("execution_capabilities", json!({}), true, "unavailable"),
-        ("execution_status", operation.clone(), true, "unavailable"),
+        (
+            "execution_task_detail",
+            json!({"reference":{"kind":"request","request":"original-id"}}),
+            true,
+            "unavailable",
+        ),
         ("execution_execute", submit, false, "outcomeUnknown"),
-        ("execution_cancel", operation, false, "outcomeUnknown"),
+        (
+            "execution_task_control",
+            control_args("original-id"),
+            false,
+            "outcomeUnknown",
+        ),
     ];
     assert_eq!(tools.len(), cases.len());
     s.catalog_delay_ms.store(1000, Ordering::SeqCst);
@@ -864,9 +912,9 @@ async fn data_tools_preserve_original_request_and_typed_results_through_real_mcp
     assert_eq!(value(&read)["kind"], "read");
     assert_eq!(value(&read)["value"]["rows"][0]["fixture"], true);
     let cancelled = w
-        .call(7, "execution_query_cancel", json!({"request":request}))
+        .call(7, "execution_task_control", control_args(request))
         .await;
-    assert_eq!(value(&cancelled)["value"]["cancelRequested"], true);
+    assert_eq!(value(&cancelled)["disposition"], "confirmed");
     assert_eq!(s.attempts.load(Ordering::SeqCst), 1);
     w.close().await;
 }

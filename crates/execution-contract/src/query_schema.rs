@@ -16,7 +16,7 @@ pub fn query_input_schema(
 // The JS transport accepts only exactly representable integers. Project that intersection;
 // the service still validates resolved parameters against the untouched Resource schema.
 fn project_parameter_schema(schema: &mut serde_json::Value) -> Result<(), QuerySchemaError> {
-    const SAFE: i64 = 9_007_199_254_740_991;
+    const SAFE: i64 = crate::MAX_SAFE_INTEGER as i64;
     if schema.is_boolean() {
         return Ok(());
     }

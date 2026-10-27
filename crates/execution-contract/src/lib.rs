@@ -47,7 +47,7 @@ pub use software::*;
 pub use software_format::*;
 pub use software_program::*;
 pub use software_progress::*;
-pub use validation::ExecutionLimits;
+pub use validation::{ExecutionLimits, MAX_SAFE_INTEGER};
 pub use value::*;
 
 /// Schema projections of the single Rust declaration source, always Draft 2020-12.

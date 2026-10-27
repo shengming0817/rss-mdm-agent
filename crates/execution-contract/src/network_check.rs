@@ -30,11 +30,6 @@ pub enum NetworkCheckOperation {
         /// Original operation UUID.
         request: RequestId,
     },
-    /// Request cancellation; acknowledgement does not prove termination.
-    Cancel {
-        /// Original operation UUID.
-        request: RequestId,
-    },
 }
 /// Closed diagnostic findings; network failure is distinct from worker failure.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

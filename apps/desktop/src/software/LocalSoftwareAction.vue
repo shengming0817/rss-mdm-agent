@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { taskCenterKey, requestRef } from "../task-center/controller";
+import { inject, computed, onBeforeUnmount, ref, watch } from "vue";
 import type { LocalSoftwareStatus, SoftwarePort } from "../self-service/types";
 import { nativeSoftwarePort } from "../self-service/native";
 import { currentUser } from "../test-users";
 import { ended } from "./controller";
+const tasks = inject(taskCenterKey, undefined);
 const props = withDefaults(
   defineProps<{
     request: string;
@@ -14,6 +16,9 @@ const props = withDefaults(
 );
 const emit = defineEmits<{ changed: [value: LocalSoftwareStatus] }>();
 const port = props.port === undefined ? nativeSoftwarePort() : props.port;
+const allowed = computed(
+  () => tasks?.lookup(requestRef(props.request))?.allowedActions ?? [],
+);
 const value = ref<LocalSoftwareStatus>(),
   busy = ref(false),
   error = ref(""),
@@ -57,6 +62,7 @@ async function refresh() {
     const result = await port.status({ request: props.request });
     if (!active || call !== epoch) return;
     value.value = result;
+    await tasks?.detail(requestRef(props.request));
     uncertain.value = false;
     error.value = "";
     emit("changed", result);
@@ -85,7 +91,11 @@ async function mutate(kind: "submit" | "cancel") {
           request: props.request,
           digest: value.value.prepared.digest,
         })
-      : port.cancel({ request: props.request }));
+      : (async () => {
+          if (!tasks) throw Error("task port unavailable");
+          await tasks.cancel(props.request);
+          return port.status({ request: props.request });
+        })());
     if (!active || call !== epoch) return;
     value.value = result;
     uncertain.value = false;
@@ -118,7 +128,12 @@ watch(
 );
 const polling = setInterval(() => {
   now.value = Date.now();
-  if (props.visible && (!value.value || !ended(value.value))) void refresh();
+  if (
+    props.visible &&
+    !document.hidden &&
+    (!value.value || !ended(value.value))
+  )
+    void refresh();
 }, 2000);
 onBeforeUnmount(() => {
   active = false;
@@ -245,7 +260,8 @@ onBeforeUnmount(() => {
         确认提交原操作
       </button>
       <button
-        :disabled="busy || value.execution.cancelRequested || ended(value)"
+        v-if="allowed.includes('cancel')"
+        :disabled="busy || !!tasks?.state.pendingControl"
         @click="mutate('cancel')"
       >
         请求取消原操作

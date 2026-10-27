@@ -1,3 +1,5 @@
+import { createTaskCenter, taskCenterKey } from "../task-center/controller";
+import { taskPort } from "../../../../tests/self-service/support";
 import { mount, flushPromises } from "@vue/test-utils";
 import { expect, it, vi } from "vitest";
 import ConnectionCheck from "./ConnectionCheck.vue";
@@ -46,8 +48,16 @@ it("lost submission receipts preserve the UUID and cancellation uses it", async 
     if (input.kind === "run") throw Error("lost");
     return { kind: "status", value: state(input.request) };
   });
+  const owner = taskPort();
+  owner.control = vi.fn(async (input) => ({
+    id: input.id,
+    disposition: "confirmed" as const,
+    created: null,
+  }));
+  const tasks = createTaskCenter(owner, null);
   const w = mount(ConnectionCheck, {
     props: { port: call as NetworkCheckPort },
+    global: { provide: { [taskCenterKey as symbol]: tasks } },
   });
   try {
     await flushPromises();
@@ -58,15 +68,27 @@ it("lost submission receipts preserve the UUID and cancellation uses it", async 
       .request;
     await w
       .findAll("button")
+      .find((b) => b.text() === "查询原请求")!
+      .trigger("click");
+    await flushPromises();
+    await w
+      .findAll("button")
       .find((b) => b.text() === "取消检查")!
       .trigger("click");
     await flushPromises();
+    expect(owner.control).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reference: { kind: "request", request: original },
+        action: "cancel",
+      }),
+    );
     expect(call.mock.calls.at(-1)![0]).toEqual({
-      kind: "cancel",
+      kind: "status",
       request: original,
     });
   } finally {
     w.unmount();
+    tasks.dispose();
   }
 });
 it("missing native capability is explicit and cannot simulate a result", async () => {

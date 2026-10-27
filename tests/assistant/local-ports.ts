@@ -98,7 +98,6 @@ export function fixtureLocalPorts(): LocalPorts {
       },
       query_submit: unsupported,
       query_status: unsupported,
-      query_cancel: unsupported,
     },
     software: {
       read: async () => ({
@@ -115,7 +114,6 @@ export function fixtureLocalPorts(): LocalPorts {
       prepare: unsupported,
       submit: unsupported,
       status: unsupported,
-      cancel: unsupported,
     },
     settings: async () => ({
       request: null,

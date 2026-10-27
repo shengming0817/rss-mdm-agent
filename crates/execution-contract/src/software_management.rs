@@ -193,8 +193,6 @@ pub enum LocalSoftwareOperation {
     Submit(LocalSoftwareSubmission),
     /// Read the original operation; never creates another attempt.
     Status(QueryRequest),
-    /// Request cancellation, independently of physical termination or rollback.
-    Cancel(QueryRequest),
 }
 
 pub(crate) fn valid_software_metadata(input: &ExecutionInput) -> bool {

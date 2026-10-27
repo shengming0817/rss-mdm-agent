@@ -6,8 +6,15 @@ import PolicyPreparation from "./PolicyPreparation.vue";
 import { currentUser } from "../test-users";
 import type { BackendRequest, SelfServicePort, SelfServiceTask } from "./types";
 const record = (id: string): BackendRequest => ({
+  retryExpectedRevision: null,
+  cancellationExpectedRevision: null,
+  recordedAtUnixMs: 1000,
+  cancellationControl: null,
+  retryOf: null,
   action: {
     kind: "policy",
+    definition: { id: "policy", revision: "version" },
+    policyRevision: 1,
 
     choice: {
       request: id,
@@ -162,7 +169,7 @@ test("remounted history queries its original UUID and does not invoke again", as
   await flushPromises();
   const button = wrapper
     .findAll("button")
-    .find((b) => b.text() === "查询原请求与结果")!;
+    .find((b) => b.text() === "查看原策略请求并处理")!;
   await button.trigger("click");
   await flushPromises();
   expect(policy_status).toHaveBeenCalledWith({ requestId: original });
@@ -337,6 +344,7 @@ test("Device history restores original AI consent independently of enterprise id
           nextCursor: null,
           asOf: 1,
         }),
+        policy_status: async () => ({ kind: "preparation", value: original }),
         policy_confirm,
         policy_invoke,
       } as unknown as SelfServicePort,
@@ -344,6 +352,11 @@ test("Device history restores original AI consent independently of enterprise id
     },
   });
   try {
+    await flushPromises();
+    await wrapper
+      .findAll("button")
+      .find((b) => b.text() === "查看原策略请求并处理")!
+      .trigger("click");
     await flushPromises();
     expect(wrapper.text()).toContain("设备准入 · 无需企业登录");
     expect(wrapper.text()).toContain("original-ai / original-tool");
@@ -590,5 +603,33 @@ test("a bounded directory window never claims the full catalog is searchable", a
     expect(wrapper.text()).not.toContain("目录已读取完毕");
   } finally {
     wrapper.unmount();
+  }
+});
+
+test("a hidden policy consumer does not load the shared catalog until it becomes visible", async () => {
+  const policy_directory = vi.fn(async () => ({
+    items: [],
+    nextCursor: null,
+    asOf: 1000,
+  }));
+  const port = {
+    policy_directory,
+    policy_resolve: vi.fn(),
+  } as unknown as SelfServicePort;
+  const w = mount(PolicySelfService, {
+    props: { port, records: [], active: false },
+  });
+  try {
+    await flushPromises();
+    expect(policy_directory).not.toHaveBeenCalled();
+    await w.setProps({ active: true });
+    await flushPromises();
+    expect(policy_directory).toHaveBeenCalledTimes(1);
+    await w.setProps({ active: false });
+    await w.setProps({ active: true });
+    await flushPromises();
+    expect(policy_directory).toHaveBeenCalledTimes(1);
+  } finally {
+    w.unmount();
   }
 });

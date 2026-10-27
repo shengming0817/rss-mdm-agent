@@ -395,12 +395,12 @@ it("queries the production execution service without a fixture fallback and repo
   await flushPromises();
   const nav = wrapper.find('[aria-label="打开主导航"]');
   if (nav.exists()) await nav.trigger("click");
-  wrapper.getComponent(Workspace).vm.$emit("navigate", "software");
+  wrapper.getComponent(Workspace).vm.$emit("navigate", "tasks");
   await flushPromises();
-  expect(wrapper.text()).toContain("无法读取执行服务；原任务保留");
-  expect(
-    vi.mocked(invoke).mock.calls.some(([c]) => c === "self_service_snapshot"),
-  ).toBe(true);
+  expect(wrapper.text()).toContain("无法读取任务；已有记录待核实");
+  expect(vi.mocked(invoke).mock.calls.some(([c]) => c === "task_list")).toBe(
+    true,
+  );
   revoked = true;
   await refreshAccount();
   await flushPromises();
@@ -517,3 +517,82 @@ it.each(["cleanup_pending", "conflict"] as const)(
     wrapper.unmount();
   },
 );
+
+it("keeps one periodic account read in flight and stops reads while hidden", async () => {
+  vi.useFakeTimers();
+  let slow = false;
+  let release: (() => void) | undefined;
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const status = () => ({
+    schemaVersion: 1,
+    kind: "accountStatus",
+    binding: "unbound",
+    current,
+  });
+  vi.mocked(invoke).mockImplementation(async (command) => {
+    if (command === "test_users")
+      return {
+        schemaVersion: 1,
+        kind: "testUserPage",
+        users: [current.user],
+        current,
+      };
+    if (command === "account_status") {
+      if (slow) await pending;
+      return status();
+    }
+    if (command === "account_organizations") return settingsPage();
+    throw { code: "ai_unavailable" };
+  });
+  const hidden = vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+  const w = mount(App);
+  const reads = () =>
+    vi.mocked(invoke).mock.calls.filter(([name]) => name === "account_status")
+      .length;
+  try {
+    await flushPromises();
+    expect(reads()).toBe(1);
+    slow = true;
+    await vi.advanceTimersByTimeAsync(12000);
+    expect(reads()).toBe(2);
+    release!();
+    await flushPromises();
+    slow = false;
+    hidden.mockReturnValue(true);
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(reads()).toBe(2);
+    hidden.mockReturnValue(false);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(reads()).toBe(3);
+  } finally {
+    release?.();
+    w.unmount();
+    hidden.mockRestore();
+    vi.useRealTimers();
+  }
+});
+
+it("ignores late account binding declarations after the native user generation changes", async () => {
+  currentUser.value = current;
+  let release!: (value: unknown) => void;
+  vi.mocked(invoke).mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  const read = refreshAccount();
+  currentUser.value = { ...current, generation: "replacement" };
+  accountBinding.value = "bound";
+  release({
+    schemaVersion: 1,
+    kind: "accountStatus",
+    binding: "invalidated",
+    current,
+  });
+  await read;
+  expect(currentUser.value?.generation).toBe("replacement");
+  expect(accountBinding.value).toBe("bound");
+});

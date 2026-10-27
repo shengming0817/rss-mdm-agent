@@ -17,6 +17,7 @@ mod data;
 mod network_check;
 mod policy;
 mod settings;
+mod tasks;
 pub(crate) const RESULT_CONSUMER: &str = "execution-results";
 pub(crate) const SHUTDOWN_WAIT: std::time::Duration = std::time::Duration::from_secs(28);
 mod software;
@@ -299,9 +300,16 @@ impl<S: IdentityProvider> DeviceService<S> {
         } else {
             None
         };
+        let transfers = client.transfers();
+        let deliveries = client.terminal_deliveries()?;
         Ok(Self {
             client,
             core: Core {
+                transfers,
+                deliveries,
+                management: None,
+                management_online: false,
+                management_clear: false,
                 filevault,
                 access,
                 #[cfg(test)]
@@ -359,6 +367,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         &mut self,
         commands: &mut tokio::sync::mpsc::Receiver<Command>,
     ) -> Result<(), Error> {
+        self.core.deliveries = self.client.terminal_deliveries()?;
         // Retired observations remain useful after registration changes, even without unmanage.
         #[cfg(windows)]
         let hello_drained = crate::access_worker::hello::drain(
@@ -1277,6 +1286,8 @@ impl<S: IdentityProvider> DeviceService<S> {
         if binding == self.core.host.binding {
             return Ok(());
         }
+        self.client.clear_management_cache()?;
+        self.core.management = None;
         self.core.data.bind_enterprise(Some(&binding))?;
         self.core.host.binding = binding;
         self.core.host.actor = actor;
@@ -1387,6 +1398,11 @@ pub(crate) struct Selection {
     pub(crate) origin: execution_ipc::host::ClientOrigin,
 }
 pub(crate) struct Core {
+    transfers: agent_client::Transfers,
+    deliveries: std::collections::BTreeMap<String, bool>,
+    management: Option<agent_client::ManagementCache>,
+    management_online: bool,
+    management_clear: bool,
     pub(crate) access: access::State,
     // Explicit test-owned authority source, absent from every production build and IPC DTO.
     #[cfg(test)]
@@ -1430,6 +1446,8 @@ impl Core {
     fn enforce_identity_gate(&mut self) -> Result<(), Error> {
         if self.host.revoked.load(Ordering::Acquire) || self.host.identity_until.revoked() {
             self.host.revoked.store(true, Ordering::Release);
+            self.management = None;
+            self.management_clear = true;
             self.revoke_preparations()?;
             self.app
                 .stop_active_matching(128, |plan| {
@@ -1508,7 +1526,7 @@ impl Core {
     fn pending(&self, request: &RequestId, subject: &str) -> Result<Option<BackendRequest>, Error> {
         if self
             .app
-            .has_service_execution(request, &self.host.binding.device)
+            .has_service_execution(request, &self.request_device(request)?)
             .map_err(crate::error::app_error)?
         {
             return Ok(None);
@@ -1630,6 +1648,11 @@ impl Core {
             (BackendRequestState::Ready, None)
         };
         let next = BackendRequest {
+            retry_of: None,
+            retry_expected_revision: None,
+            recorded_at_unix_ms: self.host.clock.millis()?,
+            cancellation_control: None,
+            cancellation_expected_revision: None,
             action: PreparedAction::Offered {
                 offer: offer.clone(),
             },
@@ -1769,6 +1792,25 @@ impl Core {
             eprintln!("agent_identity_gate: {error}");
         }
         use execution_ipc::host::{Reply, Request};
+        if let Some(Request::Task { input, origin }) = command.request.as_operation() {
+            if matches!(input, execution_app::tasks::TaskOperation::Control(c) if c.action==execution_app::tasks::TaskAction::Retry)
+                || matches!(input, execution_app::tasks::TaskOperation::List(q) if q.view == execution_app::tasks::TaskView::Management)
+                || matches!(
+                    input,
+                    execution_app::tasks::TaskOperation::Detail(
+                        execution_app::tasks::TaskRef::Activity { .. }
+                    )
+                )
+            {
+                self.enqueue_policy(command);
+                return;
+            }
+            let reply = self
+                .task_operation(&command, input, origin)
+                .unwrap_or_else(data::failure);
+            let _ = command.reply.send(reply);
+            return;
+        }
         if let Some(Request::Settings {
             context,
             origin,
@@ -1850,7 +1892,8 @@ impl Core {
         let reply = (|| -> Result<Reply, Error> {
             match command.request.into_operation() {
                 Some(
-                    Request::Data { .. }
+                    Request::Task { .. }
+                    | Request::Data { .. }
                     | Request::Settings { .. }
                     | Request::NetworkCheck { .. }
                     | Request::PlatformSso { .. }
@@ -1916,81 +1959,9 @@ impl Core {
                     | Request::RegistrationContext {}
                     | Request::ImportRegistration { .. },
                 ) => Ok(Reply::Rejected),
-                Some(Request::RecentTasks { before }) => {
-                    let cursor = before
-                        .as_deref()
-                        .map(|value| {
-                            let parsed = value.parse::<u64>().map_err(|_| Error::Protocol)?;
-                            if parsed == 0 || parsed.to_string() != value {
-                                return Err(Error::Protocol);
-                            }
-                            Ok(parsed)
-                        })
-                        .transpose()?;
-                    let mut value = self
-                        .app
-                        .service_recent_tasks(cursor, 64)
-                        .map_err(crate::error::app_error)?;
-                    value.items.retain(|item| {
-                        let request = &item.details.action.request_id;
-                        self.can_read(request, &command.subject).unwrap_or(false)
-                            && self
-                                .policy_readable(
-                                    request,
-                                    &command.subject,
-                                    command.binding.as_ref(),
-                                )
-                                .unwrap_or(false)
-                    });
-                    Ok(Reply::RecentTasks { value })
-                }
-                Some(Request::Tasks { after }) => {
-                    let mut value = self
-                        .app
-                        .service_tasks(after.as_ref(), 64)
-                        .map_err(crate::error::app_error)?;
-                    value.items.retain(|item| {
-                        self.can_read(&item.action.request_id, &command.subject)
-                            .unwrap_or(false)
-                            && self
-                                .policy_readable(
-                                    &item.action.request_id,
-                                    &command.subject,
-                                    command.binding.as_ref(),
-                                )
-                                .unwrap_or(false)
-                    });
-                    Ok(Reply::Tasks {
-                        value,
-                        available: self.available.iter().cloned().collect(),
-                        preparations: self
-                            .app
-                            .backend_requests(&self.caller())
-                            .map_err(crate::error::app_error)?
-                            .into_iter()
-                            .filter(|p| {
-                                trigger_subject(&p.trigger) == Some(command.subject.as_str())
-                                    && self
-                                        .policy_readable(
-                                            p.action.request(),
-                                            &command.subject,
-                                            command.binding.as_ref(),
-                                        )
-                                        .unwrap_or(false)
-                                    && (matches!(
-                                        p.action,
-                                        execution_contract::PreparedAction::Policy { .. }
-                                    ) || !self
-                                        .app
-                                        .has_service_execution(
-                                            &p.action.request().clone(),
-                                            &self.host.binding.device,
-                                        )
-                                        .unwrap_or(true))
-                            })
-                            .collect(),
-                    })
-                }
+                Some(Request::Offers {}) => Ok(Reply::Offers {
+                    available: self.available.iter().cloned().collect(),
+                }),
                 Some(Request::StartTask {
                     request,
                     task,
@@ -2017,100 +1988,6 @@ impl Core {
                     binding: command.binding.ok_or(Error::Denied)?,
                     origin: execution_ipc::host::ClientOrigin::Desktop {},
                 }),
-                Some(Request::Status { request }) => {
-                    if !self.policy_readable(
-                        &request,
-                        &command.subject,
-                        command.binding.as_ref(),
-                    )? {
-                        return Err(Error::Denied);
-                    }
-                    if let Some(value) = self.pending(&request, &command.subject)? {
-                        return Ok(Reply::Pending {
-                            value: Box::new(value),
-                        });
-                    }
-                    if !self.can_read(&request, &command.subject)? {
-                        return Err(Error::Denied);
-                    }
-                    Ok(Reply::Status {
-                        value: self
-                            .app
-                            .status(&self.request_caller(&request)?, &request)
-                            .map_err(crate::error::app_error)?,
-                    })
-                }
-                Some(Request::Details { request }) => {
-                    if !self.policy_readable(
-                        &request,
-                        &command.subject,
-                        command.binding.as_ref(),
-                    )? {
-                        return Err(Error::Denied);
-                    }
-                    if let Some(value) = self.pending(&request, &command.subject)? {
-                        return Ok(Reply::Pending {
-                            value: Box::new(value),
-                        });
-                    }
-                    if !self.can_read(&request, &command.subject)? {
-                        return Err(Error::Denied);
-                    }
-                    Ok(Reply::Details {
-                        value: Box::new(
-                            self.app
-                                .task_details(&self.request_caller(&request)?, &request)
-                                .map_err(crate::error::app_error)?,
-                        ),
-                    })
-                }
-                Some(Request::Cancel { request }) => {
-                    if !self.policy_readable(
-                        &request,
-                        &command.subject,
-                        command.binding.as_ref(),
-                    )? {
-                        return Err(Error::Denied);
-                    }
-                    if let Some(value) = self.pending(&request, &command.subject)? {
-                        let value = self
-                            .transition(
-                                &value.action.request().clone(),
-                                BackendRequestState::Cancelled,
-                                None,
-                            )?
-                            .ok_or(Error::Conflict)?;
-                        if self.selected.as_ref().is_some_and(|s| s.request == request) {
-                            self.selected = None;
-                        }
-                        return Ok(Reply::Pending {
-                            value: Box::new(value),
-                        });
-                    }
-                    if !self.can_read(&request, &command.subject)? {
-                        return Err(Error::Denied);
-                    }
-                    let input = self
-                        .app
-                        .frozen_input(&self.caller(), &request)
-                        .map_err(crate::error::app_error)?;
-                    if !matches!(
-                        &input.spec().request.initiator,
-                        execution_contract::Initiator::Backend {
-                            trigger: execution_contract::BackendTrigger::Human { .. }
-                                | execution_contract::BackendTrigger::Ai { .. },
-                            ..
-                        }
-                    ) {
-                        return Err(Error::Denied);
-                    }
-                    Ok(Reply::Status {
-                        value: self
-                            .app
-                            .cancel(&self.caller(), &request)
-                            .map_err(crate::error::app_error)?,
-                    })
-                }
             }
         })();
         let _ = command.reply.send(match reply {

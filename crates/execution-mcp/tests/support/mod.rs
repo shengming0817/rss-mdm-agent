@@ -34,6 +34,7 @@ pub struct TestStore {
     accepted: HashMap<(TestNamespace, RequestId), OperationStatus>,
     inputs: HashMap<(TestNamespace, RequestId), BackendSelection>,
     cancellations: HashSet<(TestNamespace, RequestId)>,
+    controls: HashMap<(TestNamespace, Id), execution_app::tasks::TaskControl>,
 }
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TestNamespace {
@@ -121,23 +122,135 @@ impl TestService {
     }
 }
 impl ExecutionServicePort for TestService {
+    async fn task_operation(
+        &self,
+        input: execution_app::tasks::TaskOperation,
+        wait: CancellationToken,
+    ) -> Result<execution_app::tasks::TaskResponse, ServiceError> {
+        use execution_app::tasks::*;
+        self.authorize()?;
+        match input {
+            TaskOperation::List(_) => {
+                self.capabilities(wait).await?;
+                Ok(TaskResponse::Page(TaskPage {
+                    items: vec![],
+                    next: None,
+                    scope: "test-scope".into(),
+                    as_of: 1000,
+                    last_sync: None,
+                    remote_available: false,
+                    coverage: vec![],
+                    retained_from: None,
+                    complete: true,
+                }))
+            }
+            TaskOperation::Detail(TaskRef::Request { request }) => {
+                let status = self
+                    .status(
+                        OperationRequest {
+                            operation_request_id: request.clone(),
+                        },
+                        wait,
+                    )
+                    .await?;
+                Ok(TaskResponse::Detail(Box::new(
+                    self.task_detail_fixture(&request, &status),
+                )))
+            }
+            TaskOperation::Detail(_) => Err(ServiceError::NotFound),
+            TaskOperation::Control(input) => {
+                let TaskRef::Request { request } = &input.reference else {
+                    return Err(ServiceError::Denied);
+                };
+                if input.scope != "test-scope" || input.action != TaskAction::Cancel {
+                    return Err(ServiceError::Denied);
+                }
+                let control_key = (self.namespace.clone(), input.id.clone());
+                if let Some(previous) = self.store.lock().unwrap().controls.get(&control_key) {
+                    if serde_json::to_value(previous).unwrap()
+                        != serde_json::to_value(&input).unwrap()
+                    {
+                        return Err(ServiceError::Conflict);
+                    }
+                }
+                let query = self
+                    .store
+                    .lock()
+                    .unwrap()
+                    .queries
+                    .contains_key(&self.key(request));
+                if query {
+                    tokio::time::sleep(Duration::from_millis(
+                        self.submit_delay_ms.load(Ordering::SeqCst) as u64,
+                    ))
+                    .await;
+                    self.authorize()?;
+                    self.store
+                        .lock()
+                        .unwrap()
+                        .query_cancellations
+                        .insert(self.key(request));
+                } else {
+                    self.cancel(
+                        OperationRequest {
+                            operation_request_id: request.clone(),
+                        },
+                        wait,
+                    )
+                    .await?;
+                }
+                self.store
+                    .lock()
+                    .unwrap()
+                    .controls
+                    .insert(control_key, input.clone());
+                Ok(TaskResponse::Control(TaskControlReceipt {
+                    id: input.id,
+                    disposition: ControlDisposition::Confirmed,
+                    created: None,
+                }))
+            }
+            TaskOperation::ControlStatus(input) => {
+                self.capabilities(wait).await?;
+                let TaskRef::Request { request } = input.reference else {
+                    return Err(ServiceError::Denied);
+                };
+                let store = self.store.lock().unwrap();
+                let confirmed = store
+                    .controls
+                    .get(&(self.namespace.clone(), input.id.clone()))
+                    .is_some_and(|c| {
+                        c.reference
+                            == TaskRef::Request {
+                                request: request.clone(),
+                            }
+                            && c.scope == input.scope
+                    });
+                Ok(TaskResponse::Control(TaskControlReceipt {
+                    id: input.id,
+                    disposition: if confirmed {
+                        ControlDisposition::Confirmed
+                    } else {
+                        ControlDisposition::Unknown
+                    },
+                    created: None,
+                }))
+            }
+        }
+    }
+
     async fn collected_data(
         &self,
         input: execution_contract::DataOperation,
         _: CancellationToken,
     ) -> Result<execution_contract::DataResponse, ServiceError> {
         self.authorize()?;
-        let delay = if matches!(
-            input,
-            execution_contract::DataOperation::Submit(_)
-                | execution_contract::DataOperation::Cancel(_)
-        ) {
+        let delay = if matches!(input, execution_contract::DataOperation::Submit(_)) {
             &self.submit_delay_ms
         } else {
             &self.catalog_delay_ms
         };
         tokio::time::sleep(Duration::from_millis(delay.load(Ordering::SeqCst) as u64)).await;
-        let cancelling = matches!(input, execution_contract::DataOperation::Cancel(_));
         use execution_contract::*;
         let query = QueryRef {
             id: Id::new("native:fixture").unwrap(),
@@ -183,13 +296,9 @@ impl ExecutionServicePort for TestService {
                 }
                 Ok(DataResponse::Status(state(submit.request, &store)))
             }
-            DataOperation::Status(input) | DataOperation::Cancel(input) => {
+            DataOperation::Status(input) => {
                 if !store.queries.contains_key(&self.key(&input.request)) {
                     return Err(ServiceError::NotFound);
-                }
-                // The transport fixture records cancellation independently from collection.
-                if cancelling {
-                    store.query_cancellations.insert(self.key(&input.request));
                 }
                 Ok(DataResponse::Status(state(input.request, &store)))
             }
@@ -246,13 +355,6 @@ impl ExecutionServicePort for TestService {
             .cloned()
             .ok_or(ServiceError::NotFound)
     }
-    async fn software_cancel(
-        &self,
-        input: execution_contract::QueryRequest,
-        wait: CancellationToken,
-    ) -> Result<LocalSoftwareResult, ServiceError> {
-        self.software_status(input, wait).await
-    }
     async fn invoke_policy(
         &self,
         _: rss_mdm_agent_wire::runtime::CapabilitySelector,
@@ -303,14 +405,6 @@ impl ExecutionServicePort for TestService {
             next: None,
         })
     }
-    async fn policy_status(
-        &self,
-        _: OperationRequest,
-        _: CancellationToken,
-    ) -> Result<serde_json::Value, ServiceError> {
-        self.capabilities(CancellationToken::new()).await?;
-        Err(ServiceError::Denied)
-    }
     async fn observe_software(
         &self,
         _: execution_contract::SoftwareReadSelection,
@@ -319,7 +413,7 @@ impl ExecutionServicePort for TestService {
         self.capabilities(CancellationToken::new()).await?;
         Err(ServiceError::Denied)
     }
-    async fn tasks(&self, _: CancellationToken) -> Result<Vec<BackendTask>, ServiceError> {
+    async fn offers(&self, _: CancellationToken) -> Result<Vec<BackendTask>, ServiceError> {
         self.authorize()?;
         tokio::time::sleep(Duration::from_millis(
             self.catalog_delay_ms.load(Ordering::SeqCst) as u64,
@@ -402,6 +496,80 @@ impl ExecutionServicePort for TestService {
             confirmation_required: true,
         })
     }
+}
+
+impl TestService {
+    fn task_detail_fixture(
+        &self,
+        request: &RequestId,
+        status: &OperationStatus,
+    ) -> execution_app::tasks::TaskDetail {
+        use execution_app::tasks::*;
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../tests/assistant/execution-fixtures.json"
+        ))
+        .unwrap();
+        let mut details: execution_app::ExecutionTaskDetails =
+            serde_json::from_value(fixture["running"].clone()).unwrap();
+        details.action.request_id = request.clone();
+        details.status.operation_request_id = request.clone();
+        details.status.phase = match status.phase {
+            OperationPhase::Verified => execution_app::TaskPhase::Verified,
+            OperationPhase::Cancelled => execution_app::TaskPhase::Cancelled,
+            OperationPhase::OutcomeUnknown => execution_app::TaskPhase::OutcomeUnknown,
+            _ => execution_app::TaskPhase::Accepted,
+        };
+        details.status.content_digest = status.content_digest.clone();
+        details.status.cancel_requested = status.cancel_requested;
+        details.status.mode = execution_lifecycle::ExecutionMode::Test;
+        details.status.assessment = status.assessment;
+        details.status.evidence = status
+            .evidence
+            .iter()
+            .map(|id| execution_contract::EvidenceRef {
+                reference: execution_contract::VersionedRef {
+                    id: id.clone(),
+                    revision: Id::new("1").unwrap(),
+                },
+                kind: execution_contract::EvidenceKind::TestResult,
+                runner: Id::new("test-runner").unwrap(),
+            })
+            .collect();
+        TaskDetail {
+            reference: TaskRef::Request {
+                request: request.clone(),
+            },
+            scope: "test-scope".into(),
+            revision: TaskRevision {
+                owner: 0,
+                transfers: vec![],
+            },
+            recorded_at: Some(1000),
+            source: TaskSource::Human,
+            task_kind: TaskKind::Policy,
+            stage: "accepted".into(),
+            active: true,
+            facts: TaskFacts::Execution(Box::new(details)),
+            nodes: vec![],
+            allowed_actions: vec![TaskAction::Cancel],
+            control_reason: None,
+            upload_acknowledged: None,
+            collection_quality: None,
+            collection_complete: None,
+            software_state: None,
+            policy: None,
+            policy_revision: None,
+            retry_of: None,
+            related: vec![],
+            selection: None,
+            missing: vec![],
+            parameter_summary: Default::default(),
+            human_confirmation: false,
+        }
+    }
+}
+
+impl TestService {
     async fn status(
         &self,
         request: OperationRequest,
@@ -424,22 +592,16 @@ impl ExecutionServicePort for TestService {
         &self,
         request: OperationRequest,
         _: CancellationToken,
-    ) -> Result<CancelResult, ServiceError> {
+    ) -> Result<(), ServiceError> {
         let id = request.operation_request_id.clone();
         let operation = self.status(request, CancellationToken::new()).await?;
-        let disposition = if operation.phase == OperationPhase::Verified {
-            CancelDisposition::AlreadyTerminal
-        } else {
+        if operation.phase != OperationPhase::Verified {
             self.store
                 .lock()
                 .unwrap()
                 .cancellations
                 .insert(self.key(&id));
-            CancelDisposition::Requested
-        };
-        Ok(CancelResult {
-            disposition,
-            operation,
-        })
+        }
+        Ok(())
     }
 }

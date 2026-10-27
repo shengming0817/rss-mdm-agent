@@ -20,6 +20,7 @@ import type {
   SelfServicePort,
 } from "./self-service/types";
 export type LocalPorts = {
+  tasks?: import("./self-service/types").TaskPort | null;
   data: DataAccessPort | null;
   software: SoftwarePort | null;
   settings: import("./system-settings/controller").SettingsPort | null;
@@ -45,9 +46,9 @@ export function assertFixtureAssembly(input: {
     !input.assistantServices.taskDetails ||
     !input.assistantServices.confirmTask ||
     !input.assistantServices.cancelTask ||
-    !input.selfServicePort?.snapshot ||
-    !input.selfServicePort.execute ||
-    !input.selfServicePort.cancel ||
+    !input.environment.local.tasks?.list ||
+    !input.selfServicePort?.execute ||
+    !input.environment.local.tasks.control ||
     !input.environment.local ||
     !input.environment.identity?.read ||
     !input.environment.device?.read ||

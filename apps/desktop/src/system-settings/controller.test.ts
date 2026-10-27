@@ -93,7 +93,11 @@ it("preview keep uses the exact frozen digest and does not allocate another oper
   controller.dispose();
   await vi.advanceTimersByTimeAsync(250);
   await refresh;
-  expect(calls.some((c) => c.kind === "cancel")).toBe(true);
+  expect(
+    calls.every((c) =>
+      ["refresh", "status", "keepDisplay", "snapshot"].includes(c.kind),
+    ),
+  ).toBe(true);
 });
 it("late native responses cannot publish into a retired user's page", async () => {
   let complete!: (value: SettingsResponse) => void;

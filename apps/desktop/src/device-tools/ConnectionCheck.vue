@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, watch, onBeforeUnmount } from "vue";
+import { taskCenterKey, requestRef } from "../task-center/controller";
+import { inject, ref, computed, watch, onBeforeUnmount } from "vue";
 import { currentUser } from "../test-users";
 import type { NetworkCheckPort } from "../self-service/native";
 import type { NetworkCheckStatus, NetworkFinding } from "../self-service/types";
+const tasks = inject(taskCenterKey, undefined);
 const props = withDefaults(
   defineProps<{
     port: NetworkCheckPort | null;
@@ -18,6 +20,11 @@ const host = ref(""),
   busy = ref(false),
   error = ref("");
 const value = ref<NetworkCheckStatus>();
+const allowed = computed(() =>
+  request.value
+    ? (tasks?.lookup(requestRef(request.value))?.allowedActions ?? [])
+    : [],
+);
 let epoch = 0,
   disposed = false;
 const finished = computed(
@@ -98,6 +105,10 @@ async function call(kind: "run" | "status" | "cancel") {
   busy.value = true;
   error.value = "";
   try {
+    if (kind === "cancel") {
+      if (!tasks) throw Error("task port unavailable");
+      await tasks.cancel(original);
+    }
     const response = await props.port(
       kind === "run"
         ? {
@@ -105,12 +116,13 @@ async function call(kind: "run" | "status" | "cancel") {
             request: original,
             target: { host: host.value.trim(), port: Number(port.value) },
           }
-        : { kind, request: original },
+        : { kind: "status", request: original },
     );
     if (disposed || generation !== epoch) return;
     if (response.kind !== "status") throw Error("response");
     request.value = response.value.status.operationRequestId;
     value.value = response.value;
+    await tasks?.detail(requestRef(request.value));
   } catch (failure) {
     if (!disposed && generation === epoch) {
       const code =
@@ -216,7 +228,8 @@ onBeforeUnmount(() => {
       </p>
       <button :disabled="busy" @click="call('status')">查询原请求</button>
       <button
-        :disabled="busy || finished || value?.status.cancelRequested"
+        v-if="allowed.includes('cancel')"
+        :disabled="busy || !!tasks?.state.pendingControl"
         @click="call('cancel')"
       >
         取消检查

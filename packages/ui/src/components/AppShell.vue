@@ -66,8 +66,19 @@ async function toggleNavigation() {
 const navigationId = useId();
 let observer: ResizeObserver | undefined;
 async function navigate() {
+  const previousFocus = document.activeElement;
   navigationOpen.value = false;
   await nextTick();
+  // A page may restore a precise task or resource after navigation.
+  const currentFocus = document.activeElement;
+  if (
+    currentFocus !== previousFocus &&
+    currentFocus !== document.body &&
+    currentFocus instanceof HTMLElement &&
+    root.value?.contains(currentFocus) &&
+    currentFocus.getClientRects().length > 0
+  )
+    return;
   const heading = [
     ...(root.value?.querySelectorAll<HTMLElement>("h1") ?? []),
   ].find((el) => el.getClientRects().length > 0);

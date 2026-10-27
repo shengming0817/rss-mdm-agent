@@ -5,6 +5,31 @@ use execution_interaction::{Interaction, Reference, Spec};
 use execution_lifecycle::{CommandEvent, ObservationEvent, ObservationVerifier};
 
 impl JournalPort for Store {
+    fn task_watermarks(&self) -> Result<(u64, u64), JournalError> {
+        self.sql_task_watermarks().map_err(Into::into)
+    }
+
+    fn task_history_page(
+        &self,
+        authority: &Authority,
+        actor: &ActorId,
+        query: &TaskHistoryQuery,
+        host: &impl JournalHost,
+    ) -> Result<Vec<TaskHistoryPosition>, JournalError> {
+        self.sql_task_history_page(authority, actor, query, host)
+            .map_err(Into::into)
+    }
+
+    fn remote_request(
+        &self,
+        task: &execution_contract::Id,
+        attempt: &execution_contract::Id,
+        host: &impl JournalHost,
+    ) -> Result<Option<execution_contract::RequestId>, JournalError> {
+        self.sql_remote_request(task, attempt, host)
+            .map_err(Into::into)
+    }
+
     type MaterialCheckpoint = MaterialCheckpoint;
     fn material_checkpoint(&self) -> Result<MaterialCheckpoint, JournalError> {
         self.sql_material_checkpoint().map_err(Into::into)
@@ -228,13 +253,13 @@ impl JournalPort for Store {
         self.sql_service_requests(after, limit, host)
             .map_err(Into::into)
     }
-    fn recent_requests(
+    fn task_requests(
         &self,
         before: Option<u64>,
         limit: usize,
         host: &impl JournalHost,
     ) -> Result<RecentRequestPage, JournalError> {
-        self.sql_recent_requests(before, limit, host)
+        self.sql_task_requests(before, limit, host)
             .map_err(Into::into)
     }
     fn execution_confirmation_state(

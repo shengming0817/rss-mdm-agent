@@ -56,6 +56,8 @@
       },
       "validity": { "expiresAtUnixMs": 2000, "notBeforeUnixMs": 1000 }
     },
+    "recordedAtUnixMs": 1000,
+    "revision": 7,
     "status": {
       "admission": "admitted",
       "assessment": "noEffect",
@@ -147,6 +149,8 @@
       },
       "validity": { "expiresAtUnixMs": 2000, "notBeforeUnixMs": 1000 }
     },
+    "recordedAtUnixMs": 1000,
+    "revision": 4,
     "status": {
       "admission": "admitted",
       "assessment": null,
@@ -186,8 +190,13 @@
         "userInitiated": true
       }
     },
+    "cancellationControl": null,
+    "cancellationExpectedRevision": null,
     "confirmation": null,
     "failure": "revoked",
+    "recordedAtUnixMs": 1,
+    "retryExpectedRevision": null,
+    "retryOf": null,
     "revision": 1,
     "risk": {
       "expiresAtUnixMs": 9999999999000,
@@ -289,6 +298,8 @@
       },
       "validity": { "expiresAtUnixMs": 2000, "notBeforeUnixMs": 1000 }
     },
+    "recordedAtUnixMs": 1000,
+    "revision": 3,
     "status": {
       "admission": "admitted",
       "assessment": null,
@@ -328,8 +339,13 @@
         "userInitiated": true
       }
     },
+    "cancellationControl": null,
+    "cancellationExpectedRevision": null,
     "confirmation": null,
     "failure": null,
+    "recordedAtUnixMs": 1,
+    "retryExpectedRevision": null,
+    "retryOf": null,
     "revision": 1,
     "risk": {
       "expiresAtUnixMs": 9999999999000,
@@ -413,6 +429,8 @@
       },
       "validity": { "expiresAtUnixMs": 2000, "notBeforeUnixMs": 1000 }
     },
+    "recordedAtUnixMs": 1000,
+    "revision": 3,
     "status": {
       "admission": "admitted",
       "assessment": null,
@@ -485,6 +503,8 @@
       },
       "validity": { "expiresAtUnixMs": 2000, "notBeforeUnixMs": 1000 }
     },
+    "recordedAtUnixMs": 1000,
+    "revision": 3,
     "status": {
       "admission": "admitted",
       "assessment": null,
@@ -559,6 +579,8 @@
       },
       "validity": { "expiresAtUnixMs": 2000, "notBeforeUnixMs": 1000 }
     },
+    "recordedAtUnixMs": 1000,
+    "revision": 5,
     "status": {
       "admission": "admitted",
       "assessment": "satisfied",

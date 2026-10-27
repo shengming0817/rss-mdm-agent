@@ -153,8 +153,8 @@ export async function refreshAccount(): Promise<void> {
   try {
     const status = parsed(await invoke("account_status"), "accountStatus");
     const value = status.current;
-    accountBinding.value = status.binding;
     if (currentUser.value?.generation !== expected) return;
+    accountBinding.value = status.binding;
     if (status.failure)
       accountNotice.value = accountFailureMessage(status.failure);
     if (

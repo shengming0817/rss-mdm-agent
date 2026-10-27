@@ -67,6 +67,7 @@ static uint64_t rss_registration_order;
 @property NSUInteger active;
 @property uint64_t serial;
 @property(copy) NSString *requirement;
+@property(strong) NSXPCConnection *publication;
 @end
 @implementation RSSExecutionListener
 - (BOOL)listener:(NSXPCListener *)listener shouldAcceptNewConnection:(NSXPCConnection *)connection {
@@ -91,8 +92,17 @@ static uint64_t rss_registration_order;
 @end
 // NSXPCListenerEndpoint is a native capability; no endpoint name or login identity is decoded from JSON.
 static void rss_publish_helper(NSXPCListener *listener, NSString *requirement) {
+    RSSExecutionListener *owner=(RSSExecutionListener *)listener.delegate;
+    if(!owner)return;
+    // A slow authenticated registration must not accumulate timer publications
+    // behind the same serial owner. ACK, transport loss or the existing deadline
+    // releases this one in-flight publication; no authentication result is cached.
+    @synchronized(owner){if(owner.publication)return;}
     if(!rss_execution_helper_active())return;
     NSXPCConnection *connection=[[NSXPCConnection alloc]initWithMachServiceName:@"com.rss-mdm.agent.execution" options:NSXPCConnectionPrivileged];
+    @synchronized(owner){if(owner.publication)return;owner.publication=connection;}
+    __weak NSXPCConnection *publication=connection;
+    connection.invalidationHandler=^{@synchronized(owner){if(owner.publication==publication)owner.publication=nil;}};
     [connection setCodeSigningRequirement:requirement];
     connection.remoteObjectInterface=[NSXPCInterface interfaceWithProtocol:@protocol(RSSExecution)];
     [connection resume];
