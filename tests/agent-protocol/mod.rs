@@ -1126,11 +1126,10 @@ async fn handler(
         // reason: these explicit faults model a proxy/transport failure, not a producer response.
         let transport_fault = uri.path().contains("/telemetry/")
             && (data.telemetry.throttled || data.telemetry.timed_out);
+        let status_fault =
+            uri.path().contains("/platform-sso/") && data.psso_status_override.is_some();
         (
-            !data.invalid_contract_response
-                && !body_override
-                && data.psso_status_override.is_none()
-                && !transport_fault,
+            !data.invalid_contract_response && !status_fault && !transport_fault,
             body_override,
         )
     };
@@ -1250,7 +1249,14 @@ async fn handle(
         }
         if let Some((suffix, body)) = &d.response_override {
             if path.ends_with(suffix) {
-                return axum::Json(body.clone()).into_response();
+                return (
+                    [
+                        ("cache-control", "no-store"),
+                        ("referrer-policy", "no-referrer"),
+                    ],
+                    axum::Json(body.clone()),
+                )
+                    .into_response();
             }
         }
         return StatusCode::NOT_FOUND.into_response();

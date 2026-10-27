@@ -1176,6 +1176,7 @@ async fn obsolete_wire_and_signing_domain_never_accept_a_task() {
     let obsolete_signature =
         serde_json::to_value(TaskClaimResponse::new(Some(obsolete_signature), vec![]).unwrap())
             .unwrap();
+    server.data.lock().unwrap().invalid_contract_response = true;
     for (body, expected) in [
         (obsolete_version, Error::Protocol),
         (obsolete_task, Error::Protocol),
@@ -1189,6 +1190,7 @@ async fn obsolete_wire_and_signing_domain_never_accept_a_task() {
         assert!(data.start_ops.is_empty());
     }
     server.data.lock().unwrap().response_override = None;
+    server.data.lock().unwrap().invalid_contract_response = false;
     assert!(client.claim().await.unwrap().offer.is_some());
 }
 
@@ -1207,6 +1209,7 @@ async fn obsolete_ack_preserves_the_original_report_for_retry() {
             1,
         )
         .unwrap();
+    server.data.lock().unwrap().invalid_contract_response = true;
     server.data.lock().unwrap().response_override = Some((
         "/reports".into(),
         serde_json::json!({
@@ -1216,6 +1219,7 @@ async fn obsolete_ack_preserves_the_original_report_for_retry() {
     assert_eq!(client.flush_reports(1).await, Err(Error::Protocol));
     drop(client);
     server.data.lock().unwrap().response_override = None;
+    server.data.lock().unwrap().invalid_contract_response = false;
     let mut client = server.client(&root, OpenMode::Existing);
     assert_eq!(client.flush_reports(1).await.unwrap(), 1);
     assert_eq!(server.data.lock().unwrap().reports.len(), 1);
@@ -1254,6 +1258,7 @@ async fn obsolete_activation_capability_preserves_active_binding_and_candidate()
         )
     };
     response["activation"]["runtime"]["capabilities"][0] = "inventory.collection.v6".into();
+    server.data.lock().unwrap().invalid_contract_response = true;
     server.data.lock().unwrap().response_override = Some(("/status".into(), response));
     drop(client);
     let mut client = server.client(&root, OpenMode::Existing);
@@ -1271,6 +1276,7 @@ async fn obsolete_activation_capability_preserves_active_binding_and_candidate()
     assert_eq!(client.registration().unwrap(), binding);
     assert!(client.has_pending_enrollment().unwrap());
     server.data.lock().unwrap().response_override = None;
+    server.data.lock().unwrap().invalid_contract_response = false;
     client.drive_enrollment().await.unwrap();
     assert_eq!(client.registration().unwrap(), binding);
     assert_eq!(server.data.lock().unwrap().activation_calls.len(), calls);

@@ -89,6 +89,7 @@ async fn registration_distinguishes_rejection_from_unknown_and_malformed_success
         assert!(client.psso_register(&input).await.is_err());
     }
     server.data.lock().unwrap().psso_status_override = None;
+    server.data.lock().unwrap().invalid_contract_response = true;
     server.data.lock().unwrap().response_override =
         Some(("/register".into(), json!({"invalid":"success"})));
     assert!(client.psso_register(&input).await.is_err());
@@ -100,6 +101,7 @@ async fn registration_distinguishes_rejection_from_unknown_and_malformed_success
         hardware_attested: false,
         registration_trust: w::RegistrationTrust::MdmBootstrapPop,
     };
+    server.data.lock().unwrap().invalid_contract_response = false;
     server.data.lock().unwrap().response_override = Some(("/register".into(), json!(receipt)));
     assert_eq!(
         client
@@ -155,5 +157,23 @@ async fn invalid_response_cannot_hide_in_an_unobserved_connection_task() {
         .await
         .unwrap();
     assert!(response.status().is_success());
+    drop(server);
+}
+
+#[tokio::test]
+#[should_panic(expected = "fixture HTTP contract violations")]
+async fn ordinary_body_override_is_still_checked_against_the_producer() {
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    server.data.lock().unwrap().response_override = Some(("/bootstrap".into(), json!({})));
+    let input = w::Bootstrap {
+        operation_id: Uuid::new_v4(),
+        kind: w::Kind::Device,
+        binding_id: None,
+        binding_generation: None,
+    };
+    assert!(client.psso_bootstrap(&input).await.is_err());
     drop(server);
 }
