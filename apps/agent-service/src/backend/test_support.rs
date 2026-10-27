@@ -157,8 +157,10 @@ impl execution_app::RunnerPort for CapturingRunner {
         {
             return Ok(None);
         }
-        if p.spec().launch.interpreter.profile.id.as_str() == crate::credential_worker::PROFILE
-            && s == execution_app::ObservationStage::Assessment
+        if matches!(
+            p.spec().launch.interpreter.profile.id.as_str(),
+            crate::credential_worker::PROFILE | crate::collection_worker::PROFILE
+        ) && s == execution_app::ObservationStage::Assessment
         {
             return Ok(None);
         }

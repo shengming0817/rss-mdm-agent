@@ -875,17 +875,17 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         let status = app
             .status(caller, binding.request())
             .map_err(map_app_error)?;
-        // Script Result is process evidence, not an independent effect assessment.
-        // Only a closed activity may release its retained association and materials.
-        let script_closed = matches!(
+        // Script and read-only collection results are observations, not effect assessments.
+        // Their acknowledged, closed processes may release transport while retaining history.
+        let observation_closed = matches!(
             client.retained_offer(task)?.payload(),
-            wire::TaskPayload::Script(_)
+            wire::TaskPayload::Script(_) | wire::TaskPayload::Collection(_)
         ) && status.phase == TaskPhase::ExecutionEnded
             && status
                 .process
                 .as_ref()
                 .is_some_and(|p| p.finished && p.quiescent);
-        if (!settled(&status) && !script_closed)
+        if (!settled(&status) && !observation_closed)
             || !app
                 .service_delivery(binding.request(), &self.consumer, 1)
                 .map_err(map_app_error)?
