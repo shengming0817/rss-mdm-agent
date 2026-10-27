@@ -59,6 +59,17 @@ pub(crate) fn valid_encoding(bytes: &[u8], encoding: TextEncoding) -> bool {
 mod collection_tests {
     use super::*;
     #[test]
+    fn scalar_action_completion_is_text_while_collection_json_stays_structured() {
+        let mut spec = OutputSpec {
+            format: OutputFormat::Text {},
+            stdout: TextEncoding::Utf8,
+            stderr: TextEncoding::Utf8,
+        };
+        assert_eq!(quality(br#""opened""#, b"", spec), OutputQuality::Complete);
+        spec.format = OutputFormat::Json { max_rows: 1 };
+        assert_eq!(quality(br#""opened""#, b"", spec), OutputQuality::Failed);
+    }
+    #[test]
     fn empty_json_list_is_complete_and_overflow_rows_are_explicitly_truncated() {
         let spec = OutputSpec {
             format: OutputFormat::Json { max_rows: 1 },
