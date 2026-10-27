@@ -83,6 +83,7 @@ export function policyRecord(
     retryExpectedRevision: null,
     action: {
       kind: "policy",
+      address: null,
       definition: { id: "policy", revision: "version" },
       policyRevision: 1,
       choice: {
@@ -184,6 +185,7 @@ export function taskDetail(
     policyRevision: null,
     retryOf: null,
     related: [],
+    relatedCursor: null,
     selection: null,
     missing: [],
     parameterSummary: {},
@@ -240,7 +242,9 @@ export function taskFromFacts<
       ? facts.value.status.operationRequestId
       : facts.value.action.kind === "offered"
         ? facts.value.action.offer.request
-        : facts.value.action.choice.request;
+        : facts.value.action.kind === "event"
+          ? facts.value.action.request
+          : facts.value.action.choice.request;
   const result = taskDetail(request);
   result.revision.owner = facts.value.revision;
   result.stage =

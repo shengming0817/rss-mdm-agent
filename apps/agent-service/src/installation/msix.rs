@@ -47,6 +47,7 @@ pub fn initialize() -> Result<Deployment, Error> {
     };
     candidate.service.path = rebase(&candidate.service.path)?;
     candidate.desktop.path = rebase(&candidate.desktop.path)?;
+    candidate.cli.path = rebase(&candidate.cli.path)?;
     candidate.runtime_root = rebase(&candidate.runtime_root)?;
     candidate.root = root;
     if candidate.format()? != "windows_msix" {
@@ -78,6 +79,9 @@ pub fn initialize() -> Result<Deployment, Error> {
     let mut next = candidate.deployment(digest, profile, &config)?;
     if let Some(old) = old {
         next.installation_id = old.installation_id;
+        if let (Some(previous), Some(next_cli)) = (&old.cli, &mut next.cli) {
+            next_cli.machine_actions = previous.machine_actions.clone();
+        }
         super::lifecycle::preserved(&old, &next)?;
         // The OS stopped the previous package service. Retained identity/journal are reopened below.
         if let Some(ca) = &old.ca_file {

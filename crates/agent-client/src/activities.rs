@@ -34,6 +34,85 @@ pub struct ManagementCache {
     pub complete: bool,
 }
 impl<S: IdentityProvider, C: Clock> Client<S, C> {
+    /// Read a bounded page through the same management activity owner. This does not
+    /// advance the independent full-history synchronization cursor.
+    pub async fn management_page(
+        &self,
+        batch: Option<&str>,
+        related: Option<&str>,
+        after: Option<&str>,
+        limit: u16,
+    ) -> Result<ManagementActivityPage, Error> {
+        if !(1..=64).contains(&limit)
+            || batch.is_some_and(|v| uuid::Uuid::parse_str(v).is_err())
+            || related.is_some_and(|v| v.is_empty() || v.len() > 512)
+            || after.is_some_and(|v| v.is_empty() || v.len() > 4096)
+        {
+            return Err(Error::Protocol);
+        }
+        let mut query = url::form_urlencoded::Serializer::new(String::new());
+        query.append_pair("limit", &limit.to_string());
+        if batch.is_none() && related.is_none() {
+            query.append_pair("kind", "batch");
+        }
+        for (key, value) in [("batch", batch), ("related", related), ("cursor", after)] {
+            if let Some(value) = value {
+                query.append_pair(key, value);
+            }
+        }
+        let value: ManagementActivityPage = self
+            .self_service_json(
+                None,
+                reqwest::Method::GET,
+                &format!("management-activities?{}", query.finish()),
+                None,
+            )
+            .await?;
+        if value.items.len() > usize::from(limit)
+            || value.as_of < 0
+            || value
+                .next_cursor
+                .as_deref()
+                .is_some_and(|v| Some(v) == after || v.len() > 4096)
+            || value.items.iter().any(|v| {
+                batch.is_some_and(|id| v.links.batch.map(|v| v.to_string()).as_deref() != Some(id))
+            })
+        {
+            return Err(Error::Untrusted);
+        }
+        Ok(value)
+    }
+    /// Recover an explicit event's accepted batch through the existing activity projection.
+    /// Missing or incomplete visibility never proves nonacceptance; only an exact idempotent
+    /// replay may follow a successful read with no match.
+    pub async fn event_batch(&self, request: uuid::Uuid) -> Result<Option<uuid::Uuid>, Error> {
+        let page: ManagementActivityPage = self
+            .self_service_json(
+                None,
+                reqwest::Method::GET,
+                &format!("management-activities?request={request}&kind=batch&limit=64"),
+                None,
+            )
+            .await?;
+        if page.items.len() > 64 || page.as_of < 0 {
+            return Err(Error::Untrusted);
+        }
+        let mut found = None;
+        for item in page.items {
+            if item.kind != rss_mdm_agent_wire::activities::ActivityKind::Batch
+                || item.links.request != Some(request)
+            {
+                return Err(Error::Untrusted);
+            }
+            if let Some(batch) = item.links.batch {
+                if found.is_some_and(|old| old != batch) {
+                    return Err(Error::Untrusted);
+                }
+                found = Some(batch);
+            }
+        }
+        Ok(found)
+    }
     fn save_management_cache(&self, mut cache: ManagementCache) -> Result<ManagementCache, Error> {
         let limit = self.configuration().limits;
         let count = limit.pending_tasks.saturating_mul(64).min(4096);

@@ -4,6 +4,7 @@ import { join, dirname, resolve } from "node:path";
 import ts from "typescript";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const appExternalDependencies = {
+  "@cfworker/json-schema": "4.1.1",
   "@modelcontextprotocol/sdk": "1.30.0",
   yaml: "2.9.1",
 };

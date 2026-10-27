@@ -2,9 +2,9 @@
 use execution_contract::{Digest, Id, RequestId, VersionedRef};
 use serde::{Deserialize, Serialize};
 /// Current desktop/system IPC. No negotiation or legacy parser exists.
-pub const IPC_VERSION: u8 = 7;
+pub const IPC_VERSION: u8 = 8;
 /// Current protected installation document format.
-pub const DEPLOYMENT_VERSION: u32 = 6;
+pub const DEPLOYMENT_VERSION: u32 = 7;
 
 /// Read-only native state, independent from Agent identity and policy authorization.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
@@ -720,6 +720,11 @@ impl NativeContextSession {
     deny_unknown_fields
 )]
 pub enum Request {
+    /// Finite entry operations. The native peer determines OS identity and caller class.
+    Entry {
+        /// Typed owner operation.
+        input: crate::entry::EntryOperation,
+    },
     /// Verify only this authenticated native peer's configured user helper.
     HelperStatus {},
     /// Finite desktop DNS/TCP diagnostics through the existing execution owner.
@@ -932,6 +937,39 @@ struct Envelope {
     rename_all_fields = "camelCase"
 )]
 pub enum Reply {
+    /// Original check-in drive was scheduled; no remote receipt or effect is asserted.
+    CheckinRequested {},
+    /// One original local tool schema.
+    LocalTool {
+        /// Owner descriptor, not permission.
+        value: execution_contract::LocalToolDescriptor,
+    },
+    /// Local schemas and the current producer directory page.
+    EntryCapabilities {
+        /// Schema references from the three existing local owners.
+        local: Vec<execution_contract::LocalToolDescriptor>,
+        /// Current remote directory, absent when its owner is unavailable.
+        policies: Option<rss_mdm_agent_wire::runtime::SelfServiceDirectoryResponse>,
+        /// Explicit remote unavailability, independent of local support.
+        remote_available: bool,
+        /// Closed reason for an unavailable remote directory; local schemas remain usable.
+        remote_failure: Option<execution_contract::DataError>,
+    },
+    /// Attachment to the current OS login; no credentials are returned.
+    EntryContext {
+        /// Current owner context and registration.
+        value: crate::entry::EntryContext,
+    },
+    /// Explicit stable page IDs; titles belong to their page owners.
+    EntryNodes {
+        /// Registered stable IDs.
+        value: Vec<String>,
+    },
+    /// Original authorized management facts, using the existing wire DTO.
+    Activities {
+        /// One bounded producer page, with independent coverage and continuation.
+        value: rss_mdm_agent_wire::activities::ManagementActivityPage,
+    },
     /// Native helper facts verified by the system owner for the requesting peer.
     HelperStatus {
         /// Code identity, login binding and work root have been checked by the owner.
@@ -1105,15 +1143,20 @@ impl ServiceClient {
     /// Load only the system-service pin from the protected deployment document.
     /// Desktop consumers do not open the communication credential or journal.
     pub fn installed() -> Result<Self, execution_app::Error> {
+        let path = installation_security::deployment_path()
+            .map_err(|_| execution_app::Error::Configuration)?;
+        Self::installed_at(&path)
+    }
+    /// Read only public pins from an explicitly selected protected deployment.
+    /// This cannot select an arbitrary IPC endpoint or read device credentials.
+    pub fn installed_at(path: &std::path::Path) -> Result<Self, execution_app::Error> {
         #[derive(Deserialize)]
         struct Pin {
             version: u32,
             ipc_version: u8,
             service: installation_security::Artifact,
         }
-        let path = installation_security::deployment_path()
-            .map_err(|_| execution_app::Error::Configuration)?;
-        let bytes = installation_security::read_protected(&path)
+        let bytes = installation_security::read_protected(path)
             .map_err(|_| execution_app::Error::Unavailable)?;
         let pin: Pin =
             serde_json::from_slice(&bytes).map_err(|_| execution_app::Error::Configuration)?;
@@ -1397,7 +1440,7 @@ mod tests {
     fn client_never_decodes_legacy_or_wrong_version_replies() {
         for bytes in [
             br#"{"kind":"unavailable"}"#.as_slice(),
-            br#"{"version":8,"reply":{"kind":"unavailable"}}"#,
+            br#"{"version":7,"reply":{"kind":"unavailable"}}"#,
             br#"{"version":9,"reply":{"kind":"unavailable"},"authority":"fake"}"#,
         ] {
             assert!(decode_reply(bytes).is_err());

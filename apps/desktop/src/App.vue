@@ -9,6 +9,7 @@ import {
 } from "vue";
 import { workspaceIdentity } from "./workspace/identity";
 import Workspace from "./Workspace.vue";
+import { nativeNavigation } from "./workspace/entry";
 import { UiProvider } from "@rss-mdm-agent/ui";
 import { createAppearance, desktopPlatform } from "./appearance";
 import type { AssistantServices } from "./assistant/controller";
@@ -162,6 +163,17 @@ async function navigate(id: string) {
   page.value = id;
 }
 watch(selectedUser, (next, previous) => {
+  if (
+    !props.environment &&
+    previous &&
+    workspaceIdentity(next) !== workspaceIdentity(previous) &&
+    !(
+      previous.identity.mode === "device" &&
+      next?.identity.mode === "user_device"
+    )
+  ) {
+    void nativeNavigation()?.({ kind: "clear" });
+  }
   if (accountEnabled && previous && !next) {
     page.value = "settings";
     loginOpen.value = true;

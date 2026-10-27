@@ -6,7 +6,123 @@ import { createSystemSettings, systemSettingsKey } from "./controller";
 import type {
   SettingsOperation,
   SettingsResponse,
+  LocalPreparation,
 } from "../self-service/types";
+
+it("prepares an exact external patch, rejects changed snapshots, and retains the original confirmation flow", async () => {
+  const calls: SettingsOperation[] = [];
+  const response: SettingsResponse = {
+    writeAllowed: true,
+    request: null,
+    digest: null,
+    finished: true,
+    effect: "observed",
+    keepBeforeUnixMs: null,
+    reason: null,
+    snapshot: {
+      section: "power",
+      revision: "a".repeat(64),
+      collectedAtUnixMs: 1,
+      source: "native fixture",
+      targets: [
+        {
+          id: "ac",
+          name: "AC",
+          options: [],
+          reason: null,
+          fields: [
+            {
+              key: "displayOffMinutes",
+              value: 5,
+              writable: true,
+              quality: "complete",
+              reason: null,
+            },
+          ],
+        },
+      ],
+    },
+  };
+  const controller = createSystemSettings(async (input) => {
+    calls.push(input);
+    return structuredClone(response);
+  }, null);
+  const w = mount(SettingDetail, {
+    props: { section: "power" },
+    global: {
+      provide: { [systemSettingsKey as symbol]: controller },
+      stubs: {
+        UiDialog: {
+          props: ["open"],
+          template: '<div v-if="open"><slot /></div>',
+        },
+      },
+    },
+  });
+  const input: Extract<LocalPreparation, { kind: "settings" }> = {
+    kind: "settings",
+    section: "power",
+    action: "change",
+    expected: "a".repeat(64),
+    patch: {
+      kind: "power",
+      target: "ac",
+      displayOffMinutes: 10,
+      sleepMinutes: null,
+      mode: null,
+    },
+  };
+  try {
+    expect(
+      await w.vm.prepareEntry({ ...input, expected: "b".repeat(64) }),
+    ).toBe(false);
+    expect(await w.vm.prepareEntry(input)).toBe(true);
+    await nextTick();
+    expect(calls.every((v) => v.kind === "snapshot")).toBe(true);
+    expect(w.get('[aria-label="外部设置建议"]').text()).toContain(
+      '"displayOffMinutes": 10',
+    );
+    await w
+      .findAll("button")
+      .find((v) => v.text() === "核对外部修改")!
+      .trigger("click");
+    expect(calls.every((v) => v.kind === "snapshot")).toBe(true);
+    const reads = calls.length;
+    expect(
+      await w.vm.prepareEntry({
+        ...input,
+        patch: {
+          kind: "power",
+          target: "dc",
+          displayOffMinutes: 15,
+          sleepMinutes: null,
+          mode: null,
+        },
+      }),
+    ).toBe(false);
+    expect(calls).toHaveLength(reads);
+    // A later observation must not rebind an already confirmed external patch.
+    response.snapshot!.revision = "b".repeat(64);
+    await controller.load("power");
+    await nextTick();
+    await w
+      .findAll("button")
+      .find((v) => v.text() === "确认修改")!
+      .trigger("click");
+    expect(calls.find((v) => v.kind === "change")).toMatchObject({
+      kind: "change",
+      expected: input.expected,
+      patch: input.patch,
+    });
+    const submitted = calls.find((v) => v.kind === "change")!;
+    expect("request" in submitted && submitted.request).toMatch(
+      /^[0-9a-f-]{36}$/,
+    );
+  } finally {
+    w.unmount();
+    controller.dispose();
+  }
+});
 
 it("submits only writable proxy edits and offers draft adoption after unrelated refresh", async () => {
   const calls: SettingsOperation[] = [];

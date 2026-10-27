@@ -82,7 +82,10 @@ impl Store {
                 execution_contract::PreparedAction::SoftwareRead {
                     observation: Some(_),
                     ..
-                }
+                } | execution_contract::PreparedAction::Event {
+                    receipt: Some(_),
+                    ..
+                } | execution_contract::PreparedAction::Event { batch: Some(_), .. }
             )
         {
             return Err(Error::InvalidInput);

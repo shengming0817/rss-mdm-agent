@@ -3,6 +3,10 @@
 /// Desktop Device Access setup messages.
 pub mod device_access;
 mod diagnostics;
+/// Shared finite CLI and navigation operations.
+pub mod entry;
+/// Bounded desktop-only navigation handoff in the actual OS login.
+pub mod navigation;
 /// Bounded operations reserved for the signed Platform SSO extension.
 pub mod platform_sso;
 pub use diagnostics::{record_background_failure, record_startup_failure};

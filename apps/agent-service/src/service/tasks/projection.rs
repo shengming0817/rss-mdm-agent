@@ -206,6 +206,7 @@ impl Core {
             policy_revision: None,
             retry_of: None,
             related: Vec::new(),
+            related_cursor: None,
             selection: None,
             missing: Vec::new(),
             parameter_summary: Default::default(),
@@ -243,9 +244,7 @@ impl Core {
                     .map(|v| TaskRef::Activity { id: v.id.clone() })
                     .collect();
                 detail.missing = remote.missing.clone();
-                if remote.related_cursor.is_some() {
-                    detail.missing.push("related-history-has-more-pages".into());
-                }
+                detail.related_cursor = remote.related_cursor.clone();
             }
         }
         if let TaskFacts::Management(value) = &detail.facts {

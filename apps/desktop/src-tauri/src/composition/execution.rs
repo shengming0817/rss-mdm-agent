@@ -64,6 +64,14 @@ pub struct ExecutionHandle {
 #[cfg(test)]
 type ContextTransport = Arc<dyn Fn(Request) -> Result<Reply, Error> + Send + Sync>;
 impl ExecutionHandle {
+    pub async fn entry(&self, input: execution_ipc::entry::EntryOperation) -> ui::Result<Reply> {
+        if !matches!(self.origin, ClientOrigin::Desktop {}) {
+            return Err(ui::error("denied", "入口需要当前真实用户"));
+        }
+        self.request(Request::Entry { input })
+            .await
+            .map_err(task_ui_error)
+    }
     pub fn new() -> Self {
         Self {
             users: None,

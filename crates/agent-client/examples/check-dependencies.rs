@@ -99,7 +99,8 @@ impl Policy {
             if name.starts_with("rss-mdm-") || source != CRATES_IO {
                 return Err("non-public package in resolved dependency closure".into());
             }
-        } else if (name.starts_with("rss-mdm-") && name != "rss-mdm-desktop")
+        } else if (name.starts_with("rss-mdm-")
+            && !["rss-mdm-desktop", "rss-mdm-cli"].contains(&name))
             || !Path::new(
                 package["manifest_path"]
                     .as_str()
@@ -261,6 +262,20 @@ mod tests {
         ] {
             assert!(configuration(&toml::from_str(input).unwrap()).is_err());
         }
+    }
+    #[test]
+    fn installed_cli_is_a_local_product_member_not_a_backend_exception() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .unwrap();
+        let mut package = serde_json::json!({"name":"rss-mdm-cli","source":null,"manifest_path":root.join("apps/cli/Cargo.toml")});
+        assert!(policy().package(&package, &root).is_ok());
+        package["name"] = "rss-mdm-inventory".into();
+        assert!(policy().package(&package, &root).is_err());
+        package["name"] = "rss-mdm-cli".into();
+        package["manifest_path"] = "/outside/product/Cargo.toml".into();
+        assert!(policy().package(&package, &root).is_err());
     }
     #[test]
     fn rejects_wrong_resolved_identity_even_under_the_backend_url() {

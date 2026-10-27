@@ -2,49 +2,186 @@
 
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "PersonalVaultOperation".
+ * via the `definition` "NavigationOperation".
  */
-export type PersonalVaultOperation =
+export type NavigationOperation =
   | {
-      kind: "status";
+      kind: "next";
     }
   | {
-      kind: "create";
+      id: string;
+      kind: "ack";
     }
   | {
-      method: UnlockMethod;
-      kind: "unlock";
+      kind: "clear";
     }
   | {
-      kind: "lock";
+      intent: EntryIntent;
+      kind: "format";
     }
   | {
-      authorization: UnlockMethod;
-      kind: "set_password";
+      selector: EntrySelector;
+      version: string | null;
+      revision: number | null;
+      step: string | null;
+      kind: "link";
     }
   | {
-      kind: "remove_password";
+      intent: EntryIntent;
+      kind: "resolve";
     }
   | {
-      kind: "repair_system";
+      intent: EntryIntent;
+      request: RequestId;
+      kind: "submit";
     }
   | {
-      kind: "repair_index";
+      batch: string | null;
+      related: string | null;
+      after: string | null;
+      limit: number;
+      kind: "activities";
     }
   | {
-      credential_id: number[];
-      revision: number;
-      kind: "delete";
-    }
-  | {
-      confirmation: string;
-      kind: "reset";
+      kind: "nodes";
     };
 /**
+ * The external link selects a view or prepares an original user interface.
+ *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "UnlockMethod".
+ * via the `definition` "EntryAction".
  */
-export type UnlockMethod = "system" | "password";
+export type EntryAction = "view" | "invoke";
+/**
+ * Explicit address kinds; display names are not exact selectors.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "EntrySelector".
+ */
+export type EntrySelector =
+  | {
+      /**
+       * Stable tool name.
+       */
+      name: LocalTool;
+      kind: "localTool";
+    }
+  | {
+      /**
+       * Explicit owner-registered ID.
+       */
+      id: string;
+      kind: "node";
+    }
+  | {
+      /**
+       * Canonical producer selector.
+       */
+      selector: CapabilitySelector;
+      kind: "capability";
+    }
+  | {
+      /**
+       * Producer-normalized name.
+       */
+      name: PolicyEventName;
+      kind: "event";
+    }
+  | {
+      /**
+       * Original business request.
+       */
+      request: RequestId;
+      kind: "request";
+    }
+  | {
+      /**
+       * Original definition and revision.
+       */
+      query: QueryRef;
+      kind: "sampling";
+    }
+  | {
+      /**
+       * Producer fact identity.
+       */
+      id: string;
+      kind: "activity";
+    }
+  | {
+      /**
+       * Canonical batch UUID.
+       */
+      id: string;
+      kind: "batch";
+    }
+  | {
+      /**
+       * Backend task UUID.
+       */
+      task: string;
+      /**
+       * Exact attempt UUID.
+       */
+      attempt: string;
+      kind: "task";
+    };
+/**
+ * Stable names for actual existing local operation owners.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "LocalTool".
+ */
+export type LocalTool = "network.check" | "system.settings" | "software.manage";
+/**
+ * Explicit exact address in the authenticated tenant's Policy namespace.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "CapabilitySelector".
+ */
+export type CapabilitySelector =
+  | {
+      /**
+       * Object ID.
+       */
+      id: string;
+      kind: "id";
+    }
+  | {
+      /**
+       * Complete canonical name.
+       */
+      name: string;
+      kind: "tool_name";
+    }
+  | {
+      /**
+       * Canonical tenant-local alias.
+       */
+      alias: PolicyAlias;
+      kind: "alias";
+    };
+/**
+ * Tenant-local canonical Policy alias.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "PolicyAlias".
+ */
+export type PolicyAlias = string;
+/**
+ * Tenant-local event name shared by any number of Policies; never an object alias.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "PolicyEventName".
+ */
+export type PolicyEventName = string;
+/**
+ * Local execution request identity.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "RequestId".
+ */
+export type RequestId = string;
 /**
  * Opaque local reference identifier; syntax validity is not authenticity.
  *
@@ -60,12 +197,685 @@ export type Id = string;
  */
 export type Digest = string;
 /**
- * Local execution request identity.
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "NavigationResponse".
+ */
+export type NavigationResponse =
+  | {
+      kind: "pending";
+      value: Delivery | null;
+    }
+  | {
+      kind: "done";
+    }
+  | {
+      kind: "uri";
+      value: string;
+    }
+  | {
+      kind: "nodes";
+      value: string[];
+    }
+  | {
+      kind: "policy";
+      value: SelfServiceDirectoryItem;
+    }
+  | {
+      kind: "task";
+      value: TaskRef;
+    }
+  | {
+      kind: "activities";
+      value: ManagementActivityPage;
+    }
+  | {
+      kind: "event";
+      value: EntryIntent;
+    }
+  | {
+      kind: "localTool";
+      value: LocalPreparation;
+    }
+  | {
+      kind: "request";
+      value: BackendRequest;
+    };
+/**
+ * Enterprise objects currently exposed through this contract.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "RequestId".
+ * via the `definition` "CapabilityObject".
  */
-export type RequestId = string;
+export type CapabilityObject = "policy";
+/**
+ * Operations available through the authenticated interface.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "CapabilityOperation".
+ */
+export type CapabilityOperation = "read" | "invoke";
+/**
+ * Subject selected by the server's explicit Policy access basis.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SelfServiceSubject".
+ */
+export type SelfServiceSubject =
+  | {
+      kind: "device";
+    }
+  | {
+      /**
+       * Authenticated enterprise coordinates, without a credential.
+       */
+      user: SelfServiceUser;
+      kind: "user";
+    };
+/**
+ * One directory interface; software does not inherit script parameter semantics.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SelfServiceTask".
+ */
+export type SelfServiceTask =
+  | {
+      /**
+       * Organization selected by Policy.
+       */
+      organization: string;
+      /**
+       * Fixed OS enrollment entry.
+       */
+      entry: EnrollmentEntry;
+      kind: "enrollment";
+    }
+  | {
+      /**
+       * Exact Resource selection.
+       */
+      resource: TaskResource;
+      /**
+       * Required operating-system identity.
+       */
+      runAs: ExecutionIdentity;
+      /**
+       * Complete sources for script parameters.
+       */
+      parameterSources: {
+        [k: string]: ScriptParameterSource;
+      };
+      /**
+       * Full resolved parameter constraints owned by Resource.
+       */
+      parameterSchema: unknown;
+      kind: "script";
+    }
+  | {
+      /**
+       * Exact Resource selection.
+       */
+      resource: TaskResource;
+      /**
+       * Required operating-system identity of the root operation.
+       */
+      runAs: ExecutionIdentity;
+      /**
+       * Exact effect target, distinct from enterprise login.
+       */
+      target: SoftwareExecutionTarget;
+      kind: "software";
+    };
+/**
+ * Platform-owned enrollment entry; opening it never proves enrollment completed.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "EnrollmentEntry".
+ */
+export type EnrollmentEntry =
+  | {
+      /**
+       * Organization's discovery server.
+       */
+      server: string;
+      kind: "windows";
+    }
+  | {
+      /**
+       * Organization's managed enrollment entry.
+       */
+      url: string;
+      kind: "macos";
+    };
+/**
+ * Required operating-system execution identity.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ExecutionIdentity".
+ */
+export type ExecutionIdentity = "system" | "logged_in_user";
+/**
+ * Public source of one Resource-declared parameter.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ScriptParameterSource".
+ */
+export type ScriptParameterSource =
+  | {
+      /**
+       * Administrator-selected scalar checked against the Resource schema.
+       */
+      value: string | boolean | number;
+      kind: "fixed";
+    }
+  | {
+      kind: "input";
+    };
+/**
+ * Concrete effect target bound before an Offer is signed.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SoftwareExecutionTarget".
+ */
+export type SoftwareExecutionTarget =
+  | {
+      kind: "device";
+    }
+  | {
+      /**
+       * Exact SID/UID.
+       */
+      identity: string;
+      /**
+       * Exact login generation.
+       */
+      sessionId: string;
+      kind: "user";
+    };
+/**
+ * Exact original owner identity, scoped by the authenticated native connection.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "TaskRef".
+ */
+export type TaskRef =
+  | {
+      /**
+       * Original immutable request identity.
+       */
+      request: RequestId;
+      kind: "request";
+    }
+  | {
+      /**
+       * Exact original versioned collection definition.
+       */
+      query: QueryRef;
+      kind: "sampling";
+    }
+  | {
+      /**
+       * Original producer ID, never a display name.
+       */
+      id: string;
+      kind: "activity";
+    };
+/**
+ * Product activity family.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ActivityKind".
+ */
+export type ActivityKind =
+  | "policy"
+  | "assignment"
+  | "batch"
+  | "execution"
+  | "configuration";
+/**
+ * Recorded producer stage, never a reconstructed current state.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ActivityPhase".
+ */
+export type ActivityPhase =
+  | "changed"
+  | "assigned"
+  | "withdrawn"
+  | "accepted"
+  | "offered"
+  | "dispatched"
+  | "received"
+  | "started"
+  | "reporting"
+  | "result"
+  | "reconciled"
+  | "cancelled"
+  | "decided";
+/**
+ * Initiating authority category; this value grants no permission.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ActivityOrigin".
+ */
+export type ActivityOrigin = "system" | "policy" | "human" | "ai";
+/**
+ * An operation remains owned by its original execution subsystem.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "PolicyEventOperation".
+ */
+export type PolicyEventOperation =
+  | {
+      /**
+       * Run identity.
+       */
+      id: string;
+      kind: "run";
+    }
+  | {
+      /**
+       * Operation identity.
+       */
+      id: string;
+      kind: "native";
+    }
+  | {
+      /**
+       * Retirement identity.
+       */
+      id: string;
+      kind: "retirement";
+    };
+/**
+ * Delivery evidence independent of execution outcome.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ActivityDelivery".
+ */
+export type ActivityDelivery =
+  | "queued"
+  | "offered"
+  | "dispatched"
+  | "received"
+  | "unknown";
+/**
+ * Execution owner state at the time of the fact.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ActivityExecution".
+ */
+export type ActivityExecution =
+  | "not_started"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "waiting_reboot"
+  | "unknown"
+  | "queued"
+  | "published"
+  | "received"
+  | "applied"
+  | "rejected"
+  | "timed_out"
+  | "superseded"
+  | "cancelled";
+/**
+ * Evidence-qualified effect, separate from execution and receipt.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ActivityEffect".
+ */
+export type ActivityEffect =
+  | "verified"
+  | "failed"
+  | "unknown"
+  | "waiting_reboot"
+  | "diverged"
+  | "waiting"
+  | "unverifiable";
+/**
+ * Result-upload receipt at the server.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ActivityReporting".
+ */
+export type ActivityReporting = "partial" | "acknowledged";
+/**
+ * Recorded admission or cancellation decision.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ActivityDecision".
+ */
+export type ActivityDecision =
+  | "pending"
+  | "accepted"
+  | "no_change"
+  | "rejected"
+  | "expired"
+  | "cancelled"
+  | "cancellation_requested"
+  | "assigned"
+  | "unavailable";
+/**
+ * Display-only preparation. Request identities and confirmation never cross from a URI.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "LocalPreparation".
+ */
+export type LocalPreparation =
+  | {
+      target: NetworkTarget | null;
+      kind: "network";
+    }
+  | {
+      section: SettingsSection;
+      action: SettingsEntryAction;
+      patch: SettingsPatch | null;
+      expected: Digest | null;
+      kind: "settings";
+    }
+  | {
+      software: SoftwareRef | null;
+      action: LocalSoftwareAction | null;
+      kind: "software";
+    };
+/**
+ * Product setting page and fixed native destination.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SettingsSection".
+ */
+export type SettingsSection =
+  | "network"
+  | "display"
+  | "sound"
+  | "power"
+  | "lock"
+  | "storage"
+  | "security"
+  | "about";
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SettingsEntryAction".
+ */
+export type SettingsEntryAction =
+  | "snapshot"
+  | "refresh"
+  | "change"
+  | "openNative";
+/**
+ * Closed settings edits; omitted properties are preserved.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SettingsPatch".
+ */
+export type SettingsPatch =
+  | {
+      /**
+       * Snapshot-selected native service identity.
+       */
+      target: string;
+      /**
+       * HTTP endpoint, if changed.
+       */
+      http: ProxyEndpoint | null;
+      /**
+       * HTTPS endpoint, if changed.
+       */
+      https: ProxyEndpoint | null;
+      /**
+       * SOCKS endpoint, if changed.
+       */
+      socks: ProxyEndpoint | null;
+      /**
+       * Optional exact replacement of manual bypass entries.
+       */
+      bypass: string[] | null;
+      kind: "proxy";
+    }
+  | {
+      /**
+       * Snapshot-selected stable display identity.
+       */
+      target: string;
+      /**
+       * Native mode from the observed options; includes supported HiDPI modes.
+       */
+      mode: string | null;
+      /**
+       * Desktop origin, if changed.
+       */
+      origin: DisplayOrigin | null;
+      kind: "display";
+    }
+  | {
+      /**
+       * AC or DC target returned by the native reader.
+       */
+      target: string;
+      /**
+       * Minutes before display sleep; zero means never.
+       */
+      displayOffMinutes: number | null;
+      /**
+       * Minutes before system sleep; zero means never.
+       */
+      sleepMinutes: number | null;
+      /**
+       * Supported native energy mode, if changed.
+       */
+      mode: string | null;
+      kind: "power";
+    };
+/**
+ * Product-owned local actions; arbitrary commands are never accepted.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "LocalSoftwareAction".
+ */
+export type LocalSoftwareAction = "launch" | "update" | "uninstall" | "detect";
+/**
+ * One preparation reference, before or after a signed Offer has arrived.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "PreparedAction".
+ */
+export type PreparedAction =
+  | {
+      /**
+       * Original stable business request.
+       */
+      request: RequestId;
+      /**
+       * Exact producer request; caller classification is native-attested.
+       */
+      input: PolicyEventRequest;
+      /**
+       * Original exact registration coordinates.
+       */
+      namespace: EntryNamespace;
+      /**
+       * Stable producer batch receipt; acceptance is not effect completion.
+       */
+      receipt: PolicyEventAccepted | null;
+      /**
+       * Exact batch recovered from an authorized original-request activity; member count remains unknown.
+       */
+      batch: Id | null;
+      /**
+       * Original authorization deadline.
+       */
+      expiresAtUnixMs: number;
+      kind: "event";
+    }
+  | {
+      /**
+       * Original read identity, independent of installation execution.
+       */
+      choice: SoftwareReadChoice;
+      /**
+       * Exact declared software definition; this is a software risk source.
+       */
+      definition: Digest;
+      /**
+       * Original preparation validity.
+       */
+      expiresAtUnixMs: number;
+      /**
+       * Independently collected fact, appended once and never treated as installation success.
+       */
+      observation: SoftwareObservation | null;
+      kind: "softwareRead";
+    }
+  | {
+      /**
+       * Exact signed task projection.
+       */
+      offer: BackendTask;
+      kind: "offered";
+    }
+  | {
+      /**
+       * Original typed external address, absent for direct native directory selections.
+       */
+      address: EntrySelector | null;
+      /**
+       * Exact original published Policy ID/version, independent of its eventual task.
+       */
+      definition: VersionedRef;
+      /**
+       * Original configuration revision.
+       */
+      policyRevision: number;
+      /**
+       * Immutable employee choice.
+       */
+      choice: PolicyChoice;
+      /**
+       * Prepared operation interface for display and input editing, never authorization.
+       */
+      task: SelfServiceTask;
+      /**
+       * Administrator-provided presentation, never executable content.
+       */
+      presentation: {
+        [k: string]: unknown;
+      };
+      /**
+       * Backend Run returned for the original request, absent until acceptance is known.
+       */
+      runId: Id | null;
+      /**
+       * Eventual signed Offer; no task/attempt is invented before this exists.
+       */
+      offer: BackendTask | null;
+      /**
+       * Local continuation binding; enterprise identity is solely directory.subject.
+       */
+      access: PolicyAccess;
+      /**
+       * Bounded validity of the original preparation.
+       */
+      expiresAtUnixMs: number;
+      kind: "policy";
+    };
+/**
+ * Origin supplied by the authenticated service; Policy origins must reference a real parent run.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "PolicyEventSource".
+ */
+export type PolicyEventSource =
+  | {
+      kind: "human";
+    }
+  | {
+      kind: "ai";
+    }
+  | {
+      /**
+       * Parent execution identity.
+       */
+      runId: string;
+      kind: "policy";
+    };
+/**
+ * Stable Windows identity authority. Display names and email addresses are excluded.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "AccessWindowsAuthority".
+ */
+export type AccessWindowsAuthority =
+  | {
+      kind: "local";
+    }
+  | {
+      /**
+       * SID of the native AD domain, excluding the user's RID.
+       */
+      domainSid: string;
+      kind: "active_directory";
+    }
+  | {
+      /**
+       * Tenant that owns the native directory account.
+       */
+      tenantId: string;
+      /**
+       * Immutable user object identifier within that tenant.
+       */
+      objectId: string;
+      kind: "entra";
+    };
+/**
+ * Quality of the captured result, independent from the exit code.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "OutputQuality".
+ */
+export type OutputQuality = "complete" | "truncated" | "failed" | "partial";
+/**
+ * Independently observed software state; installer exit is never a value of this type.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SoftwareState".
+ */
+export type SoftwareState =
+  | {
+      kind: "absent";
+    }
+  | {
+      /**
+       * Ecosystem version, preserved exactly.
+       */
+      version: PackageValue;
+      kind: "present";
+    }
+  | {
+      /**
+       * Closed detection failure, without paths or backend text.
+       */
+      reason: SoftwareDetectionFailure;
+      kind: "unknown";
+    };
+/**
+ * Exact ecosystem text: no SemVer, case folding, alias lookup or normalization.
+ * Accepts 1..=1024 UTF-8 bytes without control characters, including '+' and '~'.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "PackageValue".
+ */
+export type PackageValue = string;
+/**
+ * Closed independent detection failures.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SoftwareDetectionFailure".
+ */
+export type SoftwareDetectionFailure =
+  | "unavailable"
+  | "unrecognizedVersion"
+  | "budgetExceeded";
 /**
  * Safe preview bound to the complete signed offer revision.
  *
@@ -118,6 +928,178 @@ export type BackendIdentity = "system" | "user";
  */
 export type SoftwareOperation = "install" | "detect" | "uninstall";
 /**
+ * Local continuation binding selected from the backend directory subject.
+ * OS session and device authority remain in the original trigger and service owner.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "PolicyAccess".
+ */
+export type PolicyAccess =
+  | {
+      kind: "device";
+    }
+  | {
+      /**
+       * Owner-issued reference; never a credential or another identity authority.
+       */
+      sessionBinding: NativeContextRef;
+      kind: "user";
+    };
+/**
+ * Provenance for a task already authorized by the backend; never a local enterprise approval.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "BackendTrigger".
+ */
+export type BackendTrigger =
+  | {
+      kind: "automatic";
+    }
+  | {
+      /**
+       * Actual native account and login session, supplied by ingress.
+       */
+      osSession: OsSessionRef;
+      kind: "human";
+    }
+  | {
+      /**
+       * Native owner binding at the original invocation, independent of provider identity.
+       */
+      context: NativeContextRef;
+      /**
+       * Actual native account and login session, supplied by ingress.
+       */
+      osSession: OsSessionRef;
+      /**
+       * Native AI connection configuration, not a provider identity grant.
+       */
+      config: VersionedRef;
+      /**
+       * Conversation reference used for audit correlation.
+       */
+      conversation: Id;
+      /**
+       * Tool request reference used for audit correlation.
+       */
+      toolCall: Id;
+      kind: "ai";
+    };
+/**
+ * Device reference, not verified registration evidence.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "DeviceId".
+ */
+export type DeviceId = string;
+/**
+ * Target OS semantics for validation; an enum value is not a platform support claim.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Platform".
+ */
+export type Platform = "windows" | "macos" | "linux";
+/**
+ * Protected policy classification; never accepted as a request field.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "RiskLevel".
+ */
+export type RiskLevel = "zero" | "one" | "two" | "three";
+/**
+ * Risk authority is explicit; local software rules never impersonate a Policy.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "RiskSource".
+ */
+export type RiskSource =
+  | {
+      /**
+       * Exact configuration revision.
+       */
+      policy: VersionedRef;
+      kind: "policy";
+    }
+  | {
+      /**
+       * Exact signed software definition and action.
+       */
+      definition: Digest;
+      kind: "software";
+    };
+/**
+ * Preparation state only; none of these values authorizes physical execution.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "BackendRequestState".
+ */
+export type BackendRequestState =
+  | "draft"
+  | "observed"
+  | "awaitingConfirmation"
+  | "ready"
+  | "submitting"
+  | "failed"
+  | "cancelled";
+/**
+ * Closed preparation diagnosis without backend bodies or local paths.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "BackendRequestFailure".
+ */
+export type BackendRequestFailure =
+  | "riskUnknown"
+  | "riskBlocked"
+  | "preparationFailed"
+  | "interrupted"
+  | "expired"
+  | "revoked";
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "PersonalVaultOperation".
+ */
+export type PersonalVaultOperation =
+  | {
+      kind: "status";
+    }
+  | {
+      kind: "create";
+    }
+  | {
+      method: UnlockMethod;
+      kind: "unlock";
+    }
+  | {
+      kind: "lock";
+    }
+  | {
+      authorization: UnlockMethod;
+      kind: "set_password";
+    }
+  | {
+      kind: "remove_password";
+    }
+  | {
+      kind: "repair_system";
+    }
+  | {
+      kind: "repair_index";
+    }
+  | {
+      credential_id: number[];
+      revision: number;
+      kind: "delete";
+    }
+  | {
+      confirmation: string;
+      kind: "reset";
+    };
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "UnlockMethod".
+ */
+export type UnlockMethod = "system" | "password";
+/**
  * Coarse list partition only; detail facts retain their original states.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -143,34 +1125,6 @@ export type TaskKind =
   | "software"
   | "management"
   | "sampling";
-/**
- * Exact original owner identity, scoped by the authenticated native connection.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "TaskRef".
- */
-export type TaskRef =
-  | {
-      /**
-       * Original immutable request identity.
-       */
-      request: RequestId;
-      kind: "request";
-    }
-  | {
-      /**
-       * Exact original versioned collection definition.
-       */
-      query: QueryRef;
-      kind: "sampling";
-    }
-  | {
-      /**
-       * Original producer ID, never a display name.
-       */
-      id: string;
-      kind: "activity";
-    };
 /**
  * Original owner facts without privileged process output.
  *
@@ -262,13 +1216,6 @@ export type ProcessFailureKind =
   | "capture"
   | "supervision"
   | "outputValidation";
-/**
- * Quality of the captured result, independent from the exit code.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "OutputQuality".
- */
-export type OutputQuality = "complete" | "truncated" | "failed" | "partial";
 /**
  * Safe software diagnostic; contains no paths, source coordinates or captured output.
  *
@@ -454,60 +1401,6 @@ export type Initiator =
       kind: "policy";
     };
 /**
- * Provenance for a task already authorized by the backend; never a local enterprise approval.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "BackendTrigger".
- */
-export type BackendTrigger =
-  | {
-      kind: "automatic";
-    }
-  | {
-      /**
-       * Actual native account and login session, supplied by ingress.
-       */
-      osSession: OsSessionRef;
-      kind: "human";
-    }
-  | {
-      /**
-       * Native owner binding at the original invocation, independent of provider identity.
-       */
-      context: NativeContextRef;
-      /**
-       * Actual native account and login session, supplied by ingress.
-       */
-      osSession: OsSessionRef;
-      /**
-       * Native AI connection configuration, not a provider identity grant.
-       */
-      config: VersionedRef;
-      /**
-       * Conversation reference used for audit correlation.
-       */
-      conversation: Id;
-      /**
-       * Tool request reference used for audit correlation.
-       */
-      toolCall: Id;
-      kind: "ai";
-    };
-/**
- * Device reference, not verified registration evidence.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "DeviceId".
- */
-export type DeviceId = string;
-/**
- * Target OS semantics for validation; an enum value is not a platform support claim.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Platform".
- */
-export type Platform = "windows" | "macos" | "linux";
-/**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "LocalContractV1".
  */
@@ -557,14 +1450,6 @@ export type SoftwareKind =
  * via the `definition` "SoftwareDeploymentSummary".
  */
 export type SoftwareDeploymentSummary = "targetUser" | "futureUsers";
-/**
- * Exact ecosystem text: no SemVer, case folding, alias lookup or normalization.
- * Accepts 1..=1024 UTF-8 bytes without control characters, including '+' and '~'.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "PackageValue".
- */
-export type PackageValue = string;
 /**
  * Requested execution identity; authorization and actual identity switching are external.
  *
@@ -662,307 +1547,6 @@ export type AccessSummary =
       kind: "restricted";
     };
 /**
- * One preparation reference, before or after a signed Offer has arrived.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "PreparedAction".
- */
-export type PreparedAction =
-  | {
-      /**
-       * Original read identity, independent of installation execution.
-       */
-      choice: SoftwareReadChoice;
-      /**
-       * Exact declared software definition; this is a software risk source.
-       */
-      definition: Digest;
-      /**
-       * Original preparation validity.
-       */
-      expiresAtUnixMs: number;
-      /**
-       * Independently collected fact, appended once and never treated as installation success.
-       */
-      observation: SoftwareObservation | null;
-      kind: "softwareRead";
-    }
-  | {
-      /**
-       * Exact signed task projection.
-       */
-      offer: BackendTask;
-      kind: "offered";
-    }
-  | {
-      /**
-       * Exact original published Policy ID/version, independent of its eventual task.
-       */
-      definition: VersionedRef;
-      /**
-       * Original configuration revision.
-       */
-      policyRevision: number;
-      /**
-       * Immutable employee choice.
-       */
-      choice: PolicyChoice;
-      /**
-       * Prepared operation interface for display and input editing, never authorization.
-       */
-      task: SelfServiceTask;
-      /**
-       * Administrator-provided presentation, never executable content.
-       */
-      presentation: {
-        [k: string]: unknown;
-      };
-      /**
-       * Backend Run returned for the original request, absent until acceptance is known.
-       */
-      runId: Id | null;
-      /**
-       * Eventual signed Offer; no task/attempt is invented before this exists.
-       */
-      offer: BackendTask | null;
-      /**
-       * Local continuation binding; enterprise identity is solely directory.subject.
-       */
-      access: PolicyAccess;
-      /**
-       * Bounded validity of the original preparation.
-       */
-      expiresAtUnixMs: number;
-      kind: "policy";
-    };
-/**
- * Independently observed software state; installer exit is never a value of this type.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "SoftwareState".
- */
-export type SoftwareState =
-  | {
-      kind: "absent";
-    }
-  | {
-      /**
-       * Ecosystem version, preserved exactly.
-       */
-      version: PackageValue;
-      kind: "present";
-    }
-  | {
-      /**
-       * Closed detection failure, without paths or backend text.
-       */
-      reason: SoftwareDetectionFailure;
-      kind: "unknown";
-    };
-/**
- * Closed independent detection failures.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "SoftwareDetectionFailure".
- */
-export type SoftwareDetectionFailure =
-  | "unavailable"
-  | "unrecognizedVersion"
-  | "budgetExceeded";
-/**
- * One directory interface; software does not inherit script parameter semantics.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "SelfServiceTask".
- */
-export type SelfServiceTask =
-  | {
-      /**
-       * Organization selected by Policy.
-       */
-      organization: string;
-      /**
-       * Fixed OS enrollment entry.
-       */
-      entry: EnrollmentEntry;
-      kind: "enrollment";
-    }
-  | {
-      /**
-       * Exact Resource selection.
-       */
-      resource: TaskResource;
-      /**
-       * Required operating-system identity.
-       */
-      runAs: ExecutionIdentity;
-      /**
-       * Complete sources for script parameters.
-       */
-      parameterSources: {
-        [k: string]: ScriptParameterSource;
-      };
-      /**
-       * Full resolved parameter constraints owned by Resource.
-       */
-      parameterSchema: unknown;
-      kind: "script";
-    }
-  | {
-      /**
-       * Exact Resource selection.
-       */
-      resource: TaskResource;
-      /**
-       * Required operating-system identity of the root operation.
-       */
-      runAs: ExecutionIdentity;
-      /**
-       * Exact effect target, distinct from enterprise login.
-       */
-      target: SoftwareExecutionTarget;
-      kind: "software";
-    };
-/**
- * Platform-owned enrollment entry; opening it never proves enrollment completed.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "EnrollmentEntry".
- */
-export type EnrollmentEntry =
-  | {
-      /**
-       * Organization's discovery server.
-       */
-      server: string;
-      kind: "windows";
-    }
-  | {
-      /**
-       * Organization's managed enrollment entry.
-       */
-      url: string;
-      kind: "macos";
-    };
-/**
- * Required operating-system execution identity.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ExecutionIdentity".
- */
-export type ExecutionIdentity = "system" | "logged_in_user";
-/**
- * Public source of one Resource-declared parameter.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ScriptParameterSource".
- */
-export type ScriptParameterSource =
-  | {
-      /**
-       * Administrator-selected scalar checked against the Resource schema.
-       */
-      value: string | boolean | number;
-      kind: "fixed";
-    }
-  | {
-      kind: "input";
-    };
-/**
- * Concrete effect target bound before an Offer is signed.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "SoftwareExecutionTarget".
- */
-export type SoftwareExecutionTarget =
-  | {
-      kind: "device";
-    }
-  | {
-      /**
-       * Exact SID/UID.
-       */
-      identity: string;
-      /**
-       * Exact login generation.
-       */
-      sessionId: string;
-      kind: "user";
-    };
-/**
- * Local continuation binding selected from the backend directory subject.
- * OS session and device authority remain in the original trigger and service owner.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "PolicyAccess".
- */
-export type PolicyAccess =
-  | {
-      kind: "device";
-    }
-  | {
-      /**
-       * Owner-issued reference; never a credential or another identity authority.
-       */
-      sessionBinding: NativeContextRef;
-      kind: "user";
-    };
-/**
- * Protected policy classification; never accepted as a request field.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "RiskLevel".
- */
-export type RiskLevel = "zero" | "one" | "two" | "three";
-/**
- * Risk authority is explicit; local software rules never impersonate a Policy.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "RiskSource".
- */
-export type RiskSource =
-  | {
-      /**
-       * Exact configuration revision.
-       */
-      policy: VersionedRef;
-      kind: "policy";
-    }
-  | {
-      /**
-       * Exact signed software definition and action.
-       */
-      definition: Digest;
-      kind: "software";
-    };
-/**
- * Preparation state only; none of these values authorizes physical execution.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "BackendRequestState".
- */
-export type BackendRequestState =
-  | "draft"
-  | "observed"
-  | "awaitingConfirmation"
-  | "ready"
-  | "submitting"
-  | "failed"
-  | "cancelled";
-/**
- * Closed preparation diagnosis without backend bodies or local paths.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "BackendRequestFailure".
- */
-export type BackendRequestFailure =
-  | "riskUnknown"
-  | "riskBlocked"
-  | "preparationFailed"
-  | "interrupted"
-  | "expired"
-  | "revoked";
-/**
  * Physical source, distinct from caller identity and execution permission.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -1011,143 +1595,6 @@ export type DataQuality =
   | "denied"
   | "expired"
   | "unknown";
-/**
- * Product activity family.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ActivityKind".
- */
-export type ActivityKind =
-  | "policy"
-  | "assignment"
-  | "batch"
-  | "execution"
-  | "configuration";
-/**
- * Recorded producer stage, never a reconstructed current state.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ActivityPhase".
- */
-export type ActivityPhase =
-  | "changed"
-  | "assigned"
-  | "withdrawn"
-  | "accepted"
-  | "offered"
-  | "dispatched"
-  | "received"
-  | "started"
-  | "reporting"
-  | "result"
-  | "reconciled"
-  | "cancelled"
-  | "decided";
-/**
- * Initiating authority category; this value grants no permission.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ActivityOrigin".
- */
-export type ActivityOrigin = "system" | "policy" | "human" | "ai";
-/**
- * An operation remains owned by its original execution subsystem.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "PolicyEventOperation".
- */
-export type PolicyEventOperation =
-  | {
-      /**
-       * Run identity.
-       */
-      id: string;
-      kind: "run";
-    }
-  | {
-      /**
-       * Operation identity.
-       */
-      id: string;
-      kind: "native";
-    }
-  | {
-      /**
-       * Retirement identity.
-       */
-      id: string;
-      kind: "retirement";
-    };
-/**
- * Delivery evidence independent of execution outcome.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ActivityDelivery".
- */
-export type ActivityDelivery =
-  | "queued"
-  | "offered"
-  | "dispatched"
-  | "received"
-  | "unknown";
-/**
- * Execution owner state at the time of the fact.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ActivityExecution".
- */
-export type ActivityExecution =
-  | "not_started"
-  | "running"
-  | "succeeded"
-  | "failed"
-  | "waiting_reboot"
-  | "unknown"
-  | "queued"
-  | "published"
-  | "received"
-  | "applied"
-  | "rejected"
-  | "timed_out"
-  | "superseded"
-  | "cancelled";
-/**
- * Evidence-qualified effect, separate from execution and receipt.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ActivityEffect".
- */
-export type ActivityEffect =
-  | "verified"
-  | "failed"
-  | "unknown"
-  | "waiting_reboot"
-  | "diverged"
-  | "waiting"
-  | "unverifiable";
-/**
- * Result-upload receipt at the server.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ActivityReporting".
- */
-export type ActivityReporting = "partial" | "acknowledged";
-/**
- * Recorded admission or cancellation decision.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ActivityDecision".
- */
-export type ActivityDecision =
-  | "pending"
-  | "accepted"
-  | "no_change"
-  | "rejected"
-  | "expired"
-  | "cancelled"
-  | "cancellation_requested"
-  | "assigned"
-  | "unavailable";
 /**
  * Available owner operation.
  *
@@ -1286,85 +1733,6 @@ export type SettingsOperation =
        */
       digest: Digest;
       kind: "keepDisplay";
-    };
-/**
- * Product setting page and fixed native destination.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "SettingsSection".
- */
-export type SettingsSection =
-  | "network"
-  | "display"
-  | "sound"
-  | "power"
-  | "lock"
-  | "storage"
-  | "security"
-  | "about";
-/**
- * Closed settings edits; omitted properties are preserved.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "SettingsPatch".
- */
-export type SettingsPatch =
-  | {
-      /**
-       * Snapshot-selected native service identity.
-       */
-      target: string;
-      /**
-       * HTTP endpoint, if changed.
-       */
-      http: ProxyEndpoint | null;
-      /**
-       * HTTPS endpoint, if changed.
-       */
-      https: ProxyEndpoint | null;
-      /**
-       * SOCKS endpoint, if changed.
-       */
-      socks: ProxyEndpoint | null;
-      /**
-       * Optional exact replacement of manual bypass entries.
-       */
-      bypass: string[] | null;
-      kind: "proxy";
-    }
-  | {
-      /**
-       * Snapshot-selected stable display identity.
-       */
-      target: string;
-      /**
-       * Native mode from the observed options; includes supported HiDPI modes.
-       */
-      mode: string | null;
-      /**
-       * Desktop origin, if changed.
-       */
-      origin: DisplayOrigin | null;
-      kind: "display";
-    }
-  | {
-      /**
-       * AC or DC target returned by the native reader.
-       */
-      target: string;
-      /**
-       * Minutes before display sleep; zero means never.
-       */
-      displayOffMinutes: number | null;
-      /**
-       * Minutes before system sleep; zero means never.
-       */
-      sleepMinutes: number | null;
-      /**
-       * Supported native energy mode, if changed.
-       */
-      mode: string | null;
-      kind: "power";
     };
 /**
  * Exact effect observation, never inferred from exit status.
@@ -1764,34 +2132,6 @@ export type AccessAccount =
       platform: "macos";
     };
 /**
- * Stable Windows identity authority. Display names and email addresses are excluded.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "AccessWindowsAuthority".
- */
-export type AccessWindowsAuthority =
-  | {
-      kind: "local";
-    }
-  | {
-      /**
-       * SID of the native AD domain, excluding the user's RID.
-       */
-      domainSid: string;
-      kind: "active_directory";
-    }
-  | {
-      /**
-       * Tenant that owns the native directory account.
-       */
-      tenantId: string;
-      /**
-       * Immutable user object identifier within that tenant.
-       */
-      objectId: string;
-      kind: "entra";
-    };
-/**
  * Effect receipt. Received/start ACKs are carried by the existing task protocol separately.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -1956,13 +2296,6 @@ export type AccessFailure =
   | "needs_user"
   | "native_failure";
 /**
- * Product-owned local actions; arbitrary commands are never accepted.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "LocalSoftwareAction".
- */
-export type LocalSoftwareAction = "launch" | "update" | "uninstall" | "detect";
-/**
  * Select an existing snapshot without starting collection.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -2022,72 +2355,6 @@ export type QueryPhase =
   | "failed"
   | "cancelled"
   | "unknown";
-/**
- * Explicit exact address in the authenticated tenant's Policy namespace.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "CapabilitySelector".
- */
-export type CapabilitySelector =
-  | {
-      /**
-       * Object ID.
-       */
-      id: string;
-      kind: "id";
-    }
-  | {
-      /**
-       * Complete canonical name.
-       */
-      name: string;
-      kind: "tool_name";
-    }
-  | {
-      /**
-       * Canonical tenant-local alias.
-       */
-      alias: PolicyAlias;
-      kind: "alias";
-    };
-/**
- * Tenant-local canonical Policy alias.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "PolicyAlias".
- */
-export type PolicyAlias = string;
-/**
- * Enterprise objects currently exposed through this contract.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "CapabilityObject".
- */
-export type CapabilityObject = "policy";
-/**
- * Operations available through the authenticated interface.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "CapabilityOperation".
- */
-export type CapabilityOperation = "read" | "invoke";
-/**
- * Subject selected by the server's explicit Policy access basis.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "SelfServiceSubject".
- */
-export type SelfServiceSubject =
-  | {
-      kind: "device";
-    }
-  | {
-      /**
-       * Authenticated enterprise coordinates, without a credential.
-       */
-      user: SelfServiceUser;
-      kind: "user";
-    };
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "PolicyStatus".
@@ -2246,87 +2513,844 @@ export type FilevaultState =
   | "retired";
 
 export interface SelfServiceCommands {
-  personal_vault: Command;
-  self_service_offers: Command2;
-  task_list: Command3;
-  task_detail: Command4;
-  task_control: Command5;
-  task_control_status: Command6;
-  network_check: Command7;
-  system_settings: Command8;
-  device_access: Command9;
-  software_prepare: Command10;
-  software_submit: Command11;
-  software_status: Command12;
-  software_history: Command13;
-  software_read: Command14;
-  query_directory: Command15;
-  data_read: Command16;
-  query_submit: Command17;
-  query_status: Command18;
-  self_service_observe_software: Command19;
-  self_service_policy_resolve: Command20;
-  self_service_policy_directory: Command21;
-  self_service_policy_invoke: Command22;
-  ai_operation_submit: Command23;
-  self_service_policy_confirm: Command24;
-  self_service_policy_status: Command25;
-  self_service_execute: Command26;
-  self_service_confirm: Command26;
-  diagnostics_prepare: Command27;
-  diagnostics_export: Command28;
-  diagnostics_discard: Command29;
-  appearance_snapshot: Command30;
-  device_overview: Command31;
+  navigation: Command;
+  personal_vault: Command2;
+  self_service_offers: Command3;
+  task_list: Command4;
+  task_detail: Command5;
+  task_control: Command6;
+  task_control_status: Command7;
+  network_check: Command8;
+  system_settings: Command9;
+  device_access: Command10;
+  software_prepare: Command11;
+  software_submit: Command12;
+  software_status: Command13;
+  software_history: Command14;
+  software_read: Command15;
+  query_directory: Command16;
+  data_read: Command17;
+  query_submit: Command18;
+  query_status: Command19;
+  self_service_observe_software: Command20;
+  self_service_policy_resolve: Command21;
+  self_service_policy_directory: Command22;
+  self_service_policy_invoke: Command23;
+  ai_operation_submit: Command24;
+  self_service_policy_confirm: Command25;
+  self_service_policy_status: Command26;
+  self_service_execute: Command27;
+  self_service_confirm: Command27;
+  diagnostics_prepare: Command28;
+  diagnostics_export: Command29;
+  diagnostics_discard: Command30;
+  appearance_snapshot: Command31;
+  device_overview: Command32;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "Command".
  */
 export interface Command {
-  input: PersonalVaultOperation;
-  output: PersonalVaultStatus;
+  input: NavigationOperation;
+  output: NavigationResponse;
+}
+/**
+ * One bounded navigation intent; neither origin nor confirmation is accepted here.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "EntryIntent".
+ */
+export interface EntryIntent {
+  /**
+   * Requested navigation behavior.
+   */
+  action: EntryAction;
+  /**
+   * Shared exact selector.
+   */
+  selector: EntrySelector;
+  /**
+   * Mandatory for enterprise links; absent for purely local page nodes.
+   */
+  namespace: EntryNamespace | null;
+  /**
+   * Exact owner definition version when supplied.
+   */
+  version: string | null;
+  /**
+   * Exact owner configuration revision when supplied.
+   */
+  revision: number | null;
+  /**
+   * Owner-qualified node inside the exact attempt.
+   */
+  step: string | null;
+  /**
+   * Non-secret suggestions; the current schema is checked before display/use.
+   */
+  parameters: {
+    [k: string]: unknown;
+  };
+}
+/**
+ * Exact service-owned query definition.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "QueryRef".
+ */
+export interface QueryRef {
+  /**
+   * Stable resource identity.
+   */
+  id: Id;
+  /**
+   * Digest of the complete current definition.
+   */
+  revision: Digest;
+}
+/**
+ * Enterprise coordinates are compared with the active registration, never used to switch it.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "EntryNamespace".
+ */
+export interface EntryNamespace {
+  /**
+   * Product instance identity, not a server URL.
+   */
+  instance: string;
+  /**
+   * Exact tenant UUID.
+   */
+  tenant: string;
+  /**
+   * Exact device identity.
+   */
+  device: string;
+  /**
+   * Exact registration UUID.
+   */
+  registration: string;
+  /**
+   * Exact registration generation.
+   */
+  generation: number;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "PersonalVaultStatus".
+ * via the `definition` "Delivery".
  */
-export interface PersonalVaultStatus {
-  initialized: boolean;
-  unlocked: boolean;
-  passwordEnabled: boolean;
+export interface Delivery {
+  id: string;
+  intent: EntryIntent;
+}
+/**
+ * One currently authorized script and its Resource-owned parameter schema.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SelfServiceDirectoryItem".
+ */
+export interface SelfServiceDirectoryItem {
+  /**
+   * Server-owned identity and current callable interface.
+   */
+  capability: CapabilityDescriptor;
+  /**
+   * Logical Policy identity.
+   */
+  policyId: string;
+  /**
+   * Current configuration CAS revision.
+   */
+  policyRevision: number;
+  /**
+   * Immutable execution version.
+   */
+  policyVersion: string;
+  /**
+   * Current qualified subject, rechecked when invoking and before execution.
+   */
+  subject: SelfServiceSubject;
+  /**
+   * Normalized presentation and invocation settings.
+   */
+  selfService: SelfServiceMetadata;
+  /**
+   * Closed task kind and the exact invocation interface.
+   */
+  task: SelfServiceTask;
+}
+/**
+ * Cross-endpoint capability identity and interface, never an execution permit.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "CapabilityDescriptor".
+ */
+export interface CapabilityDescriptor {
+  /**
+   * Stable Policy capability ID.
+   */
+  id: string;
+  /**
+   * Object namespace.
+   */
+  objectType: CapabilityObject;
+  /**
+   * Server-owned stable invocation name.
+   */
+  toolName: string;
+  /**
+   * Optional administrator address.
+   */
+  alias: PolicyAlias | null;
+  /**
+   * Actual scope owner; membership is rechecked by execution.
+   */
+  scope: string;
+  /**
+   * Product service instance.
+   */
+  instance: string;
+  /**
+   * Tenant owning this capability.
+   */
+  tenant: string;
+  /**
+   * Current configuration revision, for information only.
+   */
   revision: number;
-  entries: PersonalVaultEntry[];
-  provider: ProviderStatus | null;
+  /**
+   * Material version observed while resolving, not a call precondition.
+   */
+  version: string;
+  /**
+   * Operations supported in this interface.
+   */
+  operations: CapabilityOperation[];
+  /**
+   * Schema for caller-provided parameters.
+   */
+  inputSchema: unknown;
+  /**
+   * Schema of the operation result.
+   */
+  outputSchema: unknown;
 }
 /**
+ * Authenticated product user; contains no session credential.
+ *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "PersonalVaultEntry".
+ * via the `definition` "SelfServiceUser".
  */
-export interface PersonalVaultEntry {
-  credentialId: number[];
-  rpId: string;
-  userHandle: number[];
-  username: string;
-  displayName: string;
-  backupEligible: boolean;
-  backedUp: boolean;
+export interface SelfServiceUser {
+  /**
+   * Product tenant.
+   */
+  tenantId: string;
+  /**
+   * Identity instance.
+   */
+  instanceId: string;
+  /**
+   * Authenticated principal.
+   */
+  principalId: string;
 }
 /**
+ * Published presentation and invocation settings; values are normalized by Policy CAS.
+ *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ProviderStatus".
+ * via the `definition` "SelfServiceMetadata".
  */
-export interface ProviderStatus {
-  enabled: boolean | null;
-  indexPending: boolean;
+export interface SelfServiceMetadata {
+  /**
+   * Whether this script is published for self service.
+   */
+  published: boolean;
+  /**
+   * Open directory presentation; never used as authorization or executable input.
+   */
+  presentation: {
+    [k: string]: unknown;
+  };
+  /**
+   * Effective administrator AI switch.
+   */
+  allowAi: boolean;
+  /**
+   * Effective risk level, one or two.
+   */
+  riskLevel: 1 | 2;
 }
 /**
+ * Exact Resource identity accompanying its signed digest.
+ *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command2".
+ * via the `definition` "TaskResource".
  */
-export interface Command2 {
-  input: null;
-  output: BackendTask[];
+export interface TaskResource {
+  /**
+   * Logical Resource identity.
+   */
+  id: string;
+  /**
+   * Immutable Resource version.
+   */
+  version: string;
+  /**
+   * Exact selected variant.
+   */
+  variant: string;
+}
+/**
+ * Snapshot history page or incremental page from the same authorized activity projection.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ManagementActivityPage".
+ */
+export interface ManagementActivityPage {
+  /**
+   * Bounded allowlisted activity facts.
+   */
+  items: ManagementActivity[];
+  /**
+   * Continuation of this fixed snapshot, absent at its end.
+   */
+  nextCursor: string | null;
+  /**
+   * Start incremental reads after this snapshot once all its pages are consumed.
+   */
+  syncCursor: string;
+  /**
+   * Server observation time; offline consumers must retain this freshness marker.
+   */
+  asOf: number;
+  /**
+   * Coverage only for the authorized device sources.
+   */
+  coverage: ActivityCoverage[];
+  /**
+   * Earliest retained recording time, absent when no retained fact is known.
+   */
+  retainedFrom: number | null;
+}
+/**
+ * Allowlisted device activity. Contains no principal, OS identity, names or raw output.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ManagementActivity".
+ */
+export interface ManagementActivity {
+  /**
+   * Stable source-qualified identity, also used to deduplicate incremental delivery.
+   */
+  id: string;
+  /**
+   * Business source identity.
+   */
+  source: string;
+  /**
+   * Product activity category.
+   */
+  kind: ActivityKind;
+  /**
+   * Actual recorded stage, independent of the current operation status.
+   */
+  phase: ActivityPhase;
+  /**
+   * Server recording time in UTC Unix seconds.
+   */
+  recordedAt: number;
+  /**
+   * Producer observation time in UTC Unix seconds.
+   */
+  observedAt: number;
+  /**
+   * Human, AI, Policy or system origin; never a grant.
+   */
+  origin: ActivityOrigin;
+  /**
+   * Original target; Policy parent facts have no device target.
+   */
+  target: ActivityTarget | null;
+  /**
+   * Exact producer coordinates with no user identity.
+   */
+  links: ActivityLinks;
+  /**
+   * Delivery evidence, independent of execution.
+   */
+  delivery: ActivityDelivery | null;
+  /**
+   * Execution evidence, independent of verified effect.
+   */
+  execution: ActivityExecution | null;
+  /**
+   * Qualified effect evidence, absent when unavailable.
+   */
+  effect: ActivityEffect | null;
+  /**
+   * Server receipt/partial reporting evidence, not local cache freshness.
+   */
+  reporting: ActivityReporting | null;
+  /**
+   * Business admission or cancellation decision.
+   */
+  decision: ActivityDecision | null;
+  /**
+   * Audit transaction outcome, never device-effect proof.
+   */
+  auditOutcome: string;
+}
+/**
+ * Registration coordinates of the original producer fact.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ActivityTarget".
+ */
+export interface ActivityTarget {
+  /**
+   * Authorized endpoint identity, which can differ between paired channels.
+   */
+  device: string;
+  /**
+   * Exact registration identity.
+   */
+  registration: string;
+  /**
+   * Exact registration generation.
+   */
+  generation: number;
+}
+/**
+ * Exact links to the existing business owners; absent links are not inferred.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ActivityLinks".
+ */
+export interface ActivityLinks {
+  /**
+   * Policy identity.
+   */
+  policy: string | null;
+  /**
+   * Immutable Policy execution version.
+   */
+  version: string | null;
+  /**
+   * Explicit event batch.
+   */
+  batch: string | null;
+  /**
+   * Exact batch member.
+   */
+  member: string | null;
+  /**
+   * Original request identity.
+   */
+  request: string | null;
+  /**
+   * Native operation identity.
+   */
+  operation: string | null;
+  /**
+   * Exact retirement identity shared by its cleanup and unenrollment work.
+   */
+  retirement: string | null;
+  /**
+   * Action Run identity.
+   */
+  task: string | null;
+  /**
+   * Concrete attempt, qualifying every step reference.
+   */
+  attempt: string | null;
+  /**
+   * Definition step identities within the exact task and attempt.
+   */
+  steps: string[];
+  /**
+   * Child operations accepted by the exact batch member.
+   */
+  operations: PolicyEventOperation[];
+}
+/**
+ * Scope-local completeness. An observation is not a global source commit fence.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ActivityCoverage".
+ */
+export interface ActivityCoverage {
+  /**
+   * Source family covered by this observation.
+   */
+  source: string;
+  /**
+   * Whether all visible committed facts in the observed source snapshot were projected.
+   */
+  complete: boolean;
+  /**
+   * Explicit incomplete/unsupported association or source reasons.
+   */
+  reasons: string[];
+}
+/**
+ * One destination selected by the user, independent of backend configuration.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "NetworkTarget".
+ */
+export interface NetworkTarget {
+  /**
+   * A domain or IP literal, never a URL or command.
+   */
+  host: string;
+  /**
+   * One TCP port, from 1 through 65535.
+   */
+  port: number;
+}
+/**
+ * One explicit manual proxy endpoint. Automatic configuration is preserved independently.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ProxyEndpoint".
+ */
+export interface ProxyEndpoint {
+  /**
+   * Whether this manual protocol proxy is enabled.
+   */
+  enabled: boolean;
+  /**
+   * Hostname or IP only, without scheme, credentials or path.
+   */
+  host: string;
+  /**
+   * Native TCP port; zero allowed only when disabled.
+   */
+  port: number;
+}
+/**
+ * Exact native desktop coordinates.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "DisplayOrigin".
+ */
+export interface DisplayOrigin {
+  /**
+   * Horizontal desktop coordinate.
+   */
+  x: number;
+  /**
+   * Vertical desktop coordinate.
+   */
+  y: number;
+}
+/**
+ * Stable installation identity within a currently authorized collection definition.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SoftwareRef".
+ */
+export interface SoftwareRef {
+  /**
+   * Service-owned collection definition.
+   */
+  query: QueryRef;
+  /**
+   * Native collector's stable installation identity.
+   */
+  installation: Id;
+}
+/**
+ * User intent retained in the sole execution journal before a frozen execution exists.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "BackendRequest".
+ */
+export interface BackendRequest {
+  /**
+   * Original failed request when this explicit retry was independently admitted.
+   */
+  retryOf: RequestId | null;
+  /**
+   * Complete original control revision, retained with an explicit retry's immutable association.
+   */
+  retryExpectedRevision: TaskRevision | null;
+  /**
+   * Trusted original request acceptance time in UTC milliseconds.
+   */
+  recordedAtUnixMs: number;
+  /**
+   * Original explicit cancellation control, absent for owner-driven retirement.
+   */
+  cancellationControl: Id | null;
+  /**
+   * Original complete revision fingerprint for the retained cancellation receipt.
+   */
+  cancellationExpectedRevision: TaskRevision | null;
+  /**
+   * The sole choice, frozen on submission, and appended backend association.
+   */
+  action: PreparedAction;
+  /**
+   * OS-authenticated original trigger; never accepted from an IPC request body.
+   */
+  trigger: BackendTrigger;
+  /**
+   * Immutable trusted classification; absent for human requests or unknown AI risk.
+   */
+  risk: ExecutionRisk | null;
+  /**
+   * Explicit risk-two response; readiness alone never proves confirmation.
+   */
+  confirmation: BackendConfirmation | null;
+  /**
+   * Monotonic journal revision.
+   */
+  revision: number;
+  /**
+   * Preparation state, separate from execution lifecycle.
+   */
+  state: BackendRequestState;
+  /**
+   * Diagnosis when preparation failed.
+   */
+  failure: BackendRequestFailure | null;
+}
+/**
+ * Exact owner revisions; transient byte counts never participate in control CAS.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "TaskRevision".
+ */
+export interface TaskRevision {
+  /**
+   * Execution or preparation owner revision.
+   */
+  owner: number;
+  /**
+   * Exact artifact consumer revisions, ordered by original key.
+   */
+  transfers: [string, number][];
+}
+/**
+ * Explicit event for one authenticated device, never a tenant or device selector.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "PolicyEventRequest".
+ */
+export interface PolicyEventRequest {
+  /**
+   * Stable request identity reused after response loss.
+   */
+  operationId: string;
+  /**
+   * Canonical Policy trigger name.
+   */
+  event: PolicyEventName;
+  /**
+   * Real invocation origin, not authorization.
+   */
+  source: PolicyEventSource;
+  /**
+   * Local context attested by the authenticated Agent; absent for remote management.
+   */
+  executionContext: SoftwareExecutionContext | null;
+}
+/**
+ * Complete current native execution environment reported by this registration.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SoftwareExecutionContext".
+ */
+export interface SoftwareExecutionContext {
+  /**
+   * Strictly increasing local context generation; retries retain the same value.
+   */
+  revision: number;
+  /**
+   * Current native Windows sideload policy.
+   */
+  msixSideload: boolean;
+  /**
+   * Current native API support for explicitly approved unsigned packages.
+   */
+  msixUnsigned: boolean;
+  /**
+   * Complete numeric OS version, not an inferred product/platform string.
+   *
+   * @minItems 4
+   * @maxItems 4
+   */
+  osVersion: [number, number, number, number, ...number[]];
+  /**
+   * Whether the native system broker is available in this Agent installation.
+   */
+  systemBroker: boolean;
+  /**
+   * Whether a helper is bound to this exact live interactive session.
+   */
+  userHelper: boolean;
+  /**
+   * Exact live interactive session, when one exists.
+   */
+  interactiveUser: SoftwareInteractiveUser | null;
+  /**
+   * Source-scoped read credential references actually available locally.
+   *
+   * @maxItems 16
+   */
+  sourceCredentials: SoftwareReadCredential[];
+}
+/**
+ * One concrete live OS session.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SoftwareInteractiveUser".
+ */
+export interface SoftwareInteractiveUser {
+  /**
+   * Native Windows account authority when known; required for Device Access admission.
+   */
+  windowsAuthority: AccessWindowsAuthority | null;
+  /**
+   * macOS GeneratedUID for this live account; Windows must explicitly report null.
+   */
+  generatedUid: string | null;
+  /**
+   * Windows SID or macOS numeric UID.
+   */
+  identity: string;
+  /**
+   * Changes on logoff/login; identical account names cannot reuse a previous session.
+   */
+  sessionId: string;
+  /**
+   * Privilege needed by the exact native profile, not a generic authorization grant.
+   */
+  administrator: boolean;
+}
+/**
+ * Availability of a particular source read credential in the local Agent.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SoftwareReadCredential".
+ */
+export interface SoftwareReadCredential {
+  /**
+   * Exact source identity in the consuming tenant.
+   */
+  source: string;
+  /**
+   * Host-provisioned opaque credential reference; never token bytes or a URL.
+   */
+  reference: string;
+}
+/**
+ * Stable batch receipt; acceptance does not mean its members executed successfully.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "PolicyEventAccepted".
+ */
+export interface PolicyEventAccepted {
+  /**
+   * Original request identity.
+   */
+  operationId: string;
+  /**
+   * Durable batch identity.
+   */
+  batchId: string;
+  /**
+   * Number of frozen members, including rejections.
+   */
+  members: number;
+}
+/**
+ * Native human read input with its preallocated stable request.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SoftwareReadChoice".
+ */
+export interface SoftwareReadChoice {
+  /**
+   * Original query identity.
+   */
+  request: RequestId;
+  /**
+   * The sole immutable query input.
+   */
+  input: SoftwareReadSelection;
+}
+/**
+ * Model-visible selection for a finite native software detector; no arbitrary selector or command.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SoftwareReadSelection".
+ */
+export interface SoftwareReadSelection {
+  /**
+   * Exact current signed offer projection.
+   */
+  selection: BackendSelection;
+  /**
+   * One declared step in that definition.
+   */
+  step: number;
+}
+/**
+ * A selection references exact backend content and carries no script or local catalog model.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "BackendSelection".
+ */
+export interface BackendSelection {
+  /**
+   * Original request shown with the offer, used unchanged for recovery.
+   */
+  request: RequestId;
+  /**
+   * Backend task identity.
+   */
+  task: Id;
+  /**
+   * Original backend attempt.
+   */
+  attempt: Id;
+  /**
+   * Revision shown to the user/model.
+   */
+  revision: Digest;
+}
+/**
+ * Fresh native software fact, with collection time and no installer result claims.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "SoftwareObservation".
+ */
+export interface SoftwareObservation {
+  /**
+   * Completeness of this finite native observation; failed leaves the state Unknown.
+   */
+  quality: OutputQuality;
+  /**
+   * Time of actual observation from the service clock.
+   */
+  collectedAtUnixMs: number;
+  /**
+   * Exact declared package.
+   */
+  package: string;
+  /**
+   * Exact declared desired version, separate from the observed version.
+   */
+  expectedVersion: string;
+  /**
+   * Native receipt or product observation; unknown remains explicit.
+   */
+  state: SoftwareState;
 }
 /**
  * Exact displayed backend offer, without executable input or authorization claims.
@@ -2402,10 +3426,189 @@ export interface BackendStepSummary {
   identity: BackendIdentity;
 }
 /**
+ * Exact resource/configuration reference. Resolution and authenticity belong to the owner.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "VersionedRef".
+ */
+export interface VersionedRef {
+  /**
+   * Opaque reference identity; the revision must be supplied separately.
+   */
+  id: Id;
+  /**
+   * Exact immutable revision reference; does not resolve or follow a moving alias.
+   */
+  revision: Id;
+}
+/**
+ * Employee input; caller source and confirmation are supplied only by trusted native code.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "PolicyChoice".
+ */
+export interface PolicyChoice {
+  /**
+   * Stable request allocated before submission, reused after response loss.
+   */
+  request: RequestId;
+  /**
+   * Policy from the current authorized directory.
+   */
+  policyId: Id;
+  /**
+   * Only Resource fields whose Policy source is Input.
+   */
+  parameters: {
+    [k: string]: unknown;
+  };
+}
+/**
+ * Nonsecret reference returned by the native execution owner after binding a context.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "NativeContextRef".
+ */
+export interface NativeContextRef {
+  /**
+   * Owner-assigned binding identity, scoped to the authenticated native peer.
+   */
+  id: Id;
+  /**
+   * Exact caller generation; retirement rejects new ingress and User continuations.
+   */
+  generation: Id;
+}
+/**
+ * Claimed OS login provenance at the request origin, separate from target and run-as identity.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "OsSessionRef".
+ */
+export interface OsSessionRef {
+  /**
+   * Origin device reference; it does not establish registration or target authority.
+   */
+  device: DeviceId;
+  /**
+   * Login account at the origin; never implicitly equated to the product actor.
+   */
+  account: OsAccountRef;
+  /**
+   * Origin OS login/session reference, including an explicit test reference in fixtures.
+   */
+  session: Id;
+}
+/**
+ * Opaque account reference in an OS namespace, independent of product or provider identity.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "OsAccountRef".
+ */
+export interface OsAccountRef {
+  /**
+   * OS namespace of this reference or target; does not assert platform support.
+   */
+  platform: Platform;
+  /**
+   * Opaque stable OS account reference, such as a SID/UID reference, not an authentication credential.
+   */
+  subject: Id;
+}
+/**
+ * Backend-authenticated classification of the exact offer, never an IPC claim.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ExecutionRisk".
+ */
+export interface ExecutionRisk {
+  /**
+   * Explicit effect classification selected by backend policy.
+   */
+  level: RiskLevel;
+  /**
+   * Exact backend risk policy revision.
+   */
+  source: RiskSource;
+  /**
+   * Exclusive trusted decision deadline.
+   */
+  expiresAtUnixMs: number;
+}
+/**
+ * Sole product confirmation, persisted together with the original AI request.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "BackendConfirmation".
+ */
+export interface BackendConfirmation {
+  /**
+   * Actual original login, independently authenticated at confirmation and dispatch.
+   */
+  osSession: OsSessionRef;
+  /**
+   * Trusted service time at the user's explicit response.
+   */
+  confirmedAtUnixMs: number;
+  /**
+   * Exclusive confirmation deadline before acceptance; it does not revoke an accepted Run.
+   */
+  expiresAtUnixMs: number;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Command2".
+ */
+export interface Command2 {
+  input: PersonalVaultOperation;
+  output: PersonalVaultStatus;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "PersonalVaultStatus".
+ */
+export interface PersonalVaultStatus {
+  initialized: boolean;
+  unlocked: boolean;
+  passwordEnabled: boolean;
+  revision: number;
+  entries: PersonalVaultEntry[];
+  provider: ProviderStatus | null;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "PersonalVaultEntry".
+ */
+export interface PersonalVaultEntry {
+  credentialId: number[];
+  rpId: string;
+  userHandle: number[];
+  username: string;
+  displayName: string;
+  backupEligible: boolean;
+  backedUp: boolean;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ProviderStatus".
+ */
+export interface ProviderStatus {
+  enabled: boolean | null;
+  indexPending: boolean;
+}
+/**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "Command3".
  */
 export interface Command3 {
+  input: null;
+  output: BackendTask[];
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Command4".
+ */
+export interface Command4 {
   input: TaskQuery;
   output: TaskPage;
 }
@@ -2589,6 +3792,10 @@ export interface TaskDetail {
    */
   related: TaskRef[];
   /**
+   * Original producer continuation for this activity's related history.
+   */
+  relatedCursor: string | null;
+  /**
    * Original signed-offer coordinates when retained by the business preparation owner.
    */
   selection: BackendSelection | null;
@@ -2606,38 +3813,6 @@ export interface TaskDetail {
    * A dedicated trusted-human confirmation is currently relevant; no AI control variant exists.
    */
   humanConfirmation: boolean;
-}
-/**
- * Exact service-owned query definition.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "QueryRef".
- */
-export interface QueryRef {
-  /**
-   * Stable resource identity.
-   */
-  id: Id;
-  /**
-   * Digest of the complete current definition.
-   */
-  revision: Digest;
-}
-/**
- * Exact owner revisions; transient byte counts never participate in control CAS.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "TaskRevision".
- */
-export interface TaskRevision {
-  /**
-   * Execution or preparation owner revision.
-   */
-  owner: number;
-  /**
-   * Exact artifact consumer revisions, ordered by original key.
-   */
-  transfers: [string, number][];
 }
 /**
  * One authorized record read provides both lifecycle status and frozen plan facts.
@@ -2784,22 +3959,6 @@ export interface EvidenceRef {
   runner: Id;
 }
 /**
- * Exact resource/configuration reference. Resolution and authenticity belong to the owner.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "VersionedRef".
- */
-export interface VersionedRef {
-  /**
-   * Opaque reference identity; the revision must be supplied separately.
-   */
-  id: Id;
-  /**
-   * Exact immutable revision reference; does not resolve or follow a moving alias.
-   */
-  revision: Id;
-}
-/**
  * Allowlisted view of the immutable plan; no parameters, launch inputs, secrets or audit.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -2874,58 +4033,6 @@ export interface FrozenExecutionSummary {
    * Restrictions summarized without individual private values.
    */
   access: AccessSummary;
-}
-/**
- * Claimed OS login provenance at the request origin, separate from target and run-as identity.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "OsSessionRef".
- */
-export interface OsSessionRef {
-  /**
-   * Origin device reference; it does not establish registration or target authority.
-   */
-  device: DeviceId;
-  /**
-   * Login account at the origin; never implicitly equated to the product actor.
-   */
-  account: OsAccountRef;
-  /**
-   * Origin OS login/session reference, including an explicit test reference in fixtures.
-   */
-  session: Id;
-}
-/**
- * Opaque account reference in an OS namespace, independent of product or provider identity.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "OsAccountRef".
- */
-export interface OsAccountRef {
-  /**
-   * OS namespace of this reference or target; does not assert platform support.
-   */
-  platform: Platform;
-  /**
-   * Opaque stable OS account reference, such as a SID/UID reference, not an authentication credential.
-   */
-  subject: Id;
-}
-/**
- * Nonsecret reference returned by the native execution owner after binding a context.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "NativeContextRef".
- */
-export interface NativeContextRef {
-  /**
-   * Owner-assigned binding identity, scoped to the authenticated native peer.
-   */
-  id: Id;
-  /**
-   * Exact caller generation; retirement rejects new ingress and User continuations.
-   */
-  generation: Id;
 }
 /**
  * Safe software-step projection from the frozen program.
@@ -3059,228 +4166,6 @@ export interface ExecutionBudget {
    * Maximum attempts for the whole plan; retries never multiply time/output budgets.
    */
   maxAttempts: number;
-}
-/**
- * User intent retained in the sole execution journal before a frozen execution exists.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "BackendRequest".
- */
-export interface BackendRequest {
-  /**
-   * Original failed request when this explicit retry was independently admitted.
-   */
-  retryOf: RequestId | null;
-  /**
-   * Complete original control revision, retained with an explicit retry's immutable association.
-   */
-  retryExpectedRevision: TaskRevision | null;
-  /**
-   * Trusted original request acceptance time in UTC milliseconds.
-   */
-  recordedAtUnixMs: number;
-  /**
-   * Original explicit cancellation control, absent for owner-driven retirement.
-   */
-  cancellationControl: Id | null;
-  /**
-   * Original complete revision fingerprint for the retained cancellation receipt.
-   */
-  cancellationExpectedRevision: TaskRevision | null;
-  /**
-   * The sole choice, frozen on submission, and appended backend association.
-   */
-  action: PreparedAction;
-  /**
-   * OS-authenticated original trigger; never accepted from an IPC request body.
-   */
-  trigger: BackendTrigger;
-  /**
-   * Immutable trusted classification; absent for human requests or unknown AI risk.
-   */
-  risk: ExecutionRisk | null;
-  /**
-   * Explicit risk-two response; readiness alone never proves confirmation.
-   */
-  confirmation: BackendConfirmation | null;
-  /**
-   * Monotonic journal revision.
-   */
-  revision: number;
-  /**
-   * Preparation state, separate from execution lifecycle.
-   */
-  state: BackendRequestState;
-  /**
-   * Diagnosis when preparation failed.
-   */
-  failure: BackendRequestFailure | null;
-}
-/**
- * Native human read input with its preallocated stable request.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "SoftwareReadChoice".
- */
-export interface SoftwareReadChoice {
-  /**
-   * Original query identity.
-   */
-  request: RequestId;
-  /**
-   * The sole immutable query input.
-   */
-  input: SoftwareReadSelection;
-}
-/**
- * Model-visible selection for a finite native software detector; no arbitrary selector or command.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "SoftwareReadSelection".
- */
-export interface SoftwareReadSelection {
-  /**
-   * Exact current signed offer projection.
-   */
-  selection: BackendSelection;
-  /**
-   * One declared step in that definition.
-   */
-  step: number;
-}
-/**
- * A selection references exact backend content and carries no script or local catalog model.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "BackendSelection".
- */
-export interface BackendSelection {
-  /**
-   * Original request shown with the offer, used unchanged for recovery.
-   */
-  request: RequestId;
-  /**
-   * Backend task identity.
-   */
-  task: Id;
-  /**
-   * Original backend attempt.
-   */
-  attempt: Id;
-  /**
-   * Revision shown to the user/model.
-   */
-  revision: Digest;
-}
-/**
- * Fresh native software fact, with collection time and no installer result claims.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "SoftwareObservation".
- */
-export interface SoftwareObservation {
-  /**
-   * Completeness of this finite native observation; failed leaves the state Unknown.
-   */
-  quality: OutputQuality;
-  /**
-   * Time of actual observation from the service clock.
-   */
-  collectedAtUnixMs: number;
-  /**
-   * Exact declared package.
-   */
-  package: string;
-  /**
-   * Exact declared desired version, separate from the observed version.
-   */
-  expectedVersion: string;
-  /**
-   * Native receipt or product observation; unknown remains explicit.
-   */
-  state: SoftwareState;
-}
-/**
- * Employee input; caller source and confirmation are supplied only by trusted native code.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "PolicyChoice".
- */
-export interface PolicyChoice {
-  /**
-   * Stable request allocated before submission, reused after response loss.
-   */
-  request: RequestId;
-  /**
-   * Policy from the current authorized directory.
-   */
-  policyId: Id;
-  /**
-   * Only Resource fields whose Policy source is Input.
-   */
-  parameters: {
-    [k: string]: unknown;
-  };
-}
-/**
- * Exact Resource identity accompanying its signed digest.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "TaskResource".
- */
-export interface TaskResource {
-  /**
-   * Logical Resource identity.
-   */
-  id: string;
-  /**
-   * Immutable Resource version.
-   */
-  version: string;
-  /**
-   * Exact selected variant.
-   */
-  variant: string;
-}
-/**
- * Backend-authenticated classification of the exact offer, never an IPC claim.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ExecutionRisk".
- */
-export interface ExecutionRisk {
-  /**
-   * Explicit effect classification selected by backend policy.
-   */
-  level: RiskLevel;
-  /**
-   * Exact backend risk policy revision.
-   */
-  source: RiskSource;
-  /**
-   * Exclusive trusted decision deadline.
-   */
-  expiresAtUnixMs: number;
-}
-/**
- * Sole product confirmation, persisted together with the original AI request.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "BackendConfirmation".
- */
-export interface BackendConfirmation {
-  /**
-   * Actual original login, independently authenticated at confirmation and dispatch.
-   */
-  osSession: OsSessionRef;
-  /**
-   * Trusted service time at the user's explicit response.
-   */
-  confirmedAtUnixMs: number;
-  /**
-   * Exclusive confirmation deadline before acceptance; it does not revoke an accepted Run.
-   */
-  expiresAtUnixMs: number;
 }
 /**
  * Safe query discovery; an unavailable query can still have retained data.
@@ -3421,146 +4306,6 @@ export interface DataCursor {
   offset: number;
 }
 /**
- * Allowlisted device activity. Contains no principal, OS identity, names or raw output.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ManagementActivity".
- */
-export interface ManagementActivity {
-  /**
-   * Stable source-qualified identity, also used to deduplicate incremental delivery.
-   */
-  id: string;
-  /**
-   * Business source identity.
-   */
-  source: string;
-  /**
-   * Product activity category.
-   */
-  kind: ActivityKind;
-  /**
-   * Actual recorded stage, independent of the current operation status.
-   */
-  phase: ActivityPhase;
-  /**
-   * Server recording time in UTC Unix seconds.
-   */
-  recordedAt: number;
-  /**
-   * Producer observation time in UTC Unix seconds.
-   */
-  observedAt: number;
-  /**
-   * Human, AI, Policy or system origin; never a grant.
-   */
-  origin: ActivityOrigin;
-  /**
-   * Original target; Policy parent facts have no device target.
-   */
-  target: ActivityTarget | null;
-  /**
-   * Exact producer coordinates with no user identity.
-   */
-  links: ActivityLinks;
-  /**
-   * Delivery evidence, independent of execution.
-   */
-  delivery: ActivityDelivery | null;
-  /**
-   * Execution evidence, independent of verified effect.
-   */
-  execution: ActivityExecution | null;
-  /**
-   * Qualified effect evidence, absent when unavailable.
-   */
-  effect: ActivityEffect | null;
-  /**
-   * Server receipt/partial reporting evidence, not local cache freshness.
-   */
-  reporting: ActivityReporting | null;
-  /**
-   * Business admission or cancellation decision.
-   */
-  decision: ActivityDecision | null;
-  /**
-   * Audit transaction outcome, never device-effect proof.
-   */
-  auditOutcome: string;
-}
-/**
- * Registration coordinates of the original producer fact.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ActivityTarget".
- */
-export interface ActivityTarget {
-  /**
-   * Authorized endpoint identity, which can differ between paired channels.
-   */
-  device: string;
-  /**
-   * Exact registration identity.
-   */
-  registration: string;
-  /**
-   * Exact registration generation.
-   */
-  generation: number;
-}
-/**
- * Exact links to the existing business owners; absent links are not inferred.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ActivityLinks".
- */
-export interface ActivityLinks {
-  /**
-   * Policy identity.
-   */
-  policy: string | null;
-  /**
-   * Immutable Policy execution version.
-   */
-  version: string | null;
-  /**
-   * Explicit event batch.
-   */
-  batch: string | null;
-  /**
-   * Exact batch member.
-   */
-  member: string | null;
-  /**
-   * Original request identity.
-   */
-  request: string | null;
-  /**
-   * Native operation identity.
-   */
-  operation: string | null;
-  /**
-   * Exact retirement identity shared by its cleanup and unenrollment work.
-   */
-  retirement: string | null;
-  /**
-   * Action Run identity.
-   */
-  task: string | null;
-  /**
-   * Concrete attempt, qualifying every step reference.
-   */
-  attempt: string | null;
-  /**
-   * Definition step identities within the exact task and attempt.
-   */
-  steps: string[];
-  /**
-   * Child operations accepted by the exact batch member.
-   */
-  operations: PolicyEventOperation[];
-}
-/**
  * Original child node identity, qualified by attempt and owner key.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -3609,38 +4354,18 @@ export interface TaskNode {
   quiescent: boolean | null;
 }
 /**
- * Scope-local completeness. An observation is not a global source commit fence.
- *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ActivityCoverage".
+ * via the `definition` "Command5".
  */
-export interface ActivityCoverage {
-  /**
-   * Source family covered by this observation.
-   */
-  source: string;
-  /**
-   * Whether all visible committed facts in the observed source snapshot were projected.
-   */
-  complete: boolean;
-  /**
-   * Explicit incomplete/unsupported association or source reasons.
-   */
-  reasons: string[];
-}
-/**
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command4".
- */
-export interface Command4 {
+export interface Command5 {
   input: TaskRef;
   output: TaskDetail;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command5".
+ * via the `definition` "Command6".
  */
-export interface Command5 {
+export interface Command6 {
   input: TaskControl;
   output: TaskControlReceipt;
 }
@@ -3694,9 +4419,9 @@ export interface TaskControlReceipt {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command6".
+ * via the `definition` "Command7".
  */
-export interface Command6 {
+export interface Command7 {
   input: TaskControlQuery;
   output: TaskControlReceipt;
 }
@@ -3722,27 +4447,11 @@ export interface TaskControlQuery {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command7".
+ * via the `definition` "Command8".
  */
-export interface Command7 {
+export interface Command8 {
   input: NetworkCheckOperation;
   output: NetworkCheckResponse;
-}
-/**
- * One destination selected by the user, independent of backend configuration.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "NetworkTarget".
- */
-export interface NetworkTarget {
-  /**
-   * A domain or IP literal, never a URL or command.
-   */
-  host: string;
-  /**
-   * One TCP port, from 1 through 65535.
-   */
-  port: number;
 }
 /**
  * Original execution status plus bounded fixed-worker diagnostic evidence.
@@ -3806,47 +4515,11 @@ export interface NetworkProbe {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command8".
+ * via the `definition` "Command9".
  */
-export interface Command8 {
+export interface Command9 {
   input: SettingsOperation;
   output: SettingsResponse;
-}
-/**
- * One explicit manual proxy endpoint. Automatic configuration is preserved independently.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "ProxyEndpoint".
- */
-export interface ProxyEndpoint {
-  /**
-   * Whether this manual protocol proxy is enabled.
-   */
-  enabled: boolean;
-  /**
-   * Hostname or IP only, without scheme, credentials or path.
-   */
-  host: string;
-  /**
-   * Native TCP port; zero allowed only when disabled.
-   */
-  port: number;
-}
-/**
- * Exact native desktop coordinates.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "DisplayOrigin".
- */
-export interface DisplayOrigin {
-  /**
-   * Horizontal desktop coordinate.
-   */
-  x: number;
-  /**
-   * Vertical desktop coordinate.
-   */
-  y: number;
 }
 /**
  * Read-only projection of the original settings operation.
@@ -3990,9 +4663,9 @@ export interface SettingsOption {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command9".
+ * via the `definition` "Command10".
  */
-export interface Command9 {
+export interface Command10 {
   input: Operation2;
   output: Response;
 }
@@ -4315,9 +4988,9 @@ export interface SetupTask {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command10".
+ * via the `definition` "Command11".
  */
-export interface Command10 {
+export interface Command11 {
   input: LocalSoftwareChoice;
   output: LocalSoftwarePrepared;
 }
@@ -4340,22 +5013,6 @@ export interface LocalSoftwareChoice {
    * Closed operation.
    */
   action: LocalSoftwareAction;
-}
-/**
- * Stable installation identity within a currently authorized collection definition.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "SoftwareRef".
- */
-export interface SoftwareRef {
-  /**
-   * Service-owned collection definition.
-   */
-  query: QueryRef;
-  /**
-   * Native collector's stable installation identity.
-   */
-  installation: Id;
 }
 /**
  * Safe immutable preview of a locally prepared operation; executable input stays in the journal.
@@ -4399,9 +5056,9 @@ export interface LocalSoftwarePrepared {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command11".
+ * via the `definition` "Command12".
  */
-export interface Command11 {
+export interface Command12 {
   input: LocalSoftwareSubmission;
   output: LocalSoftwareStatus;
 }
@@ -4443,9 +5100,9 @@ export interface LocalSoftwareStatus {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command12".
+ * via the `definition` "Command13".
  */
-export interface Command12 {
+export interface Command13 {
   input: QueryRequest;
   output: LocalSoftwareStatus;
 }
@@ -4463,9 +5120,9 @@ export interface QueryRequest {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command13".
+ * via the `definition` "Command14".
  */
-export interface Command13 {
+export interface Command14 {
   input: SoftwareHistoryQuery;
   output: LocalSoftwareHistory;
 }
@@ -4503,9 +5160,9 @@ export interface LocalSoftwareHistory {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command14".
+ * via the `definition` "Command15".
  */
-export interface Command14 {
+export interface Command15 {
   input: SoftwareRead;
   output: SoftwarePage;
 }
@@ -4659,9 +5316,9 @@ export interface SoftwareActionView {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command15".
+ * via the `definition` "Command16".
  */
-export interface Command15 {
+export interface Command16 {
   input: QueryDirectory;
   output: QueryPage;
 }
@@ -4711,17 +5368,17 @@ export interface QueryPage {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command16".
+ * via the `definition` "Command17".
  */
-export interface Command16 {
+export interface Command17 {
   input: DataRead;
   output: CollectedData;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command17".
+ * via the `definition` "Command18".
  */
-export interface Command17 {
+export interface Command18 {
   input: QuerySubmit;
   output: QueryStatus;
 }
@@ -4793,171 +5450,33 @@ export interface QueryPreparationRef {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command18".
- */
-export interface Command18 {
-  input: QueryRequest;
-  output: QueryStatus;
-}
-/**
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "Command19".
  */
 export interface Command19 {
-  input: SoftwareReadChoice;
-  output: BackendRequest;
+  input: QueryRequest;
+  output: QueryStatus;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "Command20".
  */
 export interface Command20 {
-  input: CapabilitySelector;
-  output: SelfServiceDirectoryItem;
-}
-/**
- * One currently authorized script and its Resource-owned parameter schema.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "SelfServiceDirectoryItem".
- */
-export interface SelfServiceDirectoryItem {
-  /**
-   * Server-owned identity and current callable interface.
-   */
-  capability: CapabilityDescriptor;
-  /**
-   * Logical Policy identity.
-   */
-  policyId: string;
-  /**
-   * Current configuration CAS revision.
-   */
-  policyRevision: number;
-  /**
-   * Immutable execution version.
-   */
-  policyVersion: string;
-  /**
-   * Current qualified subject, rechecked when invoking and before execution.
-   */
-  subject: SelfServiceSubject;
-  /**
-   * Normalized presentation and invocation settings.
-   */
-  selfService: SelfServiceMetadata;
-  /**
-   * Closed task kind and the exact invocation interface.
-   */
-  task: SelfServiceTask;
-}
-/**
- * Cross-endpoint capability identity and interface, never an execution permit.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "CapabilityDescriptor".
- */
-export interface CapabilityDescriptor {
-  /**
-   * Stable Policy capability ID.
-   */
-  id: string;
-  /**
-   * Object namespace.
-   */
-  objectType: CapabilityObject;
-  /**
-   * Server-owned stable invocation name.
-   */
-  toolName: string;
-  /**
-   * Optional administrator address.
-   */
-  alias: PolicyAlias | null;
-  /**
-   * Actual scope owner; membership is rechecked by execution.
-   */
-  scope: string;
-  /**
-   * Product service instance.
-   */
-  instance: string;
-  /**
-   * Tenant owning this capability.
-   */
-  tenant: string;
-  /**
-   * Current configuration revision, for information only.
-   */
-  revision: number;
-  /**
-   * Material version observed while resolving, not a call precondition.
-   */
-  version: string;
-  /**
-   * Operations supported in this interface.
-   */
-  operations: CapabilityOperation[];
-  /**
-   * Schema for caller-provided parameters.
-   */
-  inputSchema: unknown;
-  /**
-   * Schema of the operation result.
-   */
-  outputSchema: unknown;
-}
-/**
- * Authenticated product user; contains no session credential.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "SelfServiceUser".
- */
-export interface SelfServiceUser {
-  /**
-   * Product tenant.
-   */
-  tenantId: string;
-  /**
-   * Identity instance.
-   */
-  instanceId: string;
-  /**
-   * Authenticated principal.
-   */
-  principalId: string;
-}
-/**
- * Published presentation and invocation settings; values are normalized by Policy CAS.
- *
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "SelfServiceMetadata".
- */
-export interface SelfServiceMetadata {
-  /**
-   * Whether this script is published for self service.
-   */
-  published: boolean;
-  /**
-   * Open directory presentation; never used as authorization or executable input.
-   */
-  presentation: {
-    [k: string]: unknown;
-  };
-  /**
-   * Effective administrator AI switch.
-   */
-  allowAi: boolean;
-  /**
-   * Effective risk level, one or two.
-   */
-  riskLevel: 1 | 2;
+  input: SoftwareReadChoice;
+  output: BackendRequest;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "Command21".
  */
 export interface Command21 {
+  input: CapabilitySelector;
+  output: SelfServiceDirectoryItem;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Command22".
+ */
+export interface Command22 {
   input: PolicyDirectoryQuery;
   output: SelfServiceDirectoryResponse;
 }
@@ -5026,9 +5545,9 @@ export interface SelfServiceDirectoryProjection {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command22".
+ * via the `definition` "Command23".
  */
-export interface Command22 {
+export interface Command23 {
   input: PolicyInvocation;
   output: BackendRequest;
 }
@@ -5046,9 +5565,9 @@ export interface PolicyInvocation {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command23".
+ * via the `definition` "Command24".
  */
-export interface Command23 {
+export interface Command24 {
   input: PolicySubmission;
   output: BackendRequest;
 }
@@ -5076,9 +5595,9 @@ export interface PolicySubmission {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command24".
+ * via the `definition` "Command25".
  */
-export interface Command24 {
+export interface Command25 {
   input: ActionRef;
   output: BackendRequest;
 }
@@ -5091,9 +5610,9 @@ export interface ActionRef {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command25".
+ * via the `definition` "Command26".
  */
-export interface Command25 {
+export interface Command26 {
   input: ActionRef;
   output: PolicyStatus;
 }
@@ -5240,9 +5759,9 @@ export interface TaskDiagnostics {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command26".
+ * via the `definition` "Command27".
  */
-export interface Command26 {
+export interface Command27 {
   input: BackendSelection;
   output: TaskSubmission;
 }
@@ -5264,9 +5783,9 @@ export interface TaskSubmission {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command27".
+ * via the `definition` "Command28".
  */
-export interface Command27 {
+export interface Command28 {
   input: Scopes;
   output: Preview;
 }
@@ -5291,9 +5810,9 @@ export interface Preview {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command28".
+ * via the `definition` "Command29".
  */
-export interface Command28 {
+export interface Command29 {
   input: Selection;
   output: boolean;
 }
@@ -5306,17 +5825,17 @@ export interface Selection {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command29".
+ * via the `definition` "Command30".
  */
-export interface Command29 {
+export interface Command30 {
   input: Selection;
   output: null;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command30".
+ * via the `definition` "Command31".
  */
-export interface Command30 {
+export interface Command31 {
   input: null;
   output: AppearanceSnapshot;
 }
@@ -5331,9 +5850,9 @@ export interface AppearanceSnapshot {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command31".
+ * via the `definition` "Command32".
  */
-export interface Command31 {
+export interface Command32 {
   input: null;
   output: DeviceOverview;
 }

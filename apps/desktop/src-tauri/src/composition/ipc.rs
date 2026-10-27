@@ -13,6 +13,14 @@ fn decode<T: serde::de::DeserializeOwned>(input: serde_json::Value) -> Result<T>
     }
     serde_json::from_value(input).map_err(|_| error("input", "请求结构无效"))
 }
+#[tauri::command]
+async fn navigation<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    generation: Option<String>,
+    input: serde_json::Value,
+) -> Result<super::navigation::NavigationResponse> {
+    super::navigation::dispatch(app, generation, decode(input)?).await
+}
 fn decode_connection(
     input: serde_json::Value,
     expected: Option<u64>,
@@ -55,7 +63,7 @@ macro_rules! commands {
             struct Command<I: schemars::JsonSchema, O: schemars::JsonSchema> { input: I, output: O }
             #[derive(schemars::JsonSchema)]
             #[allow(dead_code)]
-            struct SelfServiceCommands { personal_vault: Command<super::personal_vault::Operation, super::personal_vault::Status>, $($name: Command<$input, $output>),+, diagnostics_prepare: Command<super::diagnostics::Scopes, super::diagnostics::Preview>, diagnostics_export: Command<super::diagnostics::Selection,bool>, diagnostics_discard: Command<super::diagnostics::Selection,()>, appearance_snapshot: Command<(), AppearanceSnapshot>, device_overview: Command<(), execution_ipc::host::DeviceOverview> }
+            struct SelfServiceCommands { navigation: Command<super::navigation::NavigationOperation, super::navigation::NavigationResponse>, personal_vault: Command<super::personal_vault::Operation, super::personal_vault::Status>, $($name: Command<$input, $output>),+, diagnostics_prepare: Command<super::diagnostics::Scopes, super::diagnostics::Preview>, diagnostics_export: Command<super::diagnostics::Selection,bool>, diagnostics_discard: Command<super::diagnostics::Selection,()>, appearance_snapshot: Command<(), AppearanceSnapshot>, device_overview: Command<(), execution_ipc::host::DeviceOverview> }
             schemars::generate::SchemaSettings::draft07().for_serialize().into_generator().into_root_schema_for::<SelfServiceCommands>()
         }
     }
@@ -409,6 +417,7 @@ pub async fn personal_vault<R: tauri::Runtime>(
 }
 pub fn register<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder.invoke_handler(tauri::generate_handler![
+        navigation,
         personal_vault,
         device_overview,
         appearance_snapshot,
@@ -682,6 +691,7 @@ mod tests {
 #[cfg(feature = "dev-fixture")]
 pub fn register_fixture<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
     builder.invoke_handler(tauri::generate_handler![
+        navigation,
         appearance_snapshot,
         development_assembly
     ])

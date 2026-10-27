@@ -2,6 +2,7 @@
 pub mod execution;
 pub mod ipc;
 pub mod lifecycle;
+pub mod navigation;
 pub mod origin;
 pub mod runtime;
 

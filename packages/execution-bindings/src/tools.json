@@ -5471,6 +5471,50 @@
     "name": "execution_operation_prepare",
     "outputSchema": {
       "$defs": {
+        "AccessWindowsAuthority": {
+          "description": "Stable Windows identity authority. Display names and email addresses are excluded.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "The current registered computer's SAM database.",
+              "properties": { "kind": { "const": "local", "type": "string" } },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Native directory domain SID, distinct from the user's account SID.",
+              "properties": {
+                "domainSid": {
+                  "description": "SID of the native AD domain, excluding the user's RID.",
+                  "type": "string"
+                },
+                "kind": { "const": "active_directory", "type": "string" }
+              },
+              "required": ["kind", "domainSid"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Stable directory identifiers from the native Entra account.",
+              "properties": {
+                "kind": { "const": "entra", "type": "string" },
+                "objectId": {
+                  "description": "Immutable user object identifier within that tenant.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "tenantId": {
+                  "description": "Tenant that owns the native directory account.",
+                  "format": "uuid",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "tenantId", "objectId"],
+              "type": "object"
+            }
+          ]
+        },
         "BackendConfirmation": {
           "additionalProperties": false,
           "description": "Sole product confirmation, persisted together with the original AI request.",
@@ -5897,6 +5941,51 @@
             }
           ]
         },
+        "CapabilitySelector": {
+          "description": "Explicit exact address in the authenticated tenant's Policy namespace.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Canonical Policy identity.",
+              "properties": {
+                "id": {
+                  "description": "Object ID.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "kind": { "const": "id", "type": "string" }
+              },
+              "required": ["kind", "id"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Server-generated tool name.",
+              "properties": {
+                "kind": { "const": "tool_name", "type": "string" },
+                "name": {
+                  "description": "Complete canonical name.",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Administrator-controlled unique alias.",
+              "properties": {
+                "alias": {
+                  "$ref": "#/$defs/PolicyAlias",
+                  "description": "Canonical tenant-local alias."
+                },
+                "kind": { "const": "alias", "type": "string" }
+              },
+              "required": ["kind", "alias"],
+              "type": "object"
+            }
+          ]
+        },
         "DeviceId": {
           "description": "Device reference, not verified registration evidence.",
           "maxLength": 128,
@@ -5942,6 +6031,165 @@
                 }
               },
               "required": ["kind", "url"],
+              "type": "object"
+            }
+          ]
+        },
+        "EntryNamespace": {
+          "additionalProperties": false,
+          "description": "Enterprise coordinates are compared with the active registration, never used to switch it.",
+          "properties": {
+            "device": {
+              "description": "Exact device identity.",
+              "type": "string"
+            },
+            "generation": {
+              "description": "Exact registration generation.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "instance": {
+              "description": "Product instance identity, not a server URL.",
+              "type": "string"
+            },
+            "registration": {
+              "description": "Exact registration UUID.",
+              "type": "string"
+            },
+            "tenant": { "description": "Exact tenant UUID.", "type": "string" }
+          },
+          "required": [
+            "instance",
+            "tenant",
+            "device",
+            "registration",
+            "generation"
+          ],
+          "type": "object"
+        },
+        "EntrySelector": {
+          "description": "Explicit address kinds; display names are not exact selectors.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "One packaged local tool; its existing owner supplies schema and qualification.",
+              "properties": {
+                "kind": { "const": "localTool", "type": "string" },
+                "name": {
+                  "$ref": "#/$defs/LocalTool",
+                  "description": "Stable tool name."
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Stable page or page section.",
+              "properties": {
+                "id": {
+                  "description": "Explicit owner-registered ID.",
+                  "type": "string"
+                },
+                "kind": { "const": "node", "type": "string" }
+              },
+              "required": ["kind", "id"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Server-owned ID, tool name or unique alias.",
+              "properties": {
+                "kind": { "const": "capability", "type": "string" },
+                "selector": {
+                  "$ref": "#/$defs/CapabilitySelector",
+                  "description": "Canonical producer selector."
+                }
+              },
+              "required": ["kind", "selector"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Explicit one-to-many event, never an alias lookup.",
+              "properties": {
+                "kind": { "const": "event", "type": "string" },
+                "name": {
+                  "$ref": "#/$defs/PolicyEventName",
+                  "description": "Producer-normalized name."
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Original preparation or execution.",
+              "properties": {
+                "kind": { "const": "request", "type": "string" },
+                "request": {
+                  "$ref": "#/$defs/RequestId",
+                  "description": "Original business request."
+                }
+              },
+              "required": ["kind", "request"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Exact periodic collection session.",
+              "properties": {
+                "kind": { "const": "sampling", "type": "string" },
+                "query": {
+                  "$ref": "#/$defs/QueryRef",
+                  "description": "Original definition and revision."
+                }
+              },
+              "required": ["kind", "query"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Original source-qualified management fact.",
+              "properties": {
+                "id": {
+                  "description": "Producer fact identity.",
+                  "type": "string"
+                },
+                "kind": { "const": "activity", "type": "string" }
+              },
+              "required": ["kind", "id"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Existing producer batch.",
+              "properties": {
+                "id": {
+                  "description": "Canonical batch UUID.",
+                  "type": "string"
+                },
+                "kind": { "const": "batch", "type": "string" }
+              },
+              "required": ["kind", "id"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Original remote execution and attempt.",
+              "properties": {
+                "attempt": {
+                  "description": "Exact attempt UUID.",
+                  "type": "string"
+                },
+                "kind": { "const": "task", "type": "string" },
+                "task": {
+                  "description": "Backend task UUID.",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "task", "attempt"],
               "type": "object"
             }
           ]
@@ -5995,6 +6243,26 @@
           "minLength": 1,
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
+        },
+        "LocalTool": {
+          "description": "Stable names for actual existing local operation owners.",
+          "oneOf": [
+            {
+              "const": "network.check",
+              "description": "Existing finite DNS/TCP diagnostic.",
+              "type": "string"
+            },
+            {
+              "const": "system.settings",
+              "description": "Existing local settings owner.",
+              "type": "string"
+            },
+            {
+              "const": "software.manage",
+              "description": "Existing software preparation/submission owner.",
+              "type": "string"
+            }
+          ]
         },
         "NativeContextRef": {
           "additionalProperties": false,
@@ -6122,6 +6390,10 @@
             }
           ]
         },
+        "PolicyAlias": {
+          "description": "Tenant-local canonical Policy alias.",
+          "type": "string"
+        },
         "PolicyChoice": {
           "additionalProperties": false,
           "description": "Employee input; caller source and confirmation are supplied only by trusted native code.",
@@ -6143,9 +6415,142 @@
           "required": ["request", "policyId", "parameters"],
           "type": "object"
         },
+        "PolicyEventAccepted": {
+          "additionalProperties": false,
+          "description": "Stable batch receipt; acceptance does not mean its members executed successfully.",
+          "properties": {
+            "batchId": {
+              "description": "Durable batch identity.",
+              "format": "uuid",
+              "type": "string"
+            },
+            "members": {
+              "description": "Number of frozen members, including rejections.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "operationId": {
+              "description": "Original request identity.",
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          "required": ["operationId", "batchId", "members"],
+          "type": "object"
+        },
+        "PolicyEventName": {
+          "description": "Tenant-local event name shared by any number of Policies; never an object alias.",
+          "type": "string"
+        },
+        "PolicyEventRequest": {
+          "additionalProperties": false,
+          "description": "Explicit event for one authenticated device, never a tenant or device selector.",
+          "properties": {
+            "event": {
+              "$ref": "#/$defs/PolicyEventName",
+              "description": "Canonical Policy trigger name."
+            },
+            "executionContext": {
+              "anyOf": [
+                { "$ref": "#/$defs/SoftwareExecutionContext" },
+                { "type": "null" }
+              ],
+              "description": "Local context attested by the authenticated Agent; absent for remote management."
+            },
+            "operationId": {
+              "description": "Stable request identity reused after response loss.",
+              "format": "uuid",
+              "type": "string"
+            },
+            "source": {
+              "$ref": "#/$defs/PolicyEventSource",
+              "description": "Real invocation origin, not authorization."
+            }
+          },
+          "required": ["operationId", "event", "source"],
+          "type": "object"
+        },
+        "PolicyEventSource": {
+          "description": "Origin supplied by the authenticated service; Policy origins must reference a real parent run.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Human invocation through the device service or management session.",
+              "properties": { "kind": { "const": "human", "type": "string" } },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "AI invocation through the authenticated service.",
+              "properties": { "kind": { "const": "ai", "type": "string" } },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "A running Policy, validated against the current device.",
+              "properties": {
+                "kind": { "const": "policy", "type": "string" },
+                "runId": {
+                  "description": "Parent execution identity.",
+                  "format": "uuid",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "runId"],
+              "type": "object"
+            }
+          ]
+        },
         "PreparedAction": {
           "description": "One preparation reference, before or after a signed Offer has arrived.",
           "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Explicit event acceptance, persisted in the same preparation journal as Policy calls.",
+              "properties": {
+                "batch": {
+                  "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+                  "description": "Exact batch recovered from an authorized original-request activity; member count remains unknown."
+                },
+                "expiresAtUnixMs": {
+                  "description": "Original authorization deadline.",
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "input": {
+                  "$ref": "#/$defs/PolicyEventRequest",
+                  "description": "Exact producer request; caller classification is native-attested."
+                },
+                "kind": { "const": "event", "type": "string" },
+                "namespace": {
+                  "$ref": "#/$defs/EntryNamespace",
+                  "description": "Original exact registration coordinates."
+                },
+                "receipt": {
+                  "anyOf": [
+                    { "$ref": "#/$defs/PolicyEventAccepted" },
+                    { "type": "null" }
+                  ],
+                  "description": "Stable producer batch receipt; acceptance is not effect completion."
+                },
+                "request": {
+                  "$ref": "#/$defs/RequestId",
+                  "description": "Original stable business request."
+                }
+              },
+              "required": [
+                "kind",
+                "request",
+                "input",
+                "namespace",
+                "expiresAtUnixMs"
+              ],
+              "type": "object"
+            },
             {
               "additionalProperties": false,
               "description": "A bounded native observation authorized by an exact current signed software definition.",
@@ -6196,6 +6601,13 @@
                 "access": {
                   "$ref": "#/$defs/PolicyAccess",
                   "description": "Local continuation binding; enterprise identity is solely directory.subject."
+                },
+                "address": {
+                  "anyOf": [
+                    { "$ref": "#/$defs/EntrySelector" },
+                    { "type": "null" }
+                  ],
+                  "description": "Original typed external address, absent for direct native directory selections."
                 },
                 "choice": {
                   "$ref": "#/$defs/PolicyChoice",
@@ -6252,6 +6664,22 @@
               "type": "object"
             }
           ]
+        },
+        "QueryRef": {
+          "additionalProperties": false,
+          "description": "Exact service-owned query definition.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Id",
+              "description": "Stable resource identity."
+            },
+            "revision": {
+              "$ref": "#/$defs/Digest",
+              "description": "Digest of the complete current definition."
+            }
+          },
+          "required": ["id", "revision"],
+          "type": "object"
         },
         "RequestId": {
           "description": "Local execution request identity.",
@@ -6516,6 +6944,73 @@
             }
           ]
         },
+        "SoftwareExecutionContext": {
+          "additionalProperties": false,
+          "description": "Complete current native execution environment reported by this registration.",
+          "properties": {
+            "interactiveUser": {
+              "anyOf": [
+                { "$ref": "#/$defs/SoftwareInteractiveUser" },
+                { "type": "null" }
+              ],
+              "description": "Exact live interactive session, when one exists."
+            },
+            "msixSideload": {
+              "description": "Current native Windows sideload policy.",
+              "type": "boolean"
+            },
+            "msixUnsigned": {
+              "description": "Current native API support for explicitly approved unsigned packages.",
+              "type": "boolean"
+            },
+            "osVersion": {
+              "description": "Complete numeric OS version, not an inferred product/platform string.",
+              "items": {
+                "format": "uint16",
+                "maximum": 65535,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "maxItems": 4,
+              "minItems": 4,
+              "not": { "const": [0, 0, 0, 0] },
+              "type": "array"
+            },
+            "revision": {
+              "description": "Strictly increasing local context generation; retries retain the same value.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "sourceCredentials": {
+              "description": "Source-scoped read credential references actually available locally.",
+              "items": { "$ref": "#/$defs/SoftwareReadCredential" },
+              "maxItems": 16,
+              "type": "array",
+              "uniqueItems": true
+            },
+            "systemBroker": {
+              "description": "Whether the native system broker is available in this Agent installation.",
+              "type": "boolean"
+            },
+            "userHelper": {
+              "description": "Whether a helper is bound to this exact live interactive session.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "revision",
+            "msixSideload",
+            "msixUnsigned",
+            "osVersion",
+            "systemBroker",
+            "userHelper",
+            "interactiveUser",
+            "sourceCredentials"
+          ],
+          "type": "object"
+        },
         "SoftwareExecutionTarget": {
           "description": "Concrete effect target bound before an Offer is signed.",
           "oneOf": [
@@ -6550,6 +7045,49 @@
               "type": "object"
             }
           ]
+        },
+        "SoftwareInteractiveUser": {
+          "additionalProperties": false,
+          "description": "One concrete live OS session.",
+          "properties": {
+            "administrator": {
+              "description": "Privilege needed by the exact native profile, not a generic authorization grant.",
+              "type": "boolean"
+            },
+            "generatedUid": {
+              "description": "macOS GeneratedUID for this live account; Windows must explicitly report null.",
+              "type": ["string", "null"]
+            },
+            "identity": {
+              "description": "Windows SID or macOS numeric UID.",
+              "maxLength": 184,
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "type": "string"
+            },
+            "sessionId": {
+              "description": "Changes on logoff/login; identical account names cannot reuse a previous session.",
+              "format": "uuid",
+              "not": { "const": "00000000-0000-0000-0000-000000000000" },
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "windowsAuthority": {
+              "anyOf": [
+                { "$ref": "#/$defs/AccessWindowsAuthority" },
+                { "type": "null" }
+              ],
+              "description": "Native Windows account authority when known; required for Device Access admission."
+            }
+          },
+          "required": [
+            "windowsAuthority",
+            "generatedUid",
+            "identity",
+            "sessionId",
+            "administrator"
+          ],
+          "type": "object"
         },
         "SoftwareObservation": {
           "additionalProperties": false,
@@ -6621,6 +7159,28 @@
             }
           },
           "required": ["request", "input"],
+          "type": "object"
+        },
+        "SoftwareReadCredential": {
+          "additionalProperties": false,
+          "description": "Availability of a particular source read credential in the local Agent.",
+          "properties": {
+            "reference": {
+              "description": "Host-provisioned opaque credential reference; never token bytes or a URL.",
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "type": "string"
+            },
+            "source": {
+              "description": "Exact source identity in the consuming tenant.",
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "type": "string"
+            }
+          },
+          "required": ["source", "reference"],
           "type": "object"
         },
         "SoftwareReadSelection": {
@@ -6840,6 +7400,50 @@
     "name": "execution_software_observe",
     "outputSchema": {
       "$defs": {
+        "AccessWindowsAuthority": {
+          "description": "Stable Windows identity authority. Display names and email addresses are excluded.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "The current registered computer's SAM database.",
+              "properties": { "kind": { "const": "local", "type": "string" } },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Native directory domain SID, distinct from the user's account SID.",
+              "properties": {
+                "domainSid": {
+                  "description": "SID of the native AD domain, excluding the user's RID.",
+                  "type": "string"
+                },
+                "kind": { "const": "active_directory", "type": "string" }
+              },
+              "required": ["kind", "domainSid"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Stable directory identifiers from the native Entra account.",
+              "properties": {
+                "kind": { "const": "entra", "type": "string" },
+                "objectId": {
+                  "description": "Immutable user object identifier within that tenant.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "tenantId": {
+                  "description": "Tenant that owns the native directory account.",
+                  "format": "uuid",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "tenantId", "objectId"],
+              "type": "object"
+            }
+          ]
+        },
         "BackendConfirmation": {
           "additionalProperties": false,
           "description": "Sole product confirmation, persisted together with the original AI request.",
@@ -7266,6 +7870,51 @@
             }
           ]
         },
+        "CapabilitySelector": {
+          "description": "Explicit exact address in the authenticated tenant's Policy namespace.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Canonical Policy identity.",
+              "properties": {
+                "id": {
+                  "description": "Object ID.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "kind": { "const": "id", "type": "string" }
+              },
+              "required": ["kind", "id"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Server-generated tool name.",
+              "properties": {
+                "kind": { "const": "tool_name", "type": "string" },
+                "name": {
+                  "description": "Complete canonical name.",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Administrator-controlled unique alias.",
+              "properties": {
+                "alias": {
+                  "$ref": "#/$defs/PolicyAlias",
+                  "description": "Canonical tenant-local alias."
+                },
+                "kind": { "const": "alias", "type": "string" }
+              },
+              "required": ["kind", "alias"],
+              "type": "object"
+            }
+          ]
+        },
         "DeviceId": {
           "description": "Device reference, not verified registration evidence.",
           "maxLength": 128,
@@ -7311,6 +7960,165 @@
                 }
               },
               "required": ["kind", "url"],
+              "type": "object"
+            }
+          ]
+        },
+        "EntryNamespace": {
+          "additionalProperties": false,
+          "description": "Enterprise coordinates are compared with the active registration, never used to switch it.",
+          "properties": {
+            "device": {
+              "description": "Exact device identity.",
+              "type": "string"
+            },
+            "generation": {
+              "description": "Exact registration generation.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "instance": {
+              "description": "Product instance identity, not a server URL.",
+              "type": "string"
+            },
+            "registration": {
+              "description": "Exact registration UUID.",
+              "type": "string"
+            },
+            "tenant": { "description": "Exact tenant UUID.", "type": "string" }
+          },
+          "required": [
+            "instance",
+            "tenant",
+            "device",
+            "registration",
+            "generation"
+          ],
+          "type": "object"
+        },
+        "EntrySelector": {
+          "description": "Explicit address kinds; display names are not exact selectors.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "One packaged local tool; its existing owner supplies schema and qualification.",
+              "properties": {
+                "kind": { "const": "localTool", "type": "string" },
+                "name": {
+                  "$ref": "#/$defs/LocalTool",
+                  "description": "Stable tool name."
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Stable page or page section.",
+              "properties": {
+                "id": {
+                  "description": "Explicit owner-registered ID.",
+                  "type": "string"
+                },
+                "kind": { "const": "node", "type": "string" }
+              },
+              "required": ["kind", "id"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Server-owned ID, tool name or unique alias.",
+              "properties": {
+                "kind": { "const": "capability", "type": "string" },
+                "selector": {
+                  "$ref": "#/$defs/CapabilitySelector",
+                  "description": "Canonical producer selector."
+                }
+              },
+              "required": ["kind", "selector"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Explicit one-to-many event, never an alias lookup.",
+              "properties": {
+                "kind": { "const": "event", "type": "string" },
+                "name": {
+                  "$ref": "#/$defs/PolicyEventName",
+                  "description": "Producer-normalized name."
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Original preparation or execution.",
+              "properties": {
+                "kind": { "const": "request", "type": "string" },
+                "request": {
+                  "$ref": "#/$defs/RequestId",
+                  "description": "Original business request."
+                }
+              },
+              "required": ["kind", "request"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Exact periodic collection session.",
+              "properties": {
+                "kind": { "const": "sampling", "type": "string" },
+                "query": {
+                  "$ref": "#/$defs/QueryRef",
+                  "description": "Original definition and revision."
+                }
+              },
+              "required": ["kind", "query"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Original source-qualified management fact.",
+              "properties": {
+                "id": {
+                  "description": "Producer fact identity.",
+                  "type": "string"
+                },
+                "kind": { "const": "activity", "type": "string" }
+              },
+              "required": ["kind", "id"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Existing producer batch.",
+              "properties": {
+                "id": {
+                  "description": "Canonical batch UUID.",
+                  "type": "string"
+                },
+                "kind": { "const": "batch", "type": "string" }
+              },
+              "required": ["kind", "id"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Original remote execution and attempt.",
+              "properties": {
+                "attempt": {
+                  "description": "Exact attempt UUID.",
+                  "type": "string"
+                },
+                "kind": { "const": "task", "type": "string" },
+                "task": {
+                  "description": "Backend task UUID.",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "task", "attempt"],
               "type": "object"
             }
           ]
@@ -7364,6 +8172,26 @@
           "minLength": 1,
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
+        },
+        "LocalTool": {
+          "description": "Stable names for actual existing local operation owners.",
+          "oneOf": [
+            {
+              "const": "network.check",
+              "description": "Existing finite DNS/TCP diagnostic.",
+              "type": "string"
+            },
+            {
+              "const": "system.settings",
+              "description": "Existing local settings owner.",
+              "type": "string"
+            },
+            {
+              "const": "software.manage",
+              "description": "Existing software preparation/submission owner.",
+              "type": "string"
+            }
+          ]
         },
         "NativeContextRef": {
           "additionalProperties": false,
@@ -7491,6 +8319,10 @@
             }
           ]
         },
+        "PolicyAlias": {
+          "description": "Tenant-local canonical Policy alias.",
+          "type": "string"
+        },
         "PolicyChoice": {
           "additionalProperties": false,
           "description": "Employee input; caller source and confirmation are supplied only by trusted native code.",
@@ -7512,9 +8344,142 @@
           "required": ["request", "policyId", "parameters"],
           "type": "object"
         },
+        "PolicyEventAccepted": {
+          "additionalProperties": false,
+          "description": "Stable batch receipt; acceptance does not mean its members executed successfully.",
+          "properties": {
+            "batchId": {
+              "description": "Durable batch identity.",
+              "format": "uuid",
+              "type": "string"
+            },
+            "members": {
+              "description": "Number of frozen members, including rejections.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "operationId": {
+              "description": "Original request identity.",
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          "required": ["operationId", "batchId", "members"],
+          "type": "object"
+        },
+        "PolicyEventName": {
+          "description": "Tenant-local event name shared by any number of Policies; never an object alias.",
+          "type": "string"
+        },
+        "PolicyEventRequest": {
+          "additionalProperties": false,
+          "description": "Explicit event for one authenticated device, never a tenant or device selector.",
+          "properties": {
+            "event": {
+              "$ref": "#/$defs/PolicyEventName",
+              "description": "Canonical Policy trigger name."
+            },
+            "executionContext": {
+              "anyOf": [
+                { "$ref": "#/$defs/SoftwareExecutionContext" },
+                { "type": "null" }
+              ],
+              "description": "Local context attested by the authenticated Agent; absent for remote management."
+            },
+            "operationId": {
+              "description": "Stable request identity reused after response loss.",
+              "format": "uuid",
+              "type": "string"
+            },
+            "source": {
+              "$ref": "#/$defs/PolicyEventSource",
+              "description": "Real invocation origin, not authorization."
+            }
+          },
+          "required": ["operationId", "event", "source"],
+          "type": "object"
+        },
+        "PolicyEventSource": {
+          "description": "Origin supplied by the authenticated service; Policy origins must reference a real parent run.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Human invocation through the device service or management session.",
+              "properties": { "kind": { "const": "human", "type": "string" } },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "AI invocation through the authenticated service.",
+              "properties": { "kind": { "const": "ai", "type": "string" } },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "A running Policy, validated against the current device.",
+              "properties": {
+                "kind": { "const": "policy", "type": "string" },
+                "runId": {
+                  "description": "Parent execution identity.",
+                  "format": "uuid",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "runId"],
+              "type": "object"
+            }
+          ]
+        },
         "PreparedAction": {
           "description": "One preparation reference, before or after a signed Offer has arrived.",
           "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Explicit event acceptance, persisted in the same preparation journal as Policy calls.",
+              "properties": {
+                "batch": {
+                  "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+                  "description": "Exact batch recovered from an authorized original-request activity; member count remains unknown."
+                },
+                "expiresAtUnixMs": {
+                  "description": "Original authorization deadline.",
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "input": {
+                  "$ref": "#/$defs/PolicyEventRequest",
+                  "description": "Exact producer request; caller classification is native-attested."
+                },
+                "kind": { "const": "event", "type": "string" },
+                "namespace": {
+                  "$ref": "#/$defs/EntryNamespace",
+                  "description": "Original exact registration coordinates."
+                },
+                "receipt": {
+                  "anyOf": [
+                    { "$ref": "#/$defs/PolicyEventAccepted" },
+                    { "type": "null" }
+                  ],
+                  "description": "Stable producer batch receipt; acceptance is not effect completion."
+                },
+                "request": {
+                  "$ref": "#/$defs/RequestId",
+                  "description": "Original stable business request."
+                }
+              },
+              "required": [
+                "kind",
+                "request",
+                "input",
+                "namespace",
+                "expiresAtUnixMs"
+              ],
+              "type": "object"
+            },
             {
               "additionalProperties": false,
               "description": "A bounded native observation authorized by an exact current signed software definition.",
@@ -7565,6 +8530,13 @@
                 "access": {
                   "$ref": "#/$defs/PolicyAccess",
                   "description": "Local continuation binding; enterprise identity is solely directory.subject."
+                },
+                "address": {
+                  "anyOf": [
+                    { "$ref": "#/$defs/EntrySelector" },
+                    { "type": "null" }
+                  ],
+                  "description": "Original typed external address, absent for direct native directory selections."
                 },
                 "choice": {
                   "$ref": "#/$defs/PolicyChoice",
@@ -7621,6 +8593,22 @@
               "type": "object"
             }
           ]
+        },
+        "QueryRef": {
+          "additionalProperties": false,
+          "description": "Exact service-owned query definition.",
+          "properties": {
+            "id": {
+              "$ref": "#/$defs/Id",
+              "description": "Stable resource identity."
+            },
+            "revision": {
+              "$ref": "#/$defs/Digest",
+              "description": "Digest of the complete current definition."
+            }
+          },
+          "required": ["id", "revision"],
+          "type": "object"
         },
         "RequestId": {
           "description": "Local execution request identity.",
@@ -7885,6 +8873,73 @@
             }
           ]
         },
+        "SoftwareExecutionContext": {
+          "additionalProperties": false,
+          "description": "Complete current native execution environment reported by this registration.",
+          "properties": {
+            "interactiveUser": {
+              "anyOf": [
+                { "$ref": "#/$defs/SoftwareInteractiveUser" },
+                { "type": "null" }
+              ],
+              "description": "Exact live interactive session, when one exists."
+            },
+            "msixSideload": {
+              "description": "Current native Windows sideload policy.",
+              "type": "boolean"
+            },
+            "msixUnsigned": {
+              "description": "Current native API support for explicitly approved unsigned packages.",
+              "type": "boolean"
+            },
+            "osVersion": {
+              "description": "Complete numeric OS version, not an inferred product/platform string.",
+              "items": {
+                "format": "uint16",
+                "maximum": 65535,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "maxItems": 4,
+              "minItems": 4,
+              "not": { "const": [0, 0, 0, 0] },
+              "type": "array"
+            },
+            "revision": {
+              "description": "Strictly increasing local context generation; retries retain the same value.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "sourceCredentials": {
+              "description": "Source-scoped read credential references actually available locally.",
+              "items": { "$ref": "#/$defs/SoftwareReadCredential" },
+              "maxItems": 16,
+              "type": "array",
+              "uniqueItems": true
+            },
+            "systemBroker": {
+              "description": "Whether the native system broker is available in this Agent installation.",
+              "type": "boolean"
+            },
+            "userHelper": {
+              "description": "Whether a helper is bound to this exact live interactive session.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "revision",
+            "msixSideload",
+            "msixUnsigned",
+            "osVersion",
+            "systemBroker",
+            "userHelper",
+            "interactiveUser",
+            "sourceCredentials"
+          ],
+          "type": "object"
+        },
         "SoftwareExecutionTarget": {
           "description": "Concrete effect target bound before an Offer is signed.",
           "oneOf": [
@@ -7919,6 +8974,49 @@
               "type": "object"
             }
           ]
+        },
+        "SoftwareInteractiveUser": {
+          "additionalProperties": false,
+          "description": "One concrete live OS session.",
+          "properties": {
+            "administrator": {
+              "description": "Privilege needed by the exact native profile, not a generic authorization grant.",
+              "type": "boolean"
+            },
+            "generatedUid": {
+              "description": "macOS GeneratedUID for this live account; Windows must explicitly report null.",
+              "type": ["string", "null"]
+            },
+            "identity": {
+              "description": "Windows SID or macOS numeric UID.",
+              "maxLength": 184,
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "type": "string"
+            },
+            "sessionId": {
+              "description": "Changes on logoff/login; identical account names cannot reuse a previous session.",
+              "format": "uuid",
+              "not": { "const": "00000000-0000-0000-0000-000000000000" },
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "windowsAuthority": {
+              "anyOf": [
+                { "$ref": "#/$defs/AccessWindowsAuthority" },
+                { "type": "null" }
+              ],
+              "description": "Native Windows account authority when known; required for Device Access admission."
+            }
+          },
+          "required": [
+            "windowsAuthority",
+            "generatedUid",
+            "identity",
+            "sessionId",
+            "administrator"
+          ],
+          "type": "object"
         },
         "SoftwareObservation": {
           "additionalProperties": false,
@@ -7990,6 +9088,28 @@
             }
           },
           "required": ["request", "input"],
+          "type": "object"
+        },
+        "SoftwareReadCredential": {
+          "additionalProperties": false,
+          "description": "Availability of a particular source read credential in the local Agent.",
+          "properties": {
+            "reference": {
+              "description": "Host-provisioned opaque credential reference; never token bytes or a URL.",
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "type": "string"
+            },
+            "source": {
+              "description": "Exact source identity in the consuming tenant.",
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "type": "string"
+            }
+          },
+          "required": ["source", "reference"],
           "type": "object"
         },
         "SoftwareReadSelection": {
@@ -8667,6 +9787,50 @@
                 "allowChildProcesses",
                 "requireSandbox"
               ],
+              "type": "object"
+            }
+          ]
+        },
+        "AccessWindowsAuthority": {
+          "description": "Stable Windows identity authority. Display names and email addresses are excluded.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "The current registered computer's SAM database.",
+              "properties": { "kind": { "const": "local", "type": "string" } },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Native directory domain SID, distinct from the user's account SID.",
+              "properties": {
+                "domainSid": {
+                  "description": "SID of the native AD domain, excluding the user's RID.",
+                  "type": "string"
+                },
+                "kind": { "const": "active_directory", "type": "string" }
+              },
+              "required": ["kind", "domainSid"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Stable directory identifiers from the native Entra account.",
+              "properties": {
+                "kind": { "const": "entra", "type": "string" },
+                "objectId": {
+                  "description": "Immutable user object identifier within that tenant.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "tenantId": {
+                  "description": "Tenant that owns the native directory account.",
+                  "format": "uuid",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "tenantId", "objectId"],
               "type": "object"
             }
           ]
@@ -9515,6 +10679,51 @@
             }
           ]
         },
+        "CapabilitySelector": {
+          "description": "Explicit exact address in the authenticated tenant's Policy namespace.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Canonical Policy identity.",
+              "properties": {
+                "id": {
+                  "description": "Object ID.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "kind": { "const": "id", "type": "string" }
+              },
+              "required": ["kind", "id"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Server-generated tool name.",
+              "properties": {
+                "kind": { "const": "tool_name", "type": "string" },
+                "name": {
+                  "description": "Complete canonical name.",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Administrator-controlled unique alias.",
+              "properties": {
+                "alias": {
+                  "$ref": "#/$defs/PolicyAlias",
+                  "description": "Canonical tenant-local alias."
+                },
+                "kind": { "const": "alias", "type": "string" }
+              },
+              "required": ["kind", "alias"],
+              "type": "object"
+            }
+          ]
+        },
         "CollectedData": {
           "additionalProperties": false,
           "description": "Authorized, bounded observation projection.",
@@ -9805,6 +11014,165 @@
                 }
               },
               "required": ["kind", "url"],
+              "type": "object"
+            }
+          ]
+        },
+        "EntryNamespace": {
+          "additionalProperties": false,
+          "description": "Enterprise coordinates are compared with the active registration, never used to switch it.",
+          "properties": {
+            "device": {
+              "description": "Exact device identity.",
+              "type": "string"
+            },
+            "generation": {
+              "description": "Exact registration generation.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "instance": {
+              "description": "Product instance identity, not a server URL.",
+              "type": "string"
+            },
+            "registration": {
+              "description": "Exact registration UUID.",
+              "type": "string"
+            },
+            "tenant": { "description": "Exact tenant UUID.", "type": "string" }
+          },
+          "required": [
+            "instance",
+            "tenant",
+            "device",
+            "registration",
+            "generation"
+          ],
+          "type": "object"
+        },
+        "EntrySelector": {
+          "description": "Explicit address kinds; display names are not exact selectors.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "One packaged local tool; its existing owner supplies schema and qualification.",
+              "properties": {
+                "kind": { "const": "localTool", "type": "string" },
+                "name": {
+                  "$ref": "#/$defs/LocalTool",
+                  "description": "Stable tool name."
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Stable page or page section.",
+              "properties": {
+                "id": {
+                  "description": "Explicit owner-registered ID.",
+                  "type": "string"
+                },
+                "kind": { "const": "node", "type": "string" }
+              },
+              "required": ["kind", "id"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Server-owned ID, tool name or unique alias.",
+              "properties": {
+                "kind": { "const": "capability", "type": "string" },
+                "selector": {
+                  "$ref": "#/$defs/CapabilitySelector",
+                  "description": "Canonical producer selector."
+                }
+              },
+              "required": ["kind", "selector"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Explicit one-to-many event, never an alias lookup.",
+              "properties": {
+                "kind": { "const": "event", "type": "string" },
+                "name": {
+                  "$ref": "#/$defs/PolicyEventName",
+                  "description": "Producer-normalized name."
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Original preparation or execution.",
+              "properties": {
+                "kind": { "const": "request", "type": "string" },
+                "request": {
+                  "$ref": "#/$defs/RequestId",
+                  "description": "Original business request."
+                }
+              },
+              "required": ["kind", "request"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Exact periodic collection session.",
+              "properties": {
+                "kind": { "const": "sampling", "type": "string" },
+                "query": {
+                  "$ref": "#/$defs/QueryRef",
+                  "description": "Original definition and revision."
+                }
+              },
+              "required": ["kind", "query"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Original source-qualified management fact.",
+              "properties": {
+                "id": {
+                  "description": "Producer fact identity.",
+                  "type": "string"
+                },
+                "kind": { "const": "activity", "type": "string" }
+              },
+              "required": ["kind", "id"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Existing producer batch.",
+              "properties": {
+                "id": {
+                  "description": "Canonical batch UUID.",
+                  "type": "string"
+                },
+                "kind": { "const": "batch", "type": "string" }
+              },
+              "required": ["kind", "id"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Original remote execution and attempt.",
+              "properties": {
+                "attempt": {
+                  "description": "Exact attempt UUID.",
+                  "type": "string"
+                },
+                "kind": { "const": "task", "type": "string" },
+                "task": {
+                  "description": "Backend task UUID.",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "task", "attempt"],
               "type": "object"
             }
           ]
@@ -10330,6 +11698,26 @@
           ]
         },
         "LocalContractV1": { "const": 1, "type": "integer" },
+        "LocalTool": {
+          "description": "Stable names for actual existing local operation owners.",
+          "oneOf": [
+            {
+              "const": "network.check",
+              "description": "Existing finite DNS/TCP diagnostic.",
+              "type": "string"
+            },
+            {
+              "const": "system.settings",
+              "description": "Existing local settings owner.",
+              "type": "string"
+            },
+            {
+              "const": "software.manage",
+              "description": "Existing software preparation/submission owner.",
+              "type": "string"
+            }
+          ]
+        },
         "ManagementActivity": {
           "additionalProperties": false,
           "description": "Allowlisted device activity. Contains no principal, OS identity, names or raw output.",
@@ -10570,6 +11958,10 @@
             }
           ]
         },
+        "PolicyAlias": {
+          "description": "Tenant-local canonical Policy alias.",
+          "type": "string"
+        },
         "PolicyChoice": {
           "additionalProperties": false,
           "description": "Employee input; caller source and confirmation are supplied only by trusted native code.",
@@ -10590,6 +11982,34 @@
           },
           "required": ["request", "policyId", "parameters"],
           "type": "object"
+        },
+        "PolicyEventAccepted": {
+          "additionalProperties": false,
+          "description": "Stable batch receipt; acceptance does not mean its members executed successfully.",
+          "properties": {
+            "batchId": {
+              "description": "Durable batch identity.",
+              "format": "uuid",
+              "type": "string"
+            },
+            "members": {
+              "description": "Number of frozen members, including rejections.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "operationId": {
+              "description": "Original request identity.",
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          "required": ["operationId", "batchId", "members"],
+          "type": "object"
+        },
+        "PolicyEventName": {
+          "description": "Tenant-local event name shared by any number of Policies; never an object alias.",
+          "type": "string"
         },
         "PolicyEventOperation": {
           "description": "An operation remains owned by its original execution subsystem.",
@@ -10638,9 +12058,114 @@
             }
           ]
         },
+        "PolicyEventRequest": {
+          "additionalProperties": false,
+          "description": "Explicit event for one authenticated device, never a tenant or device selector.",
+          "properties": {
+            "event": {
+              "$ref": "#/$defs/PolicyEventName",
+              "description": "Canonical Policy trigger name."
+            },
+            "executionContext": {
+              "anyOf": [
+                { "$ref": "#/$defs/SoftwareExecutionContext" },
+                { "type": "null" }
+              ],
+              "description": "Local context attested by the authenticated Agent; absent for remote management."
+            },
+            "operationId": {
+              "description": "Stable request identity reused after response loss.",
+              "format": "uuid",
+              "type": "string"
+            },
+            "source": {
+              "$ref": "#/$defs/PolicyEventSource",
+              "description": "Real invocation origin, not authorization."
+            }
+          },
+          "required": ["operationId", "event", "source"],
+          "type": "object"
+        },
+        "PolicyEventSource": {
+          "description": "Origin supplied by the authenticated service; Policy origins must reference a real parent run.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Human invocation through the device service or management session.",
+              "properties": { "kind": { "const": "human", "type": "string" } },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "AI invocation through the authenticated service.",
+              "properties": { "kind": { "const": "ai", "type": "string" } },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "A running Policy, validated against the current device.",
+              "properties": {
+                "kind": { "const": "policy", "type": "string" },
+                "runId": {
+                  "description": "Parent execution identity.",
+                  "format": "uuid",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "runId"],
+              "type": "object"
+            }
+          ]
+        },
         "PreparedAction": {
           "description": "One preparation reference, before or after a signed Offer has arrived.",
           "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Explicit event acceptance, persisted in the same preparation journal as Policy calls.",
+              "properties": {
+                "batch": {
+                  "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+                  "description": "Exact batch recovered from an authorized original-request activity; member count remains unknown."
+                },
+                "expiresAtUnixMs": {
+                  "description": "Original authorization deadline.",
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "input": {
+                  "$ref": "#/$defs/PolicyEventRequest",
+                  "description": "Exact producer request; caller classification is native-attested."
+                },
+                "kind": { "const": "event", "type": "string" },
+                "namespace": {
+                  "$ref": "#/$defs/EntryNamespace",
+                  "description": "Original exact registration coordinates."
+                },
+                "receipt": {
+                  "anyOf": [
+                    { "$ref": "#/$defs/PolicyEventAccepted" },
+                    { "type": "null" }
+                  ],
+                  "description": "Stable producer batch receipt; acceptance is not effect completion."
+                },
+                "request": {
+                  "$ref": "#/$defs/RequestId",
+                  "description": "Original stable business request."
+                }
+              },
+              "required": [
+                "kind",
+                "request",
+                "input",
+                "namespace",
+                "expiresAtUnixMs"
+              ],
+              "type": "object"
+            },
             {
               "additionalProperties": false,
               "description": "A bounded native observation authorized by an exact current signed software definition.",
@@ -10691,6 +12216,13 @@
                 "access": {
                   "$ref": "#/$defs/PolicyAccess",
                   "description": "Local continuation binding; enterprise identity is solely directory.subject."
+                },
+                "address": {
+                  "anyOf": [
+                    { "$ref": "#/$defs/EntrySelector" },
+                    { "type": "null" }
+                  ],
+                  "description": "Original typed external address, absent for direct native directory selections."
                 },
                 "choice": {
                   "$ref": "#/$defs/PolicyChoice",
@@ -11441,6 +12973,73 @@
             }
           ]
         },
+        "SoftwareExecutionContext": {
+          "additionalProperties": false,
+          "description": "Complete current native execution environment reported by this registration.",
+          "properties": {
+            "interactiveUser": {
+              "anyOf": [
+                { "$ref": "#/$defs/SoftwareInteractiveUser" },
+                { "type": "null" }
+              ],
+              "description": "Exact live interactive session, when one exists."
+            },
+            "msixSideload": {
+              "description": "Current native Windows sideload policy.",
+              "type": "boolean"
+            },
+            "msixUnsigned": {
+              "description": "Current native API support for explicitly approved unsigned packages.",
+              "type": "boolean"
+            },
+            "osVersion": {
+              "description": "Complete numeric OS version, not an inferred product/platform string.",
+              "items": {
+                "format": "uint16",
+                "maximum": 65535,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "maxItems": 4,
+              "minItems": 4,
+              "not": { "const": [0, 0, 0, 0] },
+              "type": "array"
+            },
+            "revision": {
+              "description": "Strictly increasing local context generation; retries retain the same value.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "sourceCredentials": {
+              "description": "Source-scoped read credential references actually available locally.",
+              "items": { "$ref": "#/$defs/SoftwareReadCredential" },
+              "maxItems": 16,
+              "type": "array",
+              "uniqueItems": true
+            },
+            "systemBroker": {
+              "description": "Whether the native system broker is available in this Agent installation.",
+              "type": "boolean"
+            },
+            "userHelper": {
+              "description": "Whether a helper is bound to this exact live interactive session.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "revision",
+            "msixSideload",
+            "msixUnsigned",
+            "osVersion",
+            "systemBroker",
+            "userHelper",
+            "interactiveUser",
+            "sourceCredentials"
+          ],
+          "type": "object"
+        },
         "SoftwareExecutionTarget": {
           "description": "Concrete effect target bound before an Offer is signed.",
           "oneOf": [
@@ -11475,6 +13074,49 @@
               "type": "object"
             }
           ]
+        },
+        "SoftwareInteractiveUser": {
+          "additionalProperties": false,
+          "description": "One concrete live OS session.",
+          "properties": {
+            "administrator": {
+              "description": "Privilege needed by the exact native profile, not a generic authorization grant.",
+              "type": "boolean"
+            },
+            "generatedUid": {
+              "description": "macOS GeneratedUID for this live account; Windows must explicitly report null.",
+              "type": ["string", "null"]
+            },
+            "identity": {
+              "description": "Windows SID or macOS numeric UID.",
+              "maxLength": 184,
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "type": "string"
+            },
+            "sessionId": {
+              "description": "Changes on logoff/login; identical account names cannot reuse a previous session.",
+              "format": "uuid",
+              "not": { "const": "00000000-0000-0000-0000-000000000000" },
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "windowsAuthority": {
+              "anyOf": [
+                { "$ref": "#/$defs/AccessWindowsAuthority" },
+                { "type": "null" }
+              ],
+              "description": "Native Windows account authority when known; required for Device Access admission."
+            }
+          },
+          "required": [
+            "windowsAuthority",
+            "generatedUid",
+            "identity",
+            "sessionId",
+            "administrator"
+          ],
+          "type": "object"
         },
         "SoftwareKind": {
           "description": "The supported software adapters. No plugin names or command strings are accepted.",
@@ -11601,6 +13243,28 @@
             }
           },
           "required": ["request", "input"],
+          "type": "object"
+        },
+        "SoftwareReadCredential": {
+          "additionalProperties": false,
+          "description": "Availability of a particular source read credential in the local Agent.",
+          "properties": {
+            "reference": {
+              "description": "Host-provisioned opaque credential reference; never token bytes or a URL.",
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "type": "string"
+            },
+            "source": {
+              "description": "Exact source identity in the consuming tenant.",
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "type": "string"
+            }
+          },
+          "required": ["source", "reference"],
           "type": "object"
         },
         "SoftwareReadSelection": {
@@ -11846,6 +13510,10 @@
               "description": "Independently authorized related producer identities.",
               "items": { "$ref": "#/$defs/TaskRef" },
               "type": "array"
+            },
+            "relatedCursor": {
+              "description": "Original producer continuation for this activity's related history.",
+              "type": ["string", "null"]
             },
             "retryOf": {
               "anyOf": [{ "$ref": "#/$defs/RequestId" }, { "type": "null" }],
@@ -12486,6 +14154,50 @@
                 "allowChildProcesses",
                 "requireSandbox"
               ],
+              "type": "object"
+            }
+          ]
+        },
+        "AccessWindowsAuthority": {
+          "description": "Stable Windows identity authority. Display names and email addresses are excluded.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "The current registered computer's SAM database.",
+              "properties": { "kind": { "const": "local", "type": "string" } },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Native directory domain SID, distinct from the user's account SID.",
+              "properties": {
+                "domainSid": {
+                  "description": "SID of the native AD domain, excluding the user's RID.",
+                  "type": "string"
+                },
+                "kind": { "const": "active_directory", "type": "string" }
+              },
+              "required": ["kind", "domainSid"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Stable directory identifiers from the native Entra account.",
+              "properties": {
+                "kind": { "const": "entra", "type": "string" },
+                "objectId": {
+                  "description": "Immutable user object identifier within that tenant.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "tenantId": {
+                  "description": "Tenant that owns the native directory account.",
+                  "format": "uuid",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "tenantId", "objectId"],
               "type": "object"
             }
           ]
@@ -13313,6 +15025,51 @@
             }
           ]
         },
+        "CapabilitySelector": {
+          "description": "Explicit exact address in the authenticated tenant's Policy namespace.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Canonical Policy identity.",
+              "properties": {
+                "id": {
+                  "description": "Object ID.",
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "kind": { "const": "id", "type": "string" }
+              },
+              "required": ["kind", "id"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Server-generated tool name.",
+              "properties": {
+                "kind": { "const": "tool_name", "type": "string" },
+                "name": {
+                  "description": "Complete canonical name.",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Administrator-controlled unique alias.",
+              "properties": {
+                "alias": {
+                  "$ref": "#/$defs/PolicyAlias",
+                  "description": "Canonical tenant-local alias."
+                },
+                "kind": { "const": "alias", "type": "string" }
+              },
+              "required": ["kind", "alias"],
+              "type": "object"
+            }
+          ]
+        },
         "CollectedData": {
           "additionalProperties": false,
           "description": "Authorized, bounded observation projection.",
@@ -13603,6 +15360,165 @@
                 }
               },
               "required": ["kind", "url"],
+              "type": "object"
+            }
+          ]
+        },
+        "EntryNamespace": {
+          "additionalProperties": false,
+          "description": "Enterprise coordinates are compared with the active registration, never used to switch it.",
+          "properties": {
+            "device": {
+              "description": "Exact device identity.",
+              "type": "string"
+            },
+            "generation": {
+              "description": "Exact registration generation.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "instance": {
+              "description": "Product instance identity, not a server URL.",
+              "type": "string"
+            },
+            "registration": {
+              "description": "Exact registration UUID.",
+              "type": "string"
+            },
+            "tenant": { "description": "Exact tenant UUID.", "type": "string" }
+          },
+          "required": [
+            "instance",
+            "tenant",
+            "device",
+            "registration",
+            "generation"
+          ],
+          "type": "object"
+        },
+        "EntrySelector": {
+          "description": "Explicit address kinds; display names are not exact selectors.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "One packaged local tool; its existing owner supplies schema and qualification.",
+              "properties": {
+                "kind": { "const": "localTool", "type": "string" },
+                "name": {
+                  "$ref": "#/$defs/LocalTool",
+                  "description": "Stable tool name."
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Stable page or page section.",
+              "properties": {
+                "id": {
+                  "description": "Explicit owner-registered ID.",
+                  "type": "string"
+                },
+                "kind": { "const": "node", "type": "string" }
+              },
+              "required": ["kind", "id"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Server-owned ID, tool name or unique alias.",
+              "properties": {
+                "kind": { "const": "capability", "type": "string" },
+                "selector": {
+                  "$ref": "#/$defs/CapabilitySelector",
+                  "description": "Canonical producer selector."
+                }
+              },
+              "required": ["kind", "selector"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Explicit one-to-many event, never an alias lookup.",
+              "properties": {
+                "kind": { "const": "event", "type": "string" },
+                "name": {
+                  "$ref": "#/$defs/PolicyEventName",
+                  "description": "Producer-normalized name."
+                }
+              },
+              "required": ["kind", "name"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Original preparation or execution.",
+              "properties": {
+                "kind": { "const": "request", "type": "string" },
+                "request": {
+                  "$ref": "#/$defs/RequestId",
+                  "description": "Original business request."
+                }
+              },
+              "required": ["kind", "request"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Exact periodic collection session.",
+              "properties": {
+                "kind": { "const": "sampling", "type": "string" },
+                "query": {
+                  "$ref": "#/$defs/QueryRef",
+                  "description": "Original definition and revision."
+                }
+              },
+              "required": ["kind", "query"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Original source-qualified management fact.",
+              "properties": {
+                "id": {
+                  "description": "Producer fact identity.",
+                  "type": "string"
+                },
+                "kind": { "const": "activity", "type": "string" }
+              },
+              "required": ["kind", "id"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Existing producer batch.",
+              "properties": {
+                "id": {
+                  "description": "Canonical batch UUID.",
+                  "type": "string"
+                },
+                "kind": { "const": "batch", "type": "string" }
+              },
+              "required": ["kind", "id"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Original remote execution and attempt.",
+              "properties": {
+                "attempt": {
+                  "description": "Exact attempt UUID.",
+                  "type": "string"
+                },
+                "kind": { "const": "task", "type": "string" },
+                "task": {
+                  "description": "Backend task UUID.",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "task", "attempt"],
               "type": "object"
             }
           ]
@@ -14128,6 +16044,26 @@
           ]
         },
         "LocalContractV1": { "const": 1, "type": "integer" },
+        "LocalTool": {
+          "description": "Stable names for actual existing local operation owners.",
+          "oneOf": [
+            {
+              "const": "network.check",
+              "description": "Existing finite DNS/TCP diagnostic.",
+              "type": "string"
+            },
+            {
+              "const": "system.settings",
+              "description": "Existing local settings owner.",
+              "type": "string"
+            },
+            {
+              "const": "software.manage",
+              "description": "Existing software preparation/submission owner.",
+              "type": "string"
+            }
+          ]
+        },
         "ManagementActivity": {
           "additionalProperties": false,
           "description": "Allowlisted device activity. Contains no principal, OS identity, names or raw output.",
@@ -14368,6 +16304,10 @@
             }
           ]
         },
+        "PolicyAlias": {
+          "description": "Tenant-local canonical Policy alias.",
+          "type": "string"
+        },
         "PolicyChoice": {
           "additionalProperties": false,
           "description": "Employee input; caller source and confirmation are supplied only by trusted native code.",
@@ -14388,6 +16328,34 @@
           },
           "required": ["request", "policyId", "parameters"],
           "type": "object"
+        },
+        "PolicyEventAccepted": {
+          "additionalProperties": false,
+          "description": "Stable batch receipt; acceptance does not mean its members executed successfully.",
+          "properties": {
+            "batchId": {
+              "description": "Durable batch identity.",
+              "format": "uuid",
+              "type": "string"
+            },
+            "members": {
+              "description": "Number of frozen members, including rejections.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "operationId": {
+              "description": "Original request identity.",
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          "required": ["operationId", "batchId", "members"],
+          "type": "object"
+        },
+        "PolicyEventName": {
+          "description": "Tenant-local event name shared by any number of Policies; never an object alias.",
+          "type": "string"
         },
         "PolicyEventOperation": {
           "description": "An operation remains owned by its original execution subsystem.",
@@ -14436,9 +16404,114 @@
             }
           ]
         },
+        "PolicyEventRequest": {
+          "additionalProperties": false,
+          "description": "Explicit event for one authenticated device, never a tenant or device selector.",
+          "properties": {
+            "event": {
+              "$ref": "#/$defs/PolicyEventName",
+              "description": "Canonical Policy trigger name."
+            },
+            "executionContext": {
+              "anyOf": [
+                { "$ref": "#/$defs/SoftwareExecutionContext" },
+                { "type": "null" }
+              ],
+              "description": "Local context attested by the authenticated Agent; absent for remote management."
+            },
+            "operationId": {
+              "description": "Stable request identity reused after response loss.",
+              "format": "uuid",
+              "type": "string"
+            },
+            "source": {
+              "$ref": "#/$defs/PolicyEventSource",
+              "description": "Real invocation origin, not authorization."
+            }
+          },
+          "required": ["operationId", "event", "source"],
+          "type": "object"
+        },
+        "PolicyEventSource": {
+          "description": "Origin supplied by the authenticated service; Policy origins must reference a real parent run.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Human invocation through the device service or management session.",
+              "properties": { "kind": { "const": "human", "type": "string" } },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "AI invocation through the authenticated service.",
+              "properties": { "kind": { "const": "ai", "type": "string" } },
+              "required": ["kind"],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "A running Policy, validated against the current device.",
+              "properties": {
+                "kind": { "const": "policy", "type": "string" },
+                "runId": {
+                  "description": "Parent execution identity.",
+                  "format": "uuid",
+                  "type": "string"
+                }
+              },
+              "required": ["kind", "runId"],
+              "type": "object"
+            }
+          ]
+        },
         "PreparedAction": {
           "description": "One preparation reference, before or after a signed Offer has arrived.",
           "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "Explicit event acceptance, persisted in the same preparation journal as Policy calls.",
+              "properties": {
+                "batch": {
+                  "anyOf": [{ "$ref": "#/$defs/Id" }, { "type": "null" }],
+                  "description": "Exact batch recovered from an authorized original-request activity; member count remains unknown."
+                },
+                "expiresAtUnixMs": {
+                  "description": "Original authorization deadline.",
+                  "format": "uint64",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "input": {
+                  "$ref": "#/$defs/PolicyEventRequest",
+                  "description": "Exact producer request; caller classification is native-attested."
+                },
+                "kind": { "const": "event", "type": "string" },
+                "namespace": {
+                  "$ref": "#/$defs/EntryNamespace",
+                  "description": "Original exact registration coordinates."
+                },
+                "receipt": {
+                  "anyOf": [
+                    { "$ref": "#/$defs/PolicyEventAccepted" },
+                    { "type": "null" }
+                  ],
+                  "description": "Stable producer batch receipt; acceptance is not effect completion."
+                },
+                "request": {
+                  "$ref": "#/$defs/RequestId",
+                  "description": "Original stable business request."
+                }
+              },
+              "required": [
+                "kind",
+                "request",
+                "input",
+                "namespace",
+                "expiresAtUnixMs"
+              ],
+              "type": "object"
+            },
             {
               "additionalProperties": false,
               "description": "A bounded native observation authorized by an exact current signed software definition.",
@@ -14489,6 +16562,13 @@
                 "access": {
                   "$ref": "#/$defs/PolicyAccess",
                   "description": "Local continuation binding; enterprise identity is solely directory.subject."
+                },
+                "address": {
+                  "anyOf": [
+                    { "$ref": "#/$defs/EntrySelector" },
+                    { "type": "null" }
+                  ],
+                  "description": "Original typed external address, absent for direct native directory selections."
                 },
                 "choice": {
                   "$ref": "#/$defs/PolicyChoice",
@@ -15239,6 +17319,73 @@
             }
           ]
         },
+        "SoftwareExecutionContext": {
+          "additionalProperties": false,
+          "description": "Complete current native execution environment reported by this registration.",
+          "properties": {
+            "interactiveUser": {
+              "anyOf": [
+                { "$ref": "#/$defs/SoftwareInteractiveUser" },
+                { "type": "null" }
+              ],
+              "description": "Exact live interactive session, when one exists."
+            },
+            "msixSideload": {
+              "description": "Current native Windows sideload policy.",
+              "type": "boolean"
+            },
+            "msixUnsigned": {
+              "description": "Current native API support for explicitly approved unsigned packages.",
+              "type": "boolean"
+            },
+            "osVersion": {
+              "description": "Complete numeric OS version, not an inferred product/platform string.",
+              "items": {
+                "format": "uint16",
+                "maximum": 65535,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "maxItems": 4,
+              "minItems": 4,
+              "not": { "const": [0, 0, 0, 0] },
+              "type": "array"
+            },
+            "revision": {
+              "description": "Strictly increasing local context generation; retries retain the same value.",
+              "format": "uint64",
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer"
+            },
+            "sourceCredentials": {
+              "description": "Source-scoped read credential references actually available locally.",
+              "items": { "$ref": "#/$defs/SoftwareReadCredential" },
+              "maxItems": 16,
+              "type": "array",
+              "uniqueItems": true
+            },
+            "systemBroker": {
+              "description": "Whether the native system broker is available in this Agent installation.",
+              "type": "boolean"
+            },
+            "userHelper": {
+              "description": "Whether a helper is bound to this exact live interactive session.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "revision",
+            "msixSideload",
+            "msixUnsigned",
+            "osVersion",
+            "systemBroker",
+            "userHelper",
+            "interactiveUser",
+            "sourceCredentials"
+          ],
+          "type": "object"
+        },
         "SoftwareExecutionTarget": {
           "description": "Concrete effect target bound before an Offer is signed.",
           "oneOf": [
@@ -15273,6 +17420,49 @@
               "type": "object"
             }
           ]
+        },
+        "SoftwareInteractiveUser": {
+          "additionalProperties": false,
+          "description": "One concrete live OS session.",
+          "properties": {
+            "administrator": {
+              "description": "Privilege needed by the exact native profile, not a generic authorization grant.",
+              "type": "boolean"
+            },
+            "generatedUid": {
+              "description": "macOS GeneratedUID for this live account; Windows must explicitly report null.",
+              "type": ["string", "null"]
+            },
+            "identity": {
+              "description": "Windows SID or macOS numeric UID.",
+              "maxLength": 184,
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "type": "string"
+            },
+            "sessionId": {
+              "description": "Changes on logoff/login; identical account names cannot reuse a previous session.",
+              "format": "uuid",
+              "not": { "const": "00000000-0000-0000-0000-000000000000" },
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "windowsAuthority": {
+              "anyOf": [
+                { "$ref": "#/$defs/AccessWindowsAuthority" },
+                { "type": "null" }
+              ],
+              "description": "Native Windows account authority when known; required for Device Access admission."
+            }
+          },
+          "required": [
+            "windowsAuthority",
+            "generatedUid",
+            "identity",
+            "sessionId",
+            "administrator"
+          ],
+          "type": "object"
         },
         "SoftwareKind": {
           "description": "The supported software adapters. No plugin names or command strings are accepted.",
@@ -15399,6 +17589,28 @@
             }
           },
           "required": ["request", "input"],
+          "type": "object"
+        },
+        "SoftwareReadCredential": {
+          "additionalProperties": false,
+          "description": "Availability of a particular source read credential in the local Agent.",
+          "properties": {
+            "reference": {
+              "description": "Host-provisioned opaque credential reference; never token bytes or a URL.",
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "type": "string"
+            },
+            "source": {
+              "description": "Exact source identity in the consuming tenant.",
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[^\\x00-\\x1f\\x7f]+$",
+              "type": "string"
+            }
+          },
+          "required": ["source", "reference"],
           "type": "object"
         },
         "SoftwareReadSelection": {
@@ -15644,6 +17856,10 @@
               "description": "Independently authorized related producer identities.",
               "items": { "$ref": "#/$defs/TaskRef" },
               "type": "array"
+            },
+            "relatedCursor": {
+              "description": "Original producer continuation for this activity's related history.",
+              "type": ["string", "null"]
             },
             "retryOf": {
               "anyOf": [{ "$ref": "#/$defs/RequestId" }, { "type": "null" }],

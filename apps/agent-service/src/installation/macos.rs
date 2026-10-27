@@ -424,7 +424,15 @@ pub(super) fn desktop_entry(candidate: &Candidate) -> Result<(), Error> {
     if result.is_err() {
         let _ = std::fs::remove_file(staged);
     }
-    result
+    result?;
+    launch_services(app, false)
+}
+fn launch_services(app: &Path, unregister: bool) -> Result<(), Error> {
+    let (status,_)=utility(Path::new("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"),&[if unregister{"-u"}else{"-f"}.into(),app.as_os_str().to_owned()])?;
+    if !status.success() {
+        return Err(Error::Unavailable);
+    }
+    Ok(())
 }
 
 pub(super) fn read_secret(path: &Path) -> Result<Vec<u8>, Error> {
@@ -438,6 +446,7 @@ pub(super) fn uninstall_payload(candidate: &Candidate) -> Result<(), Error> {
         if !target.starts_with(&candidate.root) {
             return Err(Error::Identity);
         }
+        launch_services(&target, true)?;
         std::fs::remove_file(alias)?;
     }
     let retired = retire_payload(candidate)?;

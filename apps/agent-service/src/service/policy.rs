@@ -87,7 +87,7 @@ impl std::ops::Deref for NativeContext {
 }
 pub(super) type Contexts = BTreeMap<String, NativeContext>;
 pub(super) type Commands = VecDeque<Command>;
-fn peer_key(command: &Command) -> Result<String, Error> {
+pub(super) fn peer_key(command: &Command) -> Result<String, Error> {
     Ok(format!(
         "{}:{}:{}",
         command.subject,
@@ -101,7 +101,11 @@ fn source(origin: &ClientOrigin) -> wire::SelfServiceCaller {
         ClientOrigin::Ai { .. } => wire::SelfServiceCaller::Ai,
     }
 }
-fn trigger(core: &Core, command: &Command, origin: &ClientOrigin) -> Result<BackendTrigger, Error> {
+pub(super) fn trigger(
+    core: &Core,
+    command: &Command,
+    origin: &ClientOrigin,
+) -> Result<BackendTrigger, Error> {
     core.require_origin_context(
         &command.subject,
         command.binding.as_ref().ok_or(Error::Denied)?,
@@ -140,7 +144,9 @@ fn uuid(value: &str) -> Result<Uuid, Error> {
 }
 // Generic operation cards have no secret reference owner. Secret fields remain unsupported;
 // local schema references are handled by the existing validator.
-fn operation_parameters_supported(directory: &wire::SelfServiceDirectoryItem) -> Result<(), Error> {
+pub(super) fn operation_parameters_supported(
+    directory: &wire::SelfServiceDirectoryItem,
+) -> Result<(), Error> {
     fn unsafe_schema(value: &serde_json::Value) -> bool {
         match value {
             serde_json::Value::Object(fields) => {
@@ -162,7 +168,7 @@ fn operation_parameters_supported(directory: &wire::SelfServiceDirectoryItem) ->
     }
     Ok(())
 }
-fn parameters(
+pub(super) fn parameters(
     directory: &wire::SelfServiceDirectoryItem,
     inputs: &BTreeMap<String, serde_json::Value>,
 ) -> Result<BTreeMap<String, serde_json::Value>, Error> {
@@ -527,7 +533,8 @@ impl<S: IdentityProvider> DeviceService<S> {
                     if matches!(
                         command.request.as_operation(),
                         Some(
-                            Request::Task { .. }
+                            Request::Entry { .. }
+                                | Request::Task { .. }
                                 | Request::Data { .. }
                                 | Request::LocalSoftware { .. }
                                 | Request::Settings { .. }
@@ -594,7 +601,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         )
         .await
     }
-    async fn resolve_policy(
+    pub(super) async fn resolve_policy(
         &mut self,
         bound: &NativeContext,
         origin: &ClientOrigin,
@@ -722,6 +729,15 @@ impl<S: IdentityProvider> DeviceService<S> {
             &choice,
             false,
             Some((original.clone(), control.expected_revision.clone())),
+            Some((
+                current.policy_version,
+                current.policy_revision,
+                execution_contract::EntrySelector::Capability {
+                    selector: wire::CapabilitySelector::Id {
+                        id: current.policy_id,
+                    },
+                },
+            )),
             commands,
         )
         .await?;
@@ -736,7 +752,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         )
     }
     #[allow(clippy::too_many_arguments)] // The original invocation's actor, immutable choice and retry association are explicit.
-    async fn invoke_task_policy(
+    pub(super) async fn invoke_task_policy(
         &mut self,
         command: &Command,
         bound: &NativeContext,
@@ -744,6 +760,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         choice: &execution_contract::PolicyChoice,
         draft: bool,
         retry: Option<(RequestId, execution_app::tasks::TaskRevision)>,
+        expected: Option<(Uuid, u64, execution_contract::EntrySelector)>,
         commands: &mut tokio::sync::mpsc::Receiver<Command>,
     ) -> Result<Reply, Error> {
         let retry_of = retry.as_ref().map(|v| v.0.clone());
@@ -778,6 +795,11 @@ impl<S: IdentityProvider> DeviceService<S> {
             }
         } else {
             let directory = self.current_policy(bound, origin, choice, commands).await?;
+            if expected.as_ref().is_some_and(|(version, revision, _)| {
+                directory.policy_version != *version || directory.policy_revision != *revision
+            }) {
+                return Err(Error::Conflict);
+            }
             if !directory.self_service.published
                 || (source(origin) == wire::SelfServiceCaller::Ai
                     && !directory.self_service.allow_ai)
@@ -845,6 +867,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 cancellation_control: None,
                 cancellation_expected_revision: None,
                 action: PreparedAction::Policy {
+                    address: expected.map(|(_, _, address)| address),
                     definition: plan::reference(
                         directory.policy_id.to_string(),
                         directory.policy_version.to_string(),
@@ -893,6 +916,9 @@ impl<S: IdentityProvider> DeviceService<S> {
         let Some(request) = command.request.as_operation() else {
             return Err(Error::Protocol);
         };
+        if let Request::Entry { input } = request {
+            return self.entry_operation(command, input, commands).await;
+        }
         match request {
             Request::RequestRegistration {} => {
                 let deployment = self.installation.as_ref().ok_or(Error::Configuration)?;
@@ -1303,6 +1329,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                     origin,
                     choice,
                     matches!(request, Request::PreparePolicy { .. }),
+                    None,
                     None,
                     commands,
                 )

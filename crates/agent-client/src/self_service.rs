@@ -7,6 +7,20 @@ use reqwest::Method;
 use serde::de::DeserializeOwned;
 use uuid::Uuid;
 impl<S: IdentityProvider, C: Clock> Client<S, C> {
+    /// Submit the original journal-frozen explicit event. Producer idempotency binds
+    /// operation_id to exact content and returns the original batch after response loss.
+    pub async fn invoke_policy_event(
+        &self,
+        request: &wire::PolicyEventRequest,
+    ) -> Result<wire::PolicyEventAccepted, Error> {
+        let value: wire::PolicyEventAccepted = self
+            .self_service_json(None, Method::POST, "policy-events", Some(encode(request)?))
+            .await?;
+        if value.operation_id != request.operation_id || value.batch_id.is_nil() {
+            return Err(Error::Untrusted);
+        }
+        Ok(value)
+    }
     pub(crate) async fn self_service_json<T: DeserializeOwned>(
         &self,
         secret: Option<&str>,

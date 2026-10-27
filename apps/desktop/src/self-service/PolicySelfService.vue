@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import CopyEntry from "../workspace/CopyEntry.vue";
 import { taskCenterKey } from "../task-center/controller";
 import PolicyExecutionContext from "./PolicyExecutionContext.vue";
 import { computed, inject, onBeforeUnmount, ref, watch, toRaw } from "vue";
@@ -22,6 +23,7 @@ const props = withDefaults(
     active?: boolean;
     allowNewRequests?: boolean;
     allowConfirm?: boolean;
+    targetPolicy?: string;
   }>(),
   { active: true, allowNewRequests: true, allowConfirm: true },
 );
@@ -48,6 +50,7 @@ const categories = computed(() => [
 const visibleDirectory = computed(() =>
   directory.value.filter(
     (i) =>
+      (!props.targetPolicy || i.policyId === props.targetPolicy) &&
       (!category.value ||
         i.selfService.presentation.category === category.value) &&
       `${i.selfService.presentation.displayName ?? ""} ${i.selfService.presentation.description ?? ""} ${i.policyId}`
@@ -154,19 +157,49 @@ const resource = computed(() =>
 );
 defineExpose({
   resource,
-  async openPolicy(id: string) {
-    if (request.value || props.allowNewRequests === false) return false;
+  async openPolicy(
+    id: string,
+    suggestions: Record<string, unknown> = {},
+    expected?: SelfServiceDirectoryItem,
+  ) {
+    if (
+      request.value ||
+      props.allowNewRequests === false ||
+      (props.targetPolicy && id !== props.targetPolicy)
+    )
+      return false;
     const item =
       directory.value.find((item) => item.policyId === id) ??
       (await catalog.resolve(id));
     if (!item) return false;
+    if (
+      expected &&
+      (item.policyVersion !== expected.policyVersion ||
+        item.policyRevision !== expected.policyRevision)
+    )
+      return false;
     select(item);
+    const suggested = new Map(Object.entries(suggestions));
+    for (const field of fields.value) {
+      if (suggested.has(field.name)) {
+        const value = suggested.get(field.name);
+        inputs.value[field.name] =
+          field.schema.type === "string"
+            ? String(value)
+            : JSON.stringify(value);
+      }
+    }
     return true;
   },
 });
 
 function select(item: SelfServiceDirectoryItem) {
-  if (request.value || props.allowNewRequests === false) return;
+  if (
+    request.value ||
+    props.allowNewRequests === false ||
+    (props.targetPolicy && item.policyId !== props.targetPolicy)
+  )
+    return;
   selected.value = item;
   choice.value = undefined;
   inputs.value = {};
@@ -404,6 +437,14 @@ function presentationText(value: unknown, fallback = "未提供"): string {
           :key="item.policyId"
           class="resource-card"
         >
+          <CopyEntry
+            :selector="{
+              kind: 'capability',
+              selector: { kind: 'id', id: item.policyId },
+            }"
+            :version="item.policyVersion"
+            :revision="item.policyRevision"
+          />
           <button :disabled="busy || !!request" @click="select(item)">
             {{
               kind === "enrollment"
@@ -447,6 +488,14 @@ function presentationText(value: unknown, fallback = "未提供"): string {
             )
           }}
         </h3>
+        <CopyEntry
+          :selector="{
+            kind: 'capability',
+            selector: { kind: 'id', id: selected.policyId },
+          }"
+          :version="selected.policyVersion"
+          :revision="selected.policyRevision"
+        />
         <label v-for="field in fields" :key="field.name"
           >{{ field.schema.title ?? field.name
           }}<span>{{ field.schema.description }}</span

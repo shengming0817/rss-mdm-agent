@@ -11,7 +11,9 @@ mod startup;
 #[cfg(not(feature = "dev-fixture"))]
 use rss_mdm_desktop::composition::runtime::DesktopRuntime;
 use rss_mdm_desktop::composition::{appearance, ipc, lifecycle::Lifecycle};
+use tauri::Emitter;
 use tauri::Manager;
+use tauri_plugin_deep_link::DeepLinkExt;
 
 fn window(app: &tauri::AppHandle) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window("main") {
@@ -31,7 +33,10 @@ fn window(app: &tauri::AppHandle) -> tauri::Result<()> {
     }
     Ok(())
 }
-fn run(_data_root: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+fn run(
+    _data_root: Option<std::path::PathBuf>,
+    initial: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
     if (std::env::var("RSS_DESKTOP_ASSEMBLY").as_deref() == Ok("fixture"))
         != cfg!(feature = "dev-fixture")
     {
@@ -44,8 +49,25 @@ fn run(_data_root: Option<std::path::PathBuf>) -> Result<(), Box<dyn std::error:
     #[cfg(feature = "native-e2e")]
     let builder = native_e2e::configure(builder, _data_root.as_deref())?;
     let app = builder
+        .plugin(tauri_plugin_deep_link::init())
         .setup(move |app| {
             app.manage(appearance::Appearance::default());
+            use rss_mdm_desktop::composition::navigation::Navigation;
+            app.manage(Navigation::default());
+            let handle=app.handle().clone();
+            let receiver=execution_ipc::navigation::NavigationInstance::claim(initial.as_deref(),move|uri|{
+                let accepted=uri.is_empty()||handle.state::<Navigation>().receive(&uri);
+                if accepted {let _=window(&handle);let _=handle.emit("navigation-pending",());}
+                accepted
+            })?;
+            let Some(receiver)=receiver else {app.handle().exit(0);return Ok(());};
+            app.manage(receiver);
+            if let Some(uri)=initial.as_deref(){if !app.state::<Navigation>().receive(uri){return Err("navigation queue rejected".into());}}
+            let handle=app.handle().clone();
+            app.deep_link().on_open_url(move|event|{
+                for uri in event.urls(){if handle.state::<Navigation>().receive(uri.as_str()){let _=window(&handle);let _=handle.emit("navigation-pending",());}}
+            });
+            if let Some(urls)=app.deep_link().get_current()?{for uri in urls{app.state::<Navigation>().receive(uri.as_str());}}
             let personal_root = match &_data_root {
                 Some(root) => Ok(root.join("personal-passkeys")),
                 None => {
@@ -145,6 +167,13 @@ fn main() -> std::process::ExitCode {
     }
     let data_root = match args.as_slice() {
         [] => None,
+        [uri]
+            if uri
+                .to_str()
+                .is_some_and(|v| execution_contract::EntryIntent::parse(v).is_ok()) =>
+        {
+            None
+        }
         [flag, path]
             if cfg!(feature = "native-e2e")
                 && flag == "--test-data-dir"
@@ -154,7 +183,12 @@ fn main() -> std::process::ExitCode {
         }
         _ => return std::process::ExitCode::FAILURE,
     };
-    match run(data_root) {
+    let initial = args
+        .first()
+        .and_then(|v| v.to_str())
+        .filter(|v| v.starts_with("rssmdm:"))
+        .map(str::to_owned);
+    match run(data_root, initial) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
             startup::report(error.as_ref());

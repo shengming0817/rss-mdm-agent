@@ -10,6 +10,152 @@ import {
   taskPage,
 } from "../../../tests/self-service/support";
 import { createHostSettings } from "./settings/controller";
+import * as externalEntry from "./workspace/entry";
+import ConnectionCheck from "./device-tools/ConnectionCheck.vue";
+import { fixtureLocalPorts } from "../../../tests/assistant/local-ports";
+
+it("hands validated local invoke suggestions to the original page without submitting", async () => {
+  const intent: import("./self-service/types").EntryIntent = {
+    action: "invoke",
+    selector: { kind: "localTool", name: "network.check" },
+    namespace: null,
+    version: null,
+    revision: null,
+    step: null,
+    parameters: {
+      kind: "run",
+      target: { host: "unvalidated.example", port: 443 },
+    },
+  };
+  let pending = true;
+  const port = vi.fn<externalEntry.NavigationPort>(async (input) => {
+    if (input.kind === "next")
+      return {
+        kind: "pending",
+        value: pending ? { id: "external", intent } : null,
+      };
+    if (input.kind === "resolve")
+      return {
+        kind: "localTool",
+        value: {
+          kind: "network",
+          target: { host: "validated.example", port: 8443 },
+        },
+      };
+    if (input.kind === "ack") {
+      pending = false;
+      return { kind: "done" };
+    }
+    throw Error("unexpected operation");
+  });
+  vi.spyOn(externalEntry, "nativeNavigation").mockReturnValue(port);
+  vi.spyOn(externalEntry, "listenNavigation").mockResolvedValue(() => {});
+  const local = fixtureLocalPorts();
+  const network = vi.fn<NonNullable<typeof local.network>>(async () => ({
+    kind: "defaults",
+    value: null,
+  }));
+  local.network = network;
+  const w = mount(Workspace, {
+    props: {
+      ready: true,
+      busy: false,
+      page: "assistant",
+      host: createHostSettings(undefined),
+      localPorts: local,
+    },
+  });
+  try {
+    await flushPromises();
+    expect(pending).toBe(false);
+    expect(w.emitted("navigate")?.at(-1)).toEqual(["device-tools"]);
+    expect(w.getComponent(ConnectionCheck).get("input").element.value).toBe(
+      "validated.example",
+    );
+    expect(network.mock.calls.every(([v]) => v.kind === "defaults")).toBe(true);
+    expect(port.mock.calls.every(([v]) => v.kind !== "submit")).toBe(true);
+  } finally {
+    w.unmount();
+  }
+});
+
+it.each(["discard", "login"])(
+  "retains a failed external target and resumes the queue after %s",
+  async (recovery) => {
+    const delivery = (
+      id: string,
+      node: string,
+    ): import("./self-service/types").Delivery => ({
+      id,
+      intent: {
+        action: "view",
+        selector: { kind: "node", id: node },
+        namespace: null,
+        version: null,
+        revision: null,
+        step: null,
+        parameters: {},
+      },
+    });
+    const queue = [
+      delivery("expired", "settings.account"),
+      delivery("valid", "home"),
+    ];
+    let unavailable = true;
+    const port = vi.fn<externalEntry.NavigationPort>(async (input) => {
+      if (input.kind === "next")
+        return { kind: "pending", value: queue[0] ?? null };
+      if (input.kind === "resolve") {
+        if (unavailable) throw Error("login_required");
+        return { kind: "event", value: input.intent };
+      }
+      if (input.kind === "ack") {
+        if (queue[0]?.id === input.id) queue.shift();
+        return { kind: "done" };
+      }
+      throw Error("unexpected navigation operation");
+    });
+    vi.spyOn(externalEntry, "nativeNavigation").mockReturnValue(port);
+    vi.spyOn(externalEntry, "listenNavigation").mockResolvedValue(() => {});
+    const w = mount(Workspace, {
+      attachTo: document.body,
+      props: {
+        ready: true,
+        busy: false,
+        page: "assistant",
+        host: createHostSettings(undefined),
+      },
+    });
+    const button = (label: string) =>
+      w.findAll("button").find((v) => v.text() === label)!;
+    try {
+      await flushPromises();
+      expect(queue.map((v) => v.id)).toEqual(["expired", "valid"]);
+      expect(port.mock.calls.some(([v]) => v.kind === "ack")).toBe(false);
+      await button("重试外部目标").trigger("click");
+      await flushPromises();
+      expect(queue).toHaveLength(2);
+      // A failed identity check stays queued. Explicit user discard only removes that target.
+      unavailable = false;
+      if (recovery === "discard") {
+        await button("放弃此目标并继续").trigger("click");
+      } else {
+        await w.setProps({ ready: false });
+        await w.setProps({ ready: true });
+      }
+      await flushPromises();
+      expect(queue).toHaveLength(0);
+      expect(
+        port.mock.calls
+          .filter(([v]) => v.kind === "ack")
+          .map(([v]) => v.kind === "ack" && v.id),
+      ).toEqual(["expired", "valid"]);
+      expect(w.emitted("navigate")?.at(-1)).toEqual(["home"]);
+    } finally {
+      w.unmount();
+    }
+  },
+);
 
 it("attaches the current page to one shared assistant and preserves question text when the sidebar closes", async () => {
   const w = mount(Workspace, {

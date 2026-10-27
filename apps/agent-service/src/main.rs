@@ -2,7 +2,6 @@
 mod error;
 use agent_client::Error;
 use agent_service::deployment::Deployment;
-use execution_ipc::host::Request;
 use std::{path::PathBuf, sync::atomic::AtomicBool};
 static STOP: AtomicBool = AtomicBool::new(false);
 #[cfg(target_os = "macos")]
@@ -152,30 +151,8 @@ fn run() -> Result<(), Error> {
         );
         return Ok(());
     }
-    let request = match args.as_slice() {
-        [arg] if arg == "--query" => Some(Request::Task {
-            input: execution_app::tasks::TaskOperation::List(execution_app::tasks::TaskQuery {
-                limit: 32,
-                ..Default::default()
-            }),
-            origin: execution_ipc::host::ClientOrigin::Desktop {},
-        }),
-        [arg] if arg == "--offers" => Some(Request::Offers {}),
-        [arg] if arg == "--service-status" => Some(Request::ServiceStatus {}),
-        [] => None,
-        _ => return Err(Error::Configuration),
-    };
-    if let Some(request) = request {
-        let reply = execution_ipc::host::ServiceClient::new(deployment.server_policy())
-            .map_err(error::app_error)?
-            .request(request)
-            .map_err(error::app_error)?;
-        println!(
-            "{}",
-            std::str::from_utf8(&execution_ipc::host::encode_reply(reply))
-                .map_err(|_| Error::Protocol)?
-        );
-        return Ok(());
+    if !args.is_empty() {
+        return Err(Error::Configuration);
     }
     let handler = deployment.assemble()?;
     serve(handler, true)
