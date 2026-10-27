@@ -103,3 +103,12 @@ export function nativeReplyComplete(
         row.textContent.includes(expected),
     );
 }
+
+export function sampledNativeTask(page) {
+  return page.items.find(
+    (item) =>
+      item.reference.kind === "sampling" &&
+      item.facts.kind === "sampling" &&
+      item.facts.value.latest.collectedAt != null,
+  );
+}

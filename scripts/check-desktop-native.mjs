@@ -38,6 +38,7 @@ import {
   sha256,
   waitForAppearance,
   nativeReplyComplete,
+  sampledNativeTask,
 } from "./native-evidence.mjs";
 import {
   verifyCandidate,
@@ -2367,8 +2368,10 @@ try {
     const collect = browser.$(
       '//button[normalize-space(.)="采集最新结果" and not(@disabled)]',
     );
+    mark("explicit local collection: available native source");
     await wait(() => collect.isDisplayed());
     await collect.click();
+    mark("explicit local collection: original query in unified task page");
     const collected = await wait(async () =>
       (await serviceCall("query")).items.find(
         (item) =>
@@ -2377,6 +2380,7 @@ try {
           !beforeCollection.has(item.reference.request),
       ),
     );
+    mark("explicit local collection: original detail and Home return focus");
     await openNativeTask(collected);
     await navigate("首页");
     const recent = browser.$(
@@ -2396,19 +2400,16 @@ try {
         collected.reference,
       ),
     );
+    mark("background history: a collected periodic definition");
     const sampling = await wait(
-      async () =>
-        (await serviceCall("query")).items.find(
-          (item) =>
-            item.reference.kind === "sampling" &&
-            item.facts.latest?.collectedAt != null,
-        ),
+      async () => sampledNativeTask(await serviceCall("query")),
       90000,
     );
     assert.equal(sampling.source, "policy");
     assert.deepEqual(sampling.allowedActions, []);
     await openNativeTask(sampling);
     assert.equal((await browser.$$(".task-actions button")).length, 0);
+    mark("background history: management coverage and read-only detail");
     await navigate("请求与任务");
     await click("管理活动", '//*[@aria-label="任务视图"]');
     const managementRef = {

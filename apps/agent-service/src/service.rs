@@ -1526,7 +1526,7 @@ impl Core {
     fn pending(&self, request: &RequestId, subject: &str) -> Result<Option<BackendRequest>, Error> {
         if self
             .app
-            .has_service_execution(request, &self.host.binding.device)
+            .has_service_execution(request, &self.request_device(request)?)
             .map_err(crate::error::app_error)?
         {
             return Ok(None);

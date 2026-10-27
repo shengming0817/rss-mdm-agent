@@ -6094,3 +6094,137 @@ async fn native_context_rejects_inexact_json_deadlines_before_publishing_a_bindi
     }
     c.device("exact-context").await;
 }
+
+#[tokio::test]
+async fn native_local_query_is_projected_under_its_original_device_after_enterprise_registration() {
+    use execution_app::tasks::{TaskFacts, TaskOperation, TaskQuery, TaskRef, TaskResponse};
+    use execution_ipc::host::Request;
+    let _budget = crate::scenario_budget::enter();
+    let mut c = Case::new(None).await;
+    c.service.core.config.worker_image_fixture = Some(fixture_worker_image);
+    assert_ne!(
+        c.service.core.host.root.device,
+        c.service.core.host.binding.device
+    );
+    let definition = c
+        .service
+        .core
+        .data
+        .directory(&c.selection.subject)
+        .unwrap()
+        .into_iter()
+        .find(|d| d.domains.contains(&"hardware.memory".into()))
+        .unwrap();
+    let mut read = c
+        .service
+        .core
+        .data
+        .local_definition(&definition.reference, &c.selection.subject)
+        .unwrap()
+        .read;
+    read.deadline = (c.service.core.host.clock.millis().unwrap() / 1000 + 90) as i64;
+    let request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
+    let root = c.service.core.host.root.clone();
+    let (frozen, materials) = backend::collection::compile_read(
+        &read,
+        request.clone(),
+        Initiator::Human {
+            os_session: OsSessionRef {
+                device: root.device.clone(),
+                account: OsAccountRef {
+                    platform: Platform::Macos,
+                    subject: plan::id(&c.selection.subject).unwrap(),
+                },
+                session: c.selection.binding.clone(),
+            },
+        },
+        Operation {
+            action: plan::id("local-query").unwrap(),
+            resource: plan::reference(
+                definition.reference.id.as_str(),
+                definition.reference.revision.as_str(),
+            )
+            .unwrap(),
+        },
+        plan::reference("local-native-query", "1").unwrap(),
+        &root,
+        &c.service.core.host.local_actor,
+        (&c.service.core.config, &mut c.service.core.material_root),
+        None,
+    )
+    .unwrap();
+    c.service
+        .core
+        .host
+        .materials
+        .register(&frozen, materials)
+        .unwrap();
+    c.service.core.data.remember(&request, read).unwrap();
+    c.service
+        .core
+        .app
+        .stage_execution(&c.service.core.local_caller(), &frozen)
+        .unwrap();
+    let reference = TaskRef::Request {
+        request: request.clone(),
+    };
+    let reply = c
+        .policy_call(Request::Task {
+            input: TaskOperation::Detail(reference.clone()),
+            origin: ClientOrigin::Desktop {},
+        })
+        .await;
+    let Reply::Task {
+        value: TaskResponse::Detail(detail),
+    } = reply
+    else {
+        panic!(
+            "native local detail failed: {}",
+            serde_json::to_string(&reply).unwrap()
+        );
+    };
+    assert_eq!(detail.task_kind, execution_app::tasks::TaskKind::Query);
+    assert!(matches!(detail.facts, TaskFacts::Execution(_)));
+    let Reply::Task {
+        value: TaskResponse::Page(page),
+    } = c
+        .policy_call(Request::Task {
+            input: TaskOperation::List(TaskQuery {
+                limit: 32,
+                ..Default::default()
+            }),
+            origin: ClientOrigin::Desktop {},
+        })
+        .await
+    else {
+        panic!("task page");
+    };
+    assert!(page.items.iter().any(|item| item.reference == reference));
+    let foreign = policy::SessionKey::new("90001".into(), c.selection.binding.clone());
+    let (reply, _) = tokio::sync::oneshot::channel();
+    let command = Command {
+        fence_epoch: c.service.core.fences.current(&foreign).unwrap(),
+        subject: "90001".into(),
+        session: c.selection.session,
+        binding: Some(c.selection.binding.clone()),
+        reply,
+        request: LocalRequest::operation(Request::ServiceStatus {}),
+    };
+    assert!(matches!(
+        c.service.core.task_operation(
+            &command,
+            &TaskOperation::Detail(reference),
+            &ClientOrigin::Desktop {}
+        ),
+        Err(Error::Denied)
+    ));
+    assert_eq!(
+        c.service
+            .core
+            .app
+            .status(&c.service.core.local_caller(), &request)
+            .unwrap()
+            .attempts,
+        0
+    );
+}

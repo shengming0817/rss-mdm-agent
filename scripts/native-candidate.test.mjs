@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import { Window } from "happy-dom";
-import { nativeReplyComplete } from "./native-evidence.mjs";
+import { nativeReplyComplete, sampledNativeTask } from "./native-evidence.mjs";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
@@ -425,4 +425,27 @@ test("native completion waits for the original new turn rather than older matchi
   } finally {
     window.happyDOM.abort();
   }
+});
+
+test("native periodic evidence reads the Rust facts envelope and never infers collection from process exit", () => {
+  const empty = {
+    reference: { kind: "sampling", query: { id: "native", revision: "1" } },
+    facts: { kind: "sampling", value: { latest: { collectedAt: null } } },
+  };
+  const collected = {
+    ...empty,
+    facts: { kind: "sampling", value: { latest: { collectedAt: 123 } } },
+  };
+  const exited = {
+    reference: { kind: "request", request: "exited" },
+    facts: {
+      kind: "execution",
+      value: { status: { process: { finished: true, exitCode: 0 } } },
+    },
+  };
+  assert.equal(sampledNativeTask({ items: [exited, empty] }), undefined);
+  assert.equal(
+    sampledNativeTask({ items: [exited, empty, collected] }),
+    collected,
+  );
 });
