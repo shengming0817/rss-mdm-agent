@@ -10,6 +10,9 @@ use std::{
     sync::Mutex,
 };
 use zeroize::Zeroizing;
+#[cfg(target_os = "macos")]
+const HANDOFF_REQUIREMENT: &str =
+    "identifier \"com.rss.mdmagent.execution-service\" and certificate leaf[subject.CN] exists";
 
 /// One deployment/enrollment namespace. This value never confers device identity.
 pub struct SecretStore {
@@ -23,6 +26,27 @@ pub struct SecretStore {
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
+    #[test]
+    fn native_parser_accepts_the_production_handoff_requirement() {
+        let parse = |text: &str| {
+            std::process::Command::new("/usr/bin/csreq")
+                .arg(format!("-r={text}"))
+                .arg("-t")
+                .output()
+                .unwrap()
+        };
+        assert!(!parse(
+            "identifier \"com.rss.mdmagent.execution-service\" and certificate leaf exists"
+        )
+        .status
+        .success());
+        let result = parse(HANDOFF_REQUIREMENT);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
     struct Isolated {
         root: PathBuf,
         path: PathBuf,
@@ -235,7 +259,7 @@ impl SecretStore {
             &self.keychain,
             old,
             new,
-            "identifier \"com.rss.mdmagent.execution-service\" and certificate leaf exists",
+            HANDOFF_REQUIREMENT,
             &items,
         )
     }
