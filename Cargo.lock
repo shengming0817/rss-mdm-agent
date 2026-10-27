@@ -58,6 +58,7 @@ dependencies = [
  "futures-util",
  "httpdate",
  "hyper",
+ "jsonschema",
  "libc",
  "platform-private-storage",
  "reqwest",
@@ -4759,7 +4760,7 @@ dependencies = [
 [[package]]
 name = "rss-mdm-agent-wire"
 version = "1.0.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=3097cbccade1bc8ef5520a6c76989379209534c4#3097cbccade1bc8ef5520a6c76989379209534c4"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=2c6fa81a9497e9777fc45bc6bc2eee8bfa3f7aff#2c6fa81a9497e9777fc45bc6bc2eee8bfa3f7aff"
 dependencies = [
  "base64 0.22.1",
  "ordered-float",
