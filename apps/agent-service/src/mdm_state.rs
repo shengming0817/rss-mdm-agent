@@ -98,19 +98,30 @@ async fn macos(expected: Option<&str>) -> Option<State> {
     let expected = expected?;
     let document = profiles(&["show", "-type", "configuration", "-output", "stdout-xml"]).await?;
     let value = plist::Value::from_reader_xml(document.as_slice()).ok()?;
-    fn find(value: &plist::Value) -> Option<&str> {
-        match value {
-            plist::Value::Dictionary(d) => {
-                if d.get("PayloadType").and_then(plist::Value::as_string) == Some("com.apple.mdm") {
-                    return d.get("ServerURL").and_then(plist::Value::as_string);
-                }
-                d.values().find_map(find)
+    Some(classify(
+        true,
+        macos_enrollment_server(&value),
+        Some(expected),
+    ))
+}
+#[cfg(target_os = "macos")]
+fn macos_enrollment_server(value: &plist::Value) -> Option<&str> {
+    match value {
+        plist::Value::Dictionary(d) => {
+            if d.get("PayloadType").and_then(plist::Value::as_string) == Some("com.apple.mdm") {
+                // profiles(1) wraps payload fields inside PayloadContent in its
+                // configuration inventory; the metadata is not the raw profile.
+                return d
+                    .get("PayloadContent")?
+                    .as_dictionary()?
+                    .get("ServerURL")
+                    .and_then(plist::Value::as_string);
             }
-            plist::Value::Array(a) => a.iter().find_map(find),
-            _ => None,
+            d.values().find_map(macos_enrollment_server)
         }
+        plist::Value::Array(a) => a.iter().find_map(macos_enrollment_server),
+        _ => None,
     }
-    Some(classify(true, find(&value), Some(expected)))
 }
 #[cfg(windows)]
 fn windows(expected: Option<&str>) -> Option<State> {
@@ -151,6 +162,41 @@ fn windows(expected: Option<&str>) -> Option<State> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn native_profile_output_classifies_wrapped_mdm_payload() {
+        // Sanitized shape from macOS profiles show -type configuration -output stdout-xml.
+        let xml=br#"<?xml version="1.0"?><plist version="1.0"><dict>
+          <key>_computerlevel</key><array><dict><key>ProfileItems</key><array><dict>
+          <key>PayloadType</key><string>com.apple.mdm</string>
+          <key>PayloadContent</key><dict><key>ServerURL</key><string>https://ours.test/mdm</string></dict>
+          </dict></array></dict></array></dict></plist>"#;
+        let document = plist::Value::from_reader_xml(xml.as_slice()).unwrap();
+        assert_eq!(
+            macos_enrollment_server(&document),
+            Some("https://ours.test/mdm")
+        );
+        assert_eq!(
+            classify(
+                true,
+                macos_enrollment_server(&document),
+                Some("https://ours.test/enroll")
+            ),
+            State::ThisOrganization
+        );
+        assert_eq!(
+            classify(
+                true,
+                macos_enrollment_server(&document),
+                Some("https://other.test/enroll")
+            ),
+            State::OtherOrganization
+        );
+        assert_eq!(
+            classify(true, macos_enrollment_server(&document), None),
+            State::Unknown
+        );
+    }
     #[test]
     fn absence_and_organization_are_observed_not_assumed() {
         assert_eq!(classify(false, None, None), State::Unenrolled);
