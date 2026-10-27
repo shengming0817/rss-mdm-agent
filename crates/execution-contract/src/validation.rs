@@ -8,7 +8,8 @@ use serde::{
 };
 use serde_json::Value;
 use std::{collections::BTreeSet, fmt};
-const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+/// Largest integer represented exactly by every Native and AI JSON consumer.
+pub const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 /// Host bounds independent from the untrusted plan; all limits must be positive.
 #[derive(Debug, Clone, Copy)]
 pub struct ExecutionLimits {

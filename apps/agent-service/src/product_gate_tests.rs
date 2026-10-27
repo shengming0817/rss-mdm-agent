@@ -2258,7 +2258,7 @@ fn select_pki_refresh(root: &std::path::Path) {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn device_context_binding_does_not_wait_for_background_pki_http() {
-    use execution_ipc::host::{Handler, NativeAccess, NativeContextSession, PeerPolicy, Request};
+    use execution_ipc::host::{Handler, NativeContextSession, PeerPolicy, Request};
     let _budget = crate::scenario_budget::enter();
     let mut c = Case::new(None).await;
     c.service.waiting = None;
@@ -2299,11 +2299,9 @@ async fn device_context_binding_does_not_wait_for_background_pki_http() {
         ));
         let reply = owner.call(
             LocalRequest::operation(Request::BindContext {
-                value: NativeContextSession {
-                    access: NativeAccess::Device {},
-                    generation: plan::id("device-during-background-http").unwrap(),
-                    expires_at_unix_ms: u64::MAX,
-                },
+                value: NativeContextSession::device(
+                    plan::id("device-during-background-http").unwrap(),
+                ),
                 expected: None,
             }),
             subject,
@@ -2659,16 +2657,12 @@ async fn software_self_service_binds_signed_policy_and_native_context() {
 
 impl Case {
     async fn device(&mut self, generation: &str) {
-        use execution_ipc::host::{NativeAccess, NativeContextSession, Request};
+        use execution_ipc::host::{NativeContextSession, Request};
         self.policy_call(Request::RevokeContext {}).await;
         let Reply::ContextBound { value } = self
             .policy_call(Request::BindContext {
                 expected: None,
-                value: NativeContextSession {
-                    access: NativeAccess::Device {},
-                    generation: plan::id(generation).unwrap(),
-                    expires_at_unix_ms: u64::MAX,
-                },
+                value: NativeContextSession::device(plan::id(generation).unwrap()),
             })
             .await
         else {
@@ -5995,4 +5989,108 @@ async fn retry_control_replay_preserves_the_original_complete_revision_without_a
         }
     ));
     assert_eq!(c._server.data.lock().unwrap().invocations.len(), calls);
+}
+
+#[tokio::test]
+async fn device_policy_preparation_is_readable_through_native_task_port_and_safe_for_ai_json() {
+    let _budget = crate::scenario_budget::enter();
+    use execution_app::tasks::{TaskOperation, TaskRef, TaskResponse};
+    use execution_ipc::host::Request;
+    let mut c = Case::new(None).await;
+    let mut directory = protocol::policy_directory_fixture(c.service.client.configuration().tenant);
+    directory.subject = wire::SelfServiceSubject::Device {};
+    directory.self_service.risk_level = 2;
+    c._server.data.lock().unwrap().self_service_directory = Some(protocol::Directory {
+        items: vec![directory.clone()],
+        next_cursor: None,
+        as_of: c._server.time.now().unwrap(),
+    });
+    c.device("native-task-device").await;
+    let choice = c.policy_choice(&directory);
+    assert!(matches!(
+        c.policy_call(Request::InvokePolicy {
+            context: c.context(),
+            choice: choice.clone(),
+            origin: c.selection.origin.clone(),
+        })
+        .await,
+        Reply::PolicyRequest { .. }
+    ));
+    fn safe(value: &serde_json::Value) {
+        match value {
+            serde_json::Value::Number(n) => {
+                if let Some(n) = n.as_u64() {
+                    assert!(n <= 9_007_199_254_740_991, "unsafe native integer: {n}");
+                }
+            }
+            serde_json::Value::Array(a) => a.iter().for_each(safe),
+            serde_json::Value::Object(o) => o.values().for_each(safe),
+            _ => (),
+        }
+    }
+    for origin in [ClientOrigin::Desktop {}, c.selection.origin.clone()] {
+        let (reply, receive) = tokio::sync::oneshot::channel();
+        c.service.core.handle(Command {
+            fence_epoch: c.service.core.fences.current(&c.scope()).unwrap(),
+            subject: c.selection.subject.clone(),
+            session: c.selection.session,
+            binding: Some(c.selection.binding.clone()),
+            reply,
+            request: LocalRequest::operation(Request::Task {
+                input: TaskOperation::Detail(TaskRef::Request {
+                    request: choice.request.clone(),
+                }),
+                origin,
+            }),
+        });
+        let response = receive.await.unwrap();
+        if !matches!(
+            response,
+            Reply::Task {
+                value: TaskResponse::Detail(_)
+            }
+        ) {
+            panic!(
+                "original detail failed: {}",
+                serde_json::to_string(&response).unwrap()
+            );
+        }
+        if let Reply::Task {
+            value: TaskResponse::Detail(detail),
+        } = &response
+        {
+            let execution_app::tasks::TaskFacts::Preparation(record) = &detail.facts else {
+                panic!("preparation facts");
+            };
+            assert_eq!(record.state, BackendRequestState::AwaitingConfirmation);
+            assert_eq!(record.risk.as_ref().unwrap().level, RiskLevel::Two);
+            assert!(record.confirmation.is_none());
+            assert!(detail.human_confirmation);
+        }
+        safe(&serde_json::to_value(response).unwrap());
+    }
+    assert!(c._server.data.lock().unwrap().start_ops.is_empty());
+}
+
+#[tokio::test]
+async fn native_context_rejects_inexact_json_deadlines_before_publishing_a_binding() {
+    let _budget = crate::scenario_budget::enter();
+    use execution_ipc::host::{NativeAccess, NativeContextSession, Request};
+    let mut c = Case::new(None).await;
+    c.policy_call(Request::RevokeContext {}).await;
+    for expiry in [execution_contract::MAX_SAFE_INTEGER + 1, u64::MAX] {
+        assert!(matches!(
+            c.policy_call(Request::BindContext {
+                expected: None,
+                value: NativeContextSession {
+                    generation: plan::id("inexact-context").unwrap(),
+                    access: NativeAccess::Device {},
+                    expires_at_unix_ms: expiry,
+                },
+            })
+            .await,
+            Reply::Rejected
+        ));
+    }
+    c.device("exact-context").await;
 }

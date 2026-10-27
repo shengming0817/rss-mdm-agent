@@ -680,6 +680,16 @@ pub struct NativeContextSession {
     pub expires_at_unix_ms: u64,
 }
 impl NativeContextSession {
+    /// Device-only binding within the shared exact JSON timestamp range.
+    /// The original OS/login generation still controls retirement; no enterprise lease is added.
+    pub fn device(generation: Id) -> Self {
+        Self {
+            access: NativeAccess::Device {},
+            generation,
+            expires_at_unix_ms: execution_contract::MAX_SAFE_INTEGER,
+        }
+    }
+
     /// Enterprise identity hint; effective admission remains backend-owned.
     pub fn user(&self) -> Option<&rss_mdm_agent_wire::runtime::SelfServiceUser> {
         match &self.access {

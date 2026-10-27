@@ -377,12 +377,10 @@ impl DesktopRuntime {
                 .ok_or_else(unavailable)?
                 .native_session(next.generation.as_str())?,
             ai_session_contract::AccountIdentity::Device { .. } => {
-                execution_ipc::host::NativeContextSession {
-                    access: execution_ipc::host::NativeAccess::Device {},
-                    generation: execution_contract::Id::new(next.generation.as_str())
+                execution_ipc::host::NativeContextSession::device(
+                    execution_contract::Id::new(next.generation.as_str())
                         .map_err(|_| unavailable())?,
-                    expires_at_unix_ms: u64::MAX,
-                }
+                )
             }
         };
         let expected = next
@@ -538,12 +536,10 @@ impl DesktopRuntime {
             let result = self
                 .execution
                 .bind_context(
-                    execution_ipc::host::NativeContextSession {
-                        access: execution_ipc::host::NativeAccess::Device {},
-                        generation: execution_contract::Id::new(before.generation.as_str())
+                    execution_ipc::host::NativeContextSession::device(
+                        execution_contract::Id::new(before.generation.as_str())
                             .map_err(|_| unavailable())?,
-                        expires_at_unix_ms: u64::MAX,
-                    },
+                    ),
                     Some(
                         execution_contract::Id::new(expected.as_str())
                             .map_err(|_| unavailable())?,

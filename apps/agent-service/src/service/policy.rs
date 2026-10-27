@@ -1144,16 +1144,19 @@ impl<S: IdentityProvider> DeviceService<S> {
             });
         }
         if let Request::BindContext { value, expected } = request {
-            if value.user().is_some_and(|user| {
-                user.tenant_id != self.client.configuration().tenant
-                    || user.instance_id != self.client.configuration().service_id
-                    || user.principal_id.is_nil()
-            }) || value.credential().is_some_and(|secret| {
-                secret.len() != 64
-                    || !secret
-                        .bytes()
-                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-            }) || value.expires_at_unix_ms <= self.core.host.clock.millis()?
+            if value.expires_at_unix_ms > execution_contract::MAX_SAFE_INTEGER
+                || value.user().is_some_and(|user| {
+                    user.tenant_id != self.client.configuration().tenant
+                        || user.instance_id != self.client.configuration().service_id
+                        || user.principal_id.is_nil()
+                })
+                || value.credential().is_some_and(|secret| {
+                    secret.len() != 64
+                        || !secret
+                            .bytes()
+                            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                })
+                || value.expires_at_unix_ms <= self.core.host.clock.millis()?
             {
                 return Err(Error::Identity);
             }

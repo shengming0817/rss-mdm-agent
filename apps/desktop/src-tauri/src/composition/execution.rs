@@ -745,14 +745,20 @@ impl ExecutionHandle {
             .await?
         {
             Reply::Task { value } => Ok(value),
-            Reply::DataFailure { reason } => Err(match reason {
-                DataError::InvalidInput => Error::InvalidInput,
-                DataError::Conflict => Error::Conflict,
-                DataError::Unsupported => Error::Unsupported,
-                DataError::Denied | DataError::NotFound | DataError::Expired => Error::Denied,
-                _ => Error::OutcomeUnknown,
-            }),
-            _ => Err(Error::OutcomeUnknown),
+            Reply::DataFailure { reason } => {
+                eprintln!("RSS_TASK_RESPONSE_FAILURE reason={reason:?}");
+                Err(match reason {
+                    DataError::InvalidInput => Error::InvalidInput,
+                    DataError::Conflict => Error::Conflict,
+                    DataError::Unsupported => Error::Unsupported,
+                    DataError::Denied | DataError::NotFound | DataError::Expired => Error::Denied,
+                    _ => Error::OutcomeUnknown,
+                })
+            }
+            _ => {
+                eprintln!("RSS_TASK_RESPONSE_FAILURE reason=UnexpectedReply");
+                Err(Error::OutcomeUnknown)
+            }
         }
     }
     pub async fn task_list(
@@ -1364,11 +1370,7 @@ mod context_admission_tests {
         let bound = tokio::time::timeout(
             std::time::Duration::from_secs(1),
             handle.bind_context(
-                execution_ipc::host::NativeContextSession {
-                    access: execution_ipc::host::NativeAccess::Device {},
-                    generation: generation.clone(),
-                    expires_at_unix_ms: u64::MAX,
-                },
+                execution_ipc::host::NativeContextSession::device(generation.clone()),
                 None,
             ),
         )
