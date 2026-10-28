@@ -207,6 +207,7 @@ pub(crate) fn profile(profile: &VersionedRef) -> Result<(), Error> {
             "native-network-check-worker",
             "native-collection-worker",
             "native-device-access-worker",
+            "native-enrollment-worker",
         ]
         .contains(&profile.id.as_str()))
     {
@@ -229,6 +230,13 @@ pub(crate) fn arguments(
         };
     }
     let path = script.to_str().ok_or(Error::InvalidInput)?;
+    if profile.id.as_str() == "native-enrollment-worker" {
+        return if args == ["--enrollment-worker", path] {
+            Ok(())
+        } else {
+            Err(Error::Denied)
+        };
+    }
     if profile.id.as_str() == "native-device-access-worker" {
         return if args == ["--device-access-worker", path] {
             Ok(())
@@ -651,5 +659,32 @@ mod path_tests {
         assert_eq!(files.metadata().unwrap().ino(), expected);
         assert!(WorkingDirectory::open(&root.join("ancestor/child")).is_err());
         std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod enrollment_admission_tests {
+    use super::*;
+    #[test]
+    fn enrollment_worker_admission_is_exact_and_versioned() {
+        let mut worker = VersionedRef {
+            id: Id::new("native-enrollment-worker").unwrap(),
+            revision: Id::new("1").unwrap(),
+        };
+        let path = Path::new("/protected/enrollment.json");
+        let valid = vec!["--enrollment-worker".into(), path.to_str().unwrap().into()];
+        assert!(profile(&worker).is_ok());
+        assert!(arguments(&worker, &valid, path).is_ok());
+        for args in [
+            vec![],
+            vec!["--enrollment-worker".into()],
+            vec!["--software-worker".into(), valid[1].clone()],
+            vec![valid[0].clone(), "/other.json".into()],
+            vec![valid[0].clone(), valid[1].clone(), "extra".into()],
+        ] {
+            assert!(arguments(&worker, &args, path).is_err());
+        }
+        worker.revision = Id::new("2").unwrap();
+        assert!(profile(&worker).is_err());
     }
 }

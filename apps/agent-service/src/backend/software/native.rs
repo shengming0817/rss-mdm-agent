@@ -313,7 +313,7 @@ pub(super) fn compile(
                 ("hdiutil", "/usr/bin/hdiutil"),
                 ("codesign", "/usr/bin/codesign"),
                 ("spctl", "/usr/sbin/spctl"),
-                ("lipo", "/usr/bin/lipo"),
+                ("file", "/usr/bin/file"),
             ] {
                 if name == "hdiutil" && intent != SoftwareOperation::Install {
                     continue;

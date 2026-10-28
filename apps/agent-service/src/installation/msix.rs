@@ -78,11 +78,7 @@ pub fn initialize() -> Result<Deployment, Error> {
     retain_public(&manifests.join(format!("{digest}.json")), &bytes)?;
     let mut next = candidate.deployment(digest, profile, &config)?;
     if let Some(old) = old {
-        next.installation_id = old.installation_id;
-        if let (Some(previous), Some(next_cli)) = (&old.cli, &mut next.cli) {
-            next_cli.machine_actions = previous.machine_actions.clone();
-        }
-        super::lifecycle::preserved(&old, &next)?;
+        super::lifecycle::inherit(&old, &mut next)?;
         // The OS stopped the previous package service. Retained identity/journal are reopened below.
         if let Some(ca) = &old.ca_file {
             if installation_security::read_protected(ca).map_err(|_| Error::Identity)?

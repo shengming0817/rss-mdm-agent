@@ -1302,6 +1302,7 @@ async fn run(
         "native-collection-worker",
         "native-settings-worker",
         "native-network-check-worker",
+        "native-enrollment-worker",
     ]
     .contains(&recipe.launch.interpreter.profile.id.as_str());
     if collection {

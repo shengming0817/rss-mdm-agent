@@ -299,7 +299,24 @@ async fn capture_recovery(case: u8) {
         );
     }
     drop(data);
+    let status = app
+        .status(&caller, &plan.spec().request.request_id)
+        .unwrap();
+    assert_eq!(status.phase, TaskPhase::ExecutionEnded);
+    assert!(
+        status.assessment.is_none(),
+        "a read-only fixture must not manufacture effect verification"
+    );
     bridge
         .finish(&mut client, offer.task_id(), &app, &caller)
         .unwrap();
+    assert!(client.pending_tasks(32).unwrap().is_empty());
+    assert!(client.bound_request(offer.task_id()).unwrap().is_none());
+    assert_eq!(
+        app.status(&caller, &plan.spec().request.request_id)
+            .unwrap()
+            .phase,
+        TaskPhase::ExecutionEnded,
+        "releasing transport must retain the original execution journal"
+    );
 }

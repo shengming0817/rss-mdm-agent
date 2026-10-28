@@ -327,6 +327,20 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
     );
     Ok(())
 }
+// Fixed packages own image/trust metadata; protected administrator deployment
+// owns execution configuration. Reinstalling must not reset pinned interpreters,
+// package managers, local permissions or budgets to the installer's defaults.
+pub(super) fn inherit(old: &Deployment, next: &mut Deployment) -> Result<(), Error> {
+    next.installation_id = old.installation_id;
+    next.software_read_grants = old.software_read_grants.clone();
+    if let (Some(previous), Some(next_cli)) = (&old.cli, &mut next.cli) {
+        next_cli.machine_actions = previous.machine_actions.clone();
+    }
+    preserved(old, next)?;
+    next.execution = old.execution.clone();
+    Ok(())
+}
+
 pub(super) fn preserved(old: &Deployment, next: &Deployment) -> Result<(), Error> {
     if old.service_id != next.service_id
         || old.signing_keys != next.signing_keys
@@ -632,12 +646,7 @@ fn apply(candidate_path: &Path, profile: Option<&PathBuf>, config: &Path) -> Res
     )?;
     let mut next = candidate.deployment(artifact, profile, config)?;
     if let Some(old) = old {
-        next.installation_id = old.installation_id;
-        if let (Some(previous), Some(next_cli)) = (&old.cli, &mut next.cli) {
-            next_cli.machine_actions = previous.machine_actions.clone();
-        }
-        next.software_read_grants = old.software_read_grants.clone();
-        preserved(&old, &next)?;
+        inherit(&old, &mut next)?;
         if let Some(ca) = &old.ca_file {
             if installation_security::read_protected(ca).map_err(|_| Error::Identity)?
                 != candidate.ca_pem.as_ref().ok_or(Error::Identity)?.as_bytes()

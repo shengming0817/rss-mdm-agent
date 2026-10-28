@@ -6,6 +6,72 @@ use uuid::Uuid;
 mod support;
 use rss_mdm_agent_wire::runtime::{TaskArchitecture, TaskPlatform};
 use support::*;
+#[tokio::test]
+async fn a_full_task_cache_keeps_cancellations_and_replays_the_unadmitted_offer_after_restart() {
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut cfg = server.config();
+    cfg.limits.pending_tasks = 1;
+    let open = |mode| {
+        Client::open(
+            &root.path,
+            cfg.clone(),
+            mode,
+            server.secrets.clone(),
+            server.time.clone(),
+        )
+        .unwrap()
+    };
+    let mut client = open(OpenMode::Create);
+    server.register(&mut client).await;
+    let registration = client.registration().unwrap();
+    let old = client.claim().await.unwrap().offer.unwrap();
+    client.received(&old).await.unwrap();
+    let cancellation = TaskCancellation::new(old.task_id(), old.attempt_id()).unwrap();
+    let (new_task, new_attempt) = {
+        let mut data = server.data.lock().unwrap();
+        data.task = Uuid::new_v4();
+        data.script();
+        data.cancellations = vec![cancellation.clone()];
+        (data.task, data.attempt)
+    };
+    let full = client.claim().await.unwrap();
+    assert!(full.offer.is_none());
+    assert_eq!(full.cancellations, vec![cancellation.clone()]);
+    assert_eq!(client.pending_tasks(1).unwrap(), vec![old.task_id()]);
+    drop(client);
+    let mut client = open(OpenMode::Existing);
+    let full = client.claim().await.unwrap();
+    assert!(full.offer.is_none());
+    assert_eq!(full.cancellations, vec![cancellation]);
+    let operations = server.data.lock().unwrap().claim_ops.clone();
+    assert_eq!(
+        operations[1], operations[2],
+        "the unadmitted claim must survive restart"
+    );
+    assert!(server.data.lock().unwrap().start_ops.is_empty());
+    // This fixture has no execution journal; only its acknowledged cancellation releases transport.
+    server.data.lock().unwrap().attempt = old.attempt_id();
+    let frozen = client.freeze_abandonment(old.task_id()).unwrap();
+    let acknowledged = client.send_abandonment(frozen).await.unwrap();
+    client.release_abandonment(acknowledged).unwrap();
+    {
+        let mut data = server.data.lock().unwrap();
+        data.attempt = new_attempt;
+        data.cancellations.clear();
+    }
+    let next = client.claim().await.unwrap().offer.unwrap();
+    assert_eq!(next.task_id(), new_task);
+    assert_eq!(next.attempt_id(), new_attempt);
+    assert_eq!(client.pending_tasks(1).unwrap(), vec![new_task]);
+    assert_eq!(client.registration().unwrap(), registration);
+    let data = server.data.lock().unwrap();
+    assert_eq!(
+        data.claim_ops[1], data.claim_ops[3],
+        "capacity recovery must retry the same claim"
+    );
+    assert!(data.start_ops.is_empty());
+}
 #[cfg(windows)]
 #[tokio::test]
 async fn ordinary_windows_path_creates_and_reopens_the_same_private_database() {

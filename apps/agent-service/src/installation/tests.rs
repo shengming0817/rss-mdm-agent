@@ -154,3 +154,25 @@ fn program_refresh_keeps_stable_namespace_and_source_grants_across_signed_seed_c
         .insert("new-root".into(), "unapproved".into());
     assert_eq!(lifecycle::preserved(&old, &next), Err(Error::Identity));
 }
+
+#[test]
+fn package_repair_keeps_administrator_execution_configuration_but_uses_new_images() {
+    let old = crate::deployment::tests::deployment();
+    let mut next = old.clone();
+    next.installation_id = uuid::Uuid::new_v4();
+    next.execution.interpreters.clear();
+    next.execution.managers.clear();
+    next.execution.processes = 8;
+    next.service.path = "/new-package/service".into();
+    next.service.sha256 = "b".repeat(64);
+    lifecycle::inherit(&old, &mut next).unwrap();
+    assert_eq!(next.installation_id, old.installation_id);
+    assert_eq!(
+        serde_json::to_value(&next.execution).unwrap(),
+        serde_json::to_value(&old.execution).unwrap()
+    );
+    assert_eq!(next.service.path, Path::new("/new-package/service"));
+    assert_eq!(next.service.sha256, "b".repeat(64));
+    next.state_root = "/different-state".into();
+    assert_eq!(lifecycle::inherit(&old, &mut next), Err(Error::Identity));
+}

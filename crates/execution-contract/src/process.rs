@@ -178,7 +178,7 @@ impl ProcessEvidence {
     }
 }
 
-/// A fixed collection worker's terminal control frame, never remote collection data.
+/// A fixed native worker's terminal control frame, never remote result data.
 /// Only the protected worker may emit it, after all of its owned work has ended.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

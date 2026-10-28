@@ -128,7 +128,7 @@ def main():
     manifest = json.loads((Path(config['service']['path']).parent / 'candidate.json').read_text())
     if manifest['signing_mode'] != 'development':
         raise RuntimeError('This script only resets a development installation')
-    namespace = hashlib.sha256(json.dumps([config['origin'], config['tenant'], config['installation_id']],
+    namespace = hashlib.sha256(json.dumps([config['service_id'], config['tenant'], config['installation_id']],
                                           separators=(',', ':')).encode()).hexdigest()
     secrets = BASE / 'state/secrets'
     if (secrets / 'credential-owner').read_text() != namespace:

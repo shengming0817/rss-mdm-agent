@@ -228,7 +228,9 @@ fn freeze(
                 artifact_encoding: ArtifactEncoding::Utf8,
                 stdin: StandardInput::Closed {},
                 output: OutputSpec {
-                    format: OutputFormat::Json { max_rows: 1 },
+                    // The worker returns one closed JSON enum scalar, not collection rows.
+                    // The bridge decodes EnrollmentEntryOutcome after complete UTF-8 capture.
+                    format: OutputFormat::Text {},
                     stdout: TextEncoding::Utf8,
                     stderr: TextEncoding::Utf8,
                 },
@@ -316,6 +318,7 @@ mod tests {
             },
         )
         .unwrap();
+        assert_eq!(plan.spec().launch.output.format, OutputFormat::Text {});
         host.template = plan.clone();
         let db = local::Database::new();
         let runner =

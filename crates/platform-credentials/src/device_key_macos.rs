@@ -45,7 +45,7 @@ extern "C" {
         acl: *const std::ffi::c_void,
         applications: *mut core_foundation::array::CFArrayRef,
         description: *mut CFStringRef,
-        prompt: *mut PromptSelector,
+        prompt: *mut u16,
     ) -> i32;
     fn SecTrustedApplicationCopyRequirement(
         application: *const std::ffi::c_void,
@@ -66,11 +66,6 @@ struct AttributeInfo {
     count: u32,
     tags: *mut u32,
     formats: *mut u32,
-}
-#[repr(C)]
-struct PromptSelector {
-    version: u16,
-    flags: u16,
 }
 /// Permanently held, non-exportable private RSA key in the explicit daemon keychain.
 pub struct DeviceKey(SecKey);
@@ -326,10 +321,7 @@ impl DeviceKey {
         for acl in acls.iter() {
             let mut applications = std::ptr::null();
             let mut description = std::ptr::null();
-            let mut prompt = PromptSelector {
-                version: 0,
-                flags: 0,
-            };
+            let mut prompt = 0u16;
             // SAFETY: Live ACL and valid CF output pointers; copied values are always released.
             let status = unsafe {
                 SecACLCopyContents(

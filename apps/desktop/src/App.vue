@@ -32,7 +32,7 @@ import TestUsers from "./settings/TestUsers.vue";
 import Account from "./settings/Account.vue";
 import LoginScreen from "./account/LoginScreen.vue";
 import type { EnterpriseLogin } from "./account/types";
-import { nativeHost } from "./settings/native";
+import { nativeHost, nativeService } from "./settings/native";
 import { createHostSettings } from "./settings/controller";
 import { assertFixtureAssembly, type FixtureEnvironment } from "./assembly";
 import type { SelfServicePort } from "./self-service/types";
@@ -52,6 +52,25 @@ const users = ref<TestUser[]>([]),
   accountMessage = ref("");
 const page = ref("home");
 const loginOpen = ref(false);
+const registrationPending = ref(false);
+let registrationEpoch = 0;
+const service = props.environment ? undefined : nativeService();
+const servicePort = service && {
+  ...service,
+  async requestRegistration(input?: EnterpriseLogin) {
+    registrationEpoch += 1;
+    registrationPending.value = true;
+    try {
+      return await service.requestRegistration(input);
+    } catch (error) {
+      if (!selectedUser.value)
+        accountMessage.value = accountErrorMessage(error);
+      throw error;
+    } finally {
+      registrationPending.value = false;
+    }
+  },
+};
 const content = ref<HTMLElement>();
 const host = createHostSettings(
   props.environment ? props.environment.host : nativeHost(),
@@ -63,6 +82,7 @@ async function pollAccount() {
   if (
     props.environment ||
     loading.value ||
+    registrationPending.value ||
     !selectedUser.value ||
     document.hidden ||
     readingAccount
@@ -70,7 +90,12 @@ async function pollAccount() {
     return;
   readingAccount = true;
   try {
-    await refreshAccount();
+    // Registration retires the old account before publishing its replacement.
+    // Reject a passive response that crossed that registration transition.
+    const epoch = registrationEpoch;
+    await refreshAccount(
+      () => epoch === registrationEpoch && !registrationPending.value,
+    );
   } finally {
     readingAccount = false;
   }
@@ -244,14 +269,15 @@ onBeforeUnmount(() => {
         :inert="loading ? true : undefined"
         :key="workspaceIdentity(selectedUser)"
         :ready="
-          environment ? !!selectedUser : !accountEnabled || !!selectedUser
+          !registrationPending &&
+          (environment ? !!selectedUser : !accountEnabled || !!selectedUser)
         "
         :busy="loading"
         :assistant-services="assistantServices"
         :self-service-port="selfServicePort"
         :page="page"
         :host="host"
-        :service-port="environment?.service"
+        :service-port="environment?.service ?? servicePort"
         :device-port="environment?.device"
         :local-ports="environment?.local"
         :identity="selectedUser"
