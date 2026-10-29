@@ -129,6 +129,8 @@ export function createDesktop(input: WorkspaceInput = {}) {
   async function start() {
     if (started || !alive) return;
     started = true;
+    state.phase = "starting";
+    state.error = "";
     const current = ++epoch;
     void appearance.refresh();
     if (!input.environment && !nativeTestMode) {
@@ -160,11 +162,12 @@ export function createDesktop(input: WorkspaceInput = {}) {
       }
     } catch (error) {
       if (alive && current === epoch) {
+        started = false;
         state.error = accountErrorMessage(error);
         state.phase = "failed";
       }
     } finally {
-      if (alive && current === epoch) {
+      if (alive && bootstrapped && current === epoch) {
         if (state.phase === "starting")
           state.phase = state.workspace ? "ready" : "signedOut";
         polling = setInterval(() => void pollAccount(), 2000);

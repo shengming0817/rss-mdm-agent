@@ -11,8 +11,13 @@ export function App() {
       <PageHeader title="RSS Agent" description="桌面自助服务" />
       <SectionCard>
         <StatePanel
-          kind="readonly"
-          title="桌面界面重建中"
+          kind={state.phase === "failed" ? "error" : "readonly"}
+          title={
+            state.phase === "failed" ? "本机会话读取失败" : "桌面界面重建中"
+          }
+          onRead={
+            state.phase === "failed" ? () => void desktop.start() : undefined
+          }
           description={
             state.error ||
             (state.phase === "ready"

@@ -1,5 +1,9 @@
+import * as assistantNative from "../assistant/native";
+import type { RuntimeClient, SessionView } from "@rss-mdm-agent/ai-client";
+import { fixtureSession } from "@rss-mdm-agent/ai-contract/testing";
+import { activeStage } from "@rss-mdm-agent/ai-contract";
 import { StrictMode, useEffect } from "react";
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { useSnapshot } from "valtio";
@@ -7,6 +11,7 @@ import { accountState, retireAccountOperations } from "../test-users";
 import { taskPage } from "../../../../tests/self-service/support";
 import type { UserContext } from "@rss-mdm-agent/ai-contract/wire";
 import { createDesktop } from "./desktop";
+import { App } from "../App";
 import { DesktopProvider, useDesktop, useWorkspace } from "./react";
 import { workspaceIdentity } from "../workspace/identity";
 vi.mock("@tauri-apps/api/core", () => ({
@@ -281,4 +286,159 @@ it("a retired startup response cannot replace the next mounted owner's account",
   await pending;
   expect(next.state.workspace).toBe(workspace);
   expect(accountState.user?.generation).toBe(user.generation);
+});
+
+it("retries a failed startup in the same owner without duplicating polling or listeners", async () => {
+  readStatus = async () => {
+    throw Error("temporary");
+  };
+  const owner = desktop();
+  await owner.start();
+  expect(owner.state.phase).toBe("failed");
+  expect(vi.getTimerCount()).toBe(0);
+  readStatus = async () => ({
+    schemaVersion: 1,
+    kind: "accountStatus",
+    binding: "unbound",
+    current: user,
+  });
+  await owner.start();
+  expect(owner.state.phase).toBe("ready");
+  const workspace = owner.state.workspace;
+  const timers = vi.getTimerCount();
+  await Promise.all([owner.start(), owner.start()]);
+  expect(owner.state.workspace).toBe(workspace);
+  expect(vi.getTimerCount()).toBe(timers);
+  const before = vi
+    .mocked(invoke)
+    .mock.calls.filter(([c]) => c === "account_status").length;
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(
+    vi.mocked(invoke).mock.calls.filter(([c]) => c === "account_status"),
+  ).toHaveLength(before + 1);
+  owner.dispose();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(vi.getTimerCount()).toBe(0);
+});
+it("mounts a new connected client after unmount and ignores callbacks retained by the old transport", async () => {
+  const clients: Array<{
+    runtime: RuntimeClient;
+    close: ReturnType<typeof vi.fn>;
+    stop: ReturnType<typeof vi.fn>;
+    publish: (view: SessionView) => void;
+  }> = [];
+  vi.spyOn(assistantNative, "nativeAssistant").mockImplementation(() => ({
+    async connect() {
+      const close = vi.fn(),
+        stop = vi.fn(),
+        client = {
+          close,
+          stop,
+          publish: (_view: SessionView) => {},
+          runtime: undefined as unknown as RuntimeClient,
+        };
+      const runtime = {
+        initialize: async () => ({}),
+        listSessions: async () => ({ items: [] }),
+        connections: async () => ({
+          connections: [],
+          preferences: { schemaVersion: 1, kind: "userPreferences" },
+        }),
+        observe: (listener: (view: SessionView) => void) => {
+          client.publish = listener;
+          return stop;
+        },
+        close,
+        connection: { closed: new Promise(() => {}) },
+      } as unknown as RuntimeClient;
+      client.runtime = runtime;
+      clients.push(client);
+      return { runtime, mode: "live" };
+    },
+  }));
+  let current: ReturnType<typeof createDesktop> | undefined;
+  function Probe() {
+    current = useDesktop();
+    return <output>mounted</output>;
+  }
+  const first = render(
+    <DesktopProvider>
+      <Probe />
+    </DesktopProvider>,
+  );
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  const firstOwner = current!,
+    oldWorkspace = firstOwner.state.workspace!;
+  expect(oldWorkspace.assistant.state.connection).toBe("connected");
+  first.unmount();
+  expect(clients[0].close).toHaveBeenCalledOnce();
+  expect(clients[0].stop).toHaveBeenCalledOnce();
+  const second = render(
+    <DesktopProvider>
+      <Probe />
+    </DesktopProvider>,
+  );
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(current).not.toBe(firstOwner);
+  expect(clients).toHaveLength(2);
+  expect(clients[1].runtime).not.toBe(clients[0].runtime);
+  const workspace = current!.state.workspace!;
+  expect(workspace).not.toBe(oldWorkspace);
+  expect(workspace.assistant.state.connection).toBe("connected");
+  const session = fixtureSession();
+  const late: SessionView = {
+    namespace: session.namespace,
+    generation: activeStage(session).binding.generation,
+    cursor: 0,
+    capabilities: activeStage(session).capabilities,
+    sessionStatus: "active",
+    connection: "attached",
+    timeline: [],
+    commands: {},
+    messages: {},
+    interactions: {},
+    surfaces: {},
+    tools: {},
+    deliveries: {},
+  };
+  clients[0].publish(late);
+  expect(workspace.assistant.state.views.size).toBe(0);
+  expect(oldWorkspace.assistant.state.views.size).toBe(0);
+  second.unmount();
+  expect(clients[1].close).toHaveBeenCalledOnce();
+  expect(clients[1].stop).toHaveBeenCalledOnce();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("the production App exposes a working retry after a temporary startup failure", async () => {
+  readStatus = async () => {
+    throw Error("temporary");
+  };
+  const app = render(
+    <DesktopProvider>
+      <App />
+    </DesktopProvider>,
+  );
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(screen.getByRole("button", { name: "重新读取" })).toBeTruthy();
+  readStatus = async () => ({
+    schemaVersion: 1,
+    kind: "accountStatus",
+    binding: "unbound",
+    current: user,
+  });
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(screen.getByText("本机会话已读取，业务页面正在重建。")).toBeTruthy();
+  app.unmount();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(vi.getTimerCount()).toBe(0);
 });
