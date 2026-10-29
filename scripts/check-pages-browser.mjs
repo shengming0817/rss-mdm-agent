@@ -541,9 +541,7 @@ export async function checkPagesBrowser(page, fixture) {
   await pendingDirectory.waitFor();
   assert.equal(await pendingDirectory.getAttribute("aria-busy"), "true");
   assert.equal(
-    await loadingPage
-      .getByRole("button", { name: "重读结果", exact: true })
-      .isDisabled(),
+    await loadingPage.getByRole("button", { name: /重读结果$/ }).isDisabled(),
     true,
   );
   assert.equal(await loadingPage.locator(".rss-software-card").count(), 0);
@@ -557,9 +555,7 @@ export async function checkPagesBrowser(page, fixture) {
     .getByRole("button", { name: "工作空间", exact: true })
     .waitFor();
   assert.equal(
-    await loadingPage
-      .getByRole("button", { name: "重读结果", exact: true })
-      .isEnabled(),
+    await loadingPage.getByRole("button", { name: /重读结果$/ }).isEnabled(),
     true,
   );
   evidence.checks.push(
