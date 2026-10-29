@@ -202,6 +202,18 @@ export function PolicyFacts({
             )}
           </>
         )}
+        {!policy && offer?.presentation.summary.kind === "script" && (
+          <>
+            <dt>准备类型</dt>
+            <dd>脚本</dd>
+            <dt>执行身份类别</dt>
+            <dd>
+              {offer.presentation.summary.identity === "system"
+                ? "系统执行身份"
+                : "本机用户执行身份"}
+            </dd>
+          </>
+        )}
         {expires != null && (
           <>
             <dt>准备有效期限</dt>

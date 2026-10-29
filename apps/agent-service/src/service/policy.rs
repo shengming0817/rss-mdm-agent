@@ -1879,13 +1879,20 @@ impl<S: IdentityProvider> DeviceService<S> {
                 resource == &spec.resource && run_as == &spec.run_as && resolved == spec.parameters
             }
             (
-                wire::SelfServiceTask::Software { run_as, target, .. },
+                wire::SelfServiceTask::Software {
+                    resource,
+                    run_as,
+                    target,
+                },
                 wire::TaskPayload::Software(spec),
             ) => {
                 choice.parameters.is_empty()
                     && spec.intent == wire::SoftwareTaskIntent::Install
                     && spec.steps.last().is_some_and(|step| {
-                        &step.target == target
+                        step.definition.resource == resource.id
+                            && step.definition.version == resource.version
+                            && step.definition.variant == resource.variant
+                            && &step.target == target
                             && execution_contract::software_commands(&step.action)
                                 .install
                                 .run_as
