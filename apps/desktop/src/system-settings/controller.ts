@@ -117,7 +117,15 @@ export function createSystemSettings(
     if (response.finished && response.request === pending?.request)
       state.pending.delete(section);
   }
+  let directoryFlight: Promise<void> | undefined;
   async function directory() {
+    if (directoryFlight) return directoryFlight;
+    directoryFlight = readDirectory().finally(() => {
+      directoryFlight = undefined;
+    });
+    return directoryFlight;
+  }
+  async function readDirectory() {
     if (!data || !active || state.sources.length) return;
     let after: string | null = null;
     const sources: QueryDescriptor[] = [],

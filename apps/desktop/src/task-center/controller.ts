@@ -31,7 +31,7 @@ export const requestRef = (request: string): TaskRef => ({
   kind: "request",
   request,
 });
-export const taskTitle = (task: TaskDetail): string => {
+export const taskTitle = (task: Snapshot<TaskDetail>): string => {
   const facts = task.facts;
   if (facts.kind === "execution")
     return `${facts.value.action.operation.action} · ${facts.value.action.operation.resource.id}`;

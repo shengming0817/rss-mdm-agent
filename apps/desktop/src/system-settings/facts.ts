@@ -1,3 +1,4 @@
+import type { Snapshot } from "valtio/vanilla";
 import type { CollectedData } from "../self-service/types";
 import type { SystemSettingsController } from "./controller";
 const number = (v: unknown) =>
@@ -6,7 +7,7 @@ const number = (v: unknown) =>
     : typeof v === "string" && /^\d+$/.test(v)
       ? Number(v)
       : undefined;
-function rows(value?: CollectedData): Record<string, unknown>[] {
+function rows(value?: Snapshot<CollectedData>): Record<string, unknown>[] {
   return (
     value?.rows.flatMap((row) =>
       row &&
@@ -30,7 +31,7 @@ const qualityLabels: Record<string, string> = {
   empty: "已采集，结果为空",
   mappingUnsupported: "映射不支持",
 };
-const quality = (value?: CollectedData) =>
+const quality = (value?: Snapshot<CollectedData>) =>
   !value || value.quality === "notCollected"
     ? "尚未采集"
     : value.stale
@@ -38,21 +39,25 @@ const quality = (value?: CollectedData) =>
       : value.quality === "complete"
         ? "已采集"
         : (qualityLabels[value.quality] ?? "结果未知");
-const collectedTime = (value?: CollectedData) =>
+const collectedTime = (value?: Snapshot<CollectedData>) =>
   value?.collectedAt == null
     ? ""
     : ` · ${new Date(value.collectedAt * 1000).toLocaleTimeString()}`;
-export function homeFacts(controller?: SystemSettingsController) {
-  const facts = controller?.summary();
+export function homeFacts(
+  controller?: SystemSettingsController,
+  current:
+    | Snapshot<SystemSettingsController["state"]>
+    | undefined = controller?.state,
+) {
+  const facts = controller?.summary(current);
   const network = facts?.network,
     storage = facts?.storage,
     power = facts?.power;
-  const observations = controller?.state.observations;
+  const observations = current?.observations;
   const nativeTime = (section: "network" | "power", label: string) => {
     const snapshot = observations?.get(section)?.snapshot;
     if (!snapshot) return "";
-    const age =
-      (controller?.state.now ?? Date.now()) - snapshot.collectedAtUnixMs;
+    const age = (current?.now ?? Date.now()) - snapshot.collectedAtUnixMs;
     return `${label}${age < 0 ? "时间待核实" : age >= 30_000 ? "已过期" : "已读取"} · ${new Date(snapshot.collectedAtUnixMs).toLocaleTimeString()}`;
   };
   const source = observations
@@ -71,7 +76,7 @@ export function homeFacts(controller?: SystemSettingsController) {
   const routeInterface = route?.fields.find(
     (f) => f.key === "interface",
   )?.value;
-  const systemDrive = [...(controller?.state.facts.values() ?? [])].find((f) =>
+  const systemDrive = [...(current?.facts.values() ?? [])].find((f) =>
     f.source.domains.includes("hardware.os"),
   )?.value.fields["hardware.os.system_drive"];
   const volume = rows(storage).find(
@@ -84,7 +89,7 @@ export function homeFacts(controller?: SystemSettingsController) {
     capacity = storage,
     shared = false;
   if (volume?.container_id) {
-    const container = [...(controller?.state.facts.values() ?? [])]
+    const container = [...(current?.facts.values() ?? [])]
       .filter((f) => f.source.domains.includes("hardware.containers"))
       .flatMap((entry) =>
         rows(entry.value).map((row) => ({ row, value: entry.value })),

@@ -2,13 +2,17 @@ import { Alert } from "antd";
 import { createEntryNavigation } from "../workspace/entry-controller";
 import { nativeNavigation, listenNavigation } from "../workspace/entry";
 import type { NavigationOutput } from "../workspace/entry";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import { useSnapshot } from "valtio";
 import { Button, Dropdown, Tooltip } from "antd";
 import {
-  CloseOutlined,
-  ExpandOutlined,
-  MinusOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   SearchOutlined,
@@ -18,6 +22,7 @@ import {
 import type { Workspace } from "../state/workspace";
 import { layouts, type PageId } from "../state/navigation";
 import { useDesktop, usePlatform } from "../state/react";
+import { WindowControls } from "./WindowControls";
 import { nativeWindow } from "../workspace/window";
 import { pageTitle } from "./navigation-model";
 import { HiddenSecondary, PrimaryNavigation } from "./NavigationMenu";
@@ -97,7 +102,11 @@ export function DesktopShell({
   onLogin,
   onAssistant,
   children,
+  assistantTrigger,
+  navToggleRef,
 }: {
+  assistantTrigger?: RefObject<HTMLButtonElement | null>;
+  navToggleRef?: RefObject<HTMLButtonElement | null>;
   workspace: Workspace;
   onLogin(): void;
   onAssistant(): void;
@@ -109,8 +118,8 @@ export function DesktopShell({
     appearance = useSnapshot(desktop.appearance.state),
     assistant = useSnapshot(workspace.assistant.state);
   const controls = useMemo(nativeWindow, []),
-    toggle = useRef<HTMLButtonElement>(null),
-    [windowError, setWindowError] = useState("");
+    ownToggle = useRef<HTMLButtonElement>(null);
+  const toggle = navToggleRef ?? ownToggle;
   const layout = layouts[nav.layoutStep];
   const collapse = () => {
     workspace.navigation.collapse();
@@ -157,13 +166,6 @@ export function DesktopShell({
       document.removeEventListener("keydown", keyboard);
     };
   }, [workspace]);
-  async function windowAction(action: () => Promise<void>) {
-    try {
-      await action();
-    } catch {
-      setWindowError("窗口操作未完成，请重试。");
-    }
-  }
   const user = workspace.identity.user,
     enterprise = workspace.identity.identity.mode === "user_device";
   const menu = {
@@ -203,6 +205,7 @@ export function DesktopShell({
   return (
     <div
       className="rss-desktop-shell"
+      data-native-window={!!controls}
       data-layout={layout}
       data-layout-step={nav.layoutStep}
       data-material={appearance.materialEnabled}
@@ -266,6 +269,7 @@ export function DesktopShell({
         </button>
         <Tooltip title="页面助手">
           <Button
+            ref={assistantTrigger}
             className="rss-page-assistant-trigger"
             type="text"
             icon={<RobotOutlined />}
@@ -276,32 +280,7 @@ export function DesktopShell({
           </Button>
         </Tooltip>
         <div className="rss-hidden-account">{accountButton(true)}</div>
-        <div className="rss-window-controls">
-          <button
-            type="button"
-            aria-label="最小化窗口"
-            disabled={!controls}
-            onClick={() => controls && void windowAction(controls.minimize)}
-          >
-            <MinusOutlined />
-          </button>
-          <button
-            type="button"
-            aria-label="最大化或还原窗口"
-            disabled={!controls}
-            onClick={() => controls && void windowAction(controls.maximize)}
-          >
-            <ExpandOutlined />
-          </button>
-          <button
-            type="button"
-            aria-label="关闭窗口"
-            disabled={!controls}
-            onClick={() => controls && void windowAction(controls.close)}
-          >
-            <CloseOutlined />
-          </button>
-        </div>
+        <WindowControls />
       </header>
       <button
         type="button"
@@ -336,7 +315,7 @@ export function DesktopShell({
               : "AI Host 未连接"}
         </span>
         <span>
-          {windowError || (enterprise ? "企业会话" : "本机工作区")} ·{" "}
+          {enterprise ? "企业会话" : "本机工作区"} ·{" "}
           {platform === "macos" ? "macOS" : "Windows"}
         </span>
       </footer>

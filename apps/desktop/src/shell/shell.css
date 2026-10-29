@@ -584,3 +584,276 @@
     scroll-behavior: auto;
   }
 }
+.rss-shell-main {
+  display: flex;
+}
+.rss-workspace-pages {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+.rss-shell-main > .ant-alert {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 20;
+}
+.rss-page-assistant {
+  width: 360px;
+  min-width: 0;
+  flex: 0 0 360px;
+  max-width: 45%;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  border-left: 1px solid var(--line);
+  background: var(--surface);
+}
+.rss-page-assistant[hidden] {
+  display: none;
+}
+.rss-page-assistant > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 18px 18px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.rss-page-assistant > header h2 {
+  font-size: 16px;
+}
+.rss-page-assistant > header p {
+  font-size: 10px;
+  color: var(--muted);
+  margin-top: 5px;
+}
+.rss-page-assistant > header > div:last-child {
+  display: flex;
+}
+.rss-page-assistant-messages {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px 16px;
+}
+.rss-companion-intro {
+  padding: 4px;
+}
+.rss-companion-intro h3 {
+  font-size: 17px;
+  margin: 14px 0 9px;
+}
+.rss-companion-intro > p {
+  font-size: 11px;
+  line-height: 1.8;
+  color: var(--muted);
+  margin-bottom: 22px;
+}
+.rss-companion-intro > button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 11px;
+  margin-bottom: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+.rss-companion-intro > button:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.rss-companion-composer {
+  padding: 12px;
+  border-top: 1px solid var(--line);
+}
+.rss-context-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 4px 5px 4px 8px;
+  background: var(--bg);
+}
+.rss-context-chip > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 10px;
+  color: var(--muted);
+}
+.rss-page-assistant .rss-composer-bottom > span {
+  font-size: 8px;
+}
+.rss-page-assistant .rss-messages {
+  padding: 0;
+}
+.rss-search-results {
+  max-height: 360px;
+  overflow: auto;
+  padding: 12px 0;
+}
+.rss-search-results > button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 16px;
+  padding: 11px 12px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.rss-search-results > button[aria-selected="true"] {
+  background: var(--tint);
+  color: var(--accent);
+}
+.rss-search-results strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 550;
+}
+.rss-search-results small {
+  display: block;
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.rss-search-results > .rss-muted {
+  padding: 22px 12px;
+}
+.rss-search-footer {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 9px;
+  color: var(--muted);
+}
+.rss-startup-gate {
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: 54px minmax(0, 1fr);
+  overflow: auto;
+  background: var(--bg);
+}
+.rss-startup-card {
+  align-self: center;
+  justify-self: center;
+  width: calc(100% - 40px);
+  max-width: 480px;
+  padding: 35px 0;
+}
+.rss-startup-mark {
+  width: 52px;
+  height: 52px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--accent);
+  font-size: 35px;
+  margin-bottom: 24px;
+  font-weight: 600;
+  letter-spacing: -4px;
+  padding-right: 4px;
+}
+.rss-startup-card > h1 {
+  font-size: 26px;
+  margin-bottom: 10px;
+}
+.rss-startup-card > .rss-muted {
+  margin-bottom: 26px;
+}
+.rss-startup-card .rss-state-panel {
+  margin-top: 18px;
+}
+.rss-reference {
+  overflow-wrap: anywhere;
+  font-size: 11px;
+}
+.rss-visually-hidden {
+  position: absolute;
+  clip: rect(0, 0, 0, 0);
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+@media (max-width: 960px) {
+  .rss-page-assistant {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    max-width: 100%;
+    width: 360px;
+    z-index: 18;
+    box-shadow: -10px 0 35px #11182715;
+  }
+}
+@media (max-width: 720px) {
+  .rss-page-assistant {
+    width: 100%;
+    max-width: 100%;
+  }
+  .rss-startup-card {
+    padding: 28px 0;
+  }
+  .rss-global-search .ant-modal-content {
+    padding: 18px;
+  }
+}
+
+.rss-ui:has(.rss-desktop-shell[data-material="true"]) {
+  background: transparent;
+}
+.rss-desktop-shell[data-material="true"] {
+  background: transparent;
+}
+.rss-desktop-shell[data-material="true"] .rss-sidebar,
+.rss-desktop-shell[data-material="true"] .rss-topbar {
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  backdrop-filter: blur(18px);
+}
+.rss-shell-main {
+  background: var(--bg);
+}
+@media (max-width: 720px) {
+  .rss-ui[data-platform="macos"]
+    [data-native-window="true"]
+    .rss-chrome-leading {
+    width: 172px;
+    min-width: 172px;
+    flex-basis: 172px;
+  }
+  .rss-ui[data-platform="macos"] [data-native-window="true"] .rss-traffic-slot {
+    display: block;
+  }
+  .rss-ui[data-platform="macos"] [data-native-window="true"] .rss-brand {
+    width: 53px;
+    min-width: 53px;
+  }
+  .rss-ui[data-platform="macos"] [data-native-window="true"] .rss-brand strong {
+    display: block;
+  }
+}

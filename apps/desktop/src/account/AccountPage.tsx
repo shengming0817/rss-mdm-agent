@@ -15,31 +15,7 @@ export function AccountPage({
   workspace: Workspace;
   onLogin(): void;
 }) {
-  const desktop = useDesktop(),
-    [owner, setOwner] = useState<ReturnType<typeof createOrganizations> | null>(
-      null,
-    );
-  useEffect(() => {
-    const fixture = desktop.fixture?.account;
-    const current = createOrganizations(
-      fixture
-        ? {
-            load: async () => ({
-              schemaVersion: 1,
-              kind: "accountSettings",
-              organizations: fixture.organizations,
-              selected: fixture.organizations[0]?.id,
-            }),
-            save: async () => {
-              throw Error("readonly");
-            },
-          }
-        : undefined,
-    );
-    setOwner(current);
-    void current.load();
-    return () => current.dispose();
-  }, [desktop]);
+  const desktop = useDesktop();
   return (
     <div className="rss-page rss-stack">
       <PageHeader title="账号与组织" description="管理当前账号与组织连接。" />
@@ -67,11 +43,7 @@ export function AccountPage({
         </p>
       </SectionCard>
       <BindingNotice />
-      {owner ? (
-        <OrganizationList owner={owner} />
-      ) : (
-        <StatePanel kind="loading" title="正在读取组织连接" />
-      )}
+      <OrganizationManager />
       <SectionCard title="本机会话">
         <p className="rss-muted">
           退出企业账号后回到本机工作区。已受理的设备任务仍按原记录查询。
@@ -92,6 +64,38 @@ export function AccountPage({
         </div>
       </SectionCard>
     </div>
+  );
+}
+export function OrganizationManager() {
+  const desktop = useDesktop(),
+    [owner, setOwner] = useState<ReturnType<typeof createOrganizations> | null>(
+      null,
+    );
+  useEffect(() => {
+    const fixture = desktop.fixture?.account;
+    const current = createOrganizations(
+      fixture
+        ? {
+            load: async () => ({
+              schemaVersion: 1,
+              kind: "accountSettings",
+              organizations: fixture.organizations,
+              selected: fixture.organizations[0]?.id,
+            }),
+            save: async () => {
+              throw Error("readonly");
+            },
+          }
+        : undefined,
+    );
+    setOwner(current);
+    void current.load();
+    return () => current.dispose();
+  }, [desktop]);
+  return owner ? (
+    <OrganizationList owner={owner} />
+  ) : (
+    <StatePanel kind="loading" title="正在读取组织连接" />
   );
 }
 export function BindingNotice() {

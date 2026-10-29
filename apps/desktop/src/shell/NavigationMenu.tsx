@@ -30,7 +30,13 @@ function Secondary({ workspace }: { workspace: Workspace }) {
                 className="rss-secondary-button"
                 aria-label={title}
                 aria-current={
-                  nav.selected[nav.page] === id ? "page" : undefined
+                  nav.page === "assistant"
+                    ? id === "history" && nav.historyOpen
+                      ? "page"
+                      : undefined
+                    : nav.selected[nav.page] === id
+                      ? "page"
+                      : undefined
                 }
                 aria-expanded={
                   nav.page === "assistant" && id === "history"

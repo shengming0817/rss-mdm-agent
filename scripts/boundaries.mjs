@@ -288,6 +288,13 @@ export function checkSource(file, source) {
     "dangerouslySetInnerHTML",
   ]);
   const dataIndex = {
+    "apps/desktop/src/App.tsx": ["nav.selected", "taskPhase"],
+    "apps/desktop/src/home/HomePage.tsx": ["taskPhase"],
+    "apps/desktop/src/assistant/messages.ts": [
+      "view.commands",
+      "view.messages",
+    ],
+    "apps/desktop/src/shell/GlobalSearch.tsx": ["matches"],
     "apps/desktop/src/account/LoginDialog.tsx": ["labels"],
     "apps/desktop/src/account/RegistrationPage.tsx": ["registrationLabels"],
     "apps/desktop/src/shell/navigation-model.ts": [
