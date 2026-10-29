@@ -1,4 +1,3 @@
-import { reactive } from "vue";
 import {
   operationPresentation,
   operationSnapshot,
@@ -43,12 +42,12 @@ export class OperationDrafts {
     const key = scopeKey(snapshot.scope);
     let entry = this.executions.get(key);
     if (!entry) {
-      entry = reactive({
+      entry = {
         snapshot,
         busy: false,
         unknown: false,
         unknownRevision: -1,
-      });
+      };
       this.executions.set(key, entry);
     }
     return entry;
@@ -76,14 +75,14 @@ export class OperationDrafts {
     let draft = this.entries.get(key);
     if (!draft || draft.schema !== schema) {
       const schemaReset = !!draft;
-      draft = reactive({
+      draft = {
         values: {},
         dirty: new Set<string>(),
         baseline: snapshot.baseline,
         schema,
         selection: [],
         schemaReset,
-      });
+      };
       this.entries.set(key, draft);
     }
     return draft;
@@ -121,7 +120,7 @@ export function createOperationController(
   const scope = initial.scope;
   const draft = drafts.acquire(operationSnapshot(initial), presentation);
   const execution = drafts.execution(initial);
-  const state = reactive({
+  const state = {
     get snapshot() {
       return execution.snapshot;
     },
@@ -155,7 +154,7 @@ export function createOperationController(
     preparationExpired: false,
     secrets: {} as Record<string, string>,
     capturing: new Set<string>(),
-  });
+  };
   let disposed = false;
   let deadline: ReturnType<typeof setTimeout> | undefined;
   const captures = new Map<string, number>();

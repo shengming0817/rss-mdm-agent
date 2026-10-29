@@ -1,14 +1,13 @@
-import { reactive } from "vue";
 import type { HostStatus } from "@rss-mdm-agent/ai-contract/wire";
 import type { nativeHost } from "./native";
 export function createHostSettings(port: ReturnType<typeof nativeHost>) {
-  const state = reactive({
+  const state = {
     status: undefined as HostStatus | undefined,
     busy: false,
     loading: false,
     message: "",
     readError: "",
-  });
+  };
   let epoch = 0,
     disposed = false;
   async function refresh() {

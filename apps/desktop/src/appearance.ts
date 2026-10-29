@@ -1,4 +1,3 @@
-import { reactive } from "vue";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { AppearanceSnapshot } from "./self-service/types";
 const solid = (): AppearanceSnapshot => ({
@@ -11,7 +10,7 @@ export function createAppearance(
     ? () => invoke<AppearanceSnapshot>("appearance_snapshot")
     : undefined,
 ) {
-  const state = reactive(solid());
+  const state = solid();
   let disposed = false,
     reading = false;
   async function refresh() {

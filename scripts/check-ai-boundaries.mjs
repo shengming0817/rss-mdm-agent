@@ -42,7 +42,7 @@ const allowed = {
     "@rss-mdm-agent/ai-contract",
     "@rss-mdm-agent/ai-client",
     "@a2ui/web_core",
-    "vue",
+    "react",
   ],
 };
 const errors = [];

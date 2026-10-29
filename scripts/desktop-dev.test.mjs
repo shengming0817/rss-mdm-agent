@@ -131,7 +131,7 @@ test("fingerprint includes dirty Host, adapter, contract, lock, Node and added/d
   const first = developmentFingerprint(root);
   write(".env", "changed desktop defaults");
   assert.equal(developmentFingerprint(root), first);
-  write("apps/desktop/src/App.vue", "UI");
+  write("apps/desktop/src/App.tsx", "UI");
   write("apps/ai-host/dist/cli.js", "output");
   assert.equal(developmentFingerprint(root), first);
   for (const path of [

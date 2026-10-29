@@ -2,6 +2,10 @@
 
 桌面生产入口通过认证 IPC 消费 `apps/agent-service`，不持有执行 SQLite 或 S1 runner。Vue 和 AI MCP 共享后台任务引用；系统服务持有唯一执行 intent、恢复和结果送达状态。独立 Node AI Host 与 provider worker 只承接会话，不签出企业批准。后台企业任务授权和来源由服务端决定；客户端校验签名、材料、设备注册及 OS 会话。
 
+React 重建 EPIC 的基础浏览器组件通过 `pnpm dev:assistant-fixture` 查看，
+当前宿主 WKWebView 基础检查使用 `pnpm check:desktop-native --foundation`。
+该入口只验证已交付的主题、组件与原生启动；业务页面和真实执行接线分别由后续实施项验收。
+
 ## 启动和运行包
 
 使用根 manifest 固定的 Node、pnpm 与 `rust-toolchain.toml`。所有命令在本仓运行。

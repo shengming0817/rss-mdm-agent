@@ -5,7 +5,7 @@ import { nativePort, nativeDataPort, nativeTaskPort } from "./native";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(), isTauri: vi.fn() }));
 beforeEach(() => {
-  currentUser.value = {
+  currentUser.current = {
     schemaVersion: 1,
     kind: "userContext",
     user: {

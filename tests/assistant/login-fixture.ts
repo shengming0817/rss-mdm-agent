@@ -1,5 +1,5 @@
 // Only the explicit fixture assembly imports this adapter. No real IM/ZT discovery or authentication.
-import { reactive } from "vue";
+
 import type { UserContext } from "../../packages/ai-contract/src/wire";
 import type {
   FixtureLoginPort,
@@ -12,12 +12,12 @@ export function createLoginFixture(
     timer: ReturnType<typeof setTimeout> | undefined,
     organization = "qinghe",
     profile = "normal";
-  const state = reactive<FixtureLoginPort["state"]>({
+  const state: FixtureLoginPort["state"] = {
     qr: "waiting",
     clients: [],
     discovering: false,
     error: "",
-  });
+  };
   const organizations = [
     {
       id: "qinghe",

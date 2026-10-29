@@ -241,7 +241,7 @@ it("orders recent original tasks by recording time after a polling refresh", asy
   try {
     await c.loadRecent();
     await c.loadRecent();
-    expect(c.recentItems.value.map((t) => t.reference)).toEqual([
+    expect(c.recentItems().map((t) => t.reference)).toEqual([
       latest.reference,
       old.reference,
     ]);

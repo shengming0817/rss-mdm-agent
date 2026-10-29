@@ -1,5 +1,3 @@
-// ref: Vue core packages/reactivity/src/computed.ts@v3.5.38; all execution state remains service-owned.
-import { computed, reactive, type InjectionKey } from "vue";
 import type {
   DataAccessPort,
   DataCursor,
@@ -38,7 +36,7 @@ export function createSoftware(
   port: SoftwarePort | null,
   tasks?: import("../task-center/controller").Controller,
 ) {
-  const state = reactive({
+  const state = {
     sources: [] as Source[],
     now: Date.now(),
     directoryNext: null as string | null,
@@ -55,7 +53,7 @@ export function createSoftware(
     historyBusy: false,
     historyError: "",
     queries: new Map<string, QueryStatus>(),
-  });
+  };
   let active = true,
     epoch = 0;
   const timer = setInterval(() => {
@@ -89,7 +87,7 @@ export function createSoftware(
     s.page.quality === "complete" &&
     s.page.enumerationComplete &&
     !s.error;
-  const observations = computed(() => {
+  const observations = () => {
     const selected = new Map<string, Source>();
     for (const source of state.sources) {
       for (const coverage of source.page?.coverage ?? []) {
@@ -105,34 +103,33 @@ export function createSoftware(
       }
     }
     return selected;
-  });
-  const coverageComplete = computed(() =>
+  };
+  const coverageComplete = () =>
     state.sources.every(
       (s) =>
         s.page &&
         s.page.coverage.length > 0 &&
         s.page.coverage.every((key) => {
-          const selected = observations.value.get(key);
+          const selected = observations().get(key);
           return selected && complete(selected);
         }),
-    ),
-  );
-  const installed = computed(() => {
+    );
+  const installed = () => {
     const rows = new Map<string, InstalledSoftware>();
     for (const source of [...state.sources].sort(
       (a, b) => (a.page?.collectedAt ?? 0) - (b.page?.collectedAt ?? 0),
     ))
       for (const item of source.items)
-        if (observations.value.get(item.coverage) === source)
+        if (observations().get(item.coverage) === source)
           rows.set(installationKey(item), item);
     // The inventory projection is replaced by its collection owner. Historical task
     // detections describe that task; their stable object references are not observation versions.
     return [...rows.values()];
-  });
-  const summary = computed(() => ({
-    items: installed.value,
-    installed: installed.value.length,
-    updates: installed.value.filter((item) =>
+  };
+  const summary = () => ({
+    items: installed(),
+    installed: installed().length,
+    updates: installed().filter((item) =>
       item.actions.some(
         (a) => a.action === "update" && a.available && a.targetVersion,
       ),
@@ -141,16 +138,14 @@ export function createSoftware(
       state.directoryComplete &&
       !state.windowed &&
       state.sources.length > 0 &&
-      coverageComplete.value,
+      coverageComplete(),
     read: state.sources.some(
       (s) =>
         s.page && ["complete", "partial", "truncated"].includes(s.page.quality),
     ),
     loading: state.loading || state.sources.some((s) => s.busy),
     error: state.error || state.sources.find((s) => s.error)?.error || "",
-    collectedAt: [...new Set(observations.value.values())].reduce<
-      number | null
-    >(
+    collectedAt: [...new Set(observations().values())].reduce<number | null>(
       (time, s) =>
         s.page?.collectedAt == null
           ? time
@@ -160,7 +155,7 @@ export function createSoftware(
       null,
     ),
     sources: state.sources.length,
-  }));
+  });
   async function read(source: Source, append = false) {
     if (!active || !port || source.busy || (append && !source.after)) return;
     const call = epoch;
@@ -480,5 +475,3 @@ export function createSoftware(
   };
 }
 export type SoftwareController = ReturnType<typeof createSoftware>;
-export const softwareSummaryKey: InjectionKey<SoftwareController["summary"]> =
-  Symbol("authorized-software-summary");

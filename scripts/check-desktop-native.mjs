@@ -47,7 +47,8 @@ import {
 } from "./native-candidate.mjs";
 import { verifyRuntimeIntegrity } from "./ai-host-artifacts.mjs";
 
-const visualOnly = process.argv.includes("--visual");
+const foundationOnly = process.argv.includes("--foundation");
+const visualOnly = foundationOnly || process.argv.includes("--visual");
 const baseline = process.argv.includes("--baseline");
 const controlledService = process.argv.includes("--controlled-service");
 const security = process.argv.includes("--security");
@@ -1181,7 +1182,49 @@ try {
     );
   }
   result.checks.push("webdriver-per-request-authentication");
-  if (visualOnly) {
+  if (foundationOnly) {
+    result.mode = "pnpm-dev-main-react-foundation";
+    result.modelFixture = false;
+    result.executor = "not exercised; presentation foundation only";
+    await text("组件基础验收");
+    await click("查询原请求");
+    await text("查询次数：1");
+    await click("更多操作");
+    await click("查看详情");
+    await wait(() => browser.$('[role="dialog"]').isDisplayed());
+    await browser.$('[aria-label="详情字段"]').setValue("原生草稿");
+    key(53);
+    await wait(async () => !(await browser.$('[role="dialog"]').isDisplayed()));
+    assert.equal(
+      await browser.execute(() =>
+        document.activeElement?.textContent?.includes("更多操作"),
+      ),
+      true,
+    );
+    const message = await browser.$('[aria-label="消息"]');
+    await message.setValue("原生消息");
+    await click("发送消息");
+    await text("原生消息");
+    assert.equal(
+      await browser.execute(
+        () =>
+          document.querySelectorAll(
+            ".rss-markdown img,.rss-markdown script,.rss-markdown a",
+          ).length,
+      ),
+      0,
+    );
+    await browser.saveScreenshot(
+      join(reports, "desktop-native-foundations.png"),
+    );
+    result.checks.push(
+      "React foundation in macOS WKWebView",
+      "drawer Escape and focus restoration",
+      "controlled message input",
+      "inert Markdown",
+    );
+    result.status = "passed";
+  } else if (visualOnly) {
     mark("visual fixture in the product main WKWebView");
     await fixtureControls();
     await text("隔离样例与验证工具");
@@ -2880,21 +2923,12 @@ try {
           '[aria-label="打开主导航"]',
         ),
       }));
-      result.transportFailure = await browser.execute(() => {
-        const c =
-          document.querySelector(".assistant")?.__vueParentComponent?.props
-            ?.controller;
-        const reason = c?.runtime?.value?.connection?.signal?.reason;
-        return {
-          visible:
-            document.querySelector(".assistant")?.__vueParentComponent?.props
-              .visible,
-          display: document.querySelector(".assistant")?.style.display,
-          state: c?.state?.connection ?? "unknown",
-          code: typeof reason?.code === "string" ? reason.code : "unknown",
-          name: typeof reason?.name === "string" ? reason.name : "unknown",
-        };
-      });
+      result.transportFailure = await browser.execute(() => ({
+        display: document.querySelector(".assistant")?.style.display,
+        state:
+          document.querySelector('[role="alert"]')?.textContent ??
+          "unavailable",
+      }));
     } catch {
       result.transportFailure = { state: "unavailable" };
     }

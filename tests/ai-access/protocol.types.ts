@@ -4,7 +4,7 @@ import {
   type InteractionView,
 } from "../../packages/ai-client/dist/index.js";
 import {
-  RuntimeSurface,
+  type RuntimeSurfaceProps,
   type RendererFactory,
   type SurfaceRendererHandle,
   type RendererError,
@@ -18,7 +18,7 @@ const handle: SurfaceRendererHandle = {
   async retry() {},
 };
 export const factory: RendererFactory = async () => handle;
-type Props = InstanceType<typeof RuntimeSurface>["$props"];
+type Props = RuntimeSurfaceProps;
 type NotAny<T> = 0 extends 1 & T ? false : true;
 type Assert<T extends true> = T;
 export type TypedError = Assert<

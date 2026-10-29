@@ -4,7 +4,7 @@ import type {
   Connection,
   HistoryPreview,
 } from "@rss-mdm-agent/ai-contract/wire";
-import { computed, markRaw, reactive, shallowRef } from "vue";
+
 import {
   composePrompt,
   type ResourceContext,
@@ -126,14 +126,14 @@ export function createAssistant(
   now = () => Date.now(),
   ownerKey = "anonymous",
 ) {
-  const runtime = shallowRef<RuntimeClient>();
-  const clock = shallowRef(now());
+  const runtime = { current: undefined as RuntimeClient | undefined };
+  const clock = { current: now() };
   const timer = setInterval(() => {
-    clock.value = now();
+    clock.current = now();
   }, 1000);
   let connectionOwner: AbortController | undefined;
   let detailsOwner: AbortController | undefined;
-  const state = reactive({
+  const state = {
     connection: "disconnected" as "disconnected" | "connecting" | "connected",
     mode: "live" as "s1" | "live",
     a2ui: false,
@@ -165,7 +165,7 @@ export function createAssistant(
     task: undefined as ExecutionTaskDetails | undefined,
     taskError: "",
     taskLoading: false,
-  });
+  };
   let epoch = 0,
     taskEpoch = 0,
     stop = () => {};
@@ -181,13 +181,12 @@ export function createAssistant(
         created: boolean;
       }
     | undefined;
-  const sessions = computed(() =>
+  const sessions = () =>
     [...state.sessions.values()].sort(
       (a, b) =>
         b.lastActivityAtMs - a.lastActivityAtMs ||
         a.namespace.sessionId.localeCompare(b.namespace.sessionId),
-    ),
-  );
+    );
   function recordView(next: SessionView) {
     state.views.set(next.namespace.sessionId, next);
     state.sessions.set(next.namespace.sessionId, {
@@ -199,8 +198,8 @@ export function createAssistant(
     });
   }
   const callbacks = new Map<string, (response: PermissionResponse) => void>();
-  const view = computed(() => state.views.get(state.selected));
-  const draft = computed({
+  const view = () => state.views.get(state.selected);
+  const draft = {
     get: () => state.drafts.get(state.selected)?.text ?? "",
     set: (value: string) => {
       state.drafts.set(state.selected, {
@@ -208,25 +207,21 @@ export function createAssistant(
         text: value,
       });
     },
-  });
+  };
   const composition = () => state.drafts.get(state.selected) ?? { text: "" };
-  const context = computed(() => composition().context);
-  const promptPreview = computed(() =>
-    composePrompt(composition(), clock.value),
-  );
-  const compositionError = computed(() =>
-    context.value?.stale ||
-    (!!context.value && context.value.expiresAt <= clock.value)
+  const context = () => composition().context;
+  const promptPreview = () => composePrompt(composition(), clock.current);
+  const compositionError = () =>
+    context()?.stale || (context()?.expiresAt ?? Infinity) <= clock.current
       ? "资源信息已变更，请移除附件或从最新资源详情重新选择。"
-      : draft.value.trim() && !promptPreview.value
+      : draft.get().trim() && !promptPreview()
         ? "消息与上下文超过发送预算，请精简后发送。"
-        : "",
-  );
+        : "";
   function stageContext(value: ResourceContext) {
     state.drafts.set(state.selected, { ...composition(), context: value });
   }
   function removeContext() {
-    state.drafts.set(state.selected, { text: draft.value });
+    state.drafts.set(state.selected, { text: draft.get() });
   }
   function validatePageContexts(current: readonly ResourceContext[]) {
     for (const [id, value] of state.drafts) {
@@ -249,96 +244,83 @@ export function createAssistant(
     v.connection === "attached" &&
     v.sessionStatus === "active" &&
     state.connection === "connected";
-  const commands = computed(() => Object.values(view.value?.commands ?? {}));
-  const busy = computed(() =>
-    commands.value.some(
+  const commands = () => Object.values(view()?.commands ?? {});
+  const busy = () =>
+    commands().some(
       (c) =>
         c.command.input.type === "prompt" &&
         !["terminal", "invalidated", "acknowledged", "cancelled"].includes(
           c.state,
         ),
-    ),
-  );
-  const active = computed(() =>
-    commands.value.find(
+    );
+  const active = () =>
+    commands().find(
       (c) =>
         c.command.input.type === "prompt" &&
         c.dispatch &&
         !["terminal", "invalidated", "acknowledged", "cancelled"].includes(
           c.state,
         ),
-    ),
-  );
-  const selectedConnectionId = computed(() =>
+    );
+  const selectedConnectionId = () =>
     state.selected
-      ? view.value?.selectedConnectionId
-      : (state.blankConnectionId ?? state.preferences.defaultConnectionId),
-  );
-  const connectionReady = computed(() =>
+      ? view()?.selectedConnectionId
+      : (state.blankConnectionId ?? state.preferences.defaultConnectionId);
+  const connectionReady = () =>
     state.connections.some(
       (row) =>
-        row.connectionId === selectedConnectionId.value &&
-        row.status === "ready",
-    ),
-  );
-  const canSend = computed(() =>
+        row.connectionId === selectedConnectionId() && row.status === "ready",
+    );
+  const canSend = () =>
     !state.selected
       ? state.connection === "connected" && !state.opening
-      : live(view.value) &&
-        connectionReady.value &&
-        !(busy.value && view.value?.connectionPending) &&
+      : live(view()) &&
+        connectionReady() &&
+        !(busy() && view()?.connectionPending) &&
         !state.pending.has(state.selected) &&
-        !state.sending.has(state.selected),
-  );
-  const canSteer = computed(
-    () =>
-      live(view.value) &&
-      active.value?.state === "running" &&
-      active.value?.dispatch?.certainty === "submitted" &&
-      !!active.value?.dispatch?.nativeRunId &&
-      view.value?.capabilities.steer === "supported" &&
-      !state.pending.has(state.selected) &&
-      !state.sending.has(state.selected),
-  );
-  const canCancel = computed(
-    () =>
-      live(view.value) &&
-      active.value?.state === "running" &&
-      active.value?.dispatch?.certainty === "submitted" &&
-      ["request_only", "terminal_acknowledged"].includes(
-        view.value!.capabilities.cancellation,
-      ) &&
-      !commands.value.some(
-        (c) =>
-          c.command.input.type === "cancel" &&
-          c.command.input.targetCommandId === active.value?.command.commandId &&
-          !["terminal", "invalidated", "acknowledged", "cancelled"].includes(
-            c.state,
-          ),
-      ) &&
-      !state.pending.has(state.selected) &&
-      !state.sending.has(state.selected),
-  );
-  const sessionConnection = computed(() =>
+        !state.sending.has(state.selected);
+  const canSteer = () =>
+    live(view()) &&
+    active()?.state === "running" &&
+    active()?.dispatch?.certainty === "submitted" &&
+    !!active()?.dispatch?.nativeRunId &&
+    view()?.capabilities.steer === "supported" &&
+    !state.pending.has(state.selected) &&
+    !state.sending.has(state.selected);
+  const canCancel = () =>
+    live(view()) &&
+    active()?.state === "running" &&
+    active()?.dispatch?.certainty === "submitted" &&
+    ["request_only", "terminal_acknowledged"].includes(
+      view()!.capabilities.cancellation,
+    ) &&
+    !commands().some(
+      (c) =>
+        c.command.input.type === "cancel" &&
+        c.command.input.targetCommandId === active()?.command.commandId &&
+        !["terminal", "invalidated", "acknowledged", "cancelled"].includes(
+          c.state,
+        ),
+    ) &&
+    !state.pending.has(state.selected) &&
+    !state.sending.has(state.selected);
+  const sessionConnection = () =>
     state.connection !== "connected"
       ? state.connection
-      : (view.value?.connection ?? "connected"),
-  );
-  const resumeReason = computed(() => {
-    const v = view.value;
+      : (view()?.connection ?? "connected");
+  const resumeReason = () => {
+    const v = view();
     if (v?.sessionStatus === "retired") return "retired";
     if (!live(v)) return "not-attached";
     if (v!.capabilities.continuation === "unknown") return "unknown";
     if (v!.capabilities.continuation === "unsupported") return "unsupported";
     if (
-      commands.value.some(
-        (c) => c.state === "running" || c.state === "dispatching",
-      )
+      commands().some((c) => c.state === "running" || c.state === "dispatching")
     )
       return "run-active";
     return "available";
-  });
-  const canResume = computed(() => resumeReason.value === "available");
+  };
+  const canResume = () => resumeReason() === "available";
   function actionable(v: SessionView, id: string, at: number) {
     const item = Object.entries(v.interactions).find(
       ([key]) => key === id,
@@ -364,35 +346,28 @@ export function createAssistant(
       !state.sending.has(v.namespace.sessionId)
     );
   }
-  const actionableIds = computed(
-    () =>
-      new Map(
-        [...state.views.values()].map((v) => [
-          v.namespace.sessionId,
-          Object.keys(v.interactions).filter((id) =>
-            actionable(v, id, clock.value),
-          ),
-        ]),
-      ),
-  );
-  const attention = computed(
-    () =>
-      state.permissions.size +
-      [...actionableIds.value.values()].reduce(
-        (count, ids) => count + ids.length,
-        0,
-      ),
-  );
-  const background = computed(() => [
+  const actionableIds = () =>
+    new Map(
+      [...state.views.values()].map((v) => [
+        v.namespace.sessionId,
+        Object.keys(v.interactions).filter((id) =>
+          actionable(v, id, clock.current),
+        ),
+      ]),
+    );
+  const attention = () =>
+    state.permissions.size +
+    [...actionableIds().values()].reduce((count, ids) => count + ids.length, 0);
+  const background = () => [
     ...new Set([
-      ...[...actionableIds.value]
+      ...[...actionableIds()]
         .filter(([id, ids]) => id !== state.selected && ids.length > 0)
         .map(([id]) => id),
       ...[...state.permissions.values()]
         .map((item) => item.request.sessionId)
         .filter((id) => id !== state.selected),
     ]),
-  ]);
+  ];
   const fail = (error: unknown) =>
     error instanceof ClientError ? error.code : "request_failed";
   function clearPermissions() {
@@ -448,8 +423,8 @@ export function createAssistant(
     }
   }
   function release() {
-    const client = runtime.value;
-    runtime.value = undefined;
+    const client = runtime.current;
+    runtime.current = undefined;
     const disposeObserver = stop;
     stop = () => {};
     try {
@@ -516,7 +491,7 @@ export function createAssistant(
         return;
       }
       const negotiated = connected.negotiated;
-      runtime.value = markRaw(connected.runtime);
+      runtime.current = connected.runtime;
       state.mode = connected.mode;
       state.a2ui = !!negotiated.a2ui;
       stop = connected.runtime.observe((next) => {
@@ -557,7 +532,7 @@ export function createAssistant(
     } catch (error) {
       owner.abort();
       if (current === epoch) {
-        if (runtime.value) release();
+        if (runtime.current) release();
         else closeClient(candidate, current);
         clearPermissions();
         state.connection = "disconnected";
@@ -568,12 +543,12 @@ export function createAssistant(
     }
   }
   async function list(more = true) {
-    if (!runtime.value || state.listing || (more && !state.next)) return;
+    if (!runtime.current || state.listing || (more && !state.next)) return;
     const current = epoch;
     state.listing = true;
     state.listError = "";
     try {
-      const page = await runtime.value.listSessions({
+      const page = await runtime.current.listSessions({
         limit: 20,
         ...(more && state.next ? { continuation: state.next } : {}),
       });
@@ -593,7 +568,7 @@ export function createAssistant(
     }
   }
   function remember(id: string) {
-    const client = runtime.value,
+    const client = runtime.current,
       current = epoch,
       selection = selectionVersion;
     if (!client || state.connection !== "connected") return Promise.resolve();
@@ -632,13 +607,13 @@ export function createAssistant(
     if (!state.sessions.has(id)) return;
     selectionVersion++;
     state.selected = id;
-    if (!runtime.value || state.connection !== "connected") return;
+    if (!runtime.current || state.connection !== "connected") return;
     void remember(id);
     if (state.views.get(id)?.connection === "attached") return;
     const current = epoch;
     state.errors.delete(id);
     try {
-      const next = await runtime.value.restore(id);
+      const next = await runtime.current.restore(id);
       if (current === epoch) {
         state.views.set(id, next);
         state.errors.delete(id);
@@ -662,14 +637,14 @@ export function createAssistant(
   }
   function firstPrompt(): Promise<void> {
     if (openingTask) return openingTask;
-    const client = runtime.value,
+    const client = runtime.current,
       current = epoch,
       selectedAtStart = selectionVersion,
       original = composition(),
       text = composePrompt(original, now());
     if (!client || state.connection !== "connected" || !text)
       return Promise.resolve();
-    if (!creation && !connectionReady.value) {
+    if (!creation && !connectionReady()) {
       state.createError = "connection_required";
       return Promise.resolve();
     }
@@ -677,7 +652,7 @@ export function createAssistant(
     const intent = (creation ??= {
       sessionId: identity(),
       commandId: identity(),
-      connectionId: selectedConnectionId.value!,
+      connectionId: selectedConnectionId()!,
       created: false,
     });
     state.opening = true;
@@ -736,7 +711,7 @@ export function createAssistant(
   }
   async function retry(id = state.selected) {
     const pending = state.pending.get(id),
-      client = runtime.value;
+      client = runtime.current;
     if (
       !pending ||
       !client ||
@@ -789,8 +764,7 @@ export function createAssistant(
     commandId = identity(),
   ) {
     const id = state.selected;
-    if (!live(view.value) || state.pending.has(id) || state.sending.has(id))
-      return;
+    if (!live(view()) || state.pending.has(id) || state.sending.has(id)) return;
     state.pending.set(id, {
       command: {
         schemaVersion: 1,
@@ -810,7 +784,7 @@ export function createAssistant(
     if (!state.selected && policy === "queue_next") return firstPrompt();
     const original = composition(),
       text = composePrompt(original, now());
-    if (!(policy === "steer" ? canSteer.value : canSend.value) || !text) return;
+    if (!(policy === "steer" ? canSteer() : canSend()) || !text) return;
     await send(
       {
         type: "prompt",
@@ -820,29 +794,29 @@ export function createAssistant(
           ? { history: state.history.get(state.selected)! }
           : {}),
         ...(policy === "steer"
-          ? { targetRunId: active.value!.dispatch!.nativeRunId! }
+          ? { targetRunId: active()!.dispatch!.nativeRunId! }
           : {}),
       },
       original,
     );
   }
   async function cancel() {
-    if (!canCancel.value) return;
-    const target = active.value!;
+    if (!canCancel()) return;
+    const target = active()!;
     await send({
       type: "cancel",
       targetCommandId: target.command.commandId,
-      generation: view.value!.generation,
+      generation: view()!.generation,
       ...(target.dispatch?.nativeRunId
         ? { nativeRunId: target.dispatch.nativeRunId }
         : {}),
     });
   }
   function answerable(id: string) {
-    const v = view.value;
+    const v = view();
     return (
       !!v &&
-      actionableIds.value.get(v.namespace.sessionId)?.includes(id) === true &&
+      actionableIds().get(v.namespace.sessionId)?.includes(id) === true &&
       actionable(v, id, now()) &&
       v.capabilities.structuredQuestion === "supported" &&
       !Object.values(v.surfaces).some((s) => s.interactionId === id)
@@ -850,7 +824,7 @@ export function createAssistant(
   }
   async function respond(id: string, answers: Record<string, string>) {
     if (!answerable(id)) return;
-    const item = Object.entries(view.value!.interactions).find(
+    const item = Object.entries(view()!.interactions).find(
       ([key]) => key === id,
     )![1];
     await send(
@@ -867,9 +841,9 @@ export function createAssistant(
   }
   async function restore(resume = false) {
     const id = state.selected,
-      client = runtime.value,
+      client = runtime.current,
       current = epoch;
-    if (!client || (resume && !canResume.value) || state.opening) return;
+    if (!client || (resume && !canResume()) || state.opening) return;
     state.opening = true;
     try {
       const next = await (resume ? client.resume(id) : client.restore(id));
@@ -887,13 +861,13 @@ export function createAssistant(
     const id = state.selected,
       current = epoch;
     try {
-      await runtime.value?.detach(id);
+      await runtime.current?.detach(id);
     } catch (error) {
       if (current === epoch) state.errors.set(id, fail(error));
     }
   }
   async function executionDetails(operationId: string, signal: AbortSignal) {
-    const session = view.value,
+    const session = view(),
       current = epoch;
     const delivery = Object.entries(session?.deliveries ?? {}).find(
       ([key]) => key === operationId,
@@ -1018,11 +992,11 @@ export function createAssistant(
     openingTask = undefined;
   }
   async function refreshConnections() {
-    const client = runtime.value,
+    const client = runtime.current,
       current = epoch;
     if (!client || state.connection !== "connected") return;
     const catalog = await client.connections();
-    if (current !== epoch || runtime.value !== client) return;
+    if (current !== epoch || runtime.current !== client) return;
     state.connections = catalog.connections;
     state.preferences = catalog.preferences;
   }

@@ -1,4 +1,3 @@
-import { computed, reactive, type InjectionKey } from "vue";
 import type {
   TaskPort,
   TaskDetail,
@@ -83,7 +82,7 @@ export function createTaskCenter(
   tasks: TaskPort | null,
   port: SelfServicePort | null,
 ) {
-  const state = reactive({
+  const state = {
     query: initialQuery(),
     items: [] as TaskDetail[],
     selected: null as TaskDetail | null,
@@ -116,7 +115,7 @@ export function createTaskCenter(
     page: 1,
     recentError: "",
     recentWindowed: false,
-  });
+  };
   let alive = true,
     epoch = 0,
     listEpoch = 0,
@@ -144,11 +143,10 @@ export function createTaskCenter(
     }
   }
 
-  const preparations = computed(() =>
+  const preparations = () =>
     [...state.byRef.values()].flatMap((t) =>
       t.facts.kind === "preparation" ? [t.facts.value] : [],
-    ),
-  );
+    );
   function invalidate() {
     ++epoch;
     state.byRef.clear();
@@ -256,7 +254,7 @@ export function createTaskCenter(
       state.page = oldPage;
     }
   }
-  const recentItems = computed(() =>
+  const recentItems = () =>
     state.recent
       .flatMap((ref) => {
         const item = state.byRef.get(taskKey(ref));
@@ -270,8 +268,7 @@ export function createTaskCenter(
             : taskKey(a.reference) === taskKey(b.reference)
               ? 0
               : -1),
-      ),
-  );
+      );
   async function loadRecent(append = false): Promise<void> {
     if (!tasks || !alive || (append && !state.recentNext)) return;
     if (recentFlight) return recentFlight;
@@ -598,9 +595,3 @@ export function createTaskCenter(
   };
 }
 export type Controller = ReturnType<typeof createTaskCenter>;
-export const taskCenterKey: InjectionKey<Controller> = Symbol("task-center");
-
-export const taskNavigationKey: InjectionKey<{
-  openTask(reference: string | TaskRef, node?: string): Promise<string>;
-  openNode(reference: TaskRef, node: string): Promise<string>;
-}> = Symbol("task-navigation");

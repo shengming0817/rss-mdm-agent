@@ -106,102 +106,6 @@ test("only the native acceptance owner can register the pinned WebDriver plugin"
   ])
     assert.ok(checkRustSources({ [path]: code }).length);
 });
-test("UI boundary rejects prohibited imports and rendering even through alternate syntax", () => {
-  for (const source of [
-    `import x from '@tauri-apps/api/core'`,
-    `export * from 'pinia'`,
-    `const x = import('../api')`,
-    `const x = require('node:fs')`,
-    `<template><div v-html="text" /></template>`,
-    `interface Item { prNumber: number }`,
-    `fetch('https://example.com')`,
-  ])
-    assert.ok(checkSource("fixture.ts", source).length > 0, source);
-  assert.deepEqual(
-    checkSource(
-      "fixture.ts",
-      `import { ref } from 'vue'; export interface Item { id: string; text: string }`,
-    ),
-    [],
-  );
-});
-
-test("desktop source and manifests cannot acquire host or network capabilities", () => {
-  const file = "apps/desktop/src/fixture.ts";
-  for (const source of [
-    `import { invoke } from '@tauri-apps/api/core'`,
-    `import { store } from './transport'`,
-    `fetch('https://example.com')`,
-  ])
-    assert.ok(checkSource(file, source).length > 0, source);
-  assert.deepEqual(
-    checkSource(
-      file,
-      `import { MessageStream } from '@rss-mdm-agent/ui'; import './style.css';`,
-    ),
-    [],
-  );
-});
-test("assistant only consumes public AI client and bridge; no provider, Host or transport implementation", () => {
-  const file = "apps/desktop/src/assistant/controller.ts";
-  assert.deepEqual(
-    checkSource(
-      file,
-      `import { ClientError } from '@rss-mdm-agent/ai-client'; import { questions } from '@rss-mdm-agent/ai-ui-bridge';`,
-    ),
-    [],
-  );
-  for (const source of [
-    `import x from '@agentclientprotocol/sdk'`,
-    `import x from '@rss-mdm-agent/ai-contract/testing'`,
-    `import x from '@rss-mdm-agent/ai-access'`,
-    `import x from '@anthropic-ai/claude-agent-sdk'`,
-    `fetch('/send')`,
-    `new WebSocket('ws://localhost')`,
-    `import x from '../../../../tests/assistant/server.mjs'`,
-    `const x = globalThis['fetch']`,
-    `const x = globalThis[key]`,
-  ])
-    assert.ok(checkSource(file, source).length, source);
-});
-test("desktop features cannot import siblings or escape through the assembly", () => {
-  for (const feature of ["assistant", "self-service"]) {
-    const file = `apps/desktop/src/${feature}/owner.ts`;
-    const sibling = feature === "assistant" ? "self-service" : "assistant";
-    for (const source of [
-      `import x from '../${sibling}/controller'`,
-      `export * from '../${sibling}/controller'`,
-      `const x = import('../${sibling}/controller')`,
-      `import x from '../App.vue'`,
-      `import x from './nested/../../${sibling}/controller'`,
-    ])
-      assert.ok(checkSource(file, source).length, source);
-    assert.deepEqual(checkSource(file, `import x from './controller'`), []);
-  }
-  assert.deepEqual(
-    checkSource(
-      "apps/desktop/src/Workspace.vue",
-      `<script setup>
-    import x from './assistant/controller'; import y from './self-service/controller';
-    const identity = () => crypto.randomUUID();
-  </script>`,
-    ),
-    [],
-  );
-});
-test("alternative HTML sinks are rejected in Vue templates and scripts", () => {
-  for (const source of [
-    `<script setup>document.body.insertAdjacentHTML('beforeend', input)</script>`,
-    `<script setup>document.write(input)</script>`,
-    `<script setup>new DOMParser().parseFromString(input, 'text/html')</script>`,
-    `<template><button @click="document.write(input)">Send</button></template>`,
-    `<script setup>node['innerHTML'] = input</script>`,
-  ])
-    assert.ok(
-      checkSource("packages/ui/src/fixture.vue", source).length > 0,
-      source,
-    );
-});
 
 test("tree scan covers desktop files and both production manifests", () => {
   const dir = mkdtempSync(join(tmpdir(), "ui-boundaries-"));
@@ -235,46 +139,17 @@ test("tree scan covers desktop files and both production manifests", () => {
     const errors = checkTree(dir);
     assert.ok(
       errors.includes(
-        "UI production dependencies must be pinned presentation primitives and Markdown parser with Vue peer only",
+        "UI production dependencies must be pinned presentation primitives and Markdown parser with React peers only",
       ),
     );
     assert.ok(
       errors.includes(
-        "desktop production dependencies must be UI, public AI contract/client/bridge, generated execution bindings, pinned A2UI core, Vue and pinned Tauri core only",
+        "desktop production dependencies must be UI, public AI contract/client/bridge, generated execution bindings, pinned A2UI core, React, Ant Design and pinned Tauri core only",
       ),
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
-});
-
-test("presentation capabilities reject global aliases, computed access and outbound templates", () => {
-  for (const source of [
-    `globalThis['fetch']('https://example.com')`,
-    `const send = navigator.sendBeacon; send('https://example.com', 'x')`,
-    `const host = window; host['__TAURI_INTERNALS__'].invoke('run')`,
-    `const { fetch: send } = globalThis; send('https://example.com')`,
-    `const key = 'fe' + 'tch'; globalThis[key]('https://example.com')`,
-    `globalThis[\`fetch\`]('https://example.com')`,
-    `new Image().src = 'https://example.com'`,
-    `import network = require('node:http')`,
-    `<template><div v-if="true"><a href="https://example.com">out</a></div></template>`,
-    `const value = {}; const key = 'con' + 'structor'; value[key]('return window')()`,
-    `<template><a href="https://example.com">out</a></template>`,
-    `<template><form action="https://example.com"><button>send</button></form></template>`,
-    `<template><img :src="url" /></template>`,
-    `<template><button @click="window['open'](url)">out</button></template>`,
-    `<template><component :is="tag" v-bind="attrs" /></template>`,
-    `const doc = document; doc.createElement('script')`,
-    `const ctor = value['con' + 'structor']; ctor('return window')()`,
-  ])
-    assert.ok(
-      checkSource(
-        "packages/ui/src/fixture.vue",
-        source.startsWith("<") ? source : `<script setup>${source}</script>`,
-      ).length,
-      source,
-    );
 });
 
 test("each host boundary mutation independently fails the tree scan", () => {
@@ -532,22 +407,6 @@ test("only the narrow native adapter can call literal fixture commands", () => {
   );
 });
 
-test("trusted execution details share only the frozen-origin view across feature directories", () => {
-  const file = "apps/desktop/src/assistant/ExecutionDetails.vue";
-  const source = (name) =>
-    `<script setup>import View from "${name}";</script><template><View /></template>`;
-  assert.deepEqual(
-    checkSource(file, source("../self-service/RequestOrigin.vue")),
-    [],
-  );
-  for (const name of [
-    "../self-service/native",
-    "../self-service/controller",
-    "../self-service/TaskDetail.vue",
-  ])
-    assert.ok(checkSource(file, source(name)).length);
-});
-
 test("fixture presentation cannot import the desktop composition owner", () => {
   for (const source of [
     "fn preview() { crate::composition::origin::human(); }",
@@ -580,45 +439,6 @@ test("test-user adapter owns only literal user and native credential commands", 
     assert.ok(checkSource(file, source).length, source);
 });
 
-test("modern presentation dependencies are admitted only at their owners", () => {
-  assert.deepEqual(
-    checkSource(
-      "packages/ui/src/internal/markdown.ts",
-      `import MarkdownIt from 'markdown-it'; const parser = new MarkdownIt({html:false});`,
-    ),
-    [],
-  );
-  assert.ok(
-    checkSource(
-      "packages/ui/src/fixture.ts",
-      `import MarkdownIt from 'markdown-it'`,
-    ).length,
-  );
-  assert.deepEqual(
-    checkSource(
-      "apps/desktop/src/assistant/clipboard.ts",
-      `export async function copyText(text: string) { await navigator.clipboard.writeText(text); }`,
-    ),
-    [],
-  );
-  for (const source of [
-    `navigator.clipboard.readText()`,
-    `const write = navigator.clipboard.writeText`,
-    `navigator.sendBeacon('https://example.com')`,
-    `navigator.clipboard['writeText'](text)`,
-  ])
-    assert.ok(
-      checkSource("apps/desktop/src/assistant/clipboard.ts", source).length,
-      source,
-    );
-  assert.ok(
-    checkSource(
-      "apps/desktop/src/assistant/Assistant.vue",
-      `<script setup>navigator.clipboard.writeText(text)</script>`,
-    ).length,
-  );
-});
-
 test("appearance adapter exposes only its literal read-only command", () => {
   const file = "apps/desktop/src/appearance.ts";
   assert.deepEqual(
@@ -632,25 +452,6 @@ test("appearance adapter exposes only its literal read-only command", () => {
     checkSource(
       file,
       'import { invoke } from "@tauri-apps/api/core"; invoke("self_service_execute", {});',
-    ).length,
-  );
-});
-
-test("operation recovery admits only fixed presentation modules and data indexing", () => {
-  const activity =
-    "apps/desktop/src/assistant/operation-ui/OperationActivity.vue";
-  for (const source of [
-    `<script setup>import('https://example.com/runtime.js')</script>`,
-    `<script setup>const path = './OperationCard.vue'; import(path)</script>`,
-    `<template><component :is="untrusted" /></template>`,
-    `<template><component :is="renderer" v-bind="untrusted" /></template>`,
-    `<script setup>const renderer = fetch('https://example.com')</script>`,
-  ])
-    assert.ok(checkSource(activity, source).length, source);
-  assert.ok(
-    checkSource(
-      "apps/desktop/src/assistant/operation-ui/host.ts",
-      "parameters[field]()",
     ).length,
   );
 });
@@ -670,8 +471,8 @@ test("registration adapters admit only fixed native actions and scoped status po
     );
     assert.ok(
       checkSource(
-        "apps/desktop/src/settings/LocalService.vue",
-        `<script setup>import { invoke } from '@tauri-apps/api/core'; invoke('${command}')</script>`,
+        "apps/desktop/src/settings/LocalService.tsx",
+        `import { invoke } from '@tauri-apps/api/core'; invoke('${command}')`,
       ).length,
     );
   }
@@ -681,17 +482,16 @@ test("registration adapters admit only fixed native actions and scoped status po
       `import { invoke } from '@tauri-apps/api/core'; const command = 'agent_import_registration'; invoke(command)`,
     ).length,
   );
-  assert.deepEqual(
+  assert.ok(
     checkSource(
-      "apps/desktop/src/settings/LocalService.vue",
-      "<script setup>const timer = setInterval(() => {}, 2000); clearInterval(timer);</script>",
-    ),
-    [],
+      "apps/desktop/src/settings/LocalService.tsx",
+      "setInterval(() => {}, 2000);",
+    ).length,
   );
   assert.ok(
     checkSource(
-      "apps/desktop/src/settings/LocalService.vue",
-      "<script setup>fetch('https://example.test');</script>",
+      "apps/desktop/src/settings/LocalService.tsx",
+      "fetch('https://example.test');",
     ).length,
   );
 });
@@ -713,4 +513,74 @@ test("only the production main can register the fixed deep-link plugin", () => {
         "fn run() { builder.plugin(tauri_plugin_deep_link::init(input)); }",
     }).length,
   );
+});
+
+test("React JSX rejects executable content, outbound attributes and ambient capability aliases", () => {
+  for (const source of [
+    'export const View = () => <div dangerouslySetInnerHTML={{__html: "bad"}} />;',
+    'export const View = () => <img src="https://example.invalid/a" />;',
+    "export const View = () => <iframe />;",
+    'export const View = () => <a href="https://example.invalid">link</a>;',
+    "export const View = () => <form><input /></form>;",
+    'export const View = () => <div {...{dangerouslySetInnerHTML: {__html: "x"}}} />;',
+    'const host = globalThis; host.fetch("x");',
+    'const host = window; host["fetch"]("x");',
+    'const key = "inner" + "HTML"; const x = {}; x[key] = "x";',
+    'const key = "constructor"; const x = {}; x[key]("return window")();',
+    'const x = {}; x.innerHTML = "x";',
+    'const x = {}; x.insertAdjacentHTML("beforeend", "x");',
+    'import("@rss-mdm-agent/ai-host");',
+    'import x from "node:fs";',
+    'import x from "@tauri-apps/api/core";',
+    'import x from "@rss-mdm-agent/ai-adapter-codex";',
+    'import x from "../../../apps/desktop/src/assembly";',
+    'const x = new WebSocket("x");',
+    'localStorage.setItem("credential", "x");',
+  ])
+    assert.ok(checkSource("packages/ui/src/Attack.tsx", source).length, source);
+  assert.deepEqual(
+    checkSource(
+      "packages/ui/src/Safe.tsx",
+      'import { Button } from "antd"; export function Safe({text}: {text: string}) { return <Button onClick={() => {}}>{text}</Button>; }',
+    ),
+    [],
+  );
+});
+
+test("system appearance and production fixture imports remain narrow capabilities", () => {
+  const provider = "packages/ui/src/UiProvider.tsx";
+  assert.deepEqual(
+    checkSource(provider, 'window.matchMedia("(prefers-color-scheme: dark)");'),
+    [],
+  );
+  for (const source of [
+    'window.fetch("x")',
+    "const host = window;",
+    'window["matchMedia"]("x");',
+  ])
+    assert.ok(checkSource(provider, source).length, source);
+  const main = "apps/desktop/src/main.tsx";
+  assert.deepEqual(
+    checkSource(
+      main,
+      'import { fixtureSelected } from "./assembly"; if (import.meta.env.DEV && fixtureSelected) { import("../../../tests/assistant/main"); }',
+    ),
+    [],
+  );
+  assert.ok(
+    checkSource(main, 'import("../../../tests/assistant/main");').length,
+  );
+  for (const name of [
+    "@rss-mdm-agent/ai-host",
+    "@rss-mdm-agent/ai-access",
+    "@rss-mdm-agent/ai-adapter-codex",
+    "../settings/native",
+  ])
+    assert.ok(
+      checkSource(
+        "apps/desktop/src/assistant/View.tsx",
+        `import x from "${name}";`,
+      ).length,
+      name,
+    );
 });

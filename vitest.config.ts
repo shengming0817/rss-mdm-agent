@@ -1,13 +1,13 @@
 import { defineConfig } from "vitest/config";
-import vue from "@vitejs/plugin-vue";
+import react from "@vitejs/plugin-react";
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [react()],
   test: {
     environment: "happy-dom",
     setupFiles: ["packages/ui/tests/setup.ts"],
     include: [
-      "packages/ui/tests/**/*.test.ts",
-      "apps/desktop/src/**/*.test.ts",
+      "packages/ui/tests/**/*.test.{ts,tsx}",
+      "apps/desktop/src/**/*.test.{ts,tsx}",
     ],
     restoreMocks: true,
   },

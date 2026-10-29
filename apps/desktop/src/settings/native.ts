@@ -19,11 +19,12 @@ export function nativeHost() {
       return status(await invoke("ai_host_status"));
     },
     async restart(generation: number) {
-      const identity = currentUser.value?.generation;
+      const identity = currentUser.current?.generation;
       try {
         return status(await invoke("ai_restart_host", { generation }));
       } finally {
-        if (currentUser.value?.generation === identity) await refreshAccount();
+        if (currentUser.current?.generation === identity)
+          await refreshAccount();
       }
     },
   };

@@ -1,7 +1,7 @@
 import { taskFromFacts } from "../../../../../tests/self-service/support";
 import { directoryItem } from "../../../../../tests/self-service/support";
 import { describe, it, expect, vi } from "vitest";
-import { shallowRef } from "vue";
+
 import {
   createOperationController,
   OperationDrafts,
@@ -71,15 +71,16 @@ function fixture() {
     loseReply = false,
     rejection = "";
   const sent: unknown[] = [];
+  const view = {
+    namespace: {
+      sessionId: "session",
+      principalId: "principal",
+      authorityId: "authority",
+      tenantId: "tenant",
+    },
+  };
   const controller = {
-    view: shallowRef({
-      namespace: {
-        sessionId: "session",
-        principalId: "principal",
-        authorityId: "authority",
-        tenantId: "tenant",
-      },
-    }),
+    view: () => view,
     executionDetails: async () =>
       taskFromFacts({ kind: "preparation", value: structuredClone(record) }),
     preparationDetails: async () => structuredClone(record),
@@ -248,7 +249,7 @@ describe("production operation adapter", () => {
     );
     expect(card.can("submit")).toBe(false);
     card.dispose();
-    f.controller.view.value!.namespace.principalId = "other";
+    f.controller.view()!.namespace.principalId = "other";
     await expect(bridge.read()).rejects.toThrow("上下文");
     expect(f.requests()).toBe(0);
     stop.abort();

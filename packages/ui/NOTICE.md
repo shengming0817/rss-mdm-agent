@@ -8,23 +8,10 @@ contain a LICENSE; this notice records the new authorization, not a historical
 license claim. Existing source attributions are preserved where present.
 
 The file-by-file transformation record is `docs/reference/ui-extraction.md` in
-rss-mdm-agent. Vue is an external MIT-licensed peer dependency, not vendored into
-this package. Its own copyright and license remain applicable.
+rss-mdm-agent. The current React presentation is rebuilt against the approved
+`docs/product/ui-ux/react-antd-desktop.html` v4 baseline. The historical extraction
+record remains provenance, not a description of the current dependency graph.
 
-The UI consumes Reka UI 2.10.5 (MIT), markdown-it 15.0.2 (MIT), and
-Lucide Vue 1.49.0 (ISC) as external dependencies. Their licenses and attribution
-remain applicable; their source is not copied into RSS-owned implementations.
-
-## Local Reka UI corrections
-
-The pinned Reka UI 2.10.5 dependency is patched through pnpm's locked patch
-mechanism (`patches/reka-ui@2.10.5.patch`). The patch clears the ToastRootImpl
-close timer on unmount and reconciles completed DateField/TimeField segment
-edits with the caller's controlled value after an update event. Source, ESM
-and CommonJS outputs receive the same corrections. TreeRoot also honors supplied
-controlled selections (including explicit empty selection), and PopoverContent
-honors a caller-supplied accessible name before its default trigger name.
-The accessibility hiding hook refreshes its target subtree after live DOM
-relocation, pauses under nested modals, and disconnects its observer on disposal. Existing focus, pause and
-incomplete-segment behavior stays owned by Reka; no parallel implementation
-is shipped. Component regression tests cover rejection/reset and early disposal.
+React, React DOM, Ant Design and markdown-it are external MIT-licensed dependencies;
+Ant Design Icons is an external MIT-licensed dependency. Their copyright and license
+remain applicable. No dependency source is vendored in this package.
