@@ -83,7 +83,7 @@ export function SettingsEditor({
       result.finished &&
       result.effect === "applied"
     ) {
-      setEdit(null);
+      setEdit((current) => (current === edit ? null : current));
     }
   }, [edit?.request, result?.request, result?.finished, result?.effect]);
   if (!draft) return null;
@@ -291,7 +291,7 @@ export function SettingsEditor({
                     max={2147483647}
                     precision={0}
                     disabled={!writable("origin")}
-                    value={origin[axis]}
+                    value={axis === "x" ? origin.x : origin.y}
                     onChange={(coordinate) => {
                       if (!writable("origin")) return;
                       const next = { ...origin, [axis]: coordinate };

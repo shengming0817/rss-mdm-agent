@@ -354,3 +354,36 @@ it("requires both explicit coordinates and blocks a draft whose field permission
   fireEvent.click(save);
   expect(f.save).not.toHaveBeenCalled();
 });
+
+it("retains a newer bypass draft when the previous save acknowledgement arrives late", async () => {
+  const f = editorFixture(
+    "network",
+    settingsTarget([field("bypass", ["localhost"])]),
+  );
+  let finish!: (request: string) => void;
+  const delayed = vi.fn(
+    () =>
+      new Promise<string>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  f.owner.save = delayed;
+  const input = screen.getByRole("textbox", { name: "目标 绕过代理的地址" });
+  fireEvent.change(input, { target: { value: "first" } });
+  fireEvent.click(screen.getByRole("button", { name: "保存更改" }));
+  fireEvent.change(input, { target: { value: "" } });
+  await act(async () => {
+    f.owner.state.observations.set("network", {
+      request: "old-request",
+      effect: "applied",
+      finished: true,
+    } as SettingsResponse);
+    finish("old-request");
+  });
+  expect((input as HTMLTextAreaElement).value).toBe("");
+  expect(
+    (screen.getByRole("button", { name: "保存更改" }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(false);
+  expect(screen.getByText("有尚未保存的修改")).toBeTruthy();
+});

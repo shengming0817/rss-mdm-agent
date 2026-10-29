@@ -306,6 +306,7 @@ export async function checkPagesBrowser(page, fixture) {
     bypass: ["localhost", "*.corp.fixture.invalid"],
   });
   assert.equal(bypassChange.expected, bypassRevision);
+  await page.getByText("修改仅在保存后提交", { exact: true }).waitFor();
   await bypassInput.fill("");
   await page.getByRole("button", { name: "保存更改", exact: true }).click();
   await page.waitForFunction(
