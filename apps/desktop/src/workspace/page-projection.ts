@@ -110,7 +110,9 @@ export function pageResources(
       });
   }
   if (page === "home" || page === "tasks")
-    for (const item of workspace.tasks.recentItems(tasks).slice(0, 3))
+    for (const item of page === "home"
+      ? workspace.tasks.recentItems(tasks).slice(0, 3)
+      : tasks.items.slice(0, 16))
       rows.push({
         id: taskKey(item.reference),
         title: taskTitle(item),
@@ -118,13 +120,18 @@ export function pageResources(
         status: item.stage,
         source: "当前主体任务记录",
         revision: JSON.stringify(item.revision),
-        collectedAt: tasks.recentAsOf,
-        validUntil: tasks.recentAsOf + 30000,
+        collectedAt: page === "home" ? tasks.recentAsOf : tasks.asOf,
+        validUntil: (page === "home" ? tasks.recentAsOf : tasks.asOf) + 30000,
         verified:
-          tasks.recentLoaded &&
-          !tasks.recentError &&
-          tasks.recentAsOf > 0 &&
-          tasks.recentAsOf <= now,
+          page === "home"
+            ? tasks.recentLoaded &&
+              !tasks.recentError &&
+              tasks.recentAsOf > 0 &&
+              tasks.recentAsOf <= now
+            : tasks.loaded &&
+              !tasks.error &&
+              tasks.asOf > 0 &&
+              tasks.asOf <= now,
       });
   return rows;
 }

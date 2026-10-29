@@ -31,10 +31,25 @@ export const requestRef = (request: string): TaskRef => ({
   kind: "request",
   request,
 });
+const managementTitles: Record<string, string> = {
+  policy: "策略",
+  configuration: "策略配置",
+  assignment: "分配",
+  batch: "批次",
+  execution: "执行记录",
+};
+const taskActionTitles: Record<string, string> = {
+  install: "安装",
+  update: "更新",
+  uninstall: "卸载",
+  launch: "打开",
+  detect: "读取软件状态",
+  repair: "修复",
+};
 export const taskTitle = (task: Snapshot<TaskDetail>): string => {
   const facts = task.facts;
   if (facts.kind === "execution")
-    return `${facts.value.action.operation.action} · ${facts.value.action.operation.resource.id}`;
+    return `${taskActionTitles[facts.value.action.operation.action] ?? facts.value.action.operation.action} · ${facts.value.action.operation.resource.id}`;
   if (facts.kind === "preparation") {
     const action = facts.value.action;
     return action.kind === "offered"
@@ -45,9 +60,22 @@ export const taskTitle = (task: Snapshot<TaskDetail>): string => {
         : "准备查询";
   }
   if (facts.kind === "sampling") return facts.value.definition.title;
-  return `${facts.value.kind} · ${facts.value.phase}`;
+  return `${managementTitles[facts.value.kind] ?? facts.value.kind} · ${taskPhase[facts.value.phase] ?? facts.value.phase}`;
 };
 export const taskPhase: Record<string, string> = {
+  changed: "配置变更已记录",
+  assigned: "分配已记录",
+  withdrawn: "撤回已记录",
+  offered: "已提供原执行任务",
+  dispatched: "已派发，效果待核实",
+  received: "已接收，执行待核实",
+  started: "来源记录已启动",
+  reporting: "正在报告结果",
+  result: "已记录来源结果",
+  reconciled: "来源已核对记录",
+  decided: "准入决定已记录",
+  completed: "来源已记录完成",
+  unknown: "原任务结果未知",
   waiting: "等待执行",
   confirmationRequired: "等待本人确认",
   awaitingConfirmation: "等待本人确认",
@@ -234,10 +262,7 @@ export function createTaskCenter(
         if (!state.uncertain) state.error = "";
       } catch (error) {
         if (alive && call === epoch)
-          state.error =
-            error instanceof Error
-              ? error.message
-              : "无法读取任务；已有记录待核实";
+          state.error = "无法读取任务；已有记录待核实，请重读当前来源。";
       } finally {
         if (alive) {
           state.loading = false;
@@ -515,11 +540,18 @@ export function createTaskCenter(
       const task = await detail(requestRef(request));
       await control(task, "cancel");
     } catch {
-      state.error = "无法确认原任务，未提交取消";
+      if (alive) state.error = "无法确认原任务，未提交取消";
     }
   }
   async function confirmPreparation(item: BackendTask) {
-    if (!port || state.busy || state.uncertain) return;
+    if (
+      !alive ||
+      !port ||
+      state.busy ||
+      state.uncertain ||
+      item.expiresAt * 1000 <= Date.now()
+    )
+      return;
     state.busy = true;
     const call = epoch;
     try {

@@ -26,13 +26,16 @@ it("resolves without submitting, retains an immutable human request on receipt l
   const parameters = { interface: "en0" };
   await owner.submit(parameters);
   parameters.interface = "changed";
-  expect(owner.state.choice?.parameters).toEqual({ interface: "en0" });
+  expect(owner.state.submission?.choice.parameters).toEqual({
+    interface: "en0",
+  });
   await owner.submit({ interface: "new" });
   expect(invoke).toHaveBeenCalledTimes(1);
   expect(owner.clear()).toBe(false);
   await owner.recover();
   await owner.submit({ interface: "new" });
   expect(invoke).toHaveBeenNthCalledWith(2, {
+    expected: { version: item.policyVersion, revision: item.policyRevision },
     choice: {
       request: "original",
       policyId: item.policyId,
@@ -97,9 +100,10 @@ it.each(["failed", "cancelled"] as const)(
     expect(resolve).toHaveBeenCalledTimes(2);
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(owner.state.item?.policyVersion).toBe("new-version");
-    expect(owner.state.choice).toBeNull();
+    expect(owner.state.submission).toBeNull();
     await owner.submit({ interface: "en1" });
     expect(invoke).toHaveBeenLastCalledWith({
+      expected: { version: "new-version", revision: 2 },
       choice: {
         request: "request-2",
         policyId: item.policyId,
@@ -140,7 +144,9 @@ it("does not restart unknown or absent requests, and preserves an ended request 
   await owner.submit({ value: "changed" });
   resolve.mockRejectedValueOnce(Error("offline"));
   await owner.restart();
-  expect(owner.state.choice?.parameters).toEqual({ value: "original" });
+  expect(owner.state.submission?.choice.parameters).toEqual({
+    value: "original",
+  });
   expect(owner.state.status?.kind).toBe("preparation");
   expect(owner.state.error).toContain("原请求仍可查询");
   owner.dispose();
@@ -194,3 +200,70 @@ it.each([
     owner.dispose();
   },
 );
+it("retains the service-frozen preparation after status moves to a run, and clears it with its original selection", async () => {
+  const record = policyRecord("original"),
+    item = directoryItem(record.action);
+  const owner = createPolicyPreparation(
+    {
+      ...policyFixturePort,
+      execute: vi.fn(),
+      confirm: vi.fn(),
+      policy_resolve: async () => item,
+      policy_invoke: async () => record,
+      policy_status: async () => ({
+        kind: "run",
+        value: {
+          requestId: "original",
+          runId: "run",
+          attemptId: null,
+          availableAt: 1,
+          deadline: 100,
+          result: null,
+          state: {
+            delivery: { kind: "queued" },
+            execution: "succeeded",
+            cancellation: "none",
+            startedAt: 1,
+            deadline: 100,
+          },
+        },
+      }),
+    },
+    () => "original",
+  );
+  await owner.select(item);
+  await owner.submit({ interface: "en0" });
+  await owner.recover();
+  expect(owner.state.status?.kind).toBe("run");
+  expect(owner.state.preparation?.action).toEqual(record.action);
+  expect(owner.clear()).toBe(true);
+  expect(owner.state.preparation).toBeNull();
+  owner.dispose();
+});
+
+it("requires a fresh selection after a definite pre-admission version conflict", async () => {
+  const item = directoryItem(policyRecord().action),
+    invoke = vi.fn().mockRejectedValue({ code: "policy_selection_changed" });
+  const owner = createPolicyPreparation(
+    {
+      ...policyFixturePort,
+      execute: vi.fn(),
+      confirm: vi.fn(),
+      policy_resolve: async () => item,
+      policy_invoke: invoke,
+    },
+    () => "original",
+  );
+  await owner.select(item);
+  await owner.submit({});
+  expect(invoke).toHaveBeenCalledWith({
+    expected: { version: item.policyVersion, revision: item.policyRevision },
+    choice: { request: "original", policyId: item.policyId, parameters: {} },
+  });
+  expect(owner.state.submission).toBeNull();
+  expect(owner.state.item).toBeNull();
+  expect(owner.state.error).toContain("本次未提交执行");
+  await owner.submit({});
+  expect(invoke).toHaveBeenCalledTimes(1);
+  owner.dispose();
+});

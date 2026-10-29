@@ -9,6 +9,10 @@ import type {
   SelfServiceDirectoryItem,
   SettingsResponse,
   TaskDetail,
+  TaskPhase,
+  EffectAssessment,
+  TaskControlReceipt,
+  SoftwareState,
 } from "../../apps/desktop/src/self-service/types";
 import { categories } from "../../apps/desktop/src/software/presentation";
 import {
@@ -25,8 +29,10 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
   environment.appVersion = async () => "0.1.6-fixture";
   const readOnly = scene === "readonly",
     offline = scene === "offline",
-    empty = scene === "empty";
-  const events: { operation: string; request?: string }[] = [];
+    empty = scene === "empty",
+    taskScene = scene.startsWith("tasks");
+  const events: { operation: string; request?: string; controlId?: string }[] =
+    [];
   const operations = new Map<string, LocalSoftwareStatus>(),
     records = new Map<string, BackendRequest>(),
     queries = new Map<string, QueryStatus>(),
@@ -109,7 +115,7 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
     if (!item) throw Error("fixture missing");
     return deepClone(item);
   };
-  selfService.policy_invoke = async ({ choice }) => {
+  selfService.policy_invoke = async ({ choice, expected }) => {
     available();
     if (readOnly) throw Error("fixture denied");
     events.push({ operation: "policy_invoke", request: choice.request });
@@ -117,8 +123,14 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
       return deepClone(records.get(choice.request)!);
     const item = published.find((value) => value.policyId === choice.policyId);
     if (!item) throw Error("fixture missing");
+    if (
+      item.policyVersion !== expected.version ||
+      item.policyRevision !== expected.revision
+    )
+      throw { code: "policy_selection_changed" };
     const record = policyRecord(choice.request);
     if (record.action.kind !== "policy") throw Error("fixture type");
+    record.action.policyRevision = item.policyRevision;
     record.action.choice = deepClone(choice);
     record.action.task = deepClone(item.task);
     record.action.presentation = deepClone(item.selfService.presentation);
@@ -127,6 +139,30 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
       revision: item.policyVersion,
     };
     record.state = "observed";
+    if (taskScene && item.task.kind === "software") {
+      record.action.offer = {
+        task: `task-${choice.request}`,
+        attempt: `attempt-${choice.request}`,
+        request: choice.request,
+        revision: "a".repeat(64),
+        expiresAt: Math.floor(Date.now() / 1000) + 60,
+        userInitiated: true,
+        presentation: {
+          title: String(item.selfService.presentation.displayName),
+          summary: {
+            kind: "software",
+            intent: "install",
+            steps: [
+              {
+                package: item.task.resource.id,
+                version: item.policyId === "fixture-software-1" ? "2.0" : "1.0",
+                identity: item.task.runAs === "system" ? "system" : "user",
+              },
+            ],
+          },
+        },
+      };
+    }
     records.set(choice.request, record);
     const detail = taskDetail(choice.request);
     detail.facts = { kind: "preparation", value: record };
@@ -134,6 +170,78 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
     detail.policy = { id: choice.policyId, revision: item.policyVersion };
     detail.policyRevision = item.policyRevision;
     details.set(choice.request, detail);
+    if (taskScene && item.task.kind === "software" && record.action.offer) {
+      const detail = taskDetail(choice.request),
+        offer = record.action.offer;
+      detail.source = record.trigger.kind === "ai" ? "ai" : "human";
+      detail.policy = deepClone(record.action.definition);
+      detail.policyRevision = record.action.policyRevision;
+      detail.taskKind = "software";
+      if (
+        detail.facts.kind === "execution" &&
+        offer.presentation.summary.kind === "software"
+      ) {
+        detail.facts.value.action.initiator = {
+          kind: "backend",
+          task: offer.task,
+          attempt: offer.attempt,
+          trigger: deepClone(record.trigger),
+        };
+        detail.facts.value.action.actor = "fixture-system";
+        detail.facts.value.action.policy = deepClone(record.action.definition);
+        detail.facts.value.action.target = {
+          device: "fixture-device",
+          platform: "macos",
+          scope: { kind: "device" },
+        };
+        detail.facts.value.action.runAs = { kind: "system", platform: "macos" };
+        detail.facts.value.action.validity = {
+          notBeforeUnixMs: Date.now(),
+          expiresAtUnixMs: Date.now() + 60_000,
+        };
+        detail.facts.value.action.execution = {
+          kind: "softwareProgram",
+          intent: offer.presentation.summary.intent,
+          steps: offer.presentation.summary.steps.map((step) => ({
+            package: step.package,
+            version: step.version,
+            adapter: "pkg",
+            deployment: null,
+            runAs: { kind: "system", platform: "macos" },
+          })),
+        };
+        detail.facts.value.action.operation.resource = deepClone({
+          id: item.task.resource.id,
+          revision: item.task.resource.version,
+        });
+        // Explicit detector fixture predates this invocation and is independent of its target.
+        detail.softwareState =
+          item.policyId === "fixture-software-1"
+            ? { kind: "present", version: "1.0" }
+            : { kind: "absent" };
+        detail.facts.value.action.operation.action =
+          offer.presentation.summary.intent;
+        detail.facts.value.status.phase = "accepted";
+        detail.facts.value.status.mode = "test";
+      }
+      detail.stage = "accepted";
+      detail.recordedAt = Date.now();
+      detail.nodes = [
+        {
+          id: `${choice.request}:accepted`,
+          parent: null,
+          stage: "accepted",
+          attempt: null,
+          bytes: null,
+          total: null,
+          reason: null,
+          exitCode: null,
+          detected: null,
+          quiescent: null,
+        },
+      ];
+      details.set(choice.request, detail);
+    }
     return deepClone(record);
   };
   selfService.policy_status = async ({ requestId }) => {
@@ -222,6 +330,22 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
         },
       };
       operations.set(choice.request, status);
+      const detail = taskDetail(choice.request);
+      detail.stage = "waiting";
+      detail.taskKind = "software";
+      detail.recordedAt = Date.now();
+      if (detail.facts.kind === "execution") {
+        detail.facts.value.status = deepClone(status.execution);
+        detail.facts.value.action.operation.action = choice.action;
+        detail.facts.value.action.operation.resource = {
+          id: choice.software.installation,
+          revision: "fixture-observation",
+        };
+        detail.facts.value.action.initiator = deepClone(
+          status.prepared.initiator,
+        );
+      }
+      details.set(choice.request, detail);
       return deepClone(status.prepared);
     };
     local.software.status = async ({ request }) => {
@@ -236,11 +360,11 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
       if (!status || status.prepared.digest !== digest)
         throw Error("fixture mismatch");
       events.push({ operation: "software_submit", request });
-      status.execution.phase = "executionEnded";
+      status.execution.phase = taskScene ? "accepted" : "executionEnded";
       status.execution.attempts = 1;
-      const detail = taskDetail(request);
-      detail.stage = "executionEnded";
-      detail.active = false;
+      const detail = details.get(request) ?? taskDetail(request);
+      detail.stage = status.execution.phase;
+      detail.active = true;
       detail.taskKind = "software";
       if (detail.facts.kind === "execution")
         detail.facts.value.status = deepClone(status.execution);
@@ -274,32 +398,300 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
     };
   }
   let taskScope: string | undefined;
-  const baseTask = local.tasks;
+  const baseTask = local.tasks,
+    controls = new Map<string, TaskControlReceipt>();
+  function advanceTask(
+    request: string,
+    phase: TaskPhase,
+    assessment: EffectAssessment | null = null,
+    observation: SoftwareState | null = null,
+  ) {
+    const detail = details.get(request);
+    if (!detail || detail.facts.kind !== "execution")
+      throw Error("fixture execution missing");
+    const status = detail.facts.value.status;
+    status.phase = phase;
+    status.assessment = assessment;
+    detail.stage = phase;
+    detail.active = [
+      "waiting",
+      "confirmationRequired",
+      "accepted",
+      "running",
+      "executionEnded",
+      "outcomeUnknown",
+    ].includes(phase);
+    detail.allowedActions = detail.active ? ["cancel"] : [];
+    detail.facts.value.revision++;
+    detail.revision = { owner: detail.facts.value.revision, transfers: [] };
+    if (phase === "executionEnded" || phase === "verified")
+      status.process = {
+        finished: true,
+        exitCode: 0,
+        end: "exited",
+        failureKind: "none",
+        quiescent: true,
+        totalOutputBytes: 0,
+        quality: "complete",
+      };
+    if (phase === "cancelled")
+      status.process = {
+        finished: true,
+        exitCode: null,
+        end: "cancelled",
+        failureKind: "none",
+        quiescent: true,
+        totalOutputBytes: 0,
+        quality: "complete",
+      };
+    if (observation) detail.softwareState = deepClone(observation);
+    detail.nodes.push({
+      id: `${request}:${phase}:${detail.nodes.length}`,
+      parent: null,
+      stage: phase,
+      bytes: null,
+      total: null,
+      attempt: status.attemptId,
+      reason: null,
+      exitCode: status.process?.exitCode ?? null,
+      detected: deepClone(detail.softwareState),
+      quiescent: status.process?.quiescent ?? null,
+    });
+    const software = operations.get(request);
+    if (software) {
+      software.execution = deepClone(status);
+      software.detected = deepClone(detail.softwareState);
+    }
+    return deepClone(detail);
+  }
+  if (taskScene) {
+    for (const [request, source, phase, assessment] of [
+      ["fixture-install", "human", "running", null],
+      ["fixture-update", "human", "executionEnded", null],
+      ["fixture-ai-unknown", "ai", "outcomeUnknown", null],
+      ["fixture-verified", "human", "verified", "satisfied"],
+      ["fixture-not-satisfied", "human", "verified", "notSatisfied"],
+    ] as const) {
+      const detail = taskDetail(request);
+      detail.source = source;
+      detail.taskKind = "software";
+      detail.recordedAt = Date.now();
+      if (detail.facts.kind === "execution") {
+        detail.facts.value.action.initiator = {
+          kind: "human",
+          osSession: {
+            device: "fixture-device",
+            account: { platform: "macos", subject: "501" },
+            session: "fixture-session",
+          },
+        };
+        detail.facts.value.action.actor = "fixture-system";
+        detail.facts.value.action.target = {
+          device: "fixture-device",
+          platform: "macos",
+          scope: { kind: "device" },
+        };
+        detail.facts.value.action.runAs = { kind: "system", platform: "macos" };
+        detail.facts.value.action.validity = {
+          notBeforeUnixMs: Date.now(),
+          expiresAtUnixMs: Date.now() + 60_000,
+        };
+        detail.facts.value.status.mode = "test";
+        detail.facts.value.action.operation.action =
+          request === "fixture-update" ? "update" : "install";
+        detail.facts.value.action.operation.resource.id =
+          request === "fixture-update"
+            ? "Work Notes"
+            : request === "fixture-ai-unknown"
+              ? "AI Work Tool"
+              : request === "fixture-not-satisfied"
+                ? "Unmet Application"
+                : "Workspace";
+        if (source === "ai")
+          detail.facts.value.action.initiator = {
+            kind: "ai",
+            provider: "codex",
+            config: { id: "cfg", revision: "1" },
+            conversation: "fixture-conversation",
+            toolCall: "fixture-tool-call",
+            osSession: {
+              device: "fixture-device",
+              account: { platform: "macos", subject: "501" },
+              session: "fixture-session",
+            },
+          };
+      }
+      details.set(request, detail);
+      advanceTask(
+        request,
+        phase,
+        assessment,
+        phase === "verified"
+          ? assessment === "satisfied"
+            ? { kind: "present", version: "1.0" }
+            : { kind: "absent" }
+          : null,
+      );
+    }
+    const management = taskDetail("management-original");
+    management.reference = { kind: "activity", id: "fixture-policy-activity" };
+    management.source = "policy";
+    management.taskKind = "management";
+    management.stage = "changed";
+    management.active = false;
+    management.allowedActions = [];
+    management.facts = {
+      kind: "management",
+      value: {
+        id: "fixture-policy-activity",
+        source: "fixture-policy",
+        kind: "configuration",
+        phase: "changed",
+        recordedAt: Math.floor(Date.now() / 1000),
+        observedAt: Math.floor(Date.now() / 1000),
+        origin: "policy",
+        target: null,
+        links: {
+          policy: "policy-original",
+          version: "v1",
+          batch: null,
+          member: null,
+          request: null,
+          operation: null,
+          retirement: null,
+          task: null,
+          attempt: null,
+          steps: [],
+          operations: [],
+        },
+        delivery: null,
+        execution: null,
+        effect: null,
+        reporting: null,
+        decision: null,
+        auditOutcome: "recorded",
+      },
+    };
+    details.set("management-original", management);
+  }
+  const visibleTask = (task: TaskDetail) => {
+    const value = deepClone(task);
+    if (readOnly) {
+      value.allowedActions = [];
+      value.humanConfirmation = false;
+      value.controlReason = "当前用户只能读取原任务";
+    }
+    return value;
+  };
   if (baseTask)
     local.tasks = {
       ...baseTask,
       detail: async (reference) => {
-        const value =
-          reference.kind === "request"
-            ? details.get(reference.request)
-            : undefined;
-        if (!value) return baseTask.detail(reference);
+        available();
+        if (scene === "tasks-denied") throw { code: "task_denied" };
+        const value = [...details.values()].find(
+          (item) =>
+            JSON.stringify(item.reference) === JSON.stringify(reference),
+        );
+        if (!value) return visibleTask(await baseTask.detail(reference));
         if (taskScope) value.scope = taskScope;
-        return deepClone(value);
+        events.push({
+          operation: "task_detail",
+          request: reference.kind === "request" ? reference.request : undefined,
+        });
+        return visibleTask(value);
       },
       list: async (query) => {
+        available();
         const page = await baseTask.list(query);
         taskScope = page.scope;
         for (const detail of details.values()) detail.scope = taskScope;
+        const items = (
+          empty
+            ? []
+            : [...details.values()]
+                .map((value) => deepClone(value))
+                .concat(taskScene ? [] : page.items)
+                .filter(
+                  (value) =>
+                    (!query.policy || value.policy?.id === query.policy) &&
+                    (!query.source || value.source === query.source) &&
+                    (query.view === "management"
+                      ? value.facts.kind === "management"
+                      : query.view === "active"
+                        ? value.active && value.facts.kind !== "management"
+                        : value.facts.kind !== "management"),
+                )
+        ).map(visibleTask);
         return {
           ...page,
-          items: [...details.values()]
-            .map((value) => deepClone(value))
-            .concat(page.items)
-            .filter(
-              (value) => !query.policy || value.policy?.id === query.policy,
-            ),
+          items,
+          asOf: Date.now(),
+          remoteAvailable: taskScene,
+          coverage: taskScene
+            ? [
+                { source: "human", complete: true, reasons: [] },
+                { source: "ai", complete: true, reasons: [] },
+                {
+                  source: "policy",
+                  complete: scene !== "tasks-partial",
+                  reasons:
+                    scene === "tasks-partial" ? ["当前管理来源仅部分覆盖"] : [],
+                },
+              ]
+            : page.coverage,
+          complete: scene !== "tasks-partial",
         };
+      },
+      control: async (input) => {
+        available();
+        if (readOnly) throw { code: "task_denied" };
+        const existing = controls.get(input.id);
+        if (existing) return deepClone(existing);
+        const task = [...details.values()].find(
+          (item) =>
+            JSON.stringify(item.reference) === JSON.stringify(input.reference),
+        );
+        if (!task && !taskScene) return baseTask.control(input);
+        if (
+          !task ||
+          task.scope !== input.scope ||
+          JSON.stringify(task.revision) !==
+            JSON.stringify(input.expectedRevision) ||
+          !task.allowedActions.includes(input.action)
+        )
+          throw { code: "task_stale" };
+        events.push({
+          operation: `task_${input.action}`,
+          request:
+            task.reference.kind === "request"
+              ? task.reference.request
+              : undefined,
+          controlId: input.id,
+        });
+        if (input.action === "cancel" && task.facts.kind === "execution") {
+          task.facts.value.status.cancelRequested = true;
+          task.facts.value.status.stopOutcome = "acknowledged";
+          task.facts.value.revision++;
+          task.revision = { owner: task.facts.value.revision, transfers: [] };
+        }
+        const receipt: TaskControlReceipt = {
+          id: input.id,
+          disposition:
+            scene === "tasks-control-unknown" ? "unknown" : "confirmed",
+          created: null,
+        };
+        controls.set(input.id, receipt);
+        return deepClone(receipt);
+      },
+      controlStatus: async (input) => {
+        available();
+        events.push({ operation: "task_control_status", controlId: input.id });
+        const receipt = controls.get(input.id);
+        if (!receipt)
+          return { id: input.id, disposition: "unknown", created: null };
+        receipt.disposition = "confirmed";
+        return deepClone(receipt);
       },
     };
   const snapshots = new Map<string, SettingsResponse>(),
@@ -608,5 +1000,5 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
       events.push({ operation: "diagnostics_discard", request: snapshot });
     },
   };
-  return { events, published, operations, records };
+  return { events, published, operations, records, details, advanceTask };
 }

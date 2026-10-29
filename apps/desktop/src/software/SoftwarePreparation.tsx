@@ -3,6 +3,8 @@ import { Alert, Button, Tag } from "antd";
 import { useSnapshot } from "valtio";
 import { DetailDrawer, StatePanel } from "@rss-mdm-agent/ui";
 import type { Workspace } from "../state/workspace";
+import { canSubmitSoftware } from "./controller";
+import { SoftwareFacts } from "../task-center/PreparationFacts";
 import { taskPhase } from "../task-center/controller";
 export function SoftwarePreparation({
   workspace,
@@ -18,11 +20,9 @@ export function SoftwarePreparation({
     status = request ? state.operations.get(request) : undefined,
     busy = !!request && state.busy.has(request),
     canSubmit =
-      !!status &&
-      ["waiting", "confirmationRequired"].includes(status.execution.phase) &&
-      status.execution.attempts === 0 &&
-      !status.execution.cancelRequested &&
-      status.execution.admission == null;
+      canSubmitSoftware(status, state.now) &&
+      !!request &&
+      !state.uncertain.has(request);
   return (
     <DetailDrawer
       open={!!request}
@@ -35,22 +35,17 @@ export function SoftwarePreparation({
         {prepared ? (
           <>
             <Tag>{localActionLabels[prepared.choice.action]}</Tag>
-            <dl className="rss-account-facts">
-              <dt>原请求</dt>
-              <dd className="rss-reference">{prepared.request}</dd>
-              <dt>原安装引用</dt>
-              <dd className="rss-reference">
-                {JSON.stringify(prepared.choice.software)}
-              </dd>
-              <dt>固定目标版本</dt>
-              <dd>{prepared.targetVersion ?? "不适用"}</dd>
-              <dt>执行身份</dt>
-              <dd>{JSON.stringify(prepared.identity)}</dd>
-              <dt>首次启动期限</dt>
-              <dd>{new Date(prepared.startBeforeUnixMs).toLocaleString()}</dd>
-              <dt>当前状态</dt>
-              <dd>{status ? taskPhase[status.execution.phase] : "尚未确认"}</dd>
-            </dl>
+            <SoftwareFacts prepared={prepared} />
+            {prepared.startBeforeUnixMs <= state.now && (
+              <Alert
+                type="warning"
+                title="原软件准备已过期，不能沿用旧确认；可继续查询原请求。"
+              />
+            )}
+            <p>
+              当前原状态：
+              {status ? taskPhase[status.execution.phase] : "尚未确认"}
+            </p>
             <Button
               type="primary"
               disabled={
@@ -71,6 +66,12 @@ export function SoftwarePreparation({
             kind="unknown"
             title="准备回执尚未取得"
             description="按原请求重新读取，不会创建新操作。"
+          />
+        )}
+        {status?.execution.cancelRequested && (
+          <Alert
+            type="warning"
+            title="已请求取消，终止与外部效果仍待原服务核实。"
           />
         )}
         <Button

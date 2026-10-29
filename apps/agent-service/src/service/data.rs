@@ -530,6 +530,10 @@ impl<S: IdentityProvider> DeviceService<S> {
                     };
                     self.core.data.associate(&submit.request, &a)?;
                     let request = Request::InvokePolicy {
+                        expected: execution_contract::PolicyExpectation {
+                            version: plan::id(item.policy_version.to_string())?,
+                            revision: item.policy_revision,
+                        },
                         context: context.clone(),
                         choice,
                         origin: origin.clone(),

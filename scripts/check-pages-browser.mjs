@@ -364,7 +364,8 @@ export async function checkPagesBrowser(page, fixture) {
   await policy.waitFor({ state: "hidden" });
   await page.evaluate(() => {
     const request =
-      window.rssDesktop.state.workspace.policies.state.choice.request;
+      window.rssDesktop.state.workspace.policies.state.submission.choice
+        .request;
     window.rssPageFixture.records.get(request).state = "failed";
   });
   await page
@@ -384,7 +385,7 @@ export async function checkPagesBrowser(page, fixture) {
   assert.equal(await freshInput.inputValue(), "");
   await freshInput.fill("en1");
   const beforeRestart = await page.evaluate(
-    () => window.rssDesktop.state.workspace.policies.state.choice,
+    () => window.rssDesktop.state.workspace.policies.state.submission,
   );
   assert.equal(beforeRestart, null);
   await policy.getByRole("button", { name: "确认并提交", exact: true }).click();

@@ -176,7 +176,7 @@ it("can explicitly re-prepare the same failed organization project with fresh fi
   });
   fireEvent.click(dialog().getByRole("button", { name: "确认并提交" }));
   await dialog().findByRole("button", { name: "查询原请求" });
-  const original = f.workspace.policies.state.choice!.request;
+  const original = f.workspace.policies.state.submission!.choice.request;
   f.pages.records.get(original)!.state = "failed";
   fireEvent.click(dialog().getByRole("button", { name: "查询原请求" }));
   fireEvent.click(await dialog().findByRole("button", { name: "重新准备" }));
@@ -192,7 +192,7 @@ it("can explicitly re-prepare the same failed organization project with fresh fi
       f.pages.events.filter((value) => value.operation === "policy_invoke"),
     ).toHaveLength(2),
   );
-  const choice = f.workspace.policies.state.choice!;
+  const choice = f.workspace.policies.state.submission!.choice;
   expect(choice.request).not.toBe(original);
   expect(choice.parameters).toMatchObject({ interface: "en1" });
   f.app.unmount();

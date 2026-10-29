@@ -468,3 +468,89 @@ it("replaces only the covered part of a multi-inventory query and preserves inde
   expect(c.installed()).toEqual([]);
   c.dispose();
 });
+it("does not let an older status or history read overwrite a newer software submission", async () => {
+  const { data, port } = ports(),
+    c = createSoftware(data, port);
+  const waiting = original("original");
+  c.accept(waiting);
+  let read!: (value: LocalSoftwareStatus) => void;
+  let history!: (value: { items: LocalSoftwareStatus[]; next: null }) => void;
+  port.status = vi.fn(
+    () =>
+      new Promise<LocalSoftwareStatus>((resolve) => {
+        read = resolve;
+      }),
+  );
+  port.history = vi.fn(
+    () =>
+      new Promise<{ items: LocalSoftwareStatus[]; next: null }>((resolve) => {
+        history = resolve;
+      }),
+  );
+  port.submit = vi.fn(async () => ({
+    ...waiting,
+    execution: {
+      ...waiting.execution,
+      phase: "accepted" as const,
+      attempts: 1,
+    },
+  }));
+  const pendingRead = c.query("original"),
+    pendingHistory = c.history();
+  await c.submit(waiting.prepared);
+  read(waiting);
+  history({ items: [waiting], next: null });
+  await Promise.all([pendingRead, pendingHistory]);
+  expect(c.state.operations.get("original")?.execution.phase).toBe("accepted");
+  await c.submit(waiting.prepared);
+  expect(port.submit).toHaveBeenCalledTimes(1);
+  c.dispose();
+});
+it("retains a lost submission and blocks another confirmation until a fresh original status is read", async () => {
+  const { data, port } = ports(),
+    c = createSoftware(data, port);
+  const waiting = original("original");
+  c.accept(waiting);
+  let read!: (value: LocalSoftwareStatus) => void;
+  port.status = vi.fn(
+    () =>
+      new Promise<LocalSoftwareStatus>((resolve) => {
+        read = resolve;
+      }),
+  );
+  port.submit = vi.fn(async () => {
+    throw Error("lost");
+  });
+  const older = c.query("original");
+  await c.submit(waiting.prepared);
+  read(waiting);
+  await older;
+  await c.submit(waiting.prepared);
+  expect(port.submit).toHaveBeenCalledTimes(1);
+  expect(c.state.uncertain.has("original")).toBe(true);
+  port.status = vi.fn(async () => ({
+    ...waiting,
+    execution: {
+      ...waiting.execution,
+      phase: "executionEnded" as const,
+      attempts: 1,
+    },
+  }));
+  await c.query("original");
+  expect(port.status).toHaveBeenLastCalledWith({ request: "original" });
+  expect(c.state.uncertain.has("original")).toBe(false);
+  expect(c.state.operations.get("original")?.execution.phase).toBe(
+    "executionEnded",
+  );
+  c.dispose();
+});
+it("an expired original preparation cannot submit even if a stale view still holds its button", async () => {
+  const { data, port } = ports(),
+    c = createSoftware(data, port),
+    status = original("expired");
+  status.prepared.startBeforeUnixMs = Date.now() - 1;
+  c.accept(status);
+  await c.submit(status.prepared);
+  expect(port.submit).not.toHaveBeenCalled();
+  c.dispose();
+});

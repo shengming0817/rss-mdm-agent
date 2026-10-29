@@ -3,6 +3,7 @@ import { Alert, Button, Input, InputNumber, Select, Switch, Tag } from "antd";
 import { useSnapshot } from "valtio";
 import { DetailDrawer, StatePanel } from "@rss-mdm-agent/ui";
 import type { Workspace } from "../state/workspace";
+import { PolicyFacts } from "../task-center/PreparationFacts";
 import { boundedText, policyPresentation } from "../software/presentation";
 
 export function PolicyDrawer({
@@ -17,7 +18,14 @@ export function PolicyDrawer({
   const owner = workspace.policies,
     state = useSnapshot(owner.state),
     item = state.item,
-    [parameters, setParameters] = useState<Record<string, unknown>>({});
+    [parameters, setParameters] = useState<Record<string, unknown>>({}),
+    [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (!open) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [open]);
   useEffect(() => {
     const values: Record<string, unknown> = {};
     if (
@@ -42,7 +50,7 @@ export function PolicyDrawer({
       }
     }
     setParameters(open ? values : {});
-  }, [open, item?.policyId, state.choice?.request]);
+  }, [open, item?.policyId, state.submission?.choice.request]);
   const schema =
       item?.task.kind === "script" &&
       typeof item.task.parameterSchema === "object"
@@ -85,6 +93,7 @@ export function PolicyDrawer({
     ),
     preparation =
       state.status?.kind === "preparation" ? state.status.value : null,
+    frozen = state.preparation,
     presentation = item ? policyPresentation(item) : null;
   const update = (name: string, value: unknown) =>
     setParameters((previous) => ({ ...previous, [name]: value }));
@@ -92,7 +101,13 @@ export function PolicyDrawer({
     <DetailDrawer
       open={open}
       onClose={onClose}
-      title={presentation?.name ?? "准备组织项目"}
+      title={
+        (frozen?.action.kind === "policy"
+          ? boundedText(frozen.action.presentation.displayName, 120)
+          : "") ||
+        presentation?.name ||
+        "准备组织项目"
+      }
       description="核对当前发布内容；提交后由原服务重新检查授权和参数。"
     >
       <div className="rss-stack">
@@ -103,25 +118,42 @@ export function PolicyDrawer({
         {item && (
           <>
             <p>{presentation?.description}</p>
-            <dl className="rss-account-facts">
-              <dt>来源</dt>
-              <dd>当前主体可见的组织发布目录</dd>
-              <dt>任务类型</dt>
-              <dd>{item.task.kind}</dd>
-              <dt>发布版本</dt>
-              <dd className="rss-reference">{item.policyVersion}</dd>
-              <dt>作用主体</dt>
-              <dd>
-                {item.subject.kind === "device" ? "设备" : "当前企业用户"}
-              </dd>
-              <dt>执行身份</dt>
-              <dd>
-                {item.task.kind === "enrollment"
-                  ? "设备注册流程"
-                  : item.task.runAs}
-              </dd>
-            </dl>
-            {!state.choice &&
+            {frozen ? (
+              <PolicyFacts record={frozen} />
+            ) : (
+              <dl className="rss-task-facts">
+                <dt>来源</dt>
+                <dd>当前主体可见的组织发布目录</dd>
+                <dt>任务类型</dt>
+                <dd>{item.task.kind}</dd>
+                <dt>发布版本</dt>
+                <dd className="rss-reference">{item.policyVersion}</dd>
+                <dt>作用主体</dt>
+                <dd>
+                  {item.subject.kind === "device" ? "设备" : "当前企业用户"}
+                </dd>
+                <dt>执行身份</dt>
+                <dd>
+                  {item.task.kind === "enrollment"
+                    ? "设备注册流程"
+                    : item.task.runAs}
+                </dd>
+                <dt>发布 ID</dt>
+                <dd className="rss-reference">{item.policyId}</dd>
+                <dt>配置版本</dt>
+                <dd>{item.policyRevision}</dd>
+                {item.task.kind !== "enrollment" && (
+                  <>
+                    <dt>固定资源</dt>
+                    <dd className="rss-reference">
+                      {item.task.resource.id} · {item.task.resource.version} ·{" "}
+                      {item.task.resource.variant}
+                    </dd>
+                  </>
+                )}
+              </dl>
+            )}
+            {!state.submission &&
               inputs.map(({ name, field, supported }) => (
                 <label className="rss-field" key={name}>
                   <span>
@@ -199,15 +231,24 @@ export function PolicyDrawer({
                       : "已记录原请求"}
               </Tag>
             )}
+            {preparation?.action.kind === "policy" &&
+              preparation.action.expiresAtUnixMs <= now && (
+                <Alert
+                  type="warning"
+                  title="原准备已过期，不能确认执行；可继续查询原请求。"
+                />
+              )}
             {state.status?.kind === "run" && (
               <Alert
                 type="info"
                 title="已读取原执行记录，可在任务中心查看进度与核实结果。"
               />
             )}
-            {state.choice ? (
+            {state.submission ? (
               <>
-                <p className="rss-reference">原请求：{state.choice.request}</p>
+                <p className="rss-reference">
+                  原请求：{state.submission.choice.request}
+                </p>
                 <Button
                   disabled={state.busy}
                   onClick={() => void owner.recover()}
@@ -222,15 +263,6 @@ export function PolicyDrawer({
                     重送原请求与原参数
                   </Button>
                 )}
-                {preparation?.state === "awaitingConfirmation" && (
-                  <Button
-                    type="primary"
-                    disabled={state.busy}
-                    onClick={() => void owner.confirm()}
-                  >
-                    确认原准备
-                  </Button>
-                )}
                 {owner.canRestart(state.status) && (
                   <Button
                     disabled={state.busy}
@@ -241,7 +273,7 @@ export function PolicyDrawer({
                 )}
                 <Button
                   onClick={() => {
-                    const request = owner.state.choice?.request;
+                    const request = owner.state.submission?.choice.request;
                     if (request) {
                       onClose();
                       workspace.navigation.select("tasks", "history");

@@ -137,10 +137,21 @@ pub struct PolicyChoice {
     /// Only Resource fields whose Policy source is Input.
     pub parameters: std::collections::BTreeMap<String, serde_json::Value>,
 }
+/// Exact publication reviewed by the caller before an invocation or draft is frozen.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PolicyExpectation {
+    /// Immutable published execution version.
+    pub version: Id,
+    /// Exact configuration revision.
+    pub revision: u64,
+}
 /// Local invocation envelope. Navigation is separate from the immutable business choice.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct PolicyInvocation {
+    /// Required publication precondition, retained across lost receipts.
+    pub expected: PolicyExpectation,
     /// Original request identity and exact user input.
     pub choice: PolicyChoice,
 }

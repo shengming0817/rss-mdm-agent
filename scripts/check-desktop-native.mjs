@@ -1388,6 +1388,72 @@ try {
       async () =>
         !(await browser.$('[aria-label="网络检测主机"]').isDisplayed()),
     );
+    mark("v4 task center and original cancellation in WKWebView");
+    const previousDocument = await browser.execute(
+      () => performance.timeOrigin,
+    );
+    await browser.execute(() => {
+      location.search = "?desktop&scene=tasks";
+    });
+    await wait(() =>
+      browser.execute(
+        (before) =>
+          performance.timeOrigin !== before &&
+          !!window.rssPageFixture &&
+          !!document.querySelector(".fixture-controls"),
+        previousDocument,
+      ),
+    );
+    await wait(() => browser.$('[aria-label="切换侧栏布局"]').isDisplayed());
+    await browser.execute(() => {
+      document.querySelector(".fixture-controls").style.display = "none";
+    });
+    await click("任务中心", "//div[contains(@class,'rss-hidden-primary')]");
+    await wait(() =>
+      browser.$(".rss-task-table button[data-task-reference]").isDisplayed(),
+    );
+    await browser.saveScreenshot(
+      join(reports, "desktop-native-tasks-active.png"),
+    );
+    await browser.$(".rss-task-table button[data-task-reference]").click();
+    await wait(() => browser.$(".rss-task-detail .ant-timeline").isDisplayed());
+    await click("请求取消");
+    await wait(() => browser.$(".ant-modal .ant-btn-primary").isDisplayed());
+    await browser.$(".ant-modal .ant-btn-primary").click();
+    await wait(() =>
+      browser.execute(
+        () =>
+          window.rssDesktop.state.workspace.tasks.state.selected?.facts.value
+            .status.cancelRequested === true,
+      ),
+    );
+    assert.equal(
+      await browser.execute(
+        () =>
+          window.rssDesktop.state.workspace.tasks.state.selected.facts.value
+            .status.phase,
+      ),
+      "running",
+    );
+    assert.equal(
+      await browser.execute(
+        () =>
+          window.rssPageFixture.events.filter(
+            (event) => event.operation === "task_cancel",
+          ).length,
+      ),
+      1,
+    );
+    await browser.saveScreenshot(
+      join(reports, "desktop-native-task-cancel-requested.png"),
+    );
+    key(53);
+    await wait(
+      async () => !(await browser.$(".rss-task-detail").isDisplayed()),
+    );
+    result.checks.push(
+      "v4 task list, real owner timeline and original control in WKWebView; acknowledged cancellation remains running until separate termination/effect evidence",
+    );
     mark("native redacted diagnostic snapshot");
     await click("用户菜单");
     const diagnosticMenu =

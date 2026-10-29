@@ -1555,6 +1555,10 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
         parameters: std::collections::BTreeMap::from([("name".into(), serde_json::json!("Acme"))]),
     };
     let invoke = Request::InvokePolicy {
+        expected: execution_contract::PolicyExpectation {
+            version: plan::id(directory.policy_version.to_string()).unwrap(),
+            revision: directory.policy_revision,
+        },
         context: c.context(),
         choice: choice.clone(),
         origin: c.selection.origin.clone(),
@@ -1577,6 +1581,10 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
         .insert("path".into(), serde_json::json!("/Library"));
     assert!(matches!(
         c.policy_call(Request::InvokePolicy {
+            expected: execution_contract::PolicyExpectation {
+                version: plan::id(directory.policy_version.to_string()).unwrap(),
+                revision: directory.policy_revision
+            },
             context: c.context(),
             choice: changed,
             origin: c.selection.origin.clone()
@@ -1616,6 +1624,10 @@ async fn policy_confirmation_is_single_exact_and_bound_to_employee_generation() 
     choice.request = RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap();
     assert!(matches!(
         c.policy_call(Request::InvokePolicy {
+            expected: execution_contract::PolicyExpectation {
+                version: plan::id(directory.policy_version.to_string()).unwrap(),
+                revision: directory.policy_revision
+            },
             context: c.context(),
             choice: choice.clone(),
             origin: c.selection.origin.clone()
@@ -1697,6 +1709,10 @@ async fn policy_low_risk_and_human_only_settings_have_separate_native_sources() 
         };
         let Reply::PolicyRequest { value } = c
             .policy_call(Request::InvokePolicy {
+                expected: execution_contract::PolicyExpectation {
+                    version: plan::id(directory.policy_version.to_string()).unwrap(),
+                    revision: directory.policy_revision,
+                },
                 context: c.context(),
                 choice: choice.clone(),
                 origin,
@@ -1723,7 +1739,7 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
     use execution_ipc::host::Request;
     for device in [false, true] {
         for level in [1, 2] {
-            for change in 0..6 {
+            for change in 0..9 {
                 let mut c = Case::new(None).await;
                 c.service.release_waiting();
                 let mut directory =
@@ -1749,6 +1765,10 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
                 };
                 assert!(matches!(
                     c.policy_call(Request::InvokePolicy {
+                        expected: execution_contract::PolicyExpectation {
+                            version: plan::id(directory.policy_version.to_string()).unwrap(),
+                            revision: directory.policy_revision
+                        },
                         context: c.context(),
                         choice: choice.clone(),
                         origin: c.selection.origin.clone()
@@ -1848,6 +1868,24 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
                                 *source = wire::SelfServiceCaller::Human;
                             }
                         }
+                        6 => {
+                            if let wire::TaskAuthorization::SelfService { policy_version, .. } =
+                                &mut spec.authorization
+                            {
+                                *policy_version = uuid::Uuid::new_v4();
+                            }
+                        }
+                        7 => {
+                            spec.run_as = wire::ExecutionIdentity::LoggedInUser;
+                            spec.execution_target = wire::SoftwareExecutionTarget::User {
+                                identity: "501".into(),
+                                session_id: uuid::Uuid::new_v4(),
+                            };
+                        }
+                        8 => {
+                            spec.parameters
+                                .insert("extra".into(), serde_json::json!("unreviewed"));
+                        }
                         _ => (),
                     }
                     data.offer = Some(data.signed(wire::TaskPayload::Script(spec)));
@@ -1855,7 +1893,7 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
                 }
                 // Every alternative is independently signed and actually verified by the HTTP client.
                 let offer = c.service.client.claim().await.unwrap().offer.unwrap();
-                if matches!(change, 1 | 3 | 5) {
+                if change != 0 {
                     assert!(c.service.bind_policy_offer(&offer).is_err());
                     assert_eq!(
                         c.service
@@ -2171,6 +2209,10 @@ async fn durable_ready_policy_resumes_original_uuid_from_each_native_entrypoint(
             )]),
         };
         let invoke = Request::InvokePolicy {
+            expected: execution_contract::PolicyExpectation {
+                version: plan::id(directory.policy_version.to_string()).unwrap(),
+                revision: directory.policy_revision,
+            },
             context: c.context(),
             choice: choice.clone(),
             origin: c.selection.origin.clone(),
@@ -2207,6 +2249,10 @@ async fn durable_ready_policy_resumes_original_uuid_from_each_native_entrypoint(
             .unwrap();
         let request = match entry {
             0 => Request::InvokePolicy {
+                expected: execution_contract::PolicyExpectation {
+                    version: plan::id(directory.policy_version.to_string()).unwrap(),
+                    revision: directory.policy_revision,
+                },
                 context: c.context(),
                 choice: match &restored.action {
                     PreparedAction::Policy { choice, .. } => choice.clone(),
@@ -2557,102 +2603,159 @@ async fn retired_installation_command_preserves_live_registration_and_journal() 
 async fn software_self_service_binds_signed_policy_and_native_context() {
     let _budget = crate::scenario_budget::enter();
     use execution_ipc::host::Request;
-    let mut c = Case::new(None).await;
-    c.service.release_waiting();
-    c.employee("software-user").await;
-    let mut directory = protocol::policy_directory_fixture(c.service.client.configuration().tenant);
-    directory.self_service.risk_level = 2;
-    let wire::TaskPayload::Software(spec) = c.offer.payload() else {
-        panic!("software")
-    };
-    let step = spec.steps.last().unwrap();
-    directory.task = wire::SelfServiceTask::Software {
-        resource: wire::TaskResource {
-            id: "software-resource".into(),
-            version: step.action.version.clone(),
-            variant: "default".into(),
-        },
-        run_as: execution_contract::software_commands(&step.action)
-            .install
-            .run_as,
-        target: step.target.clone(),
-    };
-    {
-        let mut data = c._server.data.lock().unwrap();
-        data.self_service_directory = Some(protocol::Directory {
-            items: vec![directory.clone()],
-            next_cursor: None,
-            as_of: c._server.time.now().unwrap(),
-        });
-        data.self_service_software = Some(protocol::self_service_software::Template {
-            spec: (**spec).clone(),
-        });
-        data.offer = None;
-        data.explicit_offers = true;
-        data.invocation_reply_lost = true;
-    }
-    let choice = PolicyChoice {
-        request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
-        policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
+    for change in 0..4 {
+        let mut c = Case::new(None).await;
+        c.service.release_waiting();
+        c.employee("software-user").await;
+        let mut directory =
+            protocol::policy_directory_fixture(c.service.client.configuration().tenant);
+        directory.self_service.risk_level = 2;
+        let wire::TaskPayload::Software(spec) = c.offer.payload() else {
+            panic!("software")
+        };
+        let step = spec.steps.last().unwrap();
+        directory.task = wire::SelfServiceTask::Software {
+            resource: wire::TaskResource {
+                id: step.definition.resource.clone(),
+                version: step.definition.version.clone(),
+                variant: step.definition.variant.clone(),
+            },
+            run_as: execution_contract::software_commands(&step.action)
+                .install
+                .run_as,
+            target: step.target.clone(),
+        };
+        {
+            let mut data = c._server.data.lock().unwrap();
+            data.self_service_directory = Some(protocol::Directory {
+                items: vec![directory.clone()],
+                next_cursor: None,
+                as_of: c._server.time.now().unwrap(),
+            });
+            data.self_service_software = Some(protocol::self_service_software::Template {
+                spec: (**spec).clone(),
+            });
+            data.offer = None;
+            data.explicit_offers = true;
+            data.invocation_reply_lost = true;
+        }
+        let choice = PolicyChoice {
+            request: RequestId::new(uuid::Uuid::new_v4().to_string()).unwrap(),
+            policy_id: plan::id(directory.policy_id.to_string()).unwrap(),
 
-        parameters: Default::default(),
-    };
-    let Reply::PolicyRequest { value: pending } = c
-        .policy_call(Request::InvokePolicy {
-            context: c.context(),
-            choice: choice.clone(),
-            origin: c.selection.origin.clone(),
-        })
-        .await
-    else {
-        panic!("software preparation")
-    };
-    assert_eq!(pending.state, BackendRequestState::AwaitingConfirmation);
-    let Reply::PolicyRequest { value: submitted } = c
-        .policy_call(Request::ConfirmPolicy {
-            context: c.context(),
-            request: choice.request.clone(),
-        })
-        .await
-    else {
-        panic!("software confirmation")
-    };
-    assert_eq!(submitted.state, BackendRequestState::Submitting);
-    let accepted = c
-        ._server
-        .data
-        .lock()
-        .unwrap()
-        .invocations
-        .values()
-        .next()
-        .unwrap()
-        .1
-        .clone();
-    assert_eq!(accepted.request_id.to_string(), choice.request.as_str());
-    assert_eq!(c._server.data.lock().unwrap().self_service_offers.len(), 1);
-    assert_eq!(c._server.data.lock().unwrap().invocations.len(), 1);
-    let offer = c.service.client.claim().await.unwrap().offer.unwrap();
-    c.service.bind_policy_offer(&offer).unwrap();
-    let bound = c
-        .service
-        .core
-        .app
-        .backend_request(&c.service.core.caller(), &choice.request)
-        .unwrap()
-        .unwrap();
-    assert_eq!(bound.risk.unwrap().level, RiskLevel::Two);
-    c.employee("other-context").await;
-    assert!(c.service.bind_policy_offer(&offer).is_ok());
-    assert!(!c
-        .service
-        .core
-        .policy_readable(
-            &choice.request,
-            &c.selection.subject,
-            Some(&c.selection.binding)
-        )
-        .unwrap());
+            parameters: Default::default(),
+        };
+        let Reply::PolicyRequest { value: pending } = c
+            .policy_call(Request::InvokePolicy {
+                expected: execution_contract::PolicyExpectation {
+                    version: plan::id(directory.policy_version.to_string()).unwrap(),
+                    revision: directory.policy_revision,
+                },
+                context: c.context(),
+                choice: choice.clone(),
+                origin: c.selection.origin.clone(),
+            })
+            .await
+        else {
+            panic!("software preparation")
+        };
+        assert_eq!(pending.state, BackendRequestState::AwaitingConfirmation);
+        let Reply::PolicyRequest { value: submitted } = c
+            .policy_call(Request::ConfirmPolicy {
+                context: c.context(),
+                request: choice.request.clone(),
+            })
+            .await
+        else {
+            panic!("software confirmation")
+        };
+        assert_eq!(submitted.state, BackendRequestState::Submitting);
+        let accepted = c
+            ._server
+            .data
+            .lock()
+            .unwrap()
+            .invocations
+            .values()
+            .next()
+            .unwrap()
+            .1
+            .clone();
+        assert_eq!(accepted.request_id.to_string(), choice.request.as_str());
+        assert_eq!(c._server.data.lock().unwrap().self_service_offers.len(), 1);
+        assert_eq!(c._server.data.lock().unwrap().invocations.len(), 1);
+        if change != 0 {
+            let mut payload = c
+                ._server
+                .data
+                .lock()
+                .unwrap()
+                .offer
+                .as_ref()
+                .unwrap()
+                .payload
+                .clone();
+            let wire::TaskPayload::Software(spec) = &mut payload else {
+                panic!("software offer");
+            };
+            let root = spec.steps.last_mut().unwrap();
+            match change {
+                1 => root.definition.resource = "unreviewed-resource".into(),
+                2 => root.definition.version = "unreviewed-version".into(),
+                3 => root.definition.variant = "unreviewed-variant".into(),
+                _ => unreachable!(),
+            }
+            root.step_id = root.definition.step_id().unwrap();
+            spec.definition_digest =
+                <sha2::Sha256 as sha2::Digest>::digest(serde_json::to_vec(&spec.steps).unwrap())
+                    .into();
+            // Recompute all canonical coordinates and obtain a genuinely signed, verified Offer.
+            // Authorization, run/attempt, effect target and OS identity remain unchanged.
+            {
+                let mut data = c._server.data.lock().unwrap();
+                data.offer = Some(data.signed(payload));
+            }
+        }
+        // First claim must verify this payload; the client separately pins later claims.
+        let offer = c.service.client.claim().await.unwrap().offer.unwrap();
+        if change != 0 {
+            assert!(
+                c.service.bind_policy_offer(&offer).is_err(),
+                "resource coordinate {change} drift"
+            );
+            assert_eq!(
+                c.service
+                    .core
+                    .app
+                    .backend_request(&c.service.core.caller(), &choice.request)
+                    .unwrap()
+                    .as_ref(),
+                Some(submitted.as_ref())
+            );
+            assert!(c._server.data.lock().unwrap().start_ops.is_empty());
+            continue;
+        }
+        c.service.bind_policy_offer(&offer).unwrap();
+        let bound = c
+            .service
+            .core
+            .app
+            .backend_request(&c.service.core.caller(), &choice.request)
+            .unwrap()
+            .unwrap();
+        assert_eq!(bound.risk.unwrap().level, RiskLevel::Two);
+        c.employee("other-context").await;
+        assert!(c.service.bind_policy_offer(&offer).is_ok());
+        assert!(!c
+            .service
+            .core
+            .policy_readable(
+                &choice.request,
+                &c.selection.subject,
+                Some(&c.selection.binding)
+            )
+            .unwrap());
+    }
 }
 
 impl Case {
@@ -2726,6 +2829,10 @@ async fn device_directory_and_invocation_are_credential_free_with_or_without_emp
         let choice = c.policy_choice(&item);
         let Reply::PolicyRequest { value } = c
             .policy_call(Request::InvokePolicy {
+                expected: execution_contract::PolicyExpectation {
+                    version: plan::id(item.policy_version.to_string()).unwrap(),
+                    revision: item.policy_revision,
+                },
                 context: c.context(),
                 choice: choice.clone(),
                 origin: c.selection.origin.clone(),
@@ -2774,6 +2881,10 @@ async fn retired_ai_ingress_cannot_read_or_invoke_but_original_device_consent_co
     let origin = c.selection.origin.clone();
     let Reply::PolicyRequest { value: pending } = c
         .policy_call(Request::InvokePolicy {
+            expected: execution_contract::PolicyExpectation {
+                version: plan::id(item.policy_version.to_string()).unwrap(),
+                revision: item.policy_revision,
+            },
             context: old.clone(),
             choice: choice.clone(),
             origin: origin.clone(),
@@ -2795,6 +2906,10 @@ async fn retired_ai_ingress_cannot_read_or_invoke_but_original_device_consent_co
             origin: origin.clone(),
         },
         Request::InvokePolicy {
+            expected: execution_contract::PolicyExpectation {
+                version: plan::id(item.policy_version.to_string()).unwrap(),
+                revision: item.policy_revision,
+            },
             context: c.context(),
             choice: choice.clone(),
             origin: origin.clone(),
@@ -2864,6 +2979,10 @@ async fn unknown_device_submission_queries_original_before_any_repeat_post_after
         let choice = c.policy_choice(&item);
         let Reply::PolicyRequest { value: unknown } = c
             .policy_call(Request::InvokePolicy {
+                expected: execution_contract::PolicyExpectation {
+                    version: plan::id(item.policy_version.to_string()).unwrap(),
+                    revision: item.policy_revision,
+                },
                 context: c.context(),
                 choice: choice.clone(),
                 origin: c.selection.origin.clone(),
@@ -2932,6 +3051,10 @@ async fn fences_isolate_os_sessions_and_user_requests_never_downgrade() {
     let choice = c.policy_choice(&item);
     let Reply::PolicyRequest { value } = c
         .policy_call(Request::InvokePolicy {
+            expected: execution_contract::PolicyExpectation {
+                version: plan::id(item.policy_version.to_string()).unwrap(),
+                revision: item.policy_revision,
+            },
             context: c.context(),
             choice: choice.clone(),
             origin: c.selection.origin.clone(),
@@ -2992,6 +3115,10 @@ impl Case {
         let choice = self.policy_choice(&item);
         let reply = self
             .policy_call(Request::InvokePolicy {
+                expected: execution_contract::PolicyExpectation {
+                    version: plan::id(item.policy_version.to_string()).unwrap(),
+                    revision: item.policy_revision,
+                },
                 context: self.context(),
                 choice: choice.clone(),
                 origin: self.selection.origin.clone(),
@@ -3322,6 +3449,10 @@ async fn expired_device_confirmation_checks_original_os_owner_before_read_or_wri
     let choice = c.policy_choice(&item);
     assert!(matches!(
         c.policy_call(Request::InvokePolicy {
+            expected: execution_contract::PolicyExpectation {
+                version: plan::id(item.policy_version.to_string()).unwrap(),
+                revision: item.policy_revision
+            },
             context: c.context(),
             choice: choice.clone(),
             origin: c.selection.origin.clone(),
@@ -3546,6 +3677,10 @@ async fn operation_draft_freezes_current_parameters_once_and_queries_do_not_exec
         };
         let Reply::PolicyRequest { value: draft } = c
             .policy_call(Request::PreparePolicy {
+                expected: execution_contract::PolicyExpectation {
+                    version: plan::id(directory.policy_version.to_string()).unwrap(),
+                    revision: directory.policy_revision,
+                },
                 context: c.context(),
                 choice: choice.clone(),
                 origin: c.selection.origin.clone(),
@@ -3703,6 +3838,10 @@ async fn operation_draft_rejects_secret_and_unresolved_schemas_before_persistenc
         };
         let reply = c
             .policy_call(Request::PreparePolicy {
+                expected: execution_contract::PolicyExpectation {
+                    version: plan::id(directory.policy_version.to_string()).unwrap(),
+                    revision: directory.policy_revision,
+                },
                 context: c.context(),
                 choice: choice.clone(),
                 origin: c.selection.origin.clone(),
@@ -6009,6 +6148,10 @@ async fn device_policy_preparation_is_readable_through_native_task_port_and_safe
     let choice = c.policy_choice(&directory);
     assert!(matches!(
         c.policy_call(Request::InvokePolicy {
+            expected: execution_contract::PolicyExpectation {
+                version: plan::id(directory.policy_version.to_string()).unwrap(),
+                revision: directory.policy_revision
+            },
             context: c.context(),
             choice: choice.clone(),
             origin: c.selection.origin.clone(),
@@ -6617,4 +6760,86 @@ async fn entry_policy_rechecks_registration_and_current_definition_before_journa
         }
     ));
     assert!(c._server.data.lock().unwrap().invocations.is_empty());
+}
+
+#[tokio::test]
+async fn policy_invocation_requires_reviewed_publication_before_admission_and_on_replay() {
+    let _budget = crate::scenario_budget::enter();
+    use execution_ipc::host::Request;
+    for draft in [false, true] {
+        for drift in [false, true] {
+            let mut c = Case::new(None).await;
+            let directory =
+                protocol::policy_directory_fixture(c.service.client.configuration().tenant);
+            c._server.data.lock().unwrap().self_service_directory = Some(protocol::Directory {
+                items: vec![directory.clone()],
+                next_cursor: None,
+                as_of: c._server.time.now().unwrap(),
+            });
+            c.employee("reviewed-publication").await;
+            let choice = c.policy_choice(&directory);
+            let original = execution_contract::PolicyExpectation {
+                version: plan::id(directory.policy_version.to_string()).unwrap(),
+                revision: directory.policy_revision,
+            };
+            let mut changed = original.clone();
+            if drift {
+                changed.revision += 1;
+            } else {
+                changed.version = plan::id(uuid::Uuid::new_v4().to_string()).unwrap();
+            }
+            let request = |expected| {
+                if draft {
+                    Request::PreparePolicy {
+                        context: c.context(),
+                        choice: choice.clone(),
+                        expected,
+                        origin: c.selection.origin.clone(),
+                    }
+                } else {
+                    Request::InvokePolicy {
+                        context: c.context(),
+                        choice: choice.clone(),
+                        expected,
+                        origin: c.selection.origin.clone(),
+                    }
+                }
+            };
+            let stale = request(changed.clone());
+            let exact = request(original.clone());
+            assert!(matches!(
+                c.policy_call(stale.clone()).await,
+                Reply::OperationRejected {
+                    reason: execution_contract::OperationRejection::Conflict
+                }
+            ));
+            assert!(c
+                .service
+                .core
+                .app
+                .backend_request(&c.service.core.caller(), &choice.request)
+                .unwrap()
+                .is_none());
+            assert!(c._server.data.lock().unwrap().invocations.is_empty());
+            let Reply::PolicyRequest { value: frozen } = c.policy_call(exact.clone()).await else {
+                panic!("exact publication");
+            };
+            assert!(matches!(c.policy_call(stale).await, Reply::Rejected));
+            // Recovery refers to the original preparation even after the catalog advances.
+            c._server
+                .data
+                .lock()
+                .unwrap()
+                .self_service_directory
+                .as_mut()
+                .unwrap()
+                .items[0]
+                .policy_revision += 1;
+            let Reply::PolicyRequest { value: replay } = c.policy_call(exact).await else {
+                panic!("original recovery");
+            };
+            assert_eq!(frozen, replay);
+            assert!(c._server.data.lock().unwrap().invocations.is_empty());
+        }
+    }
 }

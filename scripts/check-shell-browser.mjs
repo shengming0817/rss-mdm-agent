@@ -145,16 +145,39 @@ export async function checkShellBrowser(page, fixture) {
   });
   await go("&scene=task-error");
   await page.locator(".rss-home-activity-row").first().click();
-  const taskDialog = page.getByRole("dialog", { name: /原任务/ });
-  await taskDialog
-    .getByText("原任务不可访问或状态未确认，请重试读取", { exact: true })
-    .waitFor();
+  const taskDialog = page.getByRole("dialog", { name: /任务详情/ });
+  try {
+    await taskDialog
+      .getByText("原任务不可访问或状态未确认，请重试读取", { exact: true })
+      .waitFor();
+  } catch (error) {
+    writeFileSync(
+      new URL(
+        "../.local-ci-runs/react-shell-task-error-debug.json",
+        import.meta.url,
+      ),
+      JSON.stringify(
+        await page.evaluate(() => ({
+          requested: window.rssDesktop.state.workspace.tasks.state.requested,
+          selected:
+            window.rssDesktop.state.workspace.tasks.state.selected?.reference,
+          detailError:
+            window.rssDesktop.state.workspace.tasks.state.detailError,
+          navigation: window.rssDesktop.state.workspace.navigation.state,
+          text: document.body.innerText,
+        })),
+        null,
+        2,
+      ),
+    );
+    throw error;
+  }
   const originalTask = await page.evaluate(() =>
     JSON.stringify(window.rssDesktop.state.workspace.tasks.state.requested),
   );
   await capture("task-detail-error");
   await taskDialog
-    .getByRole("button", { name: "重新读取原任务", exact: true })
+    .getByRole("button", { name: "查询原请求", exact: true })
     .click();
   await page.waitForFunction(
     () => !!window.rssDesktop.state.workspace.tasks.state.selected,

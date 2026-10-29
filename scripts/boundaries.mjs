@@ -201,6 +201,13 @@ export function checkSource(file, source) {
       "clearInterval",
     ],
     "apps/desktop/src/assistant/operation-ui/host.ts": ["AbortController"],
+    "apps/desktop/src/task-center/TaskDetailDrawer.tsx": [
+      "document",
+      "HTMLElement",
+      "setInterval",
+      "clearInterval",
+    ],
+    "apps/desktop/src/shell/PolicyDrawer.tsx": ["setInterval", "clearInterval"],
     "apps/desktop/src/task-center/controller.ts": [
       "setTimeout",
       "clearTimeout",
@@ -368,7 +375,31 @@ export function checkSource(file, source) {
     ],
     "apps/desktop/src/system-settings/facts.ts": ["qualityLabels"],
     "apps/desktop/src/system-settings/controller.ts": ["families"],
-    "apps/desktop/src/task-center/controller.ts": ["state.items"],
+    "apps/desktop/src/task-center/controller.ts": [
+      "state.items",
+      "taskActionTitles",
+      "managementTitles",
+      "taskPhase",
+    ],
+    "apps/desktop/src/task-center/TaskCenterPage.tsx": [
+      "sourceLabels",
+      "counts",
+    ],
+    "apps/desktop/src/task-center/TaskDetailDrawer.tsx": [
+      "sourceLabels",
+      "actionLabels",
+    ],
+    "apps/desktop/src/task-center/presentation.ts": [
+      "taskPhase",
+      "nodeLabels",
+      "explanations",
+      "activityLabels",
+    ],
+    "apps/desktop/src/task-center/PreparationFacts.tsx": [
+      "localActionLabels",
+      "action.task.parameterSources",
+      "action.choice.parameters",
+    ],
   };
   function checkImport(name) {
     if (!name.startsWith(".") && !allowed.has(name))
@@ -670,7 +701,14 @@ export function checkSource(file, source) {
         !(dataIndex[file] ?? []).includes(node.expression.getText(ast))
       )
         errors.push(`${file}: dynamic member capability`);
-      if (bannedMembers.has(literal))
+      // TaskNode.parent is an owner-issued string identity, not a DOM browsing context.
+      if (
+        bannedMembers.has(literal) &&
+        !(
+          file === "apps/desktop/src/task-center/TaskDetailDrawer.tsx" &&
+          node.getText(ast) === "node.parent"
+        )
+      )
         errors.push(`${file}: non-presentation member ${literal}`);
     }
     ts.forEachChild(node, visit);

@@ -1,12 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Alert, Button, Modal, Tag } from "antd";
 import { useSnapshot } from "valtio";
-import {
-  DetailDrawer,
-  PageHeader,
-  SectionCard,
-  StatePanel,
-} from "@rss-mdm-agent/ui";
+import { PageHeader, SectionCard, StatePanel } from "@rss-mdm-agent/ui";
 import { useDesktop, useWorkspace, usePlatform } from "./state/react";
 import type { Workspace } from "./state/workspace";
 import { modules, type PageId } from "./state/navigation";
@@ -28,7 +23,8 @@ import { RegistrationPage } from "./account/RegistrationPage";
 import { createRegistration } from "./account/registration";
 import { pageContext } from "./workspace/page-context";
 import { pageResources } from "./workspace/page-projection";
-import { taskPhase, taskTitle } from "./task-center/controller";
+import { TaskCenterPage } from "./task-center/TaskCenterPage";
+import { TaskDetailDrawer } from "./task-center/TaskDetailDrawer";
 import { SoftwarePage } from "./software/SoftwarePage";
 import { SystemPage } from "./system-settings/SystemPage";
 import { ToolsPage } from "./device-tools/ToolsPage";
@@ -267,6 +263,12 @@ function WorkspaceView({
                 section={nav.selected.tools}
                 active={nav.page === "tools"}
               />
+            ) : page === "tasks" ? (
+              <TaskCenterPage
+                workspace={workspace}
+                section={nav.selected.tasks}
+                active={nav.page === "tasks"}
+              />
             ) : (
               <PendingModule page={page} section={nav.selected[page]} />
             )}
@@ -284,65 +286,11 @@ function WorkspaceView({
         open={nav.policyOpen}
         onClose={() => workspace.navigation.closePolicy()}
       />
-      <DetailDrawer
+      <TaskDetailDrawer
+        workspace={workspace}
         open={nav.page === "tasks" && !!tasks.requested}
-        onClose={() => workspace.tasks.closeTask()}
-        returnFocus={() => navButton.current?.focus()}
-        title={tasks.selected ? taskTitle(tasks.selected) : "原任务"}
-        description="当前主体可读取的原任务记录"
-      >
-        <div className="rss-stack">
-          {tasks.detailLoading && (
-            <StatePanel kind="loading" title="正在读取原任务" />
-          )}
-          {tasks.selected && (
-            <>
-              <Tag
-                color={
-                  tasks.selected.stage === "verified" ? "green" : "default"
-                }
-              >
-                {taskPhase[tasks.selected.stage] ?? "状态待核实"}
-              </Tag>
-              <dl className="rss-account-facts">
-                <dt>原任务引用</dt>
-                <dd className="rss-reference">
-                  {JSON.stringify(tasks.selected.reference)}
-                </dd>
-                <dt>来源</dt>
-                <dd>
-                  {tasks.selected.source === "human"
-                    ? "人工"
-                    : tasks.selected.source === "ai"
-                      ? "AI"
-                      : "策略"}
-                </dd>
-                <dt>记录时间</dt>
-                <dd>
-                  {tasks.selected.recordedAt != null
-                    ? new Date(tasks.selected.recordedAt).toLocaleString()
-                    : "尚未提供"}
-                </dd>
-              </dl>
-              <p className="rss-muted">
-                收到请求、执行结束、结果核实分别记录；这里不会重复提交原操作。
-              </p>
-            </>
-          )}
-          {tasks.detailError && (
-            <Alert type="warning" title={tasks.detailError} />
-          )}
-          <Button
-            disabled={tasks.detailLoading}
-            onClick={() => {
-              const reference = workspace.tasks.state.requested;
-              if (reference) void workspace.tasks.openTask(reference);
-            }}
-          >
-            重新读取原任务
-          </Button>
-        </div>
-      </DetailDrawer>
+        onReturnFocus={() => navButton.current?.focus()}
+      />
     </DesktopShell>
   );
 }
