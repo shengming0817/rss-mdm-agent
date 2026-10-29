@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, dirname, resolve } from "node:path";
 import ts from "typescript";
@@ -39,10 +39,10 @@ const allowed = {
     "@agentclientprotocol/sdk",
   ],
   "packages/ai-ui-bridge": [
+    "valtio",
     "@rss-mdm-agent/ai-contract",
     "@rss-mdm-agent/ai-client",
     "@a2ui/web_core",
-    "vue",
   ],
 };
 const errors = [];
@@ -119,22 +119,50 @@ for (const [name, dependencies] of Object.entries(allowed)) {
             ? "workspace:*"
             : appExternalDependencies[dependency]),
       )) ||
+    (name === "packages/ai-ui-bridge" &&
+      manifest.dependencies?.valtio !== "2.3.2") ||
     manifest.optionalDependencies ||
-    manifest.peerDependencies
+    (name === "packages/ai-ui-bridge"
+      ? JSON.stringify(
+          Object.entries(manifest.peerDependencies ?? {}).sort(),
+        ) !==
+        JSON.stringify([
+          ["react", "^19.3.1"],
+          ["react-dom", "^19.3.1"],
+        ])
+      : manifest.peerDependencies)
   )
     errors.push(`${name}: unexpected dependency closure`);
   for (const file of walk(join(dir, "src"))) {
-    if (!file.endsWith(".ts")) continue;
+    if (file.endsWith(".vue")) {
+      errors.push(`${name}: retired Vue SFC source`);
+      continue;
+    }
+    if (!/\.tsx?$/.test(file)) continue;
     const source = readFileSync(file, "utf8"),
-      ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+      ast = ts.createSourceFile(
+        file,
+        source,
+        ts.ScriptTarget.Latest,
+        true,
+        file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+      );
+    if (ast.parseDiagnostics.length)
+      errors.push(`${name}: invalid TypeScript source`);
     const check = (value, runtime = true) => {
       if (value.startsWith(".")) {
-        const target = resolve(dirname(file), value.replace(/\.js$/, ".ts"));
+        let target = resolve(dirname(file), value.replace(/\.js$/, ".ts"));
+        if (
+          !existsSync(target) &&
+          target.endsWith(".ts") &&
+          existsSync(target.slice(0, -3) + ".tsx")
+        )
+          target = target.slice(0, -3) + ".tsx";
         if (!target.startsWith(join(dir, "src") + "/"))
           errors.push(`${name}: relative import escapes package`);
         if (runtime) {
           const edges = runtimeEdges.get(file) ?? [];
-          edges.push(resolve(dirname(file), value.replace(/\.js$/, ".ts")));
+          edges.push(target);
           runtimeEdges.set(file, edges);
         }
         return;
@@ -155,7 +183,10 @@ for (const [name, dependencies] of Object.entries(allowed)) {
       const packageName = value.startsWith("@")
         ? value.split("/").slice(0, 2).join("/")
         : value.split("/")[0];
-      if (!dependencies.includes(packageName))
+      if (
+        !dependencies.includes(packageName) &&
+        !(name === "packages/ai-ui-bridge" && packageName === "react")
+      )
         errors.push(`${name}: forbidden import ${value}`);
     };
     function visit(node) {
@@ -202,7 +233,7 @@ for (const [name, dependencies] of Object.entries(allowed)) {
     }
     visit(ast);
     if (
-      /\binnerHTML\b|\bouterHTML\b|\bunsafeHTML\s*\(|\beval\s*\(|new\s+Function\s*\(/.test(
+      /\bdangerouslySetInnerHTML\b|\binnerHTML\b|\bouterHTML\b|\bunsafeHTML\s*\(|\beval\s*\(|new\s+Function\s*\(/.test(
         source,
       )
     )

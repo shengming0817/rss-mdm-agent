@@ -7,6 +7,26 @@ import {
   policyFixturePort,
   offer,
 } from "../../../../tests/self-service/support";
+it("reads exact Policy history through the original cache without replacing the task center's own filter", async () => {
+  const port = taskPort(),
+    item = taskDetail();
+  item.policy = { id: "published-policy", revision: "published-version" };
+  port.list = vi.fn(async () => taskPage([item]));
+  const owner = createTaskCenter(port, null),
+    query = { ...owner.state.query };
+  const page = await owner.policyTasks("published-policy");
+  expect(port.list).toHaveBeenCalledWith(
+    expect.objectContaining({
+      policy: "published-policy",
+      view: "history",
+      cursor: null,
+    }),
+  );
+  expect(page?.items).toHaveLength(1);
+  expect(owner.lookup(item.reference)).toEqual(item);
+  expect(owner.state.query).toEqual(query);
+  owner.dispose();
+});
 it("coalesces list and exact detail reads and refreshes browsed pages with fresh cursors", async () => {
   const port = taskPort();
   let finish!: (v: ReturnType<typeof taskPage>) => void;
@@ -148,6 +168,8 @@ it("fences a late detail response after a native scope change and drops old acti
   finish(taskDetail("late"));
   await pending;
   expect(c.state.selected).toBeNull();
+  expect(c.state.requested).toBeNull();
+  expect(c.state.detailLoading).toBe(false);
   expect(c.state.byRef.size).toBe(0);
   expect(c.state.pendingControl).toBeNull();
   c.dispose();
@@ -164,7 +186,7 @@ it("keeps paging beyond the cache budget and preserves the current page across d
     };
   });
   const c = createTaskCenter(port, null);
-  await c.load();
+  await c.setQuery({ view: "history", source: "ai" });
   for (let i = 0; i < 17; i++) await c.load(true);
   expect(c.state.page).toBe(18);
   expect(c.state.items).toHaveLength(32);
@@ -178,6 +200,17 @@ it("keeps paging beyond the cache budget and preserves the current page across d
   await c.previousPage();
   expect(c.state.page).toBe(17);
   expect(c.state.next).toBe("17");
+  await c.setQuery({ ...c.state.query });
+  expect(c.state.page).toBe(1);
+  expect(c.state.query).toMatchObject({ view: "history", source: "ai" });
+  expect(c.state.cursor).toBeNull();
+  expect(c.state.items[0].reference).toEqual({
+    kind: "request",
+    request: "page-0-0",
+  });
+  expect(port.list).toHaveBeenLastCalledWith(
+    expect.objectContaining({ view: "history", source: "ai", cursor: null }),
+  );
   c.dispose();
 });
 it("removes a denied original task from cached consumers and drops stale step actions when its owner advances", async () => {
@@ -241,7 +274,7 @@ it("orders recent original tasks by recording time after a polling refresh", asy
   try {
     await c.loadRecent();
     await c.loadRecent();
-    expect(c.recentItems.value.map((t) => t.reference)).toEqual([
+    expect(c.recentItems().map((t) => t.reference)).toEqual([
       latest.reference,
       old.reference,
     ]);

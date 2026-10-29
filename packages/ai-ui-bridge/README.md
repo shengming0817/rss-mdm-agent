@@ -1,7 +1,7 @@
-# Vue / A2UI 接缝
+# React / A2UI 接缝
 
-RuntimeSurface 消费唯一客户端投影，通过显式注入的 Vue 节点 renderer 挂载官方 A2UI core 投影并提交有界回答。接口见 [src](src/)，接入步骤见[开发指南](../../docs/guides/ai-access-development.md)。组件和协议版本由 manifest 与 schema 持有。
+RuntimeSurface 消费唯一客户端投影，通过显式注入的 节点 renderer 挂载官方 A2UI core 投影并提交有界回答。接口见 [src](src/)，接入步骤见[开发指南](../../docs/guides/ai-access-development.md)。组件和协议版本由 manifest 与 schema 持有。
 
-模型文本按纯文本转义。输入先校验，再创建可丢弃的 processor；处理失败、卸载和重挂不能把缓存变成权威。用户输入保留到提交，稳定更新从 Host 内容重建显示。
+模型文本按纯文本转义。输入先校验，再创建可丢弃的 processor；处理失败、卸载和重挂不能把缓存变成权威。应用级 SurfaceDrafts 按认证 namespace、会话、问题实例和代际持有非秘密输入及原未知回答；兼容字段更新保留编辑，不兼容字段明确失效。应用身份退休时清空，DOM owner 重挂不生成新的回答身份；稳定更新仍从 Host 内容重建显示。
 
 交互期限在计时与点击时检查。未知响应允许按原命令重试；其他客户端胜出、过期、回调失效或确定拒绝后清理重试，迟到错误不得恢复按钮。首答方丢回执仍可取回原回执。渲染失败保留明确错误和只读内容，回答与模型文本都不能授予执行权限。

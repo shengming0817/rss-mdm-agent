@@ -31,9 +31,13 @@ export type FixtureEnvironment = {
   device: import("./home/device").DeviceOverviewPort;
   kind: "fixture";
   account?: import("./account/types").FixtureLoginPort;
-  identity: { read(): Promise<UserContext> };
+  identity: { read(): Promise<UserContext>; guest(): Promise<UserContext> };
   host: NonNullable<ReturnType<typeof nativeHost>>;
   service: ServicePort;
+  diagnostics?: import("./settings/native").DiagnosticPort;
+  personalVault?: import("./settings/native").PersonalVaultPort;
+  connectionSave?: import("./settings/native").ConnectionSavePort;
+  appVersion?: () => Promise<string>;
 };
 export function assertFixtureAssembly(input: {
   environment?: FixtureEnvironment;
@@ -51,6 +55,7 @@ export function assertFixtureAssembly(input: {
     !input.environment.local.tasks.control ||
     !input.environment.local ||
     !input.environment.identity?.read ||
+    !input.environment.identity.guest ||
     !input.environment.device?.read ||
     !input.environment.host?.read ||
     !input.environment.host.restart ||

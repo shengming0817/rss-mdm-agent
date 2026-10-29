@@ -1,4 +1,5 @@
-import { computed, reactive, type InjectionKey } from "vue";
+import { deepClone, proxyMap } from "valtio/vanilla/utils";
+import { proxy, type Snapshot } from "valtio/vanilla";
 import type {
   TaskPort,
   TaskDetail,
@@ -30,10 +31,25 @@ export const requestRef = (request: string): TaskRef => ({
   kind: "request",
   request,
 });
-export const taskTitle = (task: TaskDetail): string => {
+const managementTitles: Record<string, string> = {
+  policy: "策略",
+  configuration: "策略配置",
+  assignment: "分配",
+  batch: "批次",
+  execution: "执行记录",
+};
+const taskActionTitles: Record<string, string> = {
+  install: "安装",
+  update: "更新",
+  uninstall: "卸载",
+  launch: "打开",
+  detect: "读取软件状态",
+  repair: "修复",
+};
+export const taskTitle = (task: Snapshot<TaskDetail>): string => {
   const facts = task.facts;
   if (facts.kind === "execution")
-    return `${facts.value.action.operation.action} · ${facts.value.action.operation.resource.id}`;
+    return `${taskActionTitles[facts.value.action.operation.action] ?? facts.value.action.operation.action} · ${facts.value.action.operation.resource.id}`;
   if (facts.kind === "preparation") {
     const action = facts.value.action;
     return action.kind === "offered"
@@ -44,9 +60,22 @@ export const taskTitle = (task: TaskDetail): string => {
         : "准备查询";
   }
   if (facts.kind === "sampling") return facts.value.definition.title;
-  return `${facts.value.kind} · ${facts.value.phase}`;
+  return `${managementTitles[facts.value.kind] ?? facts.value.kind} · ${taskPhase[facts.value.phase] ?? facts.value.phase}`;
 };
 export const taskPhase: Record<string, string> = {
+  changed: "配置变更已记录",
+  assigned: "分配已记录",
+  withdrawn: "撤回已记录",
+  offered: "已提供原执行任务",
+  dispatched: "已派发，效果待核实",
+  received: "已接收，执行待核实",
+  started: "来源记录已启动",
+  reporting: "正在报告结果",
+  result: "已记录来源结果",
+  reconciled: "来源已核对记录",
+  decided: "准入决定已记录",
+  completed: "来源已记录完成",
+  unknown: "原任务结果未知",
   waiting: "等待执行",
   confirmationRequired: "等待本人确认",
   awaitingConfirmation: "等待本人确认",
@@ -83,10 +112,13 @@ export function createTaskCenter(
   tasks: TaskPort | null,
   port: SelfServicePort | null,
 ) {
-  const state = reactive({
+  const state = proxy({
     query: initialQuery(),
     items: [] as TaskDetail[],
     selected: null as TaskDetail | null,
+    requested: null as TaskRef | null,
+    detailLoading: false,
+    detailError: "",
     next: null as string | null,
     loading: false,
     loaded: false,
@@ -94,10 +126,11 @@ export function createTaskCenter(
     uncertain: false,
     error: tasks ? "" : "本机任务服务未连接",
     taskId: "",
-    byRef: new Map<string, TaskDetail>(),
+    byRef: proxyMap<string, TaskDetail>(),
     recent: [] as TaskRef[],
     recentNext: null as string | null,
     recentLoaded: false,
+    recentAsOf: 0,
     recentLoading: false,
 
     remoteAvailable: false,
@@ -117,6 +150,7 @@ export function createTaskCenter(
     recentError: "",
     recentWindowed: false,
   });
+  type ReadState = Snapshot<typeof state>;
   let alive = true,
     epoch = 0,
     listEpoch = 0,
@@ -144,19 +178,22 @@ export function createTaskCenter(
     }
   }
 
-  const preparations = computed(() =>
-    [...state.byRef.values()].flatMap((t) =>
+  const preparations = (current: ReadState = state) =>
+    [...current.byRef.values()].flatMap((t) =>
       t.facts.kind === "preparation" ? [t.facts.value] : [],
-    ),
-  );
+    );
   function invalidate() {
     ++epoch;
     state.byRef.clear();
     state.recent = [];
     state.recentNext = null;
     state.recentLoaded = false;
+    state.recentAsOf = 0;
     state.items = [];
     state.selected = null;
+    state.requested = null;
+    state.detailLoading = false;
+    state.detailError = "";
     state.next = null;
     state.pendingControl = null;
     state.node = "";
@@ -195,7 +232,7 @@ export function createTaskCenter(
     state.loading = true;
     listFlight = (async () => {
       try {
-        const page = await tasks.list(query);
+        const page = deepClone(await tasks.list(query));
         if (!alive || call !== epoch || queryVersion !== listEpoch) return;
         acceptScope(page.scope);
         if (page.next && page.next === query.cursor)
@@ -225,10 +262,7 @@ export function createTaskCenter(
         if (!state.uncertain) state.error = "";
       } catch (error) {
         if (alive && call === epoch)
-          state.error =
-            error instanceof Error
-              ? error.message
-              : "无法读取任务；已有记录待核实";
+          state.error = "无法读取任务；已有记录待核实，请重读当前来源。";
       } finally {
         if (alive) {
           state.loading = false;
@@ -256,10 +290,10 @@ export function createTaskCenter(
       state.page = oldPage;
     }
   }
-  const recentItems = computed(() =>
-    state.recent
+  const recentItems = (current: ReadState = state) =>
+    current.recent
       .flatMap((ref) => {
-        const item = state.byRef.get(taskKey(ref));
+        const item = current.byRef.get(taskKey(ref));
         return item ? [item] : [];
       })
       .sort(
@@ -270,8 +304,7 @@ export function createTaskCenter(
             : taskKey(a.reference) === taskKey(b.reference)
               ? 0
               : -1),
-      ),
-  );
+      );
   async function loadRecent(append = false): Promise<void> {
     if (!tasks || !alive || (append && !state.recentNext)) return;
     if (recentFlight) return recentFlight;
@@ -280,7 +313,9 @@ export function createTaskCenter(
     recentFlight = (async () => {
       try {
         const cursor = append ? state.recentNext : null;
-        const page = await tasks.list({ ...initialQuery(), limit: 32, cursor });
+        const page = deepClone(
+          await tasks.list({ ...initialQuery(), limit: 32, cursor }),
+        );
         if (!alive || call !== epoch) return;
         acceptScope(page.scope);
         if (page.next && page.next === cursor) throw Error("任务游标未推进");
@@ -296,6 +331,7 @@ export function createTaskCenter(
         if (append) recentBrowsing = true;
         state.recentError = "";
         state.recentLoaded = true;
+        state.recentAsOf = page.asOf;
       } catch {
         if (alive && call === epoch)
           state.recentError = "最近任务读取未完成，保留事实待核实";
@@ -315,6 +351,7 @@ export function createTaskCenter(
     state.recent = [];
     state.recentNext = null;
     state.recentLoaded = false;
+    state.recentAsOf = 0;
     state.recentWindowed = false;
     recentBrowsing = false;
     await loadRecent();
@@ -341,7 +378,8 @@ export function createTaskCenter(
     const call = epoch;
     const promise = tasks
       .detail(reference)
-      .then((value) => {
+      .then((received) => {
+        const value = deepClone(received);
         if (!alive || call !== epoch) throw Error("任务主体已失效");
         acceptScope(value.scope);
         cache(value);
@@ -371,12 +409,18 @@ export function createTaskCenter(
   }
   function closeTask() {
     selectionEpoch++;
+    state.requested = null;
     state.selected = null;
+    state.detailLoading = false;
+    state.detailError = "";
     state.node = "";
   }
   async function openTask(reference: TaskRef, node = "") {
     const call = epoch,
       selection = ++selectionEpoch;
+    state.requested = deepClone(reference);
+    state.detailLoading = true;
+    state.detailError = "";
     if (
       state.selected &&
       taskKey(state.selected.reference) !== taskKey(reference)
@@ -391,7 +435,7 @@ export function createTaskCenter(
       if (node && !value.nodes.some((n) => n.id === node)) {
         state.selected = value;
         state.node = "";
-        state.error = "原步骤已不在当前详情中，已读取原任务最新事实";
+        state.detailError = "原步骤已不在当前详情中，已读取原任务最新事实";
         return "unavailable" as const;
       }
       if (
@@ -411,8 +455,11 @@ export function createTaskCenter(
     } catch {
       if (!alive || call !== epoch || selection !== selectionEpoch)
         return "stale" as const;
-      state.error = "原任务不可访问或状态未确认，请重试读取";
+      state.detailError = "原任务不可访问或状态未确认，请重试读取";
       return "unknown" as const;
+    } finally {
+      if (alive && call === epoch && selection === selectionEpoch)
+        state.detailLoading = false;
     }
   }
   async function reconcileControl() {
@@ -493,11 +540,18 @@ export function createTaskCenter(
       const task = await detail(requestRef(request));
       await control(task, "cancel");
     } catch {
-      state.error = "无法确认原任务，未提交取消";
+      if (alive) state.error = "无法确认原任务，未提交取消";
     }
   }
   async function confirmPreparation(item: BackendTask) {
-    if (!port || state.busy || state.uncertain) return;
+    if (
+      !alive ||
+      !port ||
+      state.busy ||
+      state.uncertain ||
+      item.expiresAt * 1000 <= Date.now()
+    )
+      return;
     state.busy = true;
     const call = epoch;
     try {
@@ -535,6 +589,24 @@ export function createTaskCenter(
     state.page = 1;
     await listFlight;
     await load();
+  }
+  /** Exact Policy history for another page, sharing this owner's scope and cache. */
+  async function policyTasks(policy: string, cursor: string | null = null) {
+    if (!tasks || !alive) throw Error("task service unavailable");
+    const call = epoch;
+    const page = deepClone(
+      await tasks.list({ ...initialQuery(), policy, cursor }),
+    );
+    if (!alive || call !== epoch) return;
+    acceptScope(page.scope);
+    if (page.next && page.next === cursor)
+      throw Error("task cursor did not advance");
+    for (const item of page.items) {
+      if (item.scope !== page.scope || item.policy?.id !== policy)
+        throw Error("Policy task scope mismatch");
+      cache(item);
+    }
+    return page;
   }
   function schedule() {
     clearTimeout(timer);
@@ -593,14 +665,9 @@ export function createTaskCenter(
     confirmPreparation,
     reconcileControl,
     setQuery,
+    policyTasks,
     setVisible,
     dispose,
   };
 }
 export type Controller = ReturnType<typeof createTaskCenter>;
-export const taskCenterKey: InjectionKey<Controller> = Symbol("task-center");
-
-export const taskNavigationKey: InjectionKey<{
-  openTask(reference: string | TaskRef, node?: string): Promise<string>;
-  openNode(reference: TaskRef, node: string): Promise<string>;
-}> = Symbol("task-navigation");

@@ -53,9 +53,9 @@ pub fn publish(
     .unwrap();
     item.task = SelfServiceTask::Software {
         resource: TaskResource {
-            id: "native-software".into(),
-            version: spec.steps[0].action.version.clone(),
-            variant: "default".into(),
+            id: spec.steps[0].definition.resource.clone(),
+            version: spec.steps[0].definition.version.clone(),
+            variant: spec.steps[0].definition.variant.clone(),
         },
         run_as,
         target: spec.steps[0].target.clone(),
@@ -113,7 +113,9 @@ pub fn offer(
         return Err(StatusCode::FORBIDDEN);
     };
     if template.spec.intent != SoftwareTaskIntent::Install
-        || resource.version != step.action.version
+        || resource.id != step.definition.resource
+        || resource.version != step.definition.version
+        || resource.variant != step.definition.variant
         || run_as != &native.install.run_as
         || target != &step.target
     {

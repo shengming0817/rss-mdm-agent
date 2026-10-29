@@ -1,7 +1,16 @@
 import { fileURLToPath } from "node:url";
-import { run } from "./ai-host-artifacts.mjs";
+import { run, verifyRuntimeIntegrity } from "./ai-host-artifacts.mjs";
+import { sourceEvidence, sha256 } from "./native-evidence.mjs";
+import { verifyFrontendClosure } from "./frontend-closure.mjs";
+import { join } from "node:path";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import assert from "node:assert/strict";
 import { desktopBuildEnvironment } from "./desktop-organization.mjs";
 const native = process.argv.includes("--native-acceptance");
+const root = fileURLToPath(new URL("../", import.meta.url));
+const receipt = join(root, ".local-ci-runs/desktop-release-static.json");
+if (!native) rmSync(receipt, { force: true });
+const fixedSource = native ? undefined : sourceEvidence(root);
 const buildEnv = native
   ? {
       ...process.env,
@@ -49,14 +58,11 @@ run(
 );
 
 if (process.platform === "darwin" && !native) {
-  const { join } = await import("node:path");
-  const { mkdirSync } = await import("node:fs");
   const { execFileSync } = await import("node:child_process");
   const { cargoTargetDir } = await import("./cargo-target.mjs");
   const { assemblePasskeyHost, appleSigned } = await import(
     "./build-macos-passkey.mjs"
   );
-  const root = fileURLToPath(new URL("../", import.meta.url));
   const app = join(
     cargoTargetDir(root),
     "release/bundle/macos/RSS MDM Agent.app",
@@ -93,4 +99,74 @@ if (process.platform === "darwin" && !native) {
   execFileSync("/usr/bin/codesign", ["--verify", "--strict", app], {
     stdio: "inherit",
   });
+}
+
+if (!native) {
+  const { cargoTargetDir } = await import("./cargo-target.mjs");
+  const desktop = verifyFrontendClosure(
+    join(root, "apps/desktop/dist"),
+    fixedSource,
+  );
+  const ui = verifyFrontendClosure(join(root, "packages/ui/dist"), fixedSource);
+  const app =
+    process.platform === "darwin"
+      ? join(
+          cargoTargetDir(root),
+          "release/bundle/macos/RSS MDM Agent.app/Contents",
+        )
+      : undefined;
+  const binary = app
+    ? join(app, "MacOS/rss-mdm-desktop")
+    : join(cargoTargetDir(root), "release/rss-mdm-desktop.exe");
+  const runtime = app
+    ? join(app, "Resources/ai-host-runtime")
+    : join(root, "apps/desktop/src-tauri/resources/ai-host-runtime");
+  const runtimeManifest = readFileSync(join(runtime, "manifest.json"));
+  const manifest = JSON.parse(runtimeManifest);
+  assert.equal(manifest.status, "passed");
+  assert.equal(manifest.kind, "release");
+  assert.equal(manifest.verification.platform, process.platform);
+  assert.equal(manifest.verification.arch, process.arch);
+  verifyRuntimeIntegrity(runtime, manifest.runtimeTreeSha256);
+  assert.deepEqual(
+    sourceEvidence(root),
+    fixedSource,
+    "source changed during release build",
+  );
+  mkdirSync(join(root, ".local-ci-runs"), { recursive: true });
+  writeFileSync(
+    receipt,
+    JSON.stringify(
+      {
+        status: "passed",
+        kind: "static-release-package",
+        source: fixedSource,
+        environment: { platform: process.platform, arch: process.arch },
+        binarySha256: sha256(readFileSync(binary)),
+        runtimeManifestSha256: sha256(runtimeManifest),
+        runtimeTreeSha256: manifest.runtimeTreeSha256,
+        frontend: Object.fromEntries(
+          [desktop, ui].map((report) => [
+            report.owner,
+            { modules: report.modules.length, files: report.files },
+          ]),
+        ),
+        macosCodeSignature:
+          process.platform === "darwin"
+            ? "codesign --verify --strict passed"
+            : "not_applicable",
+        nativeAcceptance: "not_verified",
+        applicationStarted: false,
+        windowsPackaging:
+          process.platform === "win32"
+            ? "executable and staged runtime only"
+            : "not_verified",
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+  console.log(
+    "Fixed release package and frontend closure verified statically; application was not started",
+  );
 }

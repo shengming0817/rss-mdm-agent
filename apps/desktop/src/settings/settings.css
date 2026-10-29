@@ -1,0 +1,155 @@
+.rss-preferences-page .rss-eyebrow {
+  margin-bottom: 9px;
+}
+.rss-connection-card {
+  display: flex;
+  align-items: center;
+  gap: 17px;
+  padding: 22px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  min-width: 0;
+}
+.rss-connection-mark {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: #eeeaf5;
+  color: #8b7ca5;
+  font-size: 21px;
+  font-weight: 550;
+  flex-shrink: 0;
+}
+.rss-preferences-page .rss-connection-card h2 {
+  font-size: 14px;
+  font-weight: 550;
+  margin: 0 0 6px;
+}
+.rss-preferences-page .rss-connection-card p {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0 0 5px;
+  overflow-wrap: anywhere;
+}
+.rss-connection-card small {
+  font-size: 10px;
+  color: var(--muted);
+  display: block;
+  line-height: 1.8;
+}
+.rss-connection-form {
+  padding: 12px 0;
+}
+.rss-connection-form .rss-form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.rss-vault-entry {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line);
+}
+.rss-vault-entry strong {
+  font-size: 12px;
+  font-weight: 550;
+}
+.rss-vault-entry small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 5px;
+}
+.rss-diagnostic-scopes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin: 22px 0;
+}
+.rss-diagnostic-scopes label {
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+}
+.rss-diagnostic-preview {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 16px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  border-radius: 8px;
+  max-height: 55vh;
+  overflow: auto;
+  font-size: 11px;
+}
+.rss-about-brand {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.rss-about-brand > i {
+  display: grid;
+  place-items: center;
+  font-style: normal;
+  font-size: 24px;
+  font-weight: 650;
+  width: 49px;
+  height: 49px;
+  border-radius: 13px;
+  background: var(--tint);
+  color: var(--accent);
+}
+.rss-preferences-page .rss-about-brand h2 {
+  font-size: 21px;
+  font-weight: 550;
+  margin: 0 0 6px;
+}
+.rss-preferences-page .rss-about-brand p {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0;
+}
+.rss-about-brand .ant-tag {
+  margin-left: auto;
+}
+@media (max-width: 720px) {
+  .rss-connection-card {
+    gap: 11px;
+    padding: 18px;
+    flex-wrap: wrap;
+  }
+  .rss-connection-card > .rss-grow {
+    min-width: 180px;
+  }
+  .rss-diagnostic-scopes,
+  .rss-connection-form .rss-form-grid {
+    grid-template-columns: 1fr;
+  }
+  .rss-about-brand {
+    flex-wrap: wrap;
+  }
+  .rss-about-brand .ant-tag {
+    margin-left: 0;
+  }
+}
+.rss-history-preview {
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.rss-session-options .ant-select {
+  width: 100%;
+}
+
+.rss-connection-card {
+  flex-wrap: wrap;
+}

@@ -1,7 +1,7 @@
 import { taskFromFacts } from "../../../../../tests/self-service/support";
 import { directoryItem } from "../../../../../tests/self-service/support";
 import { describe, it, expect, vi } from "vitest";
-import { shallowRef } from "vue";
+
 import {
   createOperationController,
   OperationDrafts,
@@ -71,15 +71,16 @@ function fixture() {
     loseReply = false,
     rejection = "";
   const sent: unknown[] = [];
+  const view = {
+    namespace: {
+      sessionId: "session",
+      principalId: "principal",
+      authorityId: "authority",
+      tenantId: "tenant",
+    },
+  };
   const controller = {
-    view: shallowRef({
-      namespace: {
-        sessionId: "session",
-        principalId: "principal",
-        authorityId: "authority",
-        tenantId: "tenant",
-      },
-    }),
+    view: () => view,
     executionDetails: async () =>
       taskFromFacts({ kind: "preparation", value: structuredClone(record) }),
     preparationDetails: async () => structuredClone(record),
@@ -144,11 +145,19 @@ describe("production operation adapter", () => {
   it("submits edited current values and preserves fixed parameters at the service boundary", async () => {
     const f = fixture(),
       stop = new AbortController();
+    if (
+      f.record.action.kind !== "policy" ||
+      f.record.action.task.kind !== "script"
+    )
+      throw Error("fixture");
+    (f.record.action.task.parameterSchema as any).properties.name.title =
+      "修复名称";
     const bridge = await connectOperation(
       f.controller,
       "delivery",
       stop.signal,
     );
+    expect(bridge.presentation.fields[0].label).toBe("修复名称");
     const card = createOperationController(
       bridge.presentation,
       bridge.snapshot,
@@ -248,7 +257,7 @@ describe("production operation adapter", () => {
     );
     expect(card.can("submit")).toBe(false);
     card.dispose();
-    f.controller.view.value!.namespace.principalId = "other";
+    f.controller.view()!.namespace.principalId = "other";
     await expect(bridge.read()).rejects.toThrow("上下文");
     expect(f.requests()).toBe(0);
     stop.abort();

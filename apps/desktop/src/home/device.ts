@@ -1,13 +1,19 @@
-import { shallowReactive } from "vue";
+import { deepClone } from "valtio/vanilla/utils";
+import { proxy } from "valtio/vanilla";
 import type { DeviceOverview } from "../self-service/types";
 export type DeviceOverviewPort = { read(): Promise<DeviceOverview> };
 export function createDeviceOverview(port?: DeviceOverviewPort) {
-  const state = shallowReactive<{
+  const state = proxy({
+    value: null,
+    loading: false,
+    error: "",
+    readAt: null,
+  } as {
     value: DeviceOverview | null;
     loading: boolean;
     error: string;
     readAt: number | null;
-  }>({ value: null, loading: false, error: "", readAt: null });
+  });
   let disposed = false;
   async function refresh() {
     if (!port || disposed || state.loading) return;
@@ -15,7 +21,7 @@ export function createDeviceOverview(port?: DeviceOverviewPort) {
     try {
       const value = await port.read();
       if (!disposed) {
-        state.value = value;
+        state.value = deepClone(value);
         state.readAt = Date.now();
         state.error = "";
       }

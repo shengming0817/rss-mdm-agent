@@ -1,9 +1,10 @@
-// ref: Vue core packages/reactivity/src/computed.ts@v3.5.38.
-import { computed, reactive, type InjectionKey } from "vue";
+import { deepClone, proxyMap, proxySet } from "valtio/vanilla/utils";
+import { proxy, type Snapshot } from "valtio/vanilla";
 import type {
   CollectedData,
   DataAccessPort,
   QueryDescriptor,
+  QueryStatus,
   SettingsOperation,
   SettingsPatch,
   SettingsResponse,
@@ -50,20 +51,36 @@ export function createSystemSettings(
   identity: () => string = () => crypto.randomUUID(),
   tasks: import("../task-center/controller").Controller | null = null,
 ) {
-  const state = reactive({
-    observations: new Map<SettingsSection, SettingsResponse>(),
-    facts: new Map<string, { source: QueryDescriptor; value: CollectedData }>(),
+  const state = proxy({
+    observations: proxyMap<SettingsSection, SettingsResponse>(),
+    facts: proxyMap<
+      string,
+      { source: Snapshot<QueryDescriptor>; value: CollectedData }
+    >(),
     sources: [] as QueryDescriptor[],
-    busy: new Set<SettingsSection>(),
-    errors: new Map<SettingsSection, string>(),
-    pending: new Map<
+    busy: proxySet<SettingsSection>(),
+    reads: proxySet<SettingsSection>(),
+    queries: proxyMap<string, QueryStatus>(),
+    errors: proxyMap<SettingsSection, string>(),
+    pending: proxyMap<
       SettingsSection,
       { request: string; operation: SettingsOperation }
     >(),
     now: Date.now(),
   });
+  type ReadState = Snapshot<typeof state>;
   let active = true,
     epoch = 0;
+  const waits = new Map<ReturnType<typeof setTimeout>, () => void>();
+  function pause() {
+    return new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        waits.delete(timer);
+        resolve();
+      }, 250);
+      waits.set(timer, resolve);
+    });
+  }
   function ageFact(value: CollectedData) {
     const at = value.collectedAt;
     if (
@@ -73,8 +90,8 @@ export function createSystemSettings(
     )
       value.stale = true;
   }
-  const relevant = (section: SettingsSection) =>
-    state.sources.filter((s) =>
+  const relevant = (section: SettingsSection, current: ReadState = state) =>
+    current.sources.filter((s) =>
       s.domains.some((d) => families[section].some((p) => d.startsWith(p))),
     );
   const timer = setInterval(() => {
@@ -96,13 +113,23 @@ export function createSystemSettings(
   };
   function accept(section: SettingsSection, response: SettingsResponse) {
     if (!active) return;
+    state.now = Date.now();
+    response = deepClone(response);
     const pending = state.pending.get(section);
     if (!response.request && pending) return;
     state.observations.set(section, response);
     if (response.finished && response.request === pending?.request)
       state.pending.delete(section);
   }
+  let directoryFlight: Promise<void> | undefined;
   async function directory() {
+    if (directoryFlight) return directoryFlight;
+    directoryFlight = readDirectory().finally(() => {
+      directoryFlight = undefined;
+    });
+    return directoryFlight;
+  }
+  async function readDirectory() {
     if (!data || !active || state.sources.length) return;
     let after: string | null = null;
     const sources: QueryDescriptor[] = [],
@@ -117,7 +144,7 @@ export function createSystemSettings(
       for (const source of page.items)
         if (source.kind === "native" && !seen.has(source.reference.id)) {
           seen.add(source.reference.id);
-          sources.push(source);
+          sources.push(deepClone(source));
         }
       if (!page.next) {
         if (active) state.sources = sources;
@@ -138,35 +165,62 @@ export function createSystemSettings(
     await Promise.all(
       relevant(section).map(async (source) => {
         if (refresh && source.available) {
-          const request = identity();
-          let status = await data.query_submit({
-            request,
-            query: source.reference,
-            parameters: {},
-          });
+          const key = JSON.stringify(source.reference),
+            previous = state.queries.get(key),
+            resume =
+              previous &&
+              !["completed", "failed", "cancelled"].includes(previous.phase),
+            request = resume ? previous.request : identity();
+          // Keep the original query before submission, even if its receipt is lost.
+          if (!resume)
+            state.queries.set(key, {
+              request,
+              query: deepClone(source.reference),
+              phase: "unknown",
+              cancelRequested: false,
+              preparation: null,
+            });
+          let status = resume
+            ? await data.query_status({ request })
+            : await data.query_submit({
+                request,
+                query: source.reference,
+                parameters: {},
+              });
+          if (!active || call !== epoch) return;
+          state.queries.set(key, deepClone(status));
           for (
             let n = 0;
             active &&
             call === epoch &&
-            !["completed", "failed", "cancelled", "unknown"].includes(
-              status.phase,
-            ) &&
+            ![
+              "completed",
+              "failed",
+              "cancelled",
+              "unknown",
+              "awaitingConfirmation",
+            ].includes(status.phase) &&
             n < 240;
             n++
           ) {
-            await new Promise((resolve) => setTimeout(resolve, 250));
+            await pause();
             if (!active || call !== epoch) return;
             status = await data.query_status({ request });
+            if (active && call === epoch)
+              state.queries.set(key, deepClone(status));
           }
         }
         if (!active || call !== epoch) return;
-        const value = await data.data_read({
-          selection: { kind: "query", query: source.reference },
-          after: null,
-          limit: 128,
-          maxAgeSeconds: queryMaxAgeSeconds,
-        });
+        const value = deepClone(
+          await data.data_read({
+            selection: { kind: "query", query: source.reference },
+            after: null,
+            limit: 128,
+            maxAgeSeconds: queryMaxAgeSeconds,
+          }),
+        );
         if (active && call === epoch) {
+          state.now = Date.now();
           ageFact(value);
           state.facts.set(source.reference.id, { source, value });
         }
@@ -189,8 +243,9 @@ export function createSystemSettings(
           section,
           response.reason ?? "系统未确认打开设置，请重试。",
         );
-      if (response.finished) return;
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      if (response.finished || (publish && response.effect === "preview"))
+        return response;
+      await pause();
     }
   }
   async function run(section: SettingsSection, operation: SettingsOperation) {
@@ -225,8 +280,9 @@ export function createSystemSettings(
           section,
           response.reason ?? "系统未确认打开设置，请重试。",
         );
-      if (request && !response.finished)
-        await poll(section, request, call, !navigation);
+      if (request && !response.finished && response.effect !== "preview")
+        return await poll(section, request, call, !navigation);
+      return response;
     } catch (error) {
       if (active && call === epoch) state.errors.set(section, message(error));
     } finally {
@@ -234,8 +290,9 @@ export function createSystemSettings(
     }
   }
   async function load(section: SettingsSection, refresh = false) {
-    if (!active || state.busy.has(section)) return;
+    if (!active || state.busy.has(section) || state.reads.has(section)) return;
     const call = epoch;
+    state.reads.add(section);
     const local = run(
       section,
       refresh &&
@@ -248,6 +305,28 @@ export function createSystemSettings(
     } catch {
       if (active && call === epoch)
         state.errors.set(section, "部分本机采集数据不可用，请查看各项状态。");
+    } finally {
+      if (active && call === epoch) state.reads.delete(section);
+    }
+  }
+  async function recoverQuery(section: SettingsSection, request: string) {
+    if (!active || !data || state.reads.has(section)) return;
+    const entry = [...state.queries.entries()].find(
+      ([, value]) => value.request === request,
+    );
+    if (!entry) return;
+    const call = epoch;
+    state.reads.add(section);
+    try {
+      const value = await data.query_status({ request });
+      if (!active || call !== epoch) return;
+      state.queries.set(entry[0], deepClone(value));
+      await readFacts(section, false, call);
+    } catch {
+      if (active && call === epoch)
+        state.errors.set(section, "原采集请求结果未确认，请继续查询原请求。");
+    } finally {
+      if (active && call === epoch) state.reads.delete(section);
     }
   }
   async function save(patch: SettingsPatch, expected?: string) {
@@ -258,33 +337,43 @@ export function createSystemSettings(
           ? "display"
           : "power";
     const snapshot = state.observations.get(section)?.snapshot;
-    if (!snapshot) return;
+    if (
+      !snapshot ||
+      !active ||
+      state.busy.has(section) ||
+      state.pending.has(section)
+    )
+      return;
+    const request = identity();
     await run(section, {
       kind: "change",
-      request: identity(),
+      request,
       expected: expected ?? snapshot.revision,
       patch,
     });
+    return request;
   }
   async function keep(section: SettingsSection) {
     const response = state.observations.get(section);
     if (
+      !active ||
       !port ||
+      state.busy.has(section) ||
       !response?.request ||
       !response.digest ||
       response.effect !== "preview"
     )
       return;
-    try {
-      const value = await port({
-        kind: "keepDisplay",
-        request: response.request,
-        digest: response.digest,
-      });
-      if (active) accept(section, value);
-    } catch (error) {
-      if (active) state.errors.set(section, message(error));
-    }
+    if (
+      response.keepBeforeUnixMs == null ||
+      Date.now() >= response.keepBeforeUnixMs
+    )
+      return;
+    await run(section, {
+      kind: "keepDisplay",
+      request: response.request,
+      digest: response.digest,
+    });
   }
   async function cancel(section: SettingsSection) {
     const pending = state.pending.get(section);
@@ -307,18 +396,23 @@ export function createSystemSettings(
     if (!pending || state.busy.has(section)) return;
     await run(section, pending.operation);
   }
-  const summary = computed(() => ({
-    network: [...state.facts.values()].find((v) =>
+  const summary = (current: ReadState = state) => ({
+    network: [...current.facts.values()].find((v) =>
       v.source.domains.includes("hardware.network"),
     )?.value,
-    storage: [...state.facts.values()].find((v) =>
+    storage: [...current.facts.values()].find((v) =>
       v.source.domains.includes("hardware.volumes"),
     )?.value,
-    power: [...state.facts.values()].find((v) =>
+    power: [...current.facts.values()].find((v) =>
       v.source.domains.includes("hardware.battery"),
     )?.value,
-  }));
+  });
   function dispose() {
+    for (const [timer, resolve] of waits) {
+      clearTimeout(timer);
+      resolve();
+    }
+    waits.clear();
     if (!active) return;
     // The original worker owns its preview timeout and restoration after UI disposal.
     active = false;
@@ -327,6 +421,11 @@ export function createSystemSettings(
     state.observations.clear();
     state.facts.clear();
     state.pending.clear();
+    state.sources = [];
+    state.errors.clear();
+    state.busy.clear();
+    state.reads.clear();
+    state.queries.clear();
   }
   return {
     state,
@@ -338,6 +437,7 @@ export function createSystemSettings(
     keep,
     cancel,
     recover,
+    recoverQuery,
     retry,
     summary,
     openNative: (section: SettingsSection) =>
@@ -346,5 +446,3 @@ export function createSystemSettings(
   };
 }
 export type SystemSettingsController = ReturnType<typeof createSystemSettings>;
-export const systemSettingsKey: InjectionKey<SystemSettingsController> =
-  Symbol("system-settings");

@@ -1,12 +1,12 @@
-// ref: Vue core packages/reactivity/src/computed.ts@478e3e83acd34dd213a860be4a2a2bf2090dc26b.
-import { reactive, type InjectionKey } from "vue";
+import { deepClone } from "valtio/vanilla/utils";
+import { proxy, type Snapshot } from "valtio/vanilla";
 import type { SelfServiceDirectoryItem, SelfServicePort } from "./types";
 
 /** One current-subject directory; cursors are discovery positions, never permissions. */
 export function createDirectory(
   port: Pick<SelfServicePort, "policy_directory" | "policy_resolve"> | null,
 ) {
-  const state = reactive({
+  const state = proxy({
     items: [] as SelfServiceDirectoryItem[],
     next: null as string | null,
     complete: false,
@@ -26,7 +26,7 @@ export function createDirectory(
     state.loading = true;
     try {
       if (append && visited.size >= 2048) throw Error("capacity");
-      const page = await port.policy_directory({ after });
+      const page = deepClone(await port.policy_directory({ after }));
       if (!active || call !== epoch) return;
       if (
         page.nextCursor &&
@@ -86,13 +86,12 @@ export function createDirectory(
   return { port, state, load, resolve, dispose };
 }
 export type DirectoryController = ReturnType<typeof createDirectory>;
-export const directoryKey: InjectionKey<DirectoryController> =
-  Symbol("policy-directory");
 
 /** A Resource-owned display projection; parameters and native credentials never enter it. */
 export function policyResource(
-  item: SelfServiceDirectoryItem,
+  item: Snapshot<SelfServiceDirectoryItem>,
   catalog: DirectoryController,
+  current: Snapshot<DirectoryController["state"]> = catalog.state,
 ): import("../workspace/page-navigation").PageResource {
   const text = (value: unknown) => (typeof value === "string" ? value : "");
   return {
@@ -102,10 +101,22 @@ export function policyResource(
     version: item.policyVersion,
     status: `${item.task.kind} · 风险 ${item.selfService.riskLevel} · 当前目录可见，执行仍需服务核验`,
     source: "授权 Policy 目录",
-    revision: item.policyId,
-    validUntil: catalog.state.readAt + 30_000,
+    revision: JSON.stringify([
+      item.policyId,
+      item.policyVersion,
+      item.policyRevision,
+      item.subject,
+    ]),
+    collectedAt: current.readAt,
+    validUntil: current.readAt + 30_000,
     verified:
-      !catalog.state.error &&
-      catalog.state.items.some((current) => current.policyId === item.policyId),
+      !current.error &&
+      current.readAt > 0 &&
+      current.items.some(
+        (value) =>
+          value.policyId === item.policyId &&
+          value.policyVersion === item.policyVersion &&
+          value.policyRevision === item.policyRevision,
+      ),
   };
 }

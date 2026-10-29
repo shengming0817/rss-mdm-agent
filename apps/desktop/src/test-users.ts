@@ -1,4 +1,4 @@
-import { shallowRef } from "vue";
+import { proxy } from "valtio/vanilla";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { boundedJson, decode, accessLimits } from "@rss-mdm-agent/ai-contract";
 import type {
@@ -12,12 +12,63 @@ import type {
   AccountFailure,
 } from "@rss-mdm-agent/ai-contract/wire";
 import type { Result } from "@rss-mdm-agent/ai-contract/ports";
-export const currentUser = shallowRef<UserContext>();
-export const accountNotice = shallowRef("");
-export const accountBinding =
-  shallowRef<import("@rss-mdm-agent/ai-contract/wire").AccountBindingState>(
-    "unbound",
-  );
+export const accountState = proxy({
+  user: undefined as UserContext | undefined,
+  notice: "",
+  binding:
+    "unbound" as import("@rss-mdm-agent/ai-contract/wire").AccountBindingState,
+  busy: false,
+});
+let accountEpoch = 0,
+  readTicket = 0;
+export function retireAccountOperations() {
+  accountEpoch++;
+  readTicket++;
+  accountState.busy = false;
+  accountState.user = undefined;
+  accountState.notice = "";
+  accountState.binding = "unbound";
+}
+/** Captures the application/account lifetime before a native asynchronous transition. */
+export function accountScope() {
+  const epoch = accountEpoch;
+  return () => epoch === accountEpoch;
+}
+/** Invalidates passive reads around an authenticated registration transition. */
+export function invalidateAccountReads() {
+  readTicket++;
+}
+async function changeAccount<T>(
+  run: (accept: () => boolean) => Promise<T>,
+): Promise<T> {
+  if (accountState.busy) throw new Error("account_busy");
+  const epoch = ++accountEpoch;
+  readTicket++;
+  const accept = () => epoch === accountEpoch;
+  accountState.busy = true;
+  accountState.user = undefined;
+  accountState.notice = "";
+  try {
+    return await run(accept);
+  } finally {
+    if (accept()) accountState.busy = false;
+  }
+}
+async function selectAccount(
+  read: () => Promise<unknown>,
+): Promise<UserContext> {
+  return changeAccount(async (accept) => {
+    try {
+      const value = parsed(await read(), "userContext");
+      if (!accept()) throw new Error("account_operation_retired");
+      accountState.user = value;
+      return value;
+    } catch (error) {
+      if (accept()) await refreshAccount(accept);
+      throw error;
+    }
+  });
+}
 import type { EnterpriseLogin } from "./account/types";
 import { fixtureSelected } from "./assembly";
 export const nativeTestMode = isTauri() && !fixtureSelected;
@@ -42,26 +93,19 @@ function parsed<
   >;
 }
 export async function loadTestUsers(): Promise<TestUserPage> {
+  const epoch = accountEpoch,
+    expected = accountState.user?.generation;
   const page = parsed(await invoke("test_users"), "testUserPage");
-  currentUser.value = page.current;
+  if (epoch === accountEpoch && expected === accountState.user?.generation)
+    accountState.user = page.current;
   return page;
 }
-export async function selectTestUser(name: string): Promise<UserContext> {
-  try {
-    const context = parsed(
-      await invoke("select_test_user", { name }),
-      "userContext",
-    );
-    currentUser.value = context;
-    return context;
-  } catch (error) {
-    await refreshAccount();
-    throw error;
-  }
+export function selectTestUser(name: string): Promise<UserContext> {
+  return selectAccount(() => invoke("select_test_user", { name }));
 }
 export function userGeneration(): string {
-  if (!currentUser.value) throw new Error("user_required");
-  return currentUser.value.generation;
+  if (!accountState.user) throw new Error("user_required");
+  return accountState.user.generation;
 }
 /** A secret crosses one native invocation and is never returned in connection metadata. */
 export async function saveNativeConnection(
@@ -106,78 +150,69 @@ export function selectionMessage(error: unknown): string {
   }
 }
 
-export async function enterGuest(): Promise<UserContext> {
-  try {
-    const context = parsed(await invoke("select_device"), "userContext");
-    currentUser.value = context;
-    return context;
-  } catch (error) {
-    await refreshAccount();
-    throw error;
-  }
+export function enterGuest(): Promise<UserContext> {
+  return selectAccount(() => invoke("select_device"));
 }
-export async function loginEnterprise(
-  input: EnterpriseLogin,
-): Promise<UserContext> {
-  try {
-    const context = parsed(
-      await invoke("account_login", { input }),
-      "userContext",
-    );
-    currentUser.value = context;
-    return context;
-  } catch (error) {
-    // Native login revokes the preceding account before changing organizations.
-    await refreshAccount();
-    throw error;
-  }
+export function loginEnterprise(input: EnterpriseLogin): Promise<UserContext> {
+  return selectAccount(() => invoke("account_login", { input }));
 }
-export async function recoverAccount(clear = false): Promise<void> {
-  try {
-    const value = await invoke("account_recover", { clear });
-    currentUser.value = value ? parsed(value, "userContext") : undefined;
-  } finally {
-    await refreshAccount();
-  }
+export function recoverAccount(clear = false): Promise<void> {
+  return changeAccount(async (accept) => {
+    try {
+      const value = await invoke("account_recover", { clear });
+      if (accept())
+        accountState.user = value ? parsed(value, "userContext") : undefined;
+    } finally {
+      if (accept()) await refreshAccount(accept);
+    }
+  });
 }
-export async function logoutAccount(): Promise<void> {
-  currentUser.value = undefined;
-  try {
-    await invoke("account_logout");
-  } finally {
-    await refreshAccount();
-  }
+export function logoutAccount(): Promise<void> {
+  return changeAccount(async (accept) => {
+    try {
+      await invoke("account_logout");
+    } finally {
+      if (accept()) await refreshAccount(accept);
+    }
+  });
 }
 export async function refreshAccount(
   accept: () => boolean = () => true,
-): Promise<void> {
-  const expected = currentUser.value?.generation;
+): Promise<boolean> {
+  if (!accept()) return false;
+  const expected = accountState.user?.generation;
+  const epoch = accountEpoch,
+    ticket = ++readTicket;
+  const current = () =>
+    accept() && epoch === accountEpoch && ticket === readTicket;
   try {
     const status = parsed(await invoke("account_status"), "accountStatus");
-    if (!accept() || currentUser.value?.generation !== expected) return;
+    if (!current() || accountState.user?.generation !== expected) return false;
     const value = status.current;
-    accountBinding.value = status.binding;
+    accountState.binding = status.binding;
     if (status.failure)
-      accountNotice.value = accountFailureMessage(status.failure);
+      accountState.notice = accountFailureMessage(status.failure);
     if (
       !value &&
       !status.failure &&
-      currentUser.value?.identity.mode === "user_device"
+      accountState.user?.identity.mode === "user_device"
     )
-      accountNotice.value =
+      accountState.notice =
         "企业会话已失效或无法完成在线核验。旧视图已关闭，请检查网络并重新登录。";
-    currentUser.value = value ? parsed(value, "userContext") : undefined;
+    accountState.user = value ? parsed(value, "userContext") : undefined;
+    return true;
   } catch {
     if (
-      accept() &&
-      currentUser.value?.generation === expected &&
-      currentUser.value?.identity.mode === "user_device"
+      current() &&
+      accountState.user?.generation === expected &&
+      accountState.user?.identity.mode === "user_device"
     ) {
-      currentUser.value = undefined;
-      accountNotice.value =
+      accountState.user = undefined;
+      accountState.notice =
         "无法核验企业会话，旧视图已关闭。请检查网络、组织权限并重新登录。";
     }
   }
+  return false;
 }
 
 export type Organization = AccountOrganization;
@@ -242,6 +277,12 @@ export function accountErrorMessage(error: unknown): string {
       if (status.failure) return accountFailureMessage(status.failure);
     } catch {}
   }
+  if (code === "registration_login_required")
+    return "设备注册需要企业账号核验，请登录后重试。";
+  if (code === "registration_organization_mismatch")
+    return "当前账号与设备配置的组织不一致，请核对组织。";
+  if (code === "registration_cancelled")
+    return "已停止等待注册；已受理的设备状态仍需重新读取。";
   if (code === "binding_unknown") return "登录确认尚未完成，请重试原操作。";
   if (code === "binding_conflict")
     return "当前使用者发生冲突，请清理后重新登录。";

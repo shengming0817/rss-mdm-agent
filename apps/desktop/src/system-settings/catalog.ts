@@ -31,7 +31,7 @@ export function systemEntries(mac: boolean) {
     },
     {
       id: "power",
-      title: mac ? "电池" : "电源和电池",
+      title: "电池与电源",
       description: "电量、节能与供电偏好",
       color: "green",
       group: "设备",
@@ -39,17 +39,8 @@ export function systemEntries(mac: boolean) {
       note: "电源偏好需要分别核对电池和外接电源状态。",
     },
     {
-      id: "lock",
-      title: mac ? "屏幕与睡眠" : "屏幕和睡眠",
-      description: "屏幕闲置与返回电脑时的行为",
-      color: "cyan",
-      group: "个人与安全",
-      rows: ["使用电池时关闭屏幕", "接通电源时关闭屏幕", "返回时要求登录"],
-      note: "关闭屏幕、系统睡眠与锁定电脑是不同设置。",
-    },
-    {
       id: "storage",
-      title: "储存空间",
+      title: "存储空间",
       description: "磁盘容量与空间使用情况",
       color: "orange",
       group: "设备",
@@ -72,7 +63,7 @@ export function systemEntries(mac: boolean) {
       color: "gray",
       group: "设备",
       rows: ["操作系统版本", "处理器", "内存"],
-      note: "设备规格将在接入本机状态后显示。",
+      note: "设备规格来自本机观察；未读取字段会明确标出。",
     },
   ];
 }

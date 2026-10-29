@@ -1,10 +1,12 @@
-import { OperationDrafts } from "@rss-mdm-agent/ai-ui-bridge";
+import { deepClone, proxyMap, proxySet } from "valtio/vanilla/utils";
+import { proxy, type Snapshot, ref } from "valtio/vanilla";
+import { OperationDrafts, SurfaceDrafts } from "@rss-mdm-agent/ai-ui-bridge";
 import { operationRequestId } from "@rss-mdm-agent/execution-bindings";
 import type {
   Connection,
   HistoryPreview,
 } from "@rss-mdm-agent/ai-contract/wire";
-import { computed, markRaw, reactive, shallowRef } from "vue";
+
 import {
   composePrompt,
   type ResourceContext,
@@ -126,14 +128,16 @@ export function createAssistant(
   now = () => Date.now(),
   ownerKey = "anonymous",
 ) {
-  const runtime = shallowRef<RuntimeClient>();
-  const clock = shallowRef(now());
+  const runtime = proxy({
+    current: undefined as ReturnType<typeof ref<RuntimeClient>> | undefined,
+  });
   const timer = setInterval(() => {
-    clock.value = now();
+    state.now = now();
   }, 1000);
   let connectionOwner: AbortController | undefined;
   let detailsOwner: AbortController | undefined;
-  const state = reactive({
+  const state = proxy({
+    now: now(),
     connection: "disconnected" as "disconnected" | "connecting" | "connected",
     mode: "live" as "s1" | "live",
     a2ui: false,
@@ -151,27 +155,36 @@ export function createAssistant(
       schemaVersion: 1,
       kind: "userPreferences",
     } as import("@rss-mdm-agent/ai-contract/wire").UserPreferences,
-    sessions: new Map<string, SessionItem>(),
-    views: new Map<string, SessionView>(),
-    drafts: new Map<string, Composition>(),
-    history: new Map<string, HistoryPreview>(),
-    pending: new Map<string, Pending>(),
-    sending: new Set<string>(),
-    errors: new Map<string, string>(),
+    sessions: proxyMap<string, SessionItem>(),
+    views: proxyMap<string, SessionView>(),
+    drafts: proxyMap<string, Composition>(),
+    history: proxyMap<string, HistoryPreview>(),
+    historyPreview: undefined as HistoryPreview | undefined,
+    optionBusy: false,
+    optionError: "",
+    optionPending: proxySet<string>(),
+    pending: proxyMap<string, Pending>(),
+    sending: proxySet<string>(),
+    errors: proxyMap<string, string>(),
     preferenceSave: undefined as
       | { sessionId: string; saving: boolean; failed: boolean }
       | undefined,
-    permissions: new Map<string, PermissionView>(),
+    permissions: proxyMap<string, PermissionView>(),
     task: undefined as ExecutionTaskDetails | undefined,
     taskError: "",
     taskLoading: false,
   });
+  type ReadState = Snapshot<typeof state>;
+  let disposed = false;
   let epoch = 0,
     taskEpoch = 0,
     stop = () => {};
   let selectionVersion = 0,
     blankChosen = false;
   let openingTask: Promise<void> | undefined;
+  let previewScope:
+    | { epoch: number; selection: number; generation: string; cursor: number }
+    | undefined;
   let preferenceTask = Promise.resolve();
   let creation:
     | {
@@ -181,15 +194,22 @@ export function createAssistant(
         created: boolean;
       }
     | undefined;
-  const sessions = computed(() =>
-    [...state.sessions.values()].sort(
+  const sessions = (current: ReadState = state) =>
+    [...current.sessions.values()].sort(
       (a, b) =>
         b.lastActivityAtMs - a.lastActivityAtMs ||
         a.namespace.sessionId.localeCompare(b.namespace.sessionId),
-    ),
-  );
+    );
   function recordView(next: SessionView) {
+    next = deepClone(next);
     state.views.set(next.namespace.sessionId, next);
+    if (
+      state.historyPreview?.sessionId === next.namespace.sessionId &&
+      (previewScope?.generation !== next.generation ||
+        previewScope?.cursor !== next.cursor ||
+        state.historyPreview.connectionId !== next.selectedConnectionId)
+    )
+      discardHistoryPreview();
     state.sessions.set(next.namespace.sessionId, {
       presentation: { title: "新对话" },
       lastActivityAtMs: 0,
@@ -199,34 +219,37 @@ export function createAssistant(
     });
   }
   const callbacks = new Map<string, (response: PermissionResponse) => void>();
-  const view = computed(() => state.views.get(state.selected));
-  const draft = computed({
-    get: () => state.drafts.get(state.selected)?.text ?? "",
+  const view = (current: ReadState = state) =>
+    current.views.get(current.selected);
+  const draft = {
+    get: (current: ReadState = state) =>
+      current.drafts.get(current.selected)?.text ?? "",
     set: (value: string) => {
       state.drafts.set(state.selected, {
         ...state.drafts.get(state.selected),
         text: value,
       });
     },
-  });
-  const composition = () => state.drafts.get(state.selected) ?? { text: "" };
-  const context = computed(() => composition().context);
-  const promptPreview = computed(() =>
-    composePrompt(composition(), clock.value),
-  );
-  const compositionError = computed(() =>
-    context.value?.stale ||
-    (!!context.value && context.value.expiresAt <= clock.value)
-      ? "资源信息已变更，请移除附件或从最新资源详情重新选择。"
-      : draft.value.trim() && !promptPreview.value
-        ? "消息与上下文超过发送预算，请精简后发送。"
-        : "",
-  );
+  };
+  const composition = (current: ReadState = state) =>
+    current.drafts.get(current.selected) ?? { text: "" };
+  const context = (current: ReadState = state) => composition(current).context;
+  const promptPreview = (current: ReadState = state) =>
+    composePrompt(composition(current), current.now);
+  const compositionError = (current: ReadState = state) =>
+    current.history.has(current.selected) && !historyCurrent(current)
+      ? "已确认的历史预览已变化，请移除或重新预览后再发送。"
+      : context(current)?.stale ||
+          (context(current)?.expiresAt ?? Infinity) <= current.now
+        ? "资源信息已变更，请移除附件或从最新资源详情重新选择。"
+        : draft.get(current).trim() && !promptPreview(current)
+          ? "消息与上下文超过发送预算，请精简后发送。"
+          : "";
   function stageContext(value: ResourceContext) {
     state.drafts.set(state.selected, { ...composition(), context: value });
   }
   function removeContext() {
-    state.drafts.set(state.selected, { text: draft.value });
+    state.drafts.set(state.selected, { text: draft.get() });
   }
   function validatePageContexts(current: readonly ResourceContext[]) {
     for (const [id, value] of state.drafts) {
@@ -244,102 +267,128 @@ export function createAssistant(
         });
     }
   }
-  const live = (v?: SessionView) =>
+  const live = (v?: Snapshot<SessionView>, current: ReadState = state) =>
     !!v &&
     v.connection === "attached" &&
     v.sessionStatus === "active" &&
-    state.connection === "connected";
-  const commands = computed(() => Object.values(view.value?.commands ?? {}));
-  const busy = computed(() =>
-    commands.value.some(
+    current.connection === "connected";
+  const commands = (current: ReadState = state) =>
+    Object.values(view(current)?.commands ?? {});
+  const busy = (current: ReadState = state) =>
+    commands(current).some(
       (c) =>
         c.command.input.type === "prompt" &&
         !["terminal", "invalidated", "acknowledged", "cancelled"].includes(
           c.state,
         ),
-    ),
-  );
-  const active = computed(() =>
-    commands.value.find(
+    );
+  const active = (current: ReadState = state) =>
+    commands(current).find(
       (c) =>
         c.command.input.type === "prompt" &&
         c.dispatch &&
         !["terminal", "invalidated", "acknowledged", "cancelled"].includes(
           c.state,
         ),
-    ),
-  );
-  const selectedConnectionId = computed(() =>
-    state.selected
-      ? view.value?.selectedConnectionId
-      : (state.blankConnectionId ?? state.preferences.defaultConnectionId),
-  );
-  const connectionReady = computed(() =>
-    state.connections.some(
+    );
+  const selectedConnectionId = (current: ReadState = state) =>
+    current.selected
+      ? view(current)?.selectedConnectionId
+      : (current.blankConnectionId ?? current.preferences.defaultConnectionId);
+  const connectionReady = (current: ReadState = state) =>
+    current.connections.some(
       (row) =>
-        row.connectionId === selectedConnectionId.value &&
+        row.connectionId === selectedConnectionId(current) &&
         row.status === "ready",
-    ),
-  );
-  const canSend = computed(() =>
-    !state.selected
-      ? state.connection === "connected" && !state.opening
-      : live(view.value) &&
-        connectionReady.value &&
-        !(busy.value && view.value?.connectionPending) &&
-        !state.pending.has(state.selected) &&
-        !state.sending.has(state.selected),
-  );
-  const canSteer = computed(
-    () =>
-      live(view.value) &&
-      active.value?.state === "running" &&
-      active.value?.dispatch?.certainty === "submitted" &&
-      !!active.value?.dispatch?.nativeRunId &&
-      view.value?.capabilities.steer === "supported" &&
-      !state.pending.has(state.selected) &&
-      !state.sending.has(state.selected),
-  );
-  const canCancel = computed(
-    () =>
-      live(view.value) &&
-      active.value?.state === "running" &&
-      active.value?.dispatch?.certainty === "submitted" &&
-      ["request_only", "terminal_acknowledged"].includes(
-        view.value!.capabilities.cancellation,
-      ) &&
-      !commands.value.some(
-        (c) =>
-          c.command.input.type === "cancel" &&
-          c.command.input.targetCommandId === active.value?.command.commandId &&
-          !["terminal", "invalidated", "acknowledged", "cancelled"].includes(
-            c.state,
-          ),
-      ) &&
-      !state.pending.has(state.selected) &&
-      !state.sending.has(state.selected),
-  );
-  const sessionConnection = computed(() =>
-    state.connection !== "connected"
-      ? state.connection
-      : (view.value?.connection ?? "connected"),
-  );
-  const resumeReason = computed(() => {
-    const v = view.value;
+    );
+  const canSend = (current: ReadState = state) =>
+    !current.optionBusy &&
+    !current.optionPending.has(current.selected) &&
+    (!current.selected
+      ? current.connection === "connected" &&
+        !current.opening &&
+        connectionReady(current)
+      : live(view(current), current) &&
+        connectionReady(current) &&
+        !(busy(current) && view(current)?.connectionPending) &&
+        !current.pending.has(current.selected) &&
+        !current.sending.has(current.selected));
+  const canSteer = (current: ReadState = state) =>
+    !current.optionBusy &&
+    !current.optionPending.has(current.selected) &&
+    live(view(current), current) &&
+    active(current)?.state === "running" &&
+    active(current)?.dispatch?.certainty === "submitted" &&
+    !!active(current)?.dispatch?.nativeRunId &&
+    view(current)?.capabilities.steer === "supported" &&
+    !current.pending.has(current.selected) &&
+    !current.sending.has(current.selected);
+  const canCancel = (current: ReadState = state) =>
+    live(view(current), current) &&
+    active(current)?.state === "running" &&
+    active(current)?.dispatch?.certainty === "submitted" &&
+    ["request_only", "terminal_acknowledged"].includes(
+      view(current)!.capabilities.cancellation,
+    ) &&
+    !commands(current).some(
+      (c) =>
+        c.command.input.type === "cancel" &&
+        c.command.input.targetCommandId ===
+          active(current)?.command.commandId &&
+        !["terminal", "invalidated", "acknowledged", "cancelled"].includes(
+          c.state,
+        ),
+    ) &&
+    !current.pending.has(current.selected) &&
+    !current.sending.has(current.selected);
+  const sessionConnection = (current: ReadState = state) =>
+    current.connection !== "connected"
+      ? current.connection
+      : (view(current)?.connection ?? "connected");
+  const resumeReason = (current: ReadState = state) => {
+    const v = view(current);
     if (v?.sessionStatus === "retired") return "retired";
-    if (!live(v)) return "not-attached";
+    if (!v || current.connection !== "connected" || v.connection !== "attached")
+      return "not-attached";
+    if (
+      current.optionPending.has(current.selected) ||
+      current.pending.has(current.selected)
+    )
+      return "reconcile-first";
+    if (
+      current.optionBusy ||
+      current.opening ||
+      current.sending.has(current.selected)
+    )
+      return "busy";
+    if (v.connectionPending)
+      return v.sessionStatus === "recovery_required"
+        ? "context-pending-recovery"
+        : "context-pending";
+    if (!connectionReady(current)) return "connection-required";
     if (v!.capabilities.continuation === "unknown") return "unknown";
     if (v!.capabilities.continuation === "unsupported") return "unsupported";
     if (
-      commands.value.some(
+      v.sessionStatus === "recovery_required" &&
+      v.capabilities.continuation !== "across_processes"
+    )
+      return "context-unavailable";
+    if (
+      commands(current).some(
         (c) => c.state === "running" || c.state === "dispatching",
       )
     )
       return "run-active";
     return "available";
-  });
-  const canResume = computed(() => resumeReason.value === "available");
-  function actionable(v: SessionView, id: string, at: number) {
+  };
+  const canResume = (current: ReadState = state) =>
+    resumeReason(current) === "available";
+  function actionable(
+    v: Snapshot<SessionView>,
+    id: string,
+    at: number,
+    current: ReadState = state,
+  ) {
     const item = Object.entries(v.interactions).find(
       ([key]) => key === id,
     )?.[1];
@@ -347,7 +396,7 @@ export function createAssistant(
       (surface) => surface.interactionId === id,
     );
     const supported = surfaces.length
-      ? state.a2ui &&
+      ? current.a2ui &&
         surfaces.some(
           (surface) =>
             surface.status === "active" && surface.generation === v.generation,
@@ -356,43 +405,39 @@ export function createAssistant(
     return (
       supported &&
       !!item &&
-      live(v) &&
+      live(v, current) &&
       item.status === "pending" &&
       item.generation === v.generation &&
       at <= item.expiresAtMs &&
-      !state.pending.has(v.namespace.sessionId) &&
-      !state.sending.has(v.namespace.sessionId)
+      !current.pending.has(v.namespace.sessionId) &&
+      !current.sending.has(v.namespace.sessionId)
     );
   }
-  const actionableIds = computed(
-    () =>
-      new Map(
-        [...state.views.values()].map((v) => [
-          v.namespace.sessionId,
-          Object.keys(v.interactions).filter((id) =>
-            actionable(v, id, clock.value),
-          ),
-        ]),
-      ),
-  );
-  const attention = computed(
-    () =>
-      state.permissions.size +
-      [...actionableIds.value.values()].reduce(
-        (count, ids) => count + ids.length,
-        0,
-      ),
-  );
-  const background = computed(() => [
+  const actionableIds = (current: ReadState = state) =>
+    new Map(
+      [...current.views.values()].map((v) => [
+        v.namespace.sessionId,
+        Object.keys(v.interactions).filter((id) =>
+          actionable(v, id, current.now, current),
+        ),
+      ]),
+    );
+  const attention = (current: ReadState = state) =>
+    current.permissions.size +
+    [...actionableIds(current).values()].reduce(
+      (count, ids) => count + ids.length,
+      0,
+    );
+  const background = (current: ReadState = state) => [
     ...new Set([
-      ...[...actionableIds.value]
-        .filter(([id, ids]) => id !== state.selected && ids.length > 0)
+      ...[...actionableIds(current)]
+        .filter(([id, ids]) => id !== current.selected && ids.length > 0)
         .map(([id]) => id),
-      ...[...state.permissions.values()]
+      ...[...current.permissions.values()]
         .map((item) => item.request.sessionId)
-        .filter((id) => id !== state.selected),
+        .filter((id) => id !== current.selected),
     ]),
-  ]);
+  ];
   const fail = (error: unknown) =>
     error instanceof ClientError ? error.code : "request_failed";
   function clearPermissions() {
@@ -448,8 +493,8 @@ export function createAssistant(
     }
   }
   function release() {
-    const client = runtime.value;
-    runtime.value = undefined;
+    const client = runtime.current;
+    runtime.current = undefined;
     const disposeObserver = stop;
     stop = () => {};
     try {
@@ -461,6 +506,7 @@ export function createAssistant(
     closeClient(client);
   }
   async function connect() {
+    if (disposed) return;
     const current = ++epoch;
     preferenceTask = Promise.resolve();
     if (state.preferenceSave?.saving) {
@@ -479,6 +525,9 @@ export function createAssistant(
     state.taskError = "";
     for (const cached of state.views.values()) cached.connection = "detached";
     state.history.clear();
+    discardHistoryPreview();
+    state.optionBusy = false;
+    state.optionError = "";
     state.sending.clear();
     state.errors.clear();
     state.next = undefined;
@@ -516,7 +565,7 @@ export function createAssistant(
         return;
       }
       const negotiated = connected.negotiated;
-      runtime.value = markRaw(connected.runtime);
+      runtime.current = ref(connected.runtime);
       state.mode = connected.mode;
       state.a2ui = !!negotiated.a2ui;
       stop = connected.runtime.observe((next) => {
@@ -535,8 +584,8 @@ export function createAssistant(
       await list(false);
       const catalog = await connected.runtime.connections();
       if (current !== epoch) return;
-      state.connections = catalog.connections;
-      state.preferences = catalog.preferences;
+      state.connections = deepClone(catalog.connections);
+      state.preferences = deepClone(catalog.preferences);
       const selected =
         state.selected ||
         (!blankChosen && catalog.preferences.selectedSessionId);
@@ -557,7 +606,7 @@ export function createAssistant(
     } catch (error) {
       owner.abort();
       if (current === epoch) {
-        if (runtime.value) release();
+        if (runtime.current) release();
         else closeClient(candidate, current);
         clearPermissions();
         state.connection = "disconnected";
@@ -568,19 +617,19 @@ export function createAssistant(
     }
   }
   async function list(more = true) {
-    if (!runtime.value || state.listing || (more && !state.next)) return;
+    if (!runtime.current || state.listing || (more && !state.next)) return;
     const current = epoch;
     state.listing = true;
     state.listError = "";
     try {
-      const page = await runtime.value.listSessions({
+      const page = await runtime.current.listSessions({
         limit: 20,
         ...(more && state.next ? { continuation: state.next } : {}),
       });
       if (current !== epoch) return;
       for (const item of page.items)
         state.sessions.set(item.namespace.sessionId, {
-          ...item,
+          ...deepClone(item),
           status:
             state.views.get(item.namespace.sessionId)?.sessionStatus ??
             item.status,
@@ -593,7 +642,7 @@ export function createAssistant(
     }
   }
   function remember(id: string) {
-    const client = runtime.value,
+    const client = runtime.current,
       current = epoch,
       selection = selectionVersion;
     if (!client || state.connection !== "connected") return Promise.resolve();
@@ -630,17 +679,26 @@ export function createAssistant(
   }
   async function select(id: string) {
     if (!state.sessions.has(id)) return;
+    discardHistoryPreview();
+    state.history.delete(state.selected);
+    state.optionError = "";
     selectionVersion++;
     state.selected = id;
-    if (!runtime.value || state.connection !== "connected") return;
+    if (!runtime.current || state.connection !== "connected") return;
     void remember(id);
-    if (state.views.get(id)?.connection === "attached") return;
+    if (
+      state.views.get(id)?.connection === "attached" &&
+      !state.optionPending.has(id)
+    )
+      return;
     const current = epoch;
     state.errors.delete(id);
     try {
-      const next = await runtime.value.restore(id);
+      const next = await runtime.current.restore(id);
       if (current === epoch) {
-        state.views.set(id, next);
+        state.views.set(id, deepClone(next));
+        state.optionPending.delete(id);
+        if (id === state.selected) state.optionError = "";
         state.errors.delete(id);
       }
     } catch (error) {
@@ -652,6 +710,10 @@ export function createAssistant(
     creation = undefined;
     openingTask = undefined;
     state.opening = false;
+    discardHistoryPreview();
+    state.history.delete(state.selected);
+    state.blankConnectionId = undefined;
+    state.optionError = "";
     selectionVersion++;
     blankChosen = true;
     state.selected = "";
@@ -662,14 +724,19 @@ export function createAssistant(
   }
   function firstPrompt(): Promise<void> {
     if (openingTask) return openingTask;
-    const client = runtime.value,
+    const client = runtime.current,
       current = epoch,
       selectedAtStart = selectionVersion,
       original = composition(),
       text = composePrompt(original, now());
-    if (!client || state.connection !== "connected" || !text)
+    if (
+      !client ||
+      state.connection !== "connected" ||
+      state.optionBusy ||
+      !text
+    )
       return Promise.resolve();
-    if (!creation && !connectionReady.value) {
+    if (!creation && !connectionReady()) {
       state.createError = "connection_required";
       return Promise.resolve();
     }
@@ -677,7 +744,7 @@ export function createAssistant(
     const intent = (creation ??= {
       sessionId: identity(),
       commandId: identity(),
-      connectionId: selectedConnectionId.value!,
+      connectionId: selectedConnectionId()!,
       created: false,
     });
     state.opening = true;
@@ -736,7 +803,7 @@ export function createAssistant(
   }
   async function retry(id = state.selected) {
     const pending = state.pending.get(id),
-      client = runtime.value;
+      client = runtime.current;
     if (
       !pending ||
       !client ||
@@ -789,8 +856,7 @@ export function createAssistant(
     commandId = identity(),
   ) {
     const id = state.selected;
-    if (!live(view.value) || state.pending.has(id) || state.sending.has(id))
-      return;
+    if (!live(view()) || state.pending.has(id) || state.sending.has(id)) return;
     state.pending.set(id, {
       command: {
         schemaVersion: 1,
@@ -807,10 +873,11 @@ export function createAssistant(
     await retry(id);
   }
   async function prompt(policy: "queue_next" | "steer" = "queue_next") {
+    if (compositionError()) return;
     if (!state.selected && policy === "queue_next") return firstPrompt();
     const original = composition(),
       text = composePrompt(original, now());
-    if (!(policy === "steer" ? canSteer.value : canSend.value) || !text) return;
+    if (!(policy === "steer" ? canSteer() : canSend()) || !text) return;
     await send(
       {
         type: "prompt",
@@ -820,29 +887,29 @@ export function createAssistant(
           ? { history: state.history.get(state.selected)! }
           : {}),
         ...(policy === "steer"
-          ? { targetRunId: active.value!.dispatch!.nativeRunId! }
+          ? { targetRunId: active()!.dispatch!.nativeRunId! }
           : {}),
       },
       original,
     );
   }
   async function cancel() {
-    if (!canCancel.value) return;
-    const target = active.value!;
+    if (!canCancel()) return;
+    const target = active()!;
     await send({
       type: "cancel",
       targetCommandId: target.command.commandId,
-      generation: view.value!.generation,
+      generation: view()!.generation,
       ...(target.dispatch?.nativeRunId
         ? { nativeRunId: target.dispatch.nativeRunId }
         : {}),
     });
   }
   function answerable(id: string) {
-    const v = view.value;
+    const v = view();
     return (
       !!v &&
-      actionableIds.value.get(v.namespace.sessionId)?.includes(id) === true &&
+      actionableIds().get(v.namespace.sessionId)?.includes(id) === true &&
       actionable(v, id, now()) &&
       v.capabilities.structuredQuestion === "supported" &&
       !Object.values(v.surfaces).some((s) => s.interactionId === id)
@@ -850,7 +917,7 @@ export function createAssistant(
   }
   async function respond(id: string, answers: Record<string, string>) {
     if (!answerable(id)) return;
-    const item = Object.entries(view.value!.interactions).find(
+    const item = Object.entries(view()!.interactions).find(
       ([key]) => key === id,
     )![1];
     await send(
@@ -865,20 +932,236 @@ export function createAssistant(
       Math.min(item.expiresAtMs, now() + 60_000),
     );
   }
+  function discardHistoryPreview() {
+    state.historyPreview = undefined;
+    previewScope = undefined;
+  }
+  function clearHistory() {
+    state.history.delete(state.selected);
+    discardHistoryPreview();
+  }
+  function historyCurrent(current: ReadState = state) {
+    const history = current.history.get(current.selected),
+      v = view(current);
+    return (
+      !!history &&
+      !!v &&
+      !!v.connectionPending &&
+      history.sessionId === current.selected &&
+      history.connectionId === selectedConnectionId(current) &&
+      history.throughSequence === v.cursor &&
+      current.connections.some(
+        (row) =>
+          row.connectionId === history.connectionId &&
+          row.configRevision === history.configRevision &&
+          row.status === "ready",
+      )
+    );
+  }
+  function previewCurrent() {
+    const preview = state.historyPreview,
+      v = view();
+    return (
+      !!preview &&
+      !!v &&
+      !!previewScope &&
+      !!v.connectionPending &&
+      previewScope.epoch === epoch &&
+      previewScope.selection === selectionVersion &&
+      previewScope.generation === v.generation &&
+      previewScope.cursor === v.cursor &&
+      preview.sessionId === state.selected &&
+      preview.connectionId === selectedConnectionId() &&
+      preview.throughSequence === v.cursor &&
+      state.connections.some(
+        (row) =>
+          row.connectionId === preview.connectionId &&
+          row.configRevision === preview.configRevision &&
+          row.status === "ready",
+      )
+    );
+  }
+  function confirmHistory() {
+    if (
+      !previewCurrent() ||
+      state.optionBusy ||
+      state.optionPending.has(state.selected)
+    ) {
+      state.optionError = "revision_conflict";
+      discardHistoryPreview();
+      return false;
+    }
+    state.history.set(state.selected, deepClone(state.historyPreview!));
+    return true;
+  }
+  function uncertainOption(code: string) {
+    return [
+      "request_failed",
+      "transport_closed",
+      "transport_failed",
+      "unavailable",
+      "invalid_response",
+    ].includes(code);
+  }
+  async function chooseConnection(connectionId: string, freshContext = false) {
+    const client = runtime.current,
+      current = epoch,
+      selection = selectionVersion,
+      id = state.selected,
+      v = view();
+    if (
+      !client ||
+      state.connection !== "connected" ||
+      state.optionBusy ||
+      state.opening
+    )
+      return false;
+    if (
+      !state.connections.some(
+        (row) => row.connectionId === connectionId && row.status === "ready",
+      )
+    ) {
+      state.optionError = "connection_required";
+      return false;
+    }
+    if (
+      state.optionPending.has(id) ||
+      state.pending.has(id) ||
+      state.sending.has(id) ||
+      (!id && creation)
+    ) {
+      state.optionError = "reconciliation_required";
+      return false;
+    }
+    if (!id) {
+      if (freshContext) return false;
+      state.blankConnectionId = connectionId;
+      state.optionError = "";
+      return true;
+    }
+    if (!v || v.connection !== "attached" || v.sessionStatus === "retired")
+      return false;
+    if (
+      freshContext &&
+      (busy() ||
+        (v.connectionPending && v.sessionStatus !== "recovery_required"))
+    )
+      return false;
+    clearHistory();
+    state.optionBusy = true;
+    state.optionError = "";
+    try {
+      const next = await client.selectConnection(
+        id,
+        connectionId,
+        freshContext,
+      );
+      if (current !== epoch) return false;
+      if (selection === selectionVersion && id === state.selected)
+        recordView(next);
+      else {
+        // A late reply must not leave an apparently attached stale choice in the old cache.
+        const cached = state.views.get(id);
+        if (cached) cached.connection = "detached";
+      }
+      return true;
+    } catch (error) {
+      if (current === epoch) {
+        const code = fail(error);
+        if (uncertainOption(code)) state.optionPending.add(id);
+        if (selection === selectionVersion) state.optionError = code;
+      }
+      return false;
+    } finally {
+      if (current === epoch) state.optionBusy = false;
+    }
+  }
+  async function prepareHistory(recent?: number) {
+    const client = runtime.current,
+      current = epoch,
+      selection = selectionVersion,
+      id = state.selected,
+      v = view(),
+      connectionId = selectedConnectionId();
+    if (
+      !client ||
+      !id ||
+      !v ||
+      !live(v) ||
+      !v.connectionPending ||
+      !connectionId ||
+      !connectionReady() ||
+      state.optionBusy ||
+      state.opening ||
+      busy() ||
+      state.pending.has(id) ||
+      state.optionPending.has(id) ||
+      state.sending.has(id)
+    )
+      return false;
+    if (
+      recent !== undefined &&
+      (!Number.isInteger(recent) || recent < 1 || recent > 10000)
+    )
+      return false;
+    const generation = v.generation,
+      cursor = v.cursor,
+      revision = state.connections.find(
+        (row) => row.connectionId === connectionId,
+      )!.configRevision;
+    clearHistory();
+    state.optionBusy = true;
+    state.optionError = "";
+    try {
+      const preview = await client.previewHistory(id, connectionId, recent);
+      if (
+        current !== epoch ||
+        selection !== selectionVersion ||
+        id !== state.selected
+      )
+        return false;
+      state.historyPreview = deepClone(preview);
+      previewScope = { epoch: current, selection, generation, cursor };
+      if (preview.configRevision !== revision || !previewCurrent()) {
+        discardHistoryPreview();
+        state.optionError = "revision_conflict";
+        return false;
+      }
+      return true;
+    } catch (error) {
+      if (current === epoch && selection === selectionVersion)
+        state.optionError = fail(error);
+      return false;
+    } finally {
+      if (current === epoch) state.optionBusy = false;
+    }
+  }
   async function restore(resume = false) {
     const id = state.selected,
-      client = runtime.value,
+      client = runtime.current,
       current = epoch;
-    if (!client || (resume && !canResume.value) || state.opening) return;
+    if (
+      !client ||
+      (resume && !canResume()) ||
+      state.opening ||
+      state.optionBusy
+    )
+      return;
     state.opening = true;
     try {
       const next = await (resume ? client.resume(id) : client.restore(id));
       if (current === epoch) {
-        state.views.set(id, next);
+        recordView(next);
+        state.optionPending.delete(id);
+        if (id === state.selected) state.optionError = "";
         state.errors.delete(id);
       }
     } catch (error) {
-      if (current === epoch) state.errors.set(id, fail(error));
+      if (current === epoch) {
+        const code = fail(error);
+        state.errors.set(id, code);
+        if (resume && uncertainOption(code)) state.optionPending.add(id);
+      }
     } finally {
       if (current === epoch) state.opening = false;
     }
@@ -887,13 +1170,14 @@ export function createAssistant(
     const id = state.selected,
       current = epoch;
     try {
-      await runtime.value?.detach(id);
+      await runtime.current?.detach(id);
     } catch (error) {
       if (current === epoch) state.errors.set(id, fail(error));
     }
   }
   async function executionDetails(operationId: string, signal: AbortSignal) {
-    const session = view.value,
+    if (disposed) throw new ClientError("unavailable");
+    const session = view(),
       current = epoch;
     const delivery = Object.entries(session?.deliveries ?? {}).find(
       ([key]) => key === operationId,
@@ -990,8 +1274,12 @@ export function createAssistant(
     }
   }
   const operationDrafts = new OperationDrafts();
+  const surfaceDrafts = new SurfaceDrafts();
   function dispose() {
+    if (disposed) return;
+    disposed = true;
     operationDrafts.clear();
+    surfaceDrafts.clear();
     epoch++;
     taskEpoch++;
     connectionOwner?.abort();
@@ -1010,6 +1298,10 @@ export function createAssistant(
     state.drafts.clear();
     state.pending.clear();
     state.history.clear();
+    discardHistoryPreview();
+    state.optionBusy = false;
+    state.optionPending.clear();
+    state.optionError = "";
     state.sending.clear();
     state.errors.clear();
     state.preferenceSave = undefined;
@@ -1018,17 +1310,24 @@ export function createAssistant(
     openingTask = undefined;
   }
   async function refreshConnections() {
-    const client = runtime.value,
+    const client = runtime.current,
       current = epoch;
     if (!client || state.connection !== "connected") return;
     const catalog = await client.connections();
-    if (current !== epoch || runtime.value !== client) return;
-    state.connections = catalog.connections;
-    state.preferences = catalog.preferences;
+    if (current !== epoch || runtime.current !== client) return;
+    state.connections = deepClone(catalog.connections);
+    state.preferences = deepClone(catalog.preferences);
   }
   return {
     state,
     sessions,
+    chooseConnection,
+    prepareHistory,
+    confirmHistory,
+    clearHistory,
+    discardHistoryPreview,
+    previewCurrent,
+    historyCurrent,
     selectedConnectionId,
     runtime,
     refreshConnections,
@@ -1051,7 +1350,6 @@ export function createAssistant(
     resumeReason,
     background,
     attention,
-    clock,
     connect,
     list,
     select,
@@ -1068,28 +1366,35 @@ export function createAssistant(
     taskDetails,
     executionDetails,
     operationDrafts,
+    surfaceDrafts,
     async submitOperation(
       input: import("../self-service/types").SelfServiceCommands["ai_operation_submit"]["input"],
     ) {
+      if (disposed) throw new ClientError("unavailable");
       if (!services?.submitOperation) throw new ClientError("unavailable");
       await services.submitOperation(input);
     },
     async preparationDetails(request: string) {
+      if (disposed) throw new ClientError("unavailable");
       if (!services?.preparationDetails) throw new ClientError("unavailable");
       return services.preparationDetails(request);
     },
     async reconcilePolicyPreparation(request: string) {
+      if (disposed) throw new ClientError("unavailable");
       await services?.reconcilePolicy?.(request);
     },
     async confirmPolicyPreparation(request: string) {
+      if (disposed) throw new ClientError("unavailable");
       if (!services?.confirmPolicy) throw new ClientError("unavailable");
       await services.confirmPolicy(request);
     },
     async confirmPreparation(task: BackendTask) {
+      if (disposed) throw new ClientError("unavailable");
       if (!services?.confirmTask) throw new ClientError("unavailable");
       await services.confirmTask(task);
     },
     async cancelPreparation(request: string) {
+      if (disposed) throw new ClientError("unavailable");
       if (!services?.cancelTask) throw new ClientError("unavailable");
       await services.cancelTask(request);
     },

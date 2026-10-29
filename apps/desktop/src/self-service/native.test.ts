@@ -1,11 +1,11 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { currentUser } from "../test-users";
+import { accountState } from "../test-users";
 import { nativePort, nativeDataPort, nativeTaskPort } from "./native";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(), isTauri: vi.fn() }));
 beforeEach(() => {
-  currentUser.value = {
+  accountState.user = {
     schemaVersion: 1,
     kind: "userContext",
     user: {
@@ -70,4 +70,24 @@ it("keeps local reads and explicit queries on the same authenticated data adapte
   expect(vi.mocked(invoke).mock.calls).toHaveLength(1);
   vi.mocked(isTauri).mockReturnValue(false);
   expect(nativeDataPort()).toBeNull();
+});
+it("rejects late policy and local-software replies after the authenticated generation changes", async () => {
+  const { nativeSoftwarePort } = await import("./native");
+  for (const start of [
+    () => nativePort()!.policy_status({ requestId: "original" }),
+    () => nativeSoftwarePort()!.status({ request: "original" }),
+  ]) {
+    accountState.user!.generation = "original-generation";
+    let finish!: (value: unknown) => void;
+    vi.mocked(invoke).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const pending = start();
+    accountState.user!.generation = "next-generation";
+    finish({ privateOldSubject: true });
+    await expect(pending).rejects.toThrow("native scope changed");
+  }
 });

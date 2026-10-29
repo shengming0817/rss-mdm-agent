@@ -1,7 +1,8 @@
 import { defineConfig } from "vite";
-import vue from "@vitejs/plugin-vue";
+import react from "@vitejs/plugin-react";
+import { frontendClosure } from "../../scripts/frontend-closure.mjs";
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [react(), frontendClosure("ui")],
   build: {
     lib: {
       entry: "runtime.ts",
@@ -9,6 +10,14 @@ export default defineConfig({
       fileName: "ui",
       cssFileName: "style",
     },
-    rollupOptions: { external: ["vue"] },
+    rollupOptions: {
+      external: [
+        "react",
+        "react-dom",
+        "react/jsx-runtime",
+        "antd",
+        "@ant-design/icons",
+      ],
+    },
   },
 });

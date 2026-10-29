@@ -81,25 +81,27 @@ export function nativeReplyComplete(
   expected,
   root = globalThis.document,
 ) {
-  const rows = [...root.querySelectorAll(".assistant-timeline article")];
+  const timeline = root.querySelector(".rss-assistant-timeline");
+  if (timeline?.getAttribute("data-busy") !== "false") return false;
+  const rows = [
+    ...timeline.querySelectorAll(":scope > article[data-message-key]"),
+  ];
   const at = rows.findIndex(
-    (row) => row.getAttribute("data-message-key") === promptKey,
+    (row) =>
+      row.getAttribute("data-message-kind") === "user" &&
+      row.getAttribute("data-message-key") === promptKey,
   );
-  if (
-    at < 0 ||
-    rows[at].querySelector(".command-state") ||
-    root.querySelector('.composer [data-action="cancel"]')
-  )
-    return false;
+  if (at < 0) return false;
   const after = rows.slice(at + 1);
-  const next = after.findIndex((row) =>
-    row.getAttribute("data-message-key")?.startsWith("prompt:"),
+  const next = after.findIndex(
+    (row) => row.getAttribute("data-message-kind") === "user",
   );
   return after
     .slice(0, next < 0 ? undefined : next)
     .some(
       (row) =>
-        row.getAttribute("data-message-key")?.startsWith("message:") &&
+        row.getAttribute("data-message-kind") === "assistant" &&
+        row.getAttribute("data-stable") === "true" &&
         row.textContent.includes(expected),
     );
 }

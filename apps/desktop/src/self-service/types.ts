@@ -5571,9 +5571,29 @@ export interface Command23 {
  */
 export interface PolicyInvocation {
   /**
+   * Required publication precondition, retained across lost receipts.
+   */
+  expected: PolicyExpectation;
+  /**
    * Original request identity and exact user input.
    */
   choice: PolicyChoice;
+}
+/**
+ * Exact publication reviewed by the caller before an invocation or draft is frozen.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "PolicyExpectation".
+ */
+export interface PolicyExpectation {
+  /**
+   * Immutable published execution version.
+   */
+  version: Id;
+  /**
+   * Exact configuration revision.
+   */
+  revision: number;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema

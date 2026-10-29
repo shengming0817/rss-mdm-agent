@@ -44,7 +44,12 @@ export function createFixturePorts() {
                 if (!abort.signal.aborted) disconnect();
               }
             })();
-            return () => abort.abort();
+            return () => {
+              abort.abort();
+              void fetch(`/__fixture/disconnect?peer=${peer}`, {
+                method: "POST",
+              }).catch(() => {});
+            };
           },
         }),
         options,
@@ -111,6 +116,8 @@ export function createFixturePorts() {
 
   const environment: FixtureEnvironment = {
     kind: "fixture",
+    connectionSave: (draft, expected) =>
+      rpc("save-connection", { draft, expected }),
     local: {
       ...fixtureLocalPorts(),
       tasks: {
@@ -120,7 +127,9 @@ export function createFixturePorts() {
         controlStatus: (input) => rpc("task-control-status", input),
       },
     },
-    account: createLoginFixture(() => rpc<UserContext>("identity")),
+    account: createLoginFixture((organization, login) =>
+      rpc<UserContext>("account", { organization, login }),
+    ),
     device: {
       async read() {
         return {
@@ -132,7 +141,10 @@ export function createFixturePorts() {
         };
       },
     },
-    identity: { read: () => rpc<UserContext>("identity") },
+    identity: {
+      read: () => rpc<UserContext>("identity"),
+      guest: () => rpc<UserContext>("account", { guest: true }),
+    },
     host: {
       read: () => rpc<HostStatus>("host"),
       restart: (generation) => rpc<HostStatus>("host-restart", { generation }),

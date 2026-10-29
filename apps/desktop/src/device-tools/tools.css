@@ -1,0 +1,76 @@
+.rss-tools-page .rss-eyebrow {
+  margin-bottom: 9px;
+}
+.rss-tools-page > .ant-input-search {
+  max-width: 380px;
+  margin-bottom: 22px;
+}
+.rss-tool-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+.rss-tool-card {
+  position: relative;
+  padding: 23px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.rss-tool-glyph {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 11px;
+  background: #eeecf8;
+  color: #8178ab;
+  font-size: 21px;
+  margin-bottom: 17px;
+}
+.rss-tools-page .rss-tool-card h2 {
+  font-size: 15px;
+  font-weight: 550;
+  margin: 0 0 9px;
+}
+.rss-tools-page .rss-tool-card p {
+  font-size: 12px;
+  line-height: 1.8;
+  color: var(--muted);
+  margin: 0 0 20px;
+  max-width: 420px;
+}
+.rss-tool-card small {
+  font-size: 10px;
+  color: var(--muted);
+  margin: 0 0 17px;
+}
+.rss-tool-card .ant-btn {
+  margin-top: auto;
+}
+.rss-published-tools {
+  margin-top: 30px;
+}
+.rss-published-tools + .rss-section-card {
+  margin-top: 22px;
+}
+@media (max-width: 720px) {
+  .rss-tool-grid {
+    gap: 12px;
+  }
+  .rss-tool-card {
+    padding: 17px;
+  }
+  .rss-tools-page > .ant-input-search {
+    max-width: none;
+  }
+}
+@media (max-width: 420px) {
+  .rss-tool-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -126,7 +126,7 @@ it("reads retained facts without collecting and never counts an unknown candidat
   const { data, port } = ports();
   const c = createSoftware(data, port);
   await c.discover();
-  expect(c.summary.value).toMatchObject({
+  expect(c.summary()).toMatchObject({
     installed: 1,
     updates: 0,
     complete: true,
@@ -147,10 +147,10 @@ it("preserves the existing snapshot and incomplete state on a repeated page curs
   const c = createSoftware(data, port);
   await c.discover();
   const source = c.state.sources[0];
-  expect(c.summary.value.complete).toBe(false);
+  expect(c.summary().complete).toBe(false);
   await c.read(source, true);
   expect(source.error).toContain("未完成");
-  expect(c.installed.value).toHaveLength(1);
+  expect(c.installed()).toHaveLength(1);
   expect(source.after?.offset).toBe(128);
   c.dispose();
 });
@@ -159,7 +159,7 @@ it("recovers a lost prepare acknowledgement by the same request and never prepar
   vi.mocked(port.prepare).mockRejectedValue(Error("lost acknowledgement"));
   const c = createSoftware(data, port);
   await c.discover();
-  await c.prepare(c.installed.value[0], "uninstall");
+  await c.prepare(c.installed()[0], "uninstall");
   const request = vi.mocked(port.prepare).mock.calls[0][0].request;
   expect(port.status).toHaveBeenCalledWith({ request });
   expect(c.state.operations.has(request)).toBe(true);
@@ -178,7 +178,7 @@ it("keeps current inventory authoritative across uninstall, reinstall and histor
     result.execution.phase = "executionEnded";
     result.execution.attempts = 1;
     c.accept(result);
-    expect(c.installed.value).toHaveLength(1);
+    expect(c.installed()).toHaveLength(1);
     const absent: LocalSoftwareStatus = {
       ...result,
       detected: { kind: "absent" },
@@ -187,7 +187,7 @@ it("keeps current inventory authoritative across uninstall, reinstall and histor
     expect(c.state.operations.get("request")?.detected).toEqual({
       kind: "absent",
     });
-    expect(c.installed.value).toHaveLength(1);
+    expect(c.installed()).toHaveLength(1);
 
     vi.mocked(port.read).mockResolvedValue({
       ...page,
@@ -195,7 +195,7 @@ it("keeps current inventory authoritative across uninstall, reinstall and histor
       items: [],
     });
     await c.read(c.state.sources[0]);
-    expect(c.installed.value).toHaveLength(0);
+    expect(c.installed()).toHaveLength(0);
 
     const reinstalled = { ...item, version: "2.0.0" };
     vi.mocked(port.read).mockResolvedValue({
@@ -204,12 +204,12 @@ it("keeps current inventory authoritative across uninstall, reinstall and histor
       items: [reinstalled],
     });
     await c.read(c.state.sources[0]);
-    expect(c.installed.value).toEqual([reinstalled]);
+    expect(c.installed()).toEqual([reinstalled]);
     vi.mocked(port.history).mockResolvedValue({ items: [absent], next: null });
     vi.mocked(port.status).mockResolvedValue(absent);
     await c.history();
     await c.query("request");
-    expect(c.installed.value).toEqual([reinstalled]);
+    expect(c.installed()).toEqual([reinstalled]);
     expect(c.state.operations.get("request")?.detected).toEqual({
       kind: "absent",
     });
@@ -217,7 +217,7 @@ it("keeps current inventory authoritative across uninstall, reinstall and histor
     reopened = createSoftware(data, port);
     await reopened.history();
     await reopened.discover();
-    expect(reopened.installed.value).toEqual([reinstalled]);
+    expect(reopened.installed()).toEqual([reinstalled]);
     expect(port.submit).not.toHaveBeenCalled();
     expect(data.query_submit).not.toHaveBeenCalled();
   } finally {
@@ -241,7 +241,7 @@ it("late data from a retired user generation cannot repopulate the software proj
   c.dispose();
   release(page);
   await pending;
-  expect(c.installed.value).toEqual([]);
+  expect(c.installed()).toEqual([]);
   expect(c.state.sources).toEqual([]);
 });
 
@@ -310,8 +310,8 @@ it("accepts a complete enterprise alternative to an uncollected local inventory,
   }));
   const c = createSoftware(data, port);
   await c.discover();
-  expect(c.summary.value.complete).toBe(true);
-  expect(c.summary.value.installed).toBe(0);
+  expect(c.summary().complete).toBe(true);
+  expect(c.summary().installed).toBe(0);
   const alternative = c.state.sources[1];
   for (const update of [
     { stale: true },
@@ -320,14 +320,14 @@ it("accepts a complete enterprise alternative to an uncollected local inventory,
   ]) {
     const saved = { ...alternative.page! };
     Object.assign(alternative.page!, update);
-    expect(c.summary.value.complete).toBe(false);
+    expect(c.summary().complete).toBe(false);
     alternative.page = saved;
   }
   alternative.after = { snapshot: "2".repeat(64), offset: 128 };
-  expect(c.summary.value.complete).toBe(false);
+  expect(c.summary().complete).toBe(false);
   alternative.after = null;
   alternative.error = "read failed";
-  expect(c.summary.value.complete).toBe(false);
+  expect(c.summary().complete).toBe(false);
   c.dispose();
 });
 
@@ -360,13 +360,13 @@ it("requires independent coverage for other accounts and physical inventories", 
   });
   const c = createSoftware(data, port);
   await c.discover();
-  expect(c.summary.value.complete).toBe(false);
+  expect(c.summary().complete).toBe(false);
   Object.assign(c.state.sources[1].page!, {
     quality: "complete",
     collectedAt: page.collectedAt,
     enumerationComplete: true,
   });
-  expect(c.summary.value.complete).toBe(true);
+  expect(c.summary().complete).toBe(true);
   c.dispose();
 });
 
@@ -403,11 +403,11 @@ it.each([{ current: [] as string[] }, { current: ["B"] }])(
     });
     const c = createSoftware(data, port);
     await c.discover();
-    expect(c.summary.value.complete).toBe(true);
-    expect(c.installed.value.map((row) => row.reference.installation)).toEqual(
+    expect(c.summary().complete).toBe(true);
+    expect(c.installed().map((row) => row.reference.installation)).toEqual(
       current,
     );
-    expect(c.summary.value.collectedAt).toBe(Math.floor(Date.now() / 1000));
+    expect(c.summary().collectedAt).toBe(Math.floor(Date.now() / 1000));
     c.dispose();
   },
 );
@@ -453,8 +453,8 @@ it("replaces only the covered part of a multi-inventory query and preserves inde
   });
   const c = createSoftware(data, port);
   await c.discover();
-  expect(c.summary.value.complete).toBe(false);
-  expect(c.installed.value.map((row) => row.reference.installation)).toEqual([
+  expect(c.summary().complete).toBe(false);
+  expect(c.installed().map((row) => row.reference.installation)).toEqual([
     "other-user-or-inventory",
   ]);
   // Covering this independent scope with another complete empty list removes only its own rows.
@@ -464,7 +464,93 @@ it("replaces only the covered part of a multi-inventory query and preserves inde
     page: { ...page, coverage: [otherCoverage], items: [] },
     items: [],
   });
-  expect(c.summary.value.complete).toBe(true);
-  expect(c.installed.value).toEqual([]);
+  expect(c.summary().complete).toBe(true);
+  expect(c.installed()).toEqual([]);
+  c.dispose();
+});
+it("does not let an older status or history read overwrite a newer software submission", async () => {
+  const { data, port } = ports(),
+    c = createSoftware(data, port);
+  const waiting = original("original");
+  c.accept(waiting);
+  let read!: (value: LocalSoftwareStatus) => void;
+  let history!: (value: { items: LocalSoftwareStatus[]; next: null }) => void;
+  port.status = vi.fn(
+    () =>
+      new Promise<LocalSoftwareStatus>((resolve) => {
+        read = resolve;
+      }),
+  );
+  port.history = vi.fn(
+    () =>
+      new Promise<{ items: LocalSoftwareStatus[]; next: null }>((resolve) => {
+        history = resolve;
+      }),
+  );
+  port.submit = vi.fn(async () => ({
+    ...waiting,
+    execution: {
+      ...waiting.execution,
+      phase: "accepted" as const,
+      attempts: 1,
+    },
+  }));
+  const pendingRead = c.query("original"),
+    pendingHistory = c.history();
+  await c.submit(waiting.prepared);
+  read(waiting);
+  history({ items: [waiting], next: null });
+  await Promise.all([pendingRead, pendingHistory]);
+  expect(c.state.operations.get("original")?.execution.phase).toBe("accepted");
+  await c.submit(waiting.prepared);
+  expect(port.submit).toHaveBeenCalledTimes(1);
+  c.dispose();
+});
+it("retains a lost submission and blocks another confirmation until a fresh original status is read", async () => {
+  const { data, port } = ports(),
+    c = createSoftware(data, port);
+  const waiting = original("original");
+  c.accept(waiting);
+  let read!: (value: LocalSoftwareStatus) => void;
+  port.status = vi.fn(
+    () =>
+      new Promise<LocalSoftwareStatus>((resolve) => {
+        read = resolve;
+      }),
+  );
+  port.submit = vi.fn(async () => {
+    throw Error("lost");
+  });
+  const older = c.query("original");
+  await c.submit(waiting.prepared);
+  read(waiting);
+  await older;
+  await c.submit(waiting.prepared);
+  expect(port.submit).toHaveBeenCalledTimes(1);
+  expect(c.state.uncertain.has("original")).toBe(true);
+  port.status = vi.fn(async () => ({
+    ...waiting,
+    execution: {
+      ...waiting.execution,
+      phase: "executionEnded" as const,
+      attempts: 1,
+    },
+  }));
+  await c.query("original");
+  expect(port.status).toHaveBeenLastCalledWith({ request: "original" });
+  expect(c.state.uncertain.has("original")).toBe(false);
+  expect(c.state.operations.get("original")?.execution.phase).toBe(
+    "executionEnded",
+  );
+  c.dispose();
+});
+it("an expired original preparation cannot submit even if a stale view still holds its button", async () => {
+  const { data, port } = ports(),
+    c = createSoftware(data, port),
+    status = original("expired");
+  status.prepared.startBeforeUnixMs = Date.now() - 1;
+  c.accept(status);
+  await c.submit(status.prepared);
+  expect(port.submit).not.toHaveBeenCalled();
   c.dispose();
 });

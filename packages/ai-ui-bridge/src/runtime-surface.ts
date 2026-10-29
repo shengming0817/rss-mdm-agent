@@ -1,0 +1,266 @@
+import {
+  createElement as h,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import type { RuntimeClient, SessionView } from "@rss-mdm-agent/ai-client";
+import type { Receipt } from "@rss-mdm-agent/ai-contract/wire";
+import type { NodeMount } from "./operations/surface.js";
+import type { SurfaceRendererHandle } from "./renderer.js";
+import type { SurfaceDrafts } from "./surface-drafts.js";
+import { RendererError } from "./errors.js";
+import { createSurfaceRenderer, type RendererFactory } from "./index.js";
+
+export function useSessionView(runtime: RuntimeClient, sessionId: string) {
+  const [projection, setProjection] = useState(() => ({
+    runtime,
+    sessionId,
+    view: runtime.getSession(sessionId),
+  }));
+  useEffect(() => {
+    const update = (view: SessionView | undefined) =>
+      setProjection({ runtime, sessionId, view });
+    const stop = runtime.observe((view) => {
+      if (view.namespace.sessionId === sessionId) update(view);
+    });
+    update(runtime.getSession(sessionId));
+    return stop;
+  }, [runtime, sessionId]);
+  // Changing the owner must never show the previous owner's projection for one render.
+  return projection.runtime === runtime && projection.sessionId === sessionId
+    ? projection.view
+    : runtime.getSession(sessionId);
+}
+export interface RuntimeSurfaceProps {
+  runtime: RuntimeClient;
+  sessionId: string;
+  instanceId: string;
+  mount: NodeMount;
+  drafts: SurfaceDrafts;
+  now?: () => number;
+  rendererFactory?: RendererFactory;
+  onError?(error: RendererError): void;
+  onReceipt?(receipt: Receipt): void;
+  fallback?: ReactNode;
+}
+/** Projection in, official bounded renderer, authenticated action out. No execution authority. */
+const runtimeOwners = new WeakMap<RuntimeClient, number>();
+let nextOwner = 0;
+export function RuntimeSurface(props: RuntimeSurfaceProps) {
+  let owner = runtimeOwners.get(props.runtime);
+  if (owner === undefined) {
+    owner = ++nextOwner;
+    runtimeOwners.set(props.runtime, owner);
+  }
+  // A new authenticated scope receives a new host DOM node in the same commit.
+  return h(RuntimeSurfaceOwner, {
+    ...props,
+    key: JSON.stringify([owner, props.sessionId, props.instanceId]),
+  });
+}
+function RuntimeSurfaceOwner({
+  runtime,
+  sessionId,
+  instanceId,
+  mount,
+  drafts,
+  now = Date.now,
+  rendererFactory = createSurfaceRenderer,
+  onError,
+  onReceipt,
+  fallback,
+}: RuntimeSurfaceProps) {
+  const container = useRef<HTMLDivElement>(null);
+  const current = useRef<SurfaceRendererHandle | undefined>(undefined);
+  const callbacks = useRef({ onError, onReceipt });
+  callbacks.current = { onError, onReceipt };
+  const [attempt, setAttempt] = useState(0);
+  const [status, setStatus] = useState({
+    owner: runtime,
+    sessionId,
+    instanceId,
+    note: "",
+    error: "",
+    retry: false,
+    kind: "renderer" as "renderer" | "action",
+  });
+  useLayoutEffect(() => {
+    let active = true,
+      renderer: SurfaceRendererHandle | undefined,
+      stop = () => {},
+      displayed = "";
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    let errorKind: "renderer" | "action" = "renderer";
+    const patch = (values: Partial<typeof status>) => {
+      if (active)
+        setStatus((old) => ({
+          ...old,
+          owner: runtime,
+          sessionId,
+          instanceId,
+          ...values,
+        }));
+    };
+    patch({ note: "", error: "", retry: false });
+    const report = (
+      error: RendererError,
+      kind: "renderer" | "action" = "renderer",
+    ) => {
+      if (!active) return;
+      errorKind = kind;
+      patch({ error: error.message, kind });
+      callbacks.current.onError?.(error);
+    };
+    const update = (view: SessionView | undefined) => {
+      clearTimeout(deadline);
+      if (!renderer || !active) return;
+      const surface = view?.surfaces[instanceId];
+      if (!surface || !view) {
+        renderer.clear();
+        displayed = "";
+        patch({ note: "", error: "", retry: false });
+        return;
+      }
+      const interaction = view.interactions[surface.interactionId];
+      const connected =
+        view.sessionStatus === "active" &&
+        view.connection === "attached" &&
+        view.generation === surface.generation;
+      const expired = !!interaction && now() > interaction.expiresAtMs;
+      patch({
+        note:
+          interaction?.status === "answered"
+            ? "此问题已经回答。"
+            : interaction?.status === "expired" ||
+                (interaction?.status === "pending" && expired)
+              ? "此问题已过期。"
+              : interaction?.status === "unavailable"
+                ? "此问题已不可用。"
+                : view.connection !== "attached"
+                  ? "请重新连接会话后回答。"
+                  : !connected || !interaction
+                    ? "此问题已不可用。"
+                    : "",
+      });
+      if (interaction?.status === "pending" && !expired)
+        deadline = setTimeout(
+          () => update(runtime.getSession(sessionId)),
+          Math.min(
+            2147483647,
+            Math.max(1, interaction.expiresAtMs - now() + 1),
+          ),
+        );
+      const key = JSON.stringify([
+        surface.surfaceInstanceId,
+        surface.revision,
+        connected,
+        interaction,
+        expired,
+      ]);
+      if (displayed === key) return;
+      try {
+        renderer.replace(surface, interaction, connected);
+        displayed = key;
+        patch({ retry: renderer.canRetry });
+        if (errorKind !== "action" || !renderer.canRetry) patch({ error: "" });
+      } catch {
+        renderer.dispose();
+        renderer = undefined;
+        current.current = undefined;
+        report(new RendererError("renderer_invalid"));
+      }
+    };
+    void rendererFactory(container.current!, {
+      now,
+      mount,
+      drafts,
+      onAction: async (request) => {
+        if (!active) return;
+        const receipt = await runtime.action(request);
+        if (active) {
+          patch({ error: "" });
+          callbacks.current.onReceipt?.(receipt);
+        }
+      },
+      onChange: () => patch({ retry: !!renderer?.canRetry }),
+      onError: (error) =>
+        report(
+          error,
+          error.code === "renderer_load" || error.code === "renderer_invalid"
+            ? "renderer"
+            : "action",
+        ),
+    })
+      .then((created) => {
+        if (!active) {
+          created.dispose();
+          return;
+        }
+        renderer = created;
+        current.current = created;
+        stop = runtime.observe((view) => {
+          if (view.namespace.sessionId === sessionId) update(view);
+        });
+        update(runtime.getSession(sessionId));
+      })
+      .catch(() => report(new RendererError("renderer_load")));
+    return () => {
+      active = false;
+      stop();
+      clearTimeout(deadline);
+      renderer?.dispose();
+      current.current = undefined;
+    };
+  }, [
+    runtime,
+    sessionId,
+    instanceId,
+    mount,
+    drafts,
+    now,
+    rendererFactory,
+    attempt,
+  ]);
+  const patchReadFailure = () =>
+    setStatus((old) => ({ ...old, error: "原问题状态尚未确认，请稍后重读。" }));
+  const visible =
+    status.owner === runtime &&
+    status.sessionId === sessionId &&
+    status.instanceId === instanceId;
+  return h(
+    "div",
+    { className: "rss-ai-surface" },
+    h("div", { ref: container }),
+    visible && status.note ? h("p", { role: "status" }, status.note) : null,
+    visible && status.error ? h("p", { role: "status" }, status.error) : null,
+    visible && status.error && status.kind === "renderer" ? fallback : null,
+    visible && (status.retry || (status.error && status.kind === "action"))
+      ? h(
+          "button",
+          {
+            type: "button",
+            onClick: () => {
+              void runtime.restore(sessionId).catch(() => patchReadFailure());
+            },
+          },
+          "读取原问题状态",
+        )
+      : null,
+    visible && (status.retry || (status.error && status.kind === "renderer"))
+      ? h(
+          "button",
+          {
+            type: "button",
+            onClick: () => {
+              if (status.retry) void current.current?.retry();
+              else setAttempt((value) => value + 1);
+            },
+          },
+          status.retry ? "重试原回答" : "重新加载卡片",
+        )
+      : null,
+  );
+}

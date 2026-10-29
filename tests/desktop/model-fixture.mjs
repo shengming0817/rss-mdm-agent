@@ -136,8 +136,8 @@ export async function startModelFixture() {
         const context = JSON.parse(
           text.slice(text.indexOf(marker) + marker.length),
         );
-        assert.equal(context.page, "software-management");
-        assert.ok(context.path.includes("软件管理"));
+        assert.equal(context.page, "software");
+        assert.ok(context.path.includes("软件中心"));
         assert.ok(
           context.resources.length > 0 && context.resources.length <= 12,
         );

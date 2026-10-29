@@ -1,8 +1,9 @@
-import { reactive } from "vue";
+import { deepClone } from "valtio/vanilla/utils";
+import { proxy, type Snapshot } from "valtio/vanilla";
 import type { HostStatus } from "@rss-mdm-agent/ai-contract/wire";
 import type { nativeHost } from "./native";
 export function createHostSettings(port: ReturnType<typeof nativeHost>) {
-  const state = reactive({
+  const state = proxy({
     status: undefined as HostStatus | undefined,
     busy: false,
     loading: false,
@@ -18,7 +19,7 @@ export function createHostSettings(port: ReturnType<typeof nativeHost>) {
     try {
       const next = await port.read();
       if (!disposed && current === epoch) {
-        state.status = next;
+        state.status = deepClone(next);
         state.readError = "";
       }
     } catch {
@@ -37,7 +38,7 @@ export function createHostSettings(port: ReturnType<typeof nativeHost>) {
     try {
       const next = await port.restart(state.status.generation);
       if (disposed) return false;
-      state.status = next;
+      state.status = deepClone(next);
       state.readError = "";
       return next.phase === "ready";
     } catch {
@@ -55,11 +56,16 @@ export function createHostSettings(port: ReturnType<typeof nativeHost>) {
     dispose() {
       disposed = true;
       epoch++;
+      state.status = undefined;
+      state.busy = false;
+      state.loading = false;
+      state.message = "";
+      state.readError = "";
     },
   };
 }
 export type HostSettings = ReturnType<typeof createHostSettings>;
-export const diagnosticMessage = (status?: HostStatus) => {
+export const diagnosticMessage = (status?: Snapshot<HostStatus>) => {
   switch (status?.diagnostic?.code) {
     case "runtime_missing":
       return status.source === "development_override"

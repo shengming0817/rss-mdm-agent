@@ -1,4 +1,5 @@
-import type { CollectedData } from "../self-service/types";
+import type { Snapshot } from "valtio/vanilla";
+import type { CollectedData, SettingsSnapshot } from "../self-service/types";
 import type { SystemSettingsController } from "./controller";
 const number = (v: unknown) =>
   typeof v === "number" && Number.isFinite(v)
@@ -6,7 +7,9 @@ const number = (v: unknown) =>
     : typeof v === "string" && /^\d+$/.test(v)
       ? Number(v)
       : undefined;
-function rows(value?: CollectedData): Record<string, unknown>[] {
+export function collectedRows(
+  value?: Snapshot<CollectedData>,
+): Record<string, unknown>[] {
   return (
     value?.rows.flatMap((row) =>
       row &&
@@ -30,7 +33,7 @@ const qualityLabels: Record<string, string> = {
   empty: "已采集，结果为空",
   mappingUnsupported: "映射不支持",
 };
-const quality = (value?: CollectedData) =>
+const quality = (value?: Snapshot<CollectedData>) =>
   !value || value.quality === "notCollected"
     ? "尚未采集"
     : value.stale
@@ -38,21 +41,52 @@ const quality = (value?: CollectedData) =>
       : value.quality === "complete"
         ? "已采集"
         : (qualityLabels[value.quality] ?? "结果未知");
-const collectedTime = (value?: CollectedData) =>
+const collectedTime = (value?: Snapshot<CollectedData>) =>
   value?.collectedAt == null
     ? ""
     : ` · ${new Date(value.collectedAt * 1000).toLocaleTimeString()}`;
-export function homeFacts(controller?: SystemSettingsController) {
-  const facts = controller?.summary.value;
+// Evidence follows the same inputs as each display projection; never borrow another resource's clock.
+function contextEvidence(
+  values: (Snapshot<CollectedData> | undefined)[],
+  native: Snapshot<SettingsSnapshot> | null | undefined,
+  now: number,
+) {
+  const samples = values.filter((value) => value !== undefined);
+  const times = samples.map((value) =>
+    value.collectedAt == null ? NaN : value.collectedAt * 1000,
+  );
+  const deadlines = times.map((at) => at + 300000);
+  if (native) {
+    times.push(native.collectedAtUnixMs);
+    deadlines.push(native.collectedAtUnixMs + 30000);
+  }
+  const known =
+    times.length > 0 && times.every((at) => Number.isFinite(at) && at <= now);
+  return {
+    collectedAt: known ? Math.min(...times) : undefined,
+    validUntil: known ? Math.min(...deadlines) : undefined,
+    verified:
+      known &&
+      values.every((value) => value?.quality === "complete" && !value.stale) &&
+      deadlines.every((at) => at > now),
+  };
+}
+export function homeFacts(
+  controller?: SystemSettingsController,
+  current:
+    | Snapshot<SystemSettingsController["state"]>
+    | undefined = controller?.state,
+  now = current?.now ?? Date.now(),
+) {
+  const facts = controller?.summary(current);
   const network = facts?.network,
     storage = facts?.storage,
     power = facts?.power;
-  const observations = controller?.state.observations;
+  const observations = current?.observations;
   const nativeTime = (section: "network" | "power", label: string) => {
     const snapshot = observations?.get(section)?.snapshot;
     if (!snapshot) return "";
-    const age =
-      (controller?.state.now ?? Date.now()) - snapshot.collectedAtUnixMs;
+    const age = now - snapshot.collectedAtUnixMs;
     return `${label}${age < 0 ? "时间待核实" : age >= 30_000 ? "已过期" : "已读取"} · ${new Date(snapshot.collectedAtUnixMs).toLocaleTimeString()}`;
   };
   const source = observations
@@ -62,7 +96,7 @@ export function homeFacts(controller?: SystemSettingsController) {
     (f) => f.key === "batteryPresent",
   )?.value;
   const provider = source?.fields.find((f) => f.key === "source")?.value;
-  const interfaces = rows(network).filter(
+  const interfaces = collectedRows(network).filter(
     (r) => Array.isArray(r.addresses) && r.addresses.length,
   );
   const route = observations
@@ -71,10 +105,11 @@ export function homeFacts(controller?: SystemSettingsController) {
   const routeInterface = route?.fields.find(
     (f) => f.key === "interface",
   )?.value;
-  const systemDrive = [...(controller?.state.facts.values() ?? [])].find((f) =>
+  const os = [...(current?.facts.values() ?? [])].find((f) =>
     f.source.domains.includes("hardware.os"),
-  )?.value.fields["hardware.os.system_drive"];
-  const volume = rows(storage).find(
+  )?.value;
+  const systemDrive = os?.fields["hardware.os.system_drive"];
+  const volume = collectedRows(storage).find(
     (r) =>
       r.system_volume === true ||
       (typeof systemDrive === "string" && r.DeviceID === systemDrive),
@@ -84,10 +119,10 @@ export function homeFacts(controller?: SystemSettingsController) {
     capacity = storage,
     shared = false;
   if (volume?.container_id) {
-    const container = [...(controller?.state.facts.values() ?? [])]
+    const container = [...(current?.facts.values() ?? [])]
       .filter((f) => f.source.domains.includes("hardware.containers"))
       .flatMap((entry) =>
-        rows(entry.value).map((row) => ({ row, value: entry.value })),
+        collectedRows(entry.value).map((row) => ({ row, value: entry.value })),
       )
       .find((entry) => entry.row.id === volume.container_id);
     if (container) {
@@ -112,6 +147,29 @@ export function homeFacts(controller?: SystemSettingsController) {
     free >= 0 &&
     free <= total;
   return {
+    networkContext: contextEvidence(
+      [network],
+      typeof routeInterface === "string"
+        ? observations?.get("network")?.snapshot
+        : undefined,
+      now,
+    ),
+    storageContext: contextEvidence(
+      [
+        storage,
+        capacity,
+        ...(volume && volume.system_volume !== true ? [os] : []),
+      ],
+      undefined,
+      now,
+    ),
+    powerContext: contextEvidence(
+      [power],
+      typeof provider === "string" || typeof batteryPresent === "boolean"
+        ? observations?.get("power")?.snapshot
+        : undefined,
+      now,
+    ),
     network:
       typeof routeInterface === "string"
         ? routeInterface

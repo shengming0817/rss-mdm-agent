@@ -1,11 +1,12 @@
-import { reactive } from "vue";
+import { deepClone } from "valtio/vanilla/utils";
+import { proxy } from "valtio/vanilla";
 import type {
   DiagnosticPort,
   DiagnosticPreview,
   DiagnosticScopes,
 } from "./native";
 export function createDiagnostics(port?: DiagnosticPort) {
-  const state = reactive({
+  const state = proxy({
     scopes: {
       host: true,
       service: true,
@@ -37,7 +38,7 @@ export function createDiagnostics(port?: DiagnosticPort) {
         void port.discard(preview.snapshot).catch(() => {});
         return;
       }
-      state.preview = preview;
+      state.preview = deepClone(preview);
     } catch {
       if (!disposed && call === epoch)
         state.message = "无法生成诊断预览，请重试。";

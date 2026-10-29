@@ -47,35 +47,13 @@ import {
 } from "./native-candidate.mjs";
 import { verifyRuntimeIntegrity } from "./ai-host-artifacts.mjs";
 
-const visualOnly = process.argv.includes("--visual");
-const baseline = process.argv.includes("--baseline");
-const controlledService = process.argv.includes("--controlled-service");
-const security = process.argv.includes("--security");
-assert.ok(
-  !security || controlledService,
-  "security requires controlled-service mode",
-);
-const candidateIndex = process.argv.indexOf("--candidate");
-const candidatePath =
-  candidateIndex < 0 ? undefined : process.argv[candidateIndex + 1];
-assert.ok(
-  candidateIndex < 0 || (controlledService && candidatePath),
-  "candidate requires controlled-service mode",
-);
-
-assert.ok(
-  !candidatePath || !visualOnly,
-  "candidate is unavailable in visual development mode",
-);
-
-const passwordFileIndex = process.argv.indexOf("--authorization-password-file");
-const authorizationPasswordFile =
-  passwordFileIndex < 0 ? undefined : process.argv[passwordFileIndex + 1];
-assert.ok(
-  passwordFileIndex < 0 ||
-    (controlledService && authorizationPasswordFile?.startsWith("/")),
-  "authorization password file requires controlled service mode and an absolute path",
-);
+import { nativeOptions } from "./native-options.mjs";
+let visualOnly = false,
+  baseline = false,
+  controlledService = false,
+  security = false,
+  candidatePath,
+  authorizationPasswordFile;
 let serviceWorker,
   serviceReady,
   serviceFinishing = false,
@@ -110,20 +88,19 @@ function serviceCall(method, input = {}) {
     serviceWorker.stdin.write(JSON.stringify({ id, method, ...input }) + "\n");
   });
 }
-let visualFixture, awake;
+let awake;
 const root = fileURLToPath(new URL("../", import.meta.url));
 const reports = join(root, ".local-ci-runs");
 const nonce = randomBytes(16).toString("hex");
 mkdirSync(reports, { recursive: true });
 const result = {
   status: "running",
-  mode: "pnpm-dev-main",
-  modelFixture: true,
-  credentials: "synthetic-loopback-only",
-  provider: "codex-0.155.0",
-  executor:
-    "authenticated unified service; service-owned journal and independent effects",
-  keychain: "isolated noninteractive macOS file keychain",
+  mode: "preflight",
+  modelFixture: false,
+  credentials: "not exercised; preflight pending",
+  provider: "not configured; preflight pending",
+  executor: "not exercised; preflight pending",
+  keychain: "not accessed; preflight pending",
   messageInput:
     "visible product submit button; physical Return delivery unverified on this interactive desktop",
   checks: [],
@@ -269,7 +246,7 @@ const native = (source, requireForeground = true) =>
   script(
     `tell application "System Events"\n tell (first application process whose unix id is ${receipt.pid})\n set frontmost to true\n if (count of windows) > 0 then perform action "AXRaise" of window 1\n repeat 40 times\n if frontmost then exit repeat\n set frontmost to true\n delay 0.1\n end repeat\n delay 0.2\n ${requireForeground ? 'if not frontmost then error "Owned application foreground unavailable"' : ""}\n ${source}\n end tell\nend tell`,
   );
-const key = (code, shift = false) => {
+const key = (code, shift = false, command = false) => {
   const foreground = native("get frontmost", false);
   if (foreground !== "true")
     result.foregroundFailure = script(
@@ -280,7 +257,9 @@ const key = (code, shift = false) => {
     "true",
     "native application must own foreground keyboard focus",
   );
-  native(`key code ${code}${shift ? " using shift down" : ""}`);
+  native(
+    `key code ${code}${command ? " using command down" : shift ? " using shift down" : ""}`,
+  );
 };
 const menu = (label) =>
   native(
@@ -314,77 +293,51 @@ const click = async (name, scope = "") => {
 const visibleText = async (text) =>
   browser.execute((value) => document.body.innerText.includes(value), text);
 const text = async (value) => wait(() => visibleText(value));
-const field = (label) =>
-  browser.$(
-    `//form[contains(@class,'connection-form')]//label[starts-with(normalize-space(.),${JSON.stringify(label)})]/*[self::input or self::select]`,
-  );
+const field = (label) => browser.$(`[aria-label="${label}"]`);
 const closeNavigationDialog = async () => {
+  // Ant Design portals stay mounted while hidden; only close a visible dialog.
   if (
-    await browser.execute(
-      () => !!document.querySelector('[role="dialog"][data-state="open"]'),
+    await browser.execute(() =>
+      [...document.querySelectorAll('[role="dialog"]')].some(
+        (node) => node.getClientRects().length > 0,
+      ),
     )
   )
     key(53);
 };
 const expandNavigation = async () => {
-  await wait(() => browser.$(".sidebar-cycle").isExisting());
-  for (let count = 0; count < 3; count++) {
+  for (let count = 0; count < 4; count++) {
     if (
-      (await browser.$(".workspace-chrome").getAttribute("data-layout")) ===
-      "full"
+      (await browser
+        .$(".rss-desktop-shell")
+        .getAttribute("data-layout-step")) === "2"
     )
       return;
-    await browser.$(".sidebar-cycle").click();
+    await click("切换侧栏布局");
   }
   throw new Error("Full navigation did not open");
 };
 const openAgentSettings = async (section) => {
   await closeNavigationDialog();
-  await click("RSS Agent 设置");
-  await click(section);
-};
-const fixtureControls = async () => {
-  await openAgentSettings("开发预览");
-  if (
-    !(await browser.execute(
-      () => document.querySelector(".fixture-controls")?.open,
-    ))
-  )
-    await browser.$(".fixture-controls > summary").click();
+  await click("用户菜单");
+  const item = await browser.$(
+    `//*[@role="menuitem" and normalize-space(.)=${JSON.stringify(section)}]`,
+  );
+  await wait(() => item.isDisplayed());
+  await item.click();
 };
 const openHistory = async () => {
-  if (
-    !(await browser.execute(
-      () => !!document.querySelector(".conversation-history-panel"),
-    ))
-  )
+  if (!(await browser.$(".rss-session-history:not([hidden])").isExisting()))
     await click("历史会话");
-  if (await browser.$('[aria-label="固定历史会话"]').isExisting())
-    await click("固定历史会话");
+  await wait(() =>
+    browser.$(".rss-session-history:not([hidden])").isDisplayed(),
+  );
 };
 const assertEmptyHistory = async () => {
   await openHistory();
-  await wait(() =>
-    browser.execute(() => {
-      const list = document.querySelector(
-        ".conversation-history-panel .conversation-list",
-      );
-      return (
-        list?.getClientRects().length > 0 &&
-        !list.querySelector('[role="alert"]') &&
-        [...list.querySelectorAll("p")].some(
-          (node) => node.textContent.trim() === "暂无历史会话",
-        )
-      );
-    }),
-  );
+  await text("还没有已读取的会话");
   assert.equal(
-    await browser.execute(
-      () =>
-        document.querySelectorAll(
-          ".conversation-history-panel .conversation-list li",
-        ).length,
-    ),
+    await browser.$$(".rss-session-history-item").then((items) => items.length),
     0,
     "entering chat does not create an empty session",
   );
@@ -392,26 +345,8 @@ const assertEmptyHistory = async () => {
 };
 const navigate = async (name) => {
   await closeNavigationDialog();
-  if (name === "设置") {
-    await openAgentSettings("AI 与连接");
-    return;
-  }
-  if (name === "请求与任务") {
-    if (visualOnly) {
-      await fixtureControls();
-      await browser.execute(() => {
-        const select = document.querySelector('[aria-label="业务页面"]');
-        select.value = "tasks";
-        select.dispatchEvent(new Event("change", { bubbles: true }));
-      });
-      await wait(() => browser.$(".task-center").isDisplayed());
-    } else {
-      await click("任务中心");
-    }
-    return;
-  }
   await expandNavigation();
-  await click(name, '//*[contains(@class,"workspace-primary-navigation")]');
+  await click(name, '//*[@aria-label="主导航"]');
   await browser.execute(
     () =>
       new Promise((resolve) =>
@@ -434,27 +369,31 @@ const prompt = async (value) => {
   const prior = await browser.execute(() =>
     [
       ...document.querySelectorAll(
-        '.assistant-timeline article[data-message-key^="prompt:"]',
+        '.rss-assistant-timeline article[data-message-kind="user"]',
       ),
     ].map((row) => row.getAttribute("data-message-key")),
   );
-  await browser.$(".composer textarea").click();
-  await browser.$(".composer textarea").setValue(value);
+  await browser.$(".rss-composer textarea").click();
+  await browser.$(".rss-composer textarea").setValue(value);
   assert.equal(
     await browser.execute(
       () =>
-        document.activeElement === document.querySelector(".composer textarea"),
+        document.activeElement ===
+        document.querySelector(".rss-composer textarea"),
     ),
     true,
     "composer must own DOM focus before submission",
   );
-  await wait(() => browser.$('.composer button[type="submit"]').isEnabled());
+  await wait(() =>
+    browser.$('.rss-composer button[aria-label="发送消息"]').isEnabled(),
+  );
   // Send through the visible product action. Physical Return delivery depends on the
   // interactive desktop's input source/foreground; do not resend an ambiguous command.
-  await browser.$('.composer button[type="submit"]').click();
+  await browser.$('.rss-composer button[aria-label="发送消息"]').click();
   await wait(() =>
     browser.execute(
-      (value) => document.querySelector(".composer textarea").value !== value,
+      (value) =>
+        document.querySelector(".rss-composer textarea").value !== value,
       value,
     ),
   );
@@ -463,7 +402,7 @@ const prompt = async (value) => {
       (value, prior) => {
         const row = [
           ...document.querySelectorAll(
-            '.assistant-timeline article[data-message-key^="prompt:"]',
+            '.rss-assistant-timeline article[data-message-kind="user"]',
           ),
         ].find(
           (row) =>
@@ -477,18 +416,27 @@ const prompt = async (value) => {
     ),
   );
 };
-const selectValue = async (element, value) => {
-  // The embedded driver cannot reliably select a macOS native option popup.
-  // Configure through the actual DOM change event; Enter/Tab/Escape remain native below.
-  await browser.execute(
-    (select, selected) => {
-      select.value = selected;
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-    },
-    element,
-    value,
+const selectValue = async (element, label) => {
+  // Exercise the controlled Ant Design Select through its visible dropdown.
+  await element.click();
+  const option = await wait(async () => {
+    for (const candidate of await browser.$$(
+      ".ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option",
+    )) {
+      if (
+        (await candidate.getText()).trim() === label &&
+        (await candidate.isDisplayed())
+      )
+        return candidate;
+    }
+  });
+  await option.click();
+  await wait(
+    async () =>
+      !(await browser
+        .$(".ant-select-dropdown:not(.ant-select-dropdown-hidden)")
+        .isDisplayed()),
   );
-  await wait(async () => (await element.getValue()) === value);
 };
 const permission = async (allow) => {
   await wait(async () => {
@@ -497,12 +445,12 @@ const permission = async (allow) => {
       false,
       "AI Host exited before permission",
     );
-    return browser.$('[aria-label="AI 工具权限请求"]').isDisplayed();
+    return browser.$('[aria-label="本次工具请求"]').isDisplayed();
   });
-  const el = await browser.$(
-    `//section[@aria-label='AI 工具权限请求']//button[strong[contains(.,'${allow ? "允许一次" : "拒绝一次"}')]]`,
+  await click(
+    allow ? "仅允许本次请求" : "拒绝本次请求",
+    '//*[@aria-label="本次工具请求"]',
   );
-  await el.click();
 };
 const dbRead = (file, action) => {
   const db = new DatabaseSync(join(directory, file), {
@@ -657,28 +605,44 @@ const originalRequests = (reply) =>
       .filter((item) => item.reference.kind === "request")
       .map((item) => item.reference.request),
   );
-const taskButton = (reference) =>
-  browser.$(`//button[@data-task='${JSON.stringify(reference)}']`);
+const taskButton = (reference) => {
+  const key = JSON.stringify(
+    reference.kind === "request"
+      ? { kind: reference.kind, request: reference.request }
+      : reference.kind === "sampling"
+        ? {
+            kind: reference.kind,
+            query: {
+              id: reference.query.id,
+              revision: reference.query.revision,
+            },
+          }
+        : { kind: reference.kind, id: reference.id },
+  );
+  return browser.$(
+    `.rss-task-table button[data-task-reference=${JSON.stringify(key)}]`,
+  );
+};
 const openNativeTask = async (detail) => {
-  await navigate("请求与任务");
-  const filters = await browser.$$(".task-filters select");
-  await selectValue(filters[0], "");
-  await selectValue(filters[1], "");
-  let selectedView;
-  let readRetried = false;
+  await navigate("任务中心");
+  await selectValue(await field("任务来源"), "全部来源");
+  let selectedView,
+    readRetried = false;
   await wait(async () => {
     if (await taskButton(detail.reference).isDisplayed()) return true;
-    const alert = await browser.$('.task-center [role="alert"]');
-    const refresh = await browser.$(".task-center > header button");
+    const alert = await browser.$('.rss-tasks-page [role="alert"]');
+    const refresh = await browser.$(
+      '//button[normalize-space(.)="刷新原记录"]',
+    );
     if (
       selectedView &&
-      (await alert.isExisting()) &&
+      (await alert.isDisplayed()) &&
       (await refresh.isEnabled())
     ) {
       if (readRetried)
         throw Error(`original task read failed: ${await alert.getText()}`);
       readRetried = true;
-      await refresh.click(); // Explicit read recovery; never resubmit the retained request.
+      await refresh.click(); // Read the retained task, never resubmit it.
     }
     const current =
       detail.reference.kind === "activity"
@@ -694,17 +658,15 @@ const openNativeTask = async (detail) => {
           ? "正在进行"
           : "历史记录";
     if (view !== selectedView) {
-      await click(view, '//*[@aria-label="任务视图"]');
+      await click(view, '//*[contains(@class,"rss-secondary-nav")]');
       selectedView = view;
     }
     return false;
   });
   await taskButton(detail.reference).click();
-  await wait(() =>
-    browser.$('.task-center-detail[aria-label="任务详情"]').isDisplayed(),
-  );
+  await wait(() => browser.$(".rss-task-detail").isDisplayed());
   assert.ok(
-    (await browser.$(".task-center-detail").getText()).includes(
+    (await browser.$(".rss-task-detail").getText()).includes(
       detail.reference.request ??
         detail.reference.id ??
         detail.reference.query.id,
@@ -712,13 +674,10 @@ const openNativeTask = async (detail) => {
   );
 };
 const openPageAssistant = async () => {
-  await browser
-    .$('.workspace-assistant-entry[aria-label="打开电脑助手"]')
-    .click();
+  await click("页面助手");
   await wait(() =>
-    browser.$(".page-assistant-panel .composer textarea").isDisplayed(),
+    browser.$(".rss-page-assistant .rss-composer textarea").isDisplayed(),
   );
-  await wait(() => browser.$(".resource-context").isDisplayed());
 };
 const taskExecutions = (page) =>
   page.items
@@ -746,6 +705,26 @@ const task = async () => {
   );
 };
 try {
+  ({
+    visualOnly,
+    baseline,
+    controlledService,
+    security,
+    candidatePath,
+    authorizationPasswordFile,
+  } = nativeOptions(process.argv.slice(2)));
+  Object.assign(result, {
+    mode: visualOnly ? "pnpm-dev-main-react-visual" : "pnpm-dev-main",
+    modelFixture: !visualOnly,
+    credentials:
+      "synthetic-loopback-only; not exercised until preflight succeeds",
+    provider: visualOnly
+      ? "scripted fixture Host; not yet exercised"
+      : "codex-0.155.0; not yet exercised",
+    keychain: visualOnly
+      ? "not used"
+      : "isolated keychain planned; not yet created",
+  });
   result.acceptanceEnvironment = {
     platform: process.platform,
     architecture: process.arch,
@@ -754,10 +733,6 @@ try {
   if (!candidatePath) result.developmentSource = sourceEvidence(root);
   assert.equal(process.platform, "darwin");
   assert.equal(process.arch, "arm64");
-  if (!visualOnly && !controlledService)
-    throw new Error(
-      "real execution acceptance requires explicit --controlled-service; no service is installed by ordinary UI development",
-    );
   keychainState = visualOnly ? undefined : systemKeychains();
   assert.equal(
     execFileSync(
@@ -816,7 +791,7 @@ try {
   );
   const nativeConfig = {
     build: {
-      devUrl: visualFixture?.url ?? `http://127.0.0.1:${webPort}`,
+      devUrl: `http://127.0.0.1:${webPort}`,
       beforeDevCommand: `pnpm dev:web --port ${webPort}`,
     },
     app: {
@@ -835,16 +810,6 @@ try {
     RSS_NATIVE_E2E_PORT: String(port),
     RSS_NATIVE_E2E_WEB_PORT: String(webPort),
   };
-  if (visualOnly)
-    visualFixture = {
-      async delivery() {
-        const reply = await fetch(
-          `http://127.0.0.1:${webPort}/__fixture/visual-delivery`,
-          { method: "POST" },
-        );
-        assert.equal(reply.ok, true);
-      },
-    };
   delete env.RSS_AI_HOST_RUNTIME;
   delete env.CODEX_HOME;
   if (visualOnly) {
@@ -1005,6 +970,10 @@ try {
       candidate?.runtime.path ??
       join(root, ".local-ci-runs/ai-host-dev-runtime");
     result.security = await serviceCall("security");
+    result.executor =
+      "authenticated unified service; independent effects checked later in this run";
+    result.provider = "codex-0.155.0; synthetic loopback model fixture";
+    result.keychain = "isolated noninteractive macOS file keychain";
     mark("launch protected fixed production main as the actual login user");
     child = spawn(serviceReady.desktop, ["--test-data-dir", directory], {
       cwd: root,
@@ -1182,370 +1151,604 @@ try {
   }
   result.checks.push("webdriver-per-request-authentication");
   if (visualOnly) {
-    mark("visual fixture in the product main WKWebView");
-    await fixtureControls();
-    await text("隔离样例与验证工具");
-    await click("基础控件");
-    await click("对话框与附属面板");
-    await click("打开对话框");
+    result.mode = "pnpm-dev-main-react-visual";
+    result.modelFixture = false;
+    result.executor =
+      "not exercised; React foundation and state with fixture Host";
+    mark("React foundation in the product WKWebView");
+    await text("组件基础验收");
+    await click("查询原请求");
+    await text("查询次数：1");
+    await click("更多操作");
+    const detailsItem = await browser.$('[role="menuitem"]');
+    await wait(() => detailsItem.isDisplayed());
+    await detailsItem.click();
+    await wait(() => browser.$('[role="dialog"]').isDisplayed());
+    await browser.$('[aria-label="详情字段"]').setValue("原生草稿");
+    key(53);
+    await wait(async () => !(await browser.$('[role="dialog"]').isDisplayed()));
     await wait(() =>
-      browser.$('[role="dialog"][aria-label="示例对话框"]').isDisplayed(),
-    );
-    key(48);
-    await wait(() =>
-      browser.execute(
-        () =>
-          !!document.activeElement?.closest(
-            '[role="dialog"][aria-label="示例对话框"]',
-          ),
+      browser.execute(() =>
+        document.activeElement?.textContent?.includes("更多操作"),
       ),
     );
-    key(53);
-    await wait(
-      async () =>
-        !(await browser
-          .$('[role="dialog"][aria-label="示例对话框"]')
-          .isExisting()),
+    assert.equal(
+      await browser.execute(() =>
+        document.activeElement?.textContent?.includes("更多操作"),
+      ),
+      true,
+    );
+    const message = await browser.$('[aria-label="消息"]');
+    await message.setValue("原生消息");
+    await click("发送消息");
+    await text("原生消息");
+    assert.equal(
+      await browser.execute(
+        () =>
+          document.querySelectorAll(
+            ".rss-markdown img,.rss-markdown script,.rss-markdown a",
+          ).length,
+      ),
+      0,
     );
     await browser.saveScreenshot(
       join(reports, "desktop-native-foundations.png"),
     );
-    await click("收起基础控件");
-    mark("native fixture login form and stable method switching");
-    await openAgentSettings("账号与组织");
-    await click("预览企业登录");
-    const loginGeometry = () =>
-      browser.execute(() =>
-        Object.fromEntries(
-          [
-            ".auth-heading",
-            ".organization-card",
-            ".login-tabs",
-            ".login-stage",
-            ".account-footer",
-          ].map((selector) => {
-            const { x, y, width, height } = document
-              .querySelector(selector)
-              .getBoundingClientRect();
-            return [selector, { x, y, width, height }];
-          }),
-        ),
+    await browser.execute(() => {
+      location.search = "?state";
+    });
+    await text("业务状态验收");
+    await wait(
+      async () =>
+        (await browser.$('[data-testid="state-connection"]').getText()) ===
+        "connected",
+    );
+    await browser.$('[aria-label="状态层草稿"]').setValue("原生状态草稿");
+    await click("选择软件更新");
+    for (const expected of ["1:rail", "2:full", "3:rail", "0:hidden"]) {
+      await click("切换布局");
+      await wait(
+        async () =>
+          (await browser.$('[data-testid="state-layout"]').getText()) ===
+          expected,
       );
-    for (const width of [1100, 480]) {
-      await browser.setWindowSize(width, 800);
-      await click("账号密码");
-      const before = await loginGeometry();
-      assert.equal(
-        await browser.$('[aria-label="企业账号密码"]').isExisting(),
-        true,
-      );
-      for (const name of ["扫码登录", "本机快捷登录", "账号密码"]) {
-        await click(name);
-        assert.deepEqual(
-          await loginGeometry(),
-          before,
-          `native login geometry ${width}: ${name}`,
-        );
-        await browser.saveScreenshot(
-          join(reports, `desktop-native-login-${width}-${name}.png`),
-        );
-      }
     }
-    result.checks.push("native-fixture-login-password-and-fixed-tabs");
-    await click("返回工作区");
-    await browser.setWindowSize(1100, 760);
-    mark("macOS foundation dialog keyboard focus and cleanup");
-    await navigate("AI 助手");
-    await wait(() => browser.$(".composer textarea").isDisplayed());
-    await click("新会话");
-    // This fixture intentionally seeds paginated history; a new draft preserves it.
-    mark("visual fixture new draft with existing history");
-    assert.equal(await browser.$(".composer textarea").getValue(), "");
-    await browser.setWindowSize(1100, 760);
-    await browser.saveScreenshot(
-      join(reports, "desktop-native-start-default.png"),
+    await click("隐藏或恢复侧栏");
+    await wait(
+      async () =>
+        (await browser.$('[data-testid="state-layout"]').getText()) ===
+        "3:rail",
     );
-    await navigate("软件管理");
-    mark("visual page assistant with installed-software facts");
-    await click("已安装", '//*[@aria-label="软件视图"]');
-    await openPageAssistant();
-    await browser.saveScreenshot(
-      join(reports, "desktop-native-context-default.png"),
+    await click("切换布局");
+    await wait(
+      async () =>
+        (await browser.$('[data-testid="state-layout"]').getText()) ===
+        "0:hidden",
     );
-
+    await click("读取软件");
+    await wait(
+      async () =>
+        (await browser.$('[data-testid="state-inventory"]').getText()) === "4",
+    );
+    await click("回到助手");
+    assert.equal(
+      await browser.$('[aria-label="状态层草稿"]').getValue(),
+      "原生状态草稿",
+    );
+    assert.ok(
+      Number(await browser.$('[data-testid="state-sessions"]').getText()) > 0,
+    );
+    await browser.saveScreenshot(join(reports, "desktop-native-state.png"));
+    result.checks.push(
+      "React state owner and real client/test Host in WKWebView",
+      "directed layout cycle retains session draft and async inventory",
+      "React foundation in macOS WKWebView",
+      "drawer Escape and focus restoration",
+      "controlled message input",
+      "inert Markdown",
+    );
+    mark("v4 shell and home in the product WKWebView");
+    await browser.execute(() => {
+      location.search = "?desktop";
+    });
+    await wait(() => browser.$('[aria-label="查看 Workspace"]').isDisplayed());
+    mark("v4 shell directed cycle");
+    const layout = () =>
+      browser.execute(() =>
+        document
+          .querySelector(".rss-desktop-shell")
+          ?.getAttribute("data-layout-step"),
+      );
+    await wait(async () => (await layout()) === "0");
+    const origin = await browser.execute(() => {
+      const bounds = document
+        .querySelector('[aria-label="切换侧栏布局"]')
+        .getBoundingClientRect();
+      return { x: bounds.x, y: bounds.y };
+    });
+    for (const step of [1, 2, 3, 0]) {
+      await click("切换侧栏布局");
+      await wait(async () => (await layout()) === String(step));
+      const position = await browser.execute(() => {
+        const bounds = document
+          .querySelector('[aria-label="切换侧栏布局"]')
+          .getBoundingClientRect();
+        return { x: bounds.x, y: bounds.y };
+      });
+      assert.deepEqual(position, origin);
+    }
+    await browser
+      .$('[aria-label="主页助手草稿"]')
+      .setValue("WKWebView 原生草稿");
+    mark("native Command-K and Enter global search");
+    key(40, false, true);
+    await wait(() =>
+      browser
+        .$('[role="combobox"][aria-label="搜索应用、工具和设置"]')
+        .isDisplayed(),
+    );
+    await browser
+      .$('[role="combobox"][aria-label="搜索应用、工具和设置"]')
+      .setValue("Workspace");
+    key(36);
+    await wait(async () => !(await browser.$('[role="dialog"]').isDisplayed()));
+    await click("主页", "//div[contains(@class,'rss-hidden-primary')]");
+    assert.equal(
+      await browser.$('[aria-label="主页助手草稿"]').getValue(),
+      "WKWebView 原生草稿",
+    );
+    mark("native page-assistant Escape and focus");
+    await click("页面助手");
+    await wait(() => browser.$('[aria-label="关闭页面助手"]').isDisplayed());
+    key(53);
+    await wait(() =>
+      browser.execute(
+        () => document.activeElement?.getAttribute("aria-label") === "页面助手",
+      ),
+    );
+    await browser.execute(() => {
+      document.querySelector(".fixture-controls").style.display = "none";
+    });
+    await browser.saveScreenshot(
+      join(reports, "desktop-native-shell-home.png"),
+    );
+    result.checks.push(
+      "v4 shell/home uses the product macOS WKWebView",
+      "fixed RSS toggle coordinates through 0-1-2-3-0",
+      "native Command-K/Enter search and Escape page-assistant focus",
+      "native shell navigation retains original assistant draft",
+    );
+    mark("v4 business pages in the product WKWebView, explicit sample ports");
+    for (const [name, ready, file] of [
+      ["软件中心", '.rss-store-grid [aria-label="查看 工作空间"]', "software"],
+      ["系统设置", ".rss-system-banner", "system"],
+      ["工具中心", ".rss-tool-grid", "tools"],
+    ]) {
+      await click(name, "//div[contains(@class,'rss-hidden-primary')]");
+      if (name === "软件中心")
+        await click("发现", "//div[contains(@class,'rss-hidden-secondary')]");
+      await wait(() => browser.$(ready).isDisplayed());
+      await browser.execute(async () => {
+        await document.fonts.ready;
+        await new Promise((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        );
+      });
+      await browser.saveScreenshot(
+        join(reports, `desktop-native-pages-${file}.png`),
+      );
+    }
+    mark("native staged network inspection and Escape");
+    await click("开始检查");
+    await wait(() => browser.$('[aria-label="网络检测主机"]').isDisplayed());
+    assert.equal(
+      await browser.execute(() =>
+        window.rssPageFixture.events.some(
+          (event) => event.operation === "network_run",
+        ),
+      ),
+      false,
+    );
+    key(53);
+    await wait(
+      async () =>
+        !(await browser.$('[aria-label="网络检测主机"]').isDisplayed()),
+    );
+    mark("v4 task center and original cancellation in WKWebView");
+    const previousDocument = await browser.execute(
+      () => performance.timeOrigin,
+    );
+    await browser.execute(() => {
+      location.search = "?desktop&scene=tasks";
+    });
+    await wait(() =>
+      browser.execute(
+        (before) =>
+          performance.timeOrigin !== before &&
+          !!window.rssPageFixture &&
+          !!document.querySelector(".fixture-controls"),
+        previousDocument,
+      ),
+    );
+    await wait(() => browser.$('[aria-label="切换侧栏布局"]').isDisplayed());
+    await browser.execute(() => {
+      document.querySelector(".fixture-controls").style.display = "none";
+    });
+    await click("任务中心", "//div[contains(@class,'rss-hidden-primary')]");
+    await wait(() =>
+      browser.$(".rss-task-table button[data-task-reference]").isDisplayed(),
+    );
+    await browser.saveScreenshot(
+      join(reports, "desktop-native-tasks-active.png"),
+    );
+    await browser.$(".rss-task-table button[data-task-reference]").click();
+    await wait(() => browser.$(".rss-task-detail .ant-timeline").isDisplayed());
+    await click("请求取消");
+    await wait(() => browser.$(".ant-modal .ant-btn-primary").isDisplayed());
+    await browser.$(".ant-modal .ant-btn-primary").click();
+    await wait(() =>
+      browser.execute(
+        () =>
+          window.rssDesktop.state.workspace.tasks.state.selected?.facts.value
+            .status.cancelRequested === true,
+      ),
+    );
+    assert.equal(
+      await browser.execute(
+        () =>
+          window.rssDesktop.state.workspace.tasks.state.selected.facts.value
+            .status.phase,
+      ),
+      "running",
+    );
+    assert.equal(
+      await browser.execute(
+        () =>
+          window.rssPageFixture.events.filter(
+            (event) => event.operation === "task_cancel",
+          ).length,
+      ),
+      1,
+    );
+    await browser.saveScreenshot(
+      join(reports, "desktop-native-task-cancel-requested.png"),
+    );
+    key(53);
+    await wait(
+      async () => !(await browser.$(".rss-task-detail").isDisplayed()),
+    );
+    result.checks.push(
+      "v4 task list, real owner timeline and original control in WKWebView; acknowledged cancellation remains running until separate termination/effect evidence",
+    );
+    mark(
+      "React assistant history, official input and trusted one-action card in WKWebView",
+    );
+    await click("AI 助手", "//div[contains(@class,'rss-hidden-primary')]");
+    await click("新会话", "//div[contains(@class,'rss-hidden-secondary')]");
+    await browser
+      .$('.rss-assistant-input textarea[aria-label="消息"]')
+      .setValue("WKWebView 助手原生输入验收");
+    key(36);
+    await wait(() =>
+      browser.execute(
+        () =>
+          !!window.rssDesktop.state.workspace.assistant.state.selected &&
+          window.rssDesktop.state.workspace.assistant.busy(),
+      ),
+    );
+    const assistantSession = await browser.execute(
+      () => window.rssDesktop.state.workspace.assistant.state.selected,
+    );
+    const driveAssistant = async (input) => {
+      const value = await browser.execute(
+        async (input) => {
+          const response = await fetch("/__fixture/assistant", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(input),
+          });
+          return { ok: response.ok, body: await response.text() };
+        },
+        { sessionId: assistantSession, ...input },
+      );
+      assert.equal(
+        value.ok,
+        true,
+        `assistant scripted Host stimulus ${input.action}`,
+      );
+      return JSON.parse(value.body);
+    };
+    await driveAssistant({ action: "surface" });
+    await wait(() =>
+      browser.$('.rss-ai-surface input[aria-label="Answer"]').isDisplayed(),
+    );
+    await browser
+      .$('.rss-ai-surface input[aria-label="Answer"]')
+      .setValue("WKWebView 官方输入绑定");
+    await browser
+      .$('.rss-assistant-input textarea[aria-label="消息"]')
+      .setValue("本会话未提交草稿");
+    await click("历史会话", "//div[contains(@class,'rss-hidden-secondary')]");
+    await wait(() =>
+      browser.$(".rss-session-history:not([hidden])").isDisplayed(),
+    );
+    await browser.$('.rss-session-history-item[aria-current="page"]').click();
+    assert.equal(
+      await browser.$(".rss-session-history:not([hidden])").isDisplayed(),
+      true,
+    );
+    assert.equal(
+      await browser
+        .$('.rss-assistant-input textarea[aria-label="消息"]')
+        .getValue(),
+      "本会话未提交草稿",
+    );
+    await click("关闭历史会话");
+    await click("主页", "//div[contains(@class,'rss-hidden-primary')]");
+    await click("AI 助手", "//div[contains(@class,'rss-hidden-primary')]");
+    assert.equal(
+      await browser.$('.rss-ai-surface input[aria-label="Answer"]').getValue(),
+      "WKWebView 官方输入绑定",
+    );
+    await click("Send answer");
+    await wait(() =>
+      browser.execute(() =>
+        document
+          .querySelector(".rss-ai-surface")
+          ?.textContent.includes("此问题已经回答。"),
+      ),
+    );
+    await driveAssistant({
+      action: "advance",
+      events: [{ type: "terminal", outcome: "completed" }],
+    });
+    await wait(() =>
+      browser.execute(
+        () => !window.rssDesktop.state.workspace.assistant.busy(),
+      ),
+    );
+    await browser
+      .$('.rss-assistant-input textarea[aria-label="消息"]')
+      .setValue("WKWebView 准备本次修复");
+    key(36);
+    await wait(() =>
+      browser.execute(() => window.rssDesktop.state.workspace.assistant.busy()),
+    );
+    const operationId = await browser.execute((sessionId) => {
+      const id = crypto.randomUUID();
+      window.rssPageFixture.stageAssistantOperation(sessionId, id);
+      return id;
+    }, assistantSession);
+    await driveAssistant({
+      action: "delivery",
+      operationId,
+      proposal: { name: "execution_operation_prepare", arguments: {} },
+    });
+    await wait(() =>
+      browser
+        .$('.rss-operation-card input[aria-label="修复名称"]')
+        .isDisplayed(),
+    );
+    await browser
+      .$('.rss-operation-card input[aria-label="修复名称"]')
+      .setValue("原生确认的最终参数");
+    await browser.saveScreenshot(
+      join(reports, "desktop-native-assistant-operation.png"),
+    );
+    await click("确认本次具体动作");
+    await wait(() =>
+      browser.execute(
+        () =>
+          window.rssPageFixture.events.filter(
+            (e) => e.operation === "ai_operation_submit",
+          ).length === 1,
+      ),
+    );
+    assert.equal(
+      await browser.execute(
+        (id) =>
+          window.rssPageFixture.records.get(id).action.choice.parameters.name,
+        operationId,
+      ),
+      "原生确认的最终参数",
+    );
+    assert.equal(
+      await browser.execute(
+        (id) => window.rssPageFixture.records.get(id).state,
+        operationId,
+      ),
+      "submitting",
+    );
+    assert.equal(await browser.$('[role="dialog"]').isExisting(), false);
+    await driveAssistant({
+      action: "advance",
+      events: [{ type: "terminal", outcome: "completed" }],
+    });
+    await browser.saveScreenshot(
+      join(reports, "desktop-native-assistant-submitted.png"),
+    );
+    result.checks.push(
+      "production assistant in macOS WKWebView: native keyboard input, fixed secondary history keeps per-session draft, official A2UI binding/answer, original trusted Policy draft edited and submitted once; scripted Host/sample record, no real model or OS execution effect claimed",
+    );
+    mark("native redacted diagnostic snapshot");
+    await click("用户菜单");
+    const diagnosticMenu =
+      '//*[@role="menuitem" and normalize-space(.)="运行与诊断"]';
+    await wait(() => browser.$(diagnosticMenu).isDisplayed());
+    await browser.$(diagnosticMenu).click();
+    await click("预览脱敏诊断");
+    await wait(() => browser.$(".rss-diagnostic-preview").isDisplayed());
+    await browser.saveScreenshot(
+      join(reports, "desktop-native-pages-diagnostic.png"),
+    );
+    key(53);
+    await wait(() =>
+      browser.execute(
+        () =>
+          window.rssDesktop.state.workspace.diagnostics.state.preview == null,
+      ),
+    );
+    result.checks.push(
+      "v4 software covers, system overview and utility cards in WKWebView",
+      "native Escape closes staged network check without running it",
+      "native diagnostic preview uses and discards the original redacted sample snapshot; no OS export effect claimed",
+    );
     if (!baseline) {
       result.visual = [];
-      result.taskFixture =
-        "Rust-generated phase/process/effect; synthetic AI association for renderer testing";
+      await navigate("AI 助手");
+      await click("新会话");
+      await browser.execute(() => {
+        window.nativeVisualInput = document.querySelector(
+          ".rss-assistant-input textarea",
+        );
+      });
+      await browser
+        .$(".rss-assistant-input textarea")
+        .setValue("原生尺寸与主题草稿");
       const originalDark =
         script(
           'tell application "System Events" to tell appearance preferences to get dark mode',
         ) === "true";
-      const setDark = async (dark) => {
+      try {
+        for (const dark of [false, true]) {
+          script(
+            `tell application "System Events" to tell appearance preferences to set dark mode to ${dark}`,
+          );
+          await wait(() =>
+            browser.execute(
+              (value) =>
+                matchMedia("(prefers-color-scheme: dark)").matches === value,
+              dark,
+            ),
+          );
+          for (const [width, height] of [
+            [1100, 760],
+            [1440, 960],
+            [480, 400],
+          ]) {
+            await browser.setWindowSize(width, height);
+            const metrics = await browser.execute(() => {
+              const input = document.querySelector(
+                  ".rss-assistant-input textarea",
+                ),
+                rect = input.getBoundingClientRect();
+              const visibleComposers = [
+                ...document.querySelectorAll(".rss-composer textarea"),
+              ].filter((node) => node.getClientRects().length > 0);
+              return {
+                width: innerWidth,
+                height: innerHeight,
+                dpr: devicePixelRatio,
+                theme: matchMedia("(prefers-color-scheme: dark)").matches
+                  ? "dark"
+                  : "light",
+                inputVisible:
+                  rect.top >= 0 &&
+                  rect.bottom <= innerHeight &&
+                  rect.left >= 0 &&
+                  rect.right <= innerWidth,
+                overflow: document.documentElement.scrollWidth > innerWidth,
+                composerCount: visibleComposers.length,
+                sameInput: input === window.nativeVisualInput,
+                background: getComputedStyle(
+                  document.querySelector(".rss-composer"),
+                ).backgroundColor,
+              };
+            });
+            assert.equal(metrics.theme, dark ? "dark" : "light");
+            assert.equal(metrics.inputVisible, true);
+            assert.equal(metrics.overflow, false);
+            assert.equal(metrics.composerCount, 1);
+            assert.equal(metrics.sameInput, true);
+            assert.equal(
+              await browser.$(".rss-assistant-input textarea").getValue(),
+              "原生尺寸与主题草稿",
+            );
+            assert.ok(
+              !["transparent", "rgba(0, 0, 0, 0)"].includes(metrics.background),
+            );
+            result.visual.push(metrics);
+            await browser.saveScreenshot(
+              join(
+                reports,
+                `desktop-native-assistant-${metrics.theme}-${width}.png`,
+              ),
+            );
+          }
+        }
+      } finally {
         script(
-          `tell application "System Events" to tell appearance preferences to set dark mode to ${dark}`,
+          `tell application "System Events" to tell appearance preferences to set dark mode to ${originalDark}`,
         );
         await wait(() =>
           browser.execute(
             (value) =>
               matchMedia("(prefers-color-scheme: dark)").matches === value,
-            dark,
+            originalDark,
           ),
         );
-      };
-      const capture = async (kind, theme, width) => {
-        const metrics = await browser.execute(() => {
-          const input = document.querySelector(".composer textarea");
-          const r = input.getBoundingClientRect(),
-            style = getComputedStyle(input);
-          return {
-            width: innerWidth,
-            height: innerHeight,
-            dpr: devicePixelRatio,
-            theme: matchMedia("(prefers-color-scheme: dark)").matches
-              ? "dark"
-              : "light",
-            font: style.fontFamily,
-            fontSize: style.fontSize,
-            inputVisible:
-              r.top >= 0 &&
-              r.bottom <= innerHeight &&
-              r.left >= 0 &&
-              r.right <= innerWidth,
-            overflow: document.documentElement.scrollWidth > innerWidth,
-            assistantCount: document.querySelectorAll(".assistant").length,
-            composerCount: document.querySelectorAll(".composer").length,
-            mainOpaque: !getComputedStyle(
-              document.querySelector(".shell main"),
-            ).backgroundColor.includes("rgba"),
-            inputOpaque: !getComputedStyle(
-              document.querySelector(".composer-box"),
-            ).backgroundColor.includes("rgba"),
-          };
-        });
-        assert.equal(metrics.theme, theme);
-        assert.equal(
-          metrics.inputVisible,
-          true,
-          `${kind} ${theme} ${width}: composer reachable`,
-        );
-        assert.equal(metrics.overflow, false);
-        assert.equal(metrics.assistantCount, 1);
-        assert.equal(metrics.composerCount, 1);
-        assert.equal(metrics.mainOpaque && metrics.inputOpaque, true);
-        const screenshot = `desktop-native-${kind}-${theme}-${width}.png`;
-        await browser.saveScreenshot(join(reports, screenshot));
-        result.visual.push({ kind, screenshot, ...metrics });
-      };
-      await click("关闭电脑助手侧栏");
-      await navigate("AI 助手");
-      await click("新会话");
-      if (await browser.$('[aria-label="移除上下文"]').isExisting())
-        await click("移除上下文");
-      await browser.execute(() => {
-        window.nativeVisualInput = document.querySelector(".composer textarea");
-      });
-      try {
-        for (const dark of [false, true]) {
-          const theme = dark ? "dark" : "light";
-          await setDark(dark);
-          for (const [width, height] of [
-            [1100, 760],
-            [1440, 960],
-            [480, 400],
-          ]) {
-            mark(`native visual start ${theme} ${width}×${height}`);
-            await browser.setWindowSize(width, height);
-            await wait(() =>
-              browser.execute(
-                () =>
-                  document.querySelector(".assistant-welcome")?.getClientRects()
-                    .length > 0,
-              ),
-            );
-            assert.equal(
-              await browser.execute(
-                () =>
-                  window.nativeVisualInput ===
-                  document.querySelector(".composer textarea"),
-              ),
-              true,
-            );
-            await capture("start", theme, width);
-          }
-        }
-        await browser.setWindowSize(1100, 760);
-        await navigate("AI 助手");
-        // This is a real product submission to the explicit FakeHost renderer fixture.
-        await prompt("原生视觉验收：解释当前任务记录");
-        await visualFixture.delivery();
-        await wait(() => browser.$(".execution-activity").isDisplayed());
-        await text("设备状态由独立执行记录呈现。S1 测试投影不代表设备变更。");
-        for (const dark of [false, true]) {
-          const theme = dark ? "dark" : "light";
-          await setDark(dark);
-          for (const [width, height] of [
-            [1100, 760],
-            [1440, 960],
-            [480, 400],
-          ]) {
-            mark(`native visual conversation ${theme} ${width}×${height}`);
-            await browser.setWindowSize(width, height);
-            await capture("conversation", theme, width);
-          }
-        }
-        for (const [width, height] of [
-          [1100, 760],
-          [1440, 960],
-          [480, 400],
-        ]) {
-          await browser.setWindowSize(width, height);
-          await browser.$('[data-action="execution-details"]').click();
-          await wait(() =>
-            browser.$(".execution-inspector-content").isDisplayed(),
-          );
-          await browser.saveScreenshot(
-            join(reports, `desktop-native-execution-dark-${width}.png`),
-          );
-          if (width === 1440) {
-            assert.equal(
-              await browser.$('aside[aria-label="设备操作详情"]').isDisplayed(),
-              true,
-            );
-            await browser.$('[aria-label="关闭设备操作详情"]').click();
-          } else {
-            assert.equal(
-              await browser
-                .$('[role="dialog"][aria-label="设备操作详情"]')
-                .isDisplayed(),
-              true,
-            );
-            key(53);
-          }
-          await wait(() =>
-            browser.execute(
-              () =>
-                document.activeElement?.getAttribute("data-action") ===
-                "execution-details",
-            ),
-          );
-        }
-        result.checks.push(
-          "native-task-aside-and-drawer",
-          "native-task-focus-return",
-          "model-terminal-separate-from-execution",
-        );
-        for (const dark of [false, true]) {
-          const theme = dark ? "dark" : "light";
-          await setDark(dark);
-          for (const [width, height] of [
-            [1100, 760],
-            [1440, 960],
-            [480, 400],
-          ]) {
-            mark(`native visual context ${theme} ${width}×${height}`);
-            await browser.setWindowSize(width, height);
-            await navigate("软件管理");
-            await click("已安装", '//*[@aria-label="软件视图"]');
-            await openPageAssistant();
-            await browser
-              .$(".composer textarea")
-              .setValue(`保留原生草稿 ${theme} ${width}`);
-            await capture("context", theme, width);
-            const beforeTab = await browser.execute(
-              () =>
-                document.activeElement ===
-                document.querySelector(".composer textarea"),
-            );
-            assert.equal(
-              beforeTab,
-              true,
-              "context composer owns focus before Tab",
-            );
-            key(48);
-            await wait(() =>
-              browser.execute(
-                () =>
-                  document.activeElement !==
-                    document.querySelector(".composer textarea") &&
-                  !!document.activeElement?.closest(".page-assistant-panel"),
-              ),
-            );
-            key(48, true);
-            await wait(() =>
-              browser.execute(
-                () =>
-                  document.activeElement ===
-                  document.querySelector(".composer textarea"),
-              ),
-            );
-            await click("关闭电脑助手侧栏");
-            mark(`native context close focus ${theme} ${width}`);
-            await wait(() =>
-              browser.execute(
-                () =>
-                  !document.querySelector(".page-assistant-panel") &&
-                  document.activeElement?.classList.contains(
-                    "workspace-assistant-entry",
-                  ),
-              ),
-            );
-            mark(`native context return to main ${theme} ${width}`);
-            await navigate("AI 助手");
-            assert.equal(
-              await browser.$(".composer textarea").getValue(),
-              `保留原生草稿 ${theme} ${width}`,
-            );
-            assert.equal(
-              await browser.execute(
-                () =>
-                  window.nativeVisualInput ===
-                  document.querySelector(".composer textarea"),
-              ),
-              true,
-            );
-          }
-        }
-        result.checks.push(
-          "native-six-layout-theme-cases",
-          "native-theme-hot-switch",
-          "native-context-tab-escape-focus",
-          "native-single-composer-draft-preservation",
-        );
-      } finally {
-        await setDark(originalDark);
         result.systemThemeRestored = true;
       }
-      const nativePreferences = JSON.parse(
-        execFileSync(
-          "/usr/bin/osascript",
-          [
-            "-l",
-            "JavaScript",
-            "-e",
-            'ObjC.import("AppKit"); var w=$.NSWorkspace.sharedWorkspace; JSON.stringify({reduceTransparency:Boolean(w.accessibilityDisplayShouldReduceTransparency),reducedMotion:Boolean(w.accessibilityDisplayShouldReduceMotion),highContrast:Boolean(w.accessibilityDisplayShouldIncreaseContrast)});',
-          ],
-          { encoding: "utf8", timeout: 10000 },
+      // A physical Shift-Return adds a newline without creating a session.
+      await browser.setWindowSize(1100, 760);
+      await browser.$(".rss-assistant-input textarea").click();
+      const sessionsBefore = await browser.execute(
+        () => window.rssDesktop.state.workspace.assistant.sessions().length,
+      );
+      key(36, true);
+      assert.ok(
+        (await browser.$(".rss-assistant-input textarea").getValue()).includes(
+          "\n",
         ),
       );
-      result.appearance = await waitForAppearance(
-        () =>
-          browser.execute(() => ({
-            materialEnabled: document
-              .querySelector(".app-root")
-              .classList.contains("native-material"),
-            reducedMotion: document
-              .querySelector(".app-root")
-              .classList.contains("reduced-motion"),
-            highContrast: document
-              .querySelector(".app-root")
-              .classList.contains("high-contrast"),
-          })),
-        nativePreferences,
-        wait,
+      assert.equal(
+        await browser.execute(
+          () => window.rssDesktop.state.workspace.assistant.sessions().length,
+        ),
+        sessionsBefore,
       );
-      result.appearance.systemPreferences = nativePreferences;
-
+      // Page and main composers share the conversation draft; Escape restores the trigger.
+      await navigate("软件中心");
+      await click("已安装");
+      await openPageAssistant();
+      await browser
+        .$(".rss-page-assistant textarea")
+        .setValue("页面助手独立草稿");
+      key(48);
+      await wait(() =>
+        browser.execute(
+          () =>
+            !!document.activeElement?.closest(".rss-page-assistant") &&
+            document.activeElement.tagName !== "TEXTAREA",
+        ),
+      );
+      key(48, true);
+      await wait(() =>
+        browser.execute(
+          () =>
+            document.activeElement ===
+            document.querySelector(".rss-page-assistant textarea"),
+        ),
+      );
+      key(53);
+      await wait(() =>
+        browser.execute(
+          () =>
+            document.activeElement?.getAttribute("aria-label") === "页面助手",
+        ),
+      );
+      await navigate("AI 助手");
+      assert.equal(
+        await browser.$(".rss-assistant-input textarea").getValue(),
+        "页面助手独立草稿",
+      );
+      result.checks.push(
+        "native-six-layout-theme-cases",
+        "native-theme-hot-switch",
+        "native-context-tab-escape-focus",
+        "native-same-conversation-draft-preservation",
+        "native-Shift-Return-without-send",
+      );
       // Use an enabled real input source and physical keys; no composition simulation.
       const inputSources = () =>
         JSON.parse(
@@ -1573,23 +1776,23 @@ try {
         await browser.setWindowSize(1100, 760);
         await navigate("AI 助手");
         await click("新会话");
-        await browser.$(".composer textarea").setValue("");
-        await browser.$(".composer textarea").click();
+        await browser.$(".rss-composer textarea").setValue("");
+        await browser.$(".rss-composer textarea").click();
         const before = await browser.execute(
           async () =>
-            (await window.assistantRuntime.listSessions()).items.length,
+            window.rssDesktop.state.workspace.assistant.sessions().length,
         );
         await browser.execute(() => {
           window.nativeImeEvents = [];
-          const input = document.querySelector(".composer textarea");
+          const input = document.querySelector(".rss-composer textarea");
+          window.nativeImeListener = (event) =>
+            window.nativeImeEvents.push(event.type);
           for (const type of ["compositionstart", "compositionend"])
-            input.addEventListener(type, (event) =>
-              window.nativeImeEvents.push(event.type),
-            );
+            input.addEventListener(type, window.nativeImeListener);
         });
         try {
           await browser.switchToWindow("main");
-          await browser.$(".composer textarea").click();
+          await browser.$(".rss-composer textarea").click();
           native("get frontmost");
           selectInputSource("com.apple.inputmethod.SCIM.ITABC");
           assert.equal(
@@ -1609,7 +1812,9 @@ try {
               window.nativeImeEvents.includes("compositionend"),
             ),
           );
-          const confirmed = await browser.$(".composer textarea").getValue();
+          const confirmed = await browser
+            .$(".rss-composer textarea")
+            .getValue();
           assert.ok(
             confirmed.length > 0,
             "native Return commits the composing text",
@@ -1617,13 +1822,13 @@ try {
           assert.equal(
             await browser.execute(
               async () =>
-                (await window.assistantRuntime.listSessions()).items.length,
+                window.rssDesktop.state.workspace.assistant.sessions().length,
             ),
             before,
             "IME confirmation must not submit",
           );
           // Apple Pinyin Return commits raw spelling; Space selects its Chinese candidate.
-          await browser.$(".composer textarea").setValue("");
+          await browser.$(".rss-composer textarea").setValue("");
           for (const code of [45, 34, 4, 0, 31]) key(code);
           await wait(() =>
             browser.execute(
@@ -1643,14 +1848,14 @@ try {
             ),
           );
           assert.match(
-            await browser.$(".composer textarea").getValue(),
+            await browser.$(".rss-composer textarea").getValue(),
             /[^\x00-\x7f]/,
             "Space selects the native Chinese candidate",
           );
           assert.equal(
             await browser.execute(
               async () =>
-                (await window.assistantRuntime.listSessions()).items.length,
+                window.rssDesktop.state.workspace.assistant.sessions().length,
             ),
             before,
             "Chinese candidate confirmation must not submit",
@@ -1660,7 +1865,7 @@ try {
             async () =>
               (await browser.execute(
                 async () =>
-                  (await window.assistantRuntime.listSessions()).items.length,
+                  window.rssDesktop.state.workspace.assistant.sessions().length,
               )) ===
               before + 1,
           );
@@ -1680,10 +1885,20 @@ try {
             "native-explicit-Return-send",
           );
         } finally {
-          selectInputSource(sources.current);
-          result.inputSourceRestored =
-            inputSources().current === sources.current;
-          assert.equal(result.inputSourceRestored, true);
+          try {
+            await browser.execute(() => {
+              const input = document.querySelector(".rss-composer textarea");
+              for (const type of ["compositionstart", "compositionend"])
+                input?.removeEventListener(type, window.nativeImeListener);
+              delete window.nativeImeListener;
+            });
+          } finally {
+            // System restoration must not depend on a surviving WebDriver session.
+            selectInputSource(sources.current);
+            result.inputSourceRestored =
+              inputSources().current === sources.current;
+            assert.equal(result.inputSourceRestored, true);
+          }
         }
       } else
         result.ime = {
@@ -1692,92 +1907,18 @@ try {
         };
       result.pageZoom = {
         status: "unverified",
-        reason:
-          "the current product has no native page zoom entry; CSS zoom is not evidence",
+        reason: "no native page zoom entry; CSS zoom is not evidence",
       };
       result.displayScaling = {
         status: "observed",
         dpr: [...new Set(result.visual.map((row) => row.dpr))],
         otherScales: "unverified",
       };
-
-      mark("native operation gallery activation");
-      await fixtureControls();
-      await browser.$('input[aria-label="显示操作模板"]').click();
-      // OperationGallery is owned by the active development settings slot.
-      await wait(() =>
-        browser.$('select[aria-label="操作模板"]').isDisplayed(),
-      );
-      for (const template of [
-        "SettingsForm",
-        "ObjectActions",
-        "ResourceSelection",
-        "ChangeReview",
-        "TaskExecution",
-        "GuidedFlow",
-        "OperationApproval",
-      ]) {
-        await selectValue(
-          await browser.$('select[aria-label="操作模板"]'),
-          template,
-        );
-        mark(`native operation controls ${template}`);
-        const card = await browser.$(
-          `article[aria-label="${template} 操作示例"]`,
-        );
-        await wait(() => card.isDisplayed());
-        await card.scrollIntoView();
-        if (template === "SettingsForm")
-          await card.$('input[type="text"]').setValue("原生用户修改");
-        if (template === "GuidedFlow") await card.$("button=下一步").click();
-        if (["ObjectActions", "ResourceSelection"].includes(template))
-          await card.$('input[aria-label="选择 测试对象 A"]').click();
-        if (template === "TaskExecution") await card.$("button=继续").click();
-        else
-          await card
-            .$(
-              `button=${template === "OperationApproval" ? "确认操作" : "保存"}`,
-            )
-            .click();
-        if (template === "TaskExecution") {
-          await wait(async () => !(await card.$("fieldset").isExisting()));
-          assert.ok((await card.getText()).includes("执行中"));
-          assert.equal(await card.$("button=取消操作").isEnabled(), true);
-        } else {
-          await wait(async () =>
-            (await card.getText()).includes("fixture 已核实"),
-          );
-          assert.ok((await card.getText()).includes("核实成功"));
-          if (template === "SettingsForm") {
-            assert.equal(
-              await card.$('input[type="text"]').getValue(),
-              "原生用户修改",
-            );
-            assert.ok(
-              (await card.$(".ui-table").getText()).includes("原生用户修改"),
-            );
-          }
-          if (["ObjectActions", "ResourceSelection"].includes(template)) {
-            const rows = await card.$$("tbody tr");
-            const selected = await rows[0].getText();
-            assert.ok(
-              selected.includes("测试对象 A") && selected.includes("已核实"),
-            );
-            assert.ok(!(await rows[1].getText()).includes("已核实"));
-          }
-        }
-        await browser.saveScreenshot(
-          join(reports, `desktop-native-operation-${template}.png`),
-        );
-        result.checks.push(`native-operation-${template}`);
-      }
-      await fixtureControls();
-      await browser.$('input[aria-label="显示操作模板"]').click();
-      await navigate("AI 助手");
-      result.windowsAppearance = "unverified; no Windows host";
-      await browser.setWindowSize(1100, 760);
-      mark("native visual close and reopen main window");
-      // The driver calls the real Tauri window.close lifecycle; no renderer hide/mock.
+      result.appearance = {
+        status: "fixture",
+        reason:
+          "visual assembly uses fixed appearance facts; real AppKit policy is checked only in controlled-service mode",
+      };
       await browser.closeWindow();
       result.closeWindowAction =
         "WebDriver -> native Tauri window.close; menu reopen";
@@ -1787,17 +1928,18 @@ try {
       menu("显示窗口");
       await wait(async () => (await browser.getWindowHandles()).length === 1);
       await browser.switchToWindow((await browser.getWindowHandles())[0]);
-      // Recreated fixture views open at Home, then use the product navigation.
+      await browser.execute(() => {
+        location.search = "?desktop";
+      });
+      await wait(() => browser.$('[aria-label="切换侧栏布局"]').isDisplayed());
       await navigate("AI 助手");
-      await wait(() => browser.$(".composer textarea").isDisplayed());
+      await wait(() =>
+        browser.$(".rss-assistant-input textarea").isDisplayed(),
+      );
       result.checks.push("native-visual-close-reopen");
     }
-    result.checks.push(
-      "native-visual-baseline",
-      "same-product-App",
-      "explicit-resource-context-selection",
-    );
     result.baseline = baseline;
+    result.windowsAppearance = "unverified; no Windows host";
     assert.deepEqual(
       sourceEvidence(root),
       result.developmentSource,
@@ -1805,178 +1947,134 @@ try {
     );
     result.status = "passed";
   } else {
-    mark("account and saved unverified connection");
-    if (await browser.$('[aria-label="登录工作空间"]').isExisting())
-      await click("设置与诊断");
-    // A ready local owner opens Home. Enter settings through the visible product navigation.
+    mark(
+      "current authenticated local workspace and saved unverified connection",
+    );
+    if (
+      await browser
+        .$('//button[normalize-space(.)="使用本机工作区"]')
+        .isDisplayed()
+    )
+      await click("使用本机工作区");
+    await wait(() => browser.$(".rss-desktop-shell").isDisplayed());
     await openAgentSettings("账号与组织");
-    mark("select the fixed native local test workspace");
-    await browser.$(".account-local-workspaces > summary").click();
-    await browser.$('[aria-label="测试用户名"]').setValue("Golden Alice");
-    await click("进入");
-    await wait(() =>
-      browser.execute(() => {
-        const users = document.querySelector('[aria-label="测试用户"]');
-        const failure = users
-          ?.querySelector('[role="alert"]')
-          ?.textContent?.trim();
-        if (failure) throw Error(failure);
-        return users?.textContent?.includes("当前用户：Golden Alice");
-      }),
-    );
-    await wait(() =>
-      browser.execute(
-        () => document.querySelector(".shell")?.hasAttribute("inert") === false,
-      ),
-    );
+    await text("当前使用本机工作区");
+    // Test-user switching was retired with the old UI. Use the actual OS owner;
+    // cross-user enforcement is exercised by the native service security probe.
+    result.callerIsolation = {
+      status: "not_verified",
+      reason:
+        "no synthetic user switch in the production UI; service cross-user security requires --security",
+    };
     mark("native task port reads before model setup or any execution");
-    await navigate("请求与任务");
-    let taskReadRetried = false;
-    await wait(async () => {
-      const alert = await browser.$('.task-center [role="alert"]');
-      if (await alert.isExisting()) {
-        const reason = await alert.getText();
-        if (taskReadRetried)
-          throw Error(`native task list rejected: ${reason}`);
-        taskReadRetried = true;
-        await click("刷新原记录", '//*[@aria-label="任务中心"]');
-      }
-      return (
-        (await browser.$$(".task-center-list [data-task]")).length > 0 ||
-        (await browser.$(".task-center-list").getText()).includes(
-          "没有匹配的保留记录",
-        )
-      );
-    });
-    result.checks.push("native-task-read-before-model-or-execution");
-    mark("open connection settings for the acknowledged local workspace");
-    await navigate("设置");
-    await text("个人 AI 连接（0）");
-    const personalVault = await browser.$('[aria-label="个人 Passkey Vault"]');
-    assert.equal(await personalVault.isExisting(), true);
-    assert.equal(
-      await personalVault.$('input[type="password"]').isExisting(),
-      false,
-    );
-    assert.ok((await personalVault.getText()).includes("仅本机，尚未同步"));
-    result.checks.push("personal-vault-native-management-no-renderer-password");
-    await (await field("名称")).setValue("Golden Codex");
-    await selectValue(await field("认证来源"), "custom_api");
-    await (await field("API 地址")).setValue(fixture.url);
-    await (await field("模型")).setValue("native-golden-model");
-    await browser.$(".connection-form summary").click();
-    await selectValue(await field("工具"), "controlled_tools");
-    await browser.$('input[type="password"]').setValue(fixture.secret);
-    mark("save connection through native credential owner");
-    await click("保存配置");
+    await navigate("任务中心");
     await wait(
       async () =>
-        (await visibleText("Golden Codex · Codex · 未验证")) ||
-        (await visibleText("AI Host 不可用，配置尚未保存")),
+        (await browser.$(".rss-task-table").isDisplayed()) ||
+        (await visibleText("当前视图没有任务")),
     );
-    assert.equal(await visibleText("Golden Codex · Codex · 未验证"), true);
-    result.checks.push("noninteractive-isolated-keychain");
-    assert.equal(
-      await browser.$('input[type="password"]').isExisting(),
-      false,
-      "form resets after save",
-    );
-    assert.equal(fixture.facts.requests, 0, "save must not contact model");
-    mark("failed probe then explicit retry");
-    await click("测试连接");
-    await text("最近测试失败");
-    assert.ok(fixture.facts.rejectedAuthentication > 0);
-    fixture.accept();
-    await click("测试连接");
-    await text("Golden Codex · Codex · 可用");
+    result.checks.push("native-task-read-before-model-or-execution");
+    await openAgentSettings("个人 Passkey");
+    await text("密码输入与用户验证只在受保护的原生对话框中进行。");
     assert.equal(
       await browser
-        .$('[aria-label="将连接 Golden Codex 设为默认"]')
-        .isEnabled(),
+        .$('.rss-preferences-page input[type="password"]')
+        .isExisting(),
       false,
-      "first saved connection is already the default",
     );
-    const sidebar = await browser.execute(() => {
-      const el = document.querySelector(".shell aside");
-      const style = getComputedStyle(el);
-      const solid = document.createElement("span");
-      solid.style.backgroundColor = "var(--rss-color-navigation)";
-      el.append(solid);
-      const solidBackground = getComputedStyle(solid).backgroundColor;
-      solid.remove();
-      return {
-        width: el.getBoundingClientRect().width,
-        padding: style.padding,
-        background: style.backgroundColor,
-        solidBackground,
-      };
-    });
-    await click("开始对话");
-    assert.equal(await browser.$(".composer textarea").isDisplayed(), true);
-    await assertEmptyHistory();
+    result.checks.push("personal-vault-native-management-no-renderer-password");
+    await openAgentSettings("AI 与连接");
+    await text("还没有 AI 连接");
+    await click("添加连接");
+    await (await field("连接名称")).setValue("Golden Codex");
+    await selectValue(await field("AI 配置来源"), "自定义 API");
+    await (await field("AI API 地址")).setValue(fixture.url);
+    await (await field("AI 模型")).setValue("native-golden-model");
+    await selectValue(await field("AI 连接用途"), "受控工具");
+    await (await field("AI 新密钥")).setValue(fixture.secret);
+    await click("保存连接");
+    await text("待验证");
+    assert.equal(
+      await browser.$('input[aria-label="AI 新密钥"]').isExisting(),
+      false,
+      "secret form discarded after save",
+    );
+    assert.equal(fixture.facts.requests, 0, "saving must not contact model");
     result.checks.push(
       "saved-unverified",
-      "failed-probe-retry",
+      "noninteractive-isolated-keychain",
       "secret-cleared",
-      "blank-composer",
     );
+    mark("failed probe then explicit retry through the saved configuration");
+    await click("配置 Golden Codex");
+    await click("验证当前已保存配置");
+    await text("验证未通过");
+    assert.ok(fixture.facts.rejectedAuthentication > 0);
+    fixture.accept();
+    if (!(await browser.$('[role="dialog"]').isDisplayed()))
+      await click("配置 Golden Codex");
+    await click("验证当前已保存配置");
+    await text("已验证");
+    await navigate("AI 助手");
+    assert.equal(
+      await browser.$(".rss-assistant-input textarea").getValue(),
+      "",
+    );
+    await assertEmptyHistory();
+    result.checks.push("failed-probe-retry", "blank-composer");
     await browser.saveScreenshot(
       join(reports, "desktop-native-start-default.png"),
     );
-    mark("left primary navigation shares the persistent sidebar theme");
+    mark("v4 narrow navigation overlay and fixed RSS control");
     await browser.setWindowSize(480, 400);
-    await wait(() =>
-      browser.$('.sidebar-cycle[aria-label="打开主导航"]').isDisplayed(),
+    await expandNavigation();
+    assert.equal(
+      await browser.execute(() => {
+        const sidebar = document
+          .querySelector(".rss-sidebar")
+          .getBoundingClientRect();
+        const toggle = document
+          .querySelector('[aria-label="切换侧栏布局"]')
+          .getBoundingClientRect();
+        return (
+          sidebar.left >= 0 &&
+          sidebar.right <= innerWidth &&
+          toggle.left >= 0 &&
+          toggle.right <= innerWidth
+        );
+      }),
+      true,
     );
-    await browser.$('.sidebar-cycle[aria-label="打开主导航"]').click();
-    const navigation = await browser.execute(() => {
-      const el = document.querySelector('[role="dialog"][aria-label="主导航"]');
-      const rect = el.getBoundingClientRect();
-      const style = getComputedStyle(el);
-      return {
-        left: rect.left,
-        width: rect.width,
-        padding: style.padding,
-        background: style.backgroundColor,
-        footerAtBottom:
-          el.querySelector(".navigation-footer").getBoundingClientRect()
-            .bottom >
-          innerHeight - 40,
-      };
-    });
-    assert.equal(navigation.left, 0);
-    assert.equal(navigation.footerAtBottom, true);
-    assert.equal(navigation.width, 280);
-    assert.equal(navigation.background, sidebar.solidBackground);
     await browser.saveScreenshot(
       join(reports, "desktop-native-navigation.png"),
     );
     key(53);
     await wait(
       async () =>
-        !(await browser.$('[role="dialog"][data-state="open"]').isExisting()),
+        (await browser
+          .$(".rss-desktop-shell")
+          .getAttribute("data-layout-step")) === "0",
     );
-    await wait(() =>
-      browser.execute(
-        () =>
-          document.activeElement?.getAttribute("aria-label") === "打开主导航",
-      ),
-    );
-    result.checks.push("left-navigation-consistent-style");
+    result.checks.push("v4-native-narrow-navigation-overlay");
     mark("human action enters the service without a backend confirmation gate");
     await browser.setWindowSize(1100, 760);
-    await navigate("软件管理");
-    await click("企业软件", '//*[@aria-label="软件视图"]');
+    await navigate("软件中心");
+    await click("发现");
     assert.equal(originalRequests(await serviceCall("query")).size, 0);
     const published = serviceReady.catalog;
+    // The controlled catalog has exactly one visible resource. Its detail must
+    // show the service's original policy identity before a concrete submission.
     await wait(() =>
-      browser
-        .$(`[data-policy-id="${published.policyId}"] button`)
-        .isDisplayed(),
+      browser.$(".rss-store-grid .rss-software-card").isDisplayed(),
     );
-    await browser.$(`[data-policy-id="${published.policyId}"] button`).click();
-    await click("核对执行参数", '//*[contains(@class,"software-production")]');
-    await click("确认并执行", '//*[contains(@class,"software-production")]');
+    await browser
+      .$(
+        ".rss-store-grid .rss-software-card .rss-software-card-footer button:last-child",
+      )
+      .click();
+    await wait(() => browser.$('[role="dialog"]').isDisplayed());
+    await text(published.policyId);
+    await click("确认并提交");
     await wait(async () =>
       taskExecutions(await serviceCall("query")).some(
         (row) => row.status.attempts === 1,
@@ -1995,14 +2093,15 @@ try {
     );
     assert.equal(humanTask.source, "human");
     await openNativeTask(humanTask);
-    assert.ok(
-      (await browser.$$("[aria-label='父子步骤'] [data-node]")).length > 0,
+    assert.ok((await browser.$$(".rss-task-detail [data-node]")).length > 0);
+    await click(
+      "关闭",
+      '//*[contains(@class,"rss-task-detail") or contains(@class,"ant-drawer")]',
     );
-    await click("返回任务列表", '//*[@aria-label="任务详情"]');
     await wait(() =>
       browser.execute(
         (reference) =>
-          document.activeElement?.getAttribute("data-task") ===
+          document.activeElement?.getAttribute("data-task-reference") ===
           JSON.stringify(reference),
         humanTask.reference,
       ),
@@ -2030,8 +2129,7 @@ try {
     await browser.$('[aria-label="复制代码"]').click();
     await wait(
       async () =>
-        (await visibleText("已复制")) ||
-        (await visibleText("复制不可用，请选中文本手动复制。")),
+        (await visibleText("已复制")) || (await visibleText("复制未完成")),
     );
     result.clipboard = (await visibleText("已复制"))
       ? "writeText"
@@ -2041,7 +2139,7 @@ try {
     assert.equal((await task()).snapshot.attempts, 1);
     assert.equal((await task()).plan.initiator.trigger.kind, "human");
     assert.equal(
-      await browser.$('[aria-label="AI 工具权限请求"]').isExisting(),
+      await browser.$('[aria-label="本次工具请求"]').isExisting(),
       false,
     );
     await prompt("GOLDEN_CANCEL_REJECT 拒绝取消");
@@ -2068,7 +2166,7 @@ try {
     await prompt("GOLDEN_READ 读取状态");
     await completedReply("完成 READ");
     assert.equal(
-      await browser.$('[aria-label="AI 工具权限请求"]').isExisting(),
+      await browser.$('[aria-label="本次工具请求"]').isExisting(),
       false,
     );
     result.checks.push(
@@ -2079,92 +2177,43 @@ try {
       "human-original-journal-detail",
     );
     mark("manual history position survives a new reply");
-    await browser.$(".assistant-timeline article:first-child").scrollIntoView();
-    await wait(
-      async () =>
-        await browser
-          .$('//button[normalize-space(.)="回到最新消息"]')
-          .isDisplayed(),
-    );
+    await browser
+      .$(".rss-assistant-timeline article:first-child")
+      .scrollIntoView();
     const scrollTop = await browser.execute(
-      () => document.querySelector(".assistant-timeline").scrollTop,
+      () => document.querySelector(".rss-assistant-scroll").scrollTop,
     );
     await prompt("GOLDEN_HELLO 保留阅读位置");
     await completedReply("完成 HELLO");
     assert.ok(
       Math.abs(
         (await browser.execute(
-          () => document.querySelector(".assistant-timeline").scrollTop,
+          () => document.querySelector(".rss-assistant-scroll").scrollTop,
         )) - scrollTop,
       ) < 2,
     );
-    await click("回到最新消息");
+    await wait(() => browser.$(".rss-latest-output").isDisplayed());
+    await click("有新内容 · 回到最新");
     result.checks.push("manual-scroll-preserved", "jump-to-latest");
     mark("narrow layout, native focus and scrolling");
     await browser.setWindowSize(480, 400);
-    await wait(() =>
-      browser.$('.sidebar-cycle[aria-label="打开主导航"]').isDisplayed(),
-    );
-    await browser.$('.sidebar-cycle[aria-label="打开主导航"]').click();
-    assert.equal(
-      await browser.execute(() => {
-        const r = document
-          .querySelector('[role="dialog"][aria-label="主导航"]')
-          .getBoundingClientRect();
-        return r.left === 0 && r.right <= innerWidth;
-      }),
-      true,
-    );
+    await expandNavigation();
     await browser.saveScreenshot(
       join(reports, "desktop-native-navigation-narrow.png"),
     );
     key(53);
     await wait(
       async () =>
-        !(await browser.$('[role="dialog"][data-state="open"]').isExisting()),
+        (await browser
+          .$(".rss-desktop-shell")
+          .getAttribute("data-layout-step")) === "0",
     );
-    await browser.$('.sidebar-cycle[aria-label="打开主导航"]').click();
+    await browser.$(".rss-composer textarea").setValue("保留键盘验收草稿");
+    await browser.$(".rss-composer textarea").click();
     assert.equal(
-      await browser.execute(
-        () =>
-          document
-            .querySelector('[role="dialog"][aria-label="主导航"]')
-            .getBoundingClientRect().left,
-      ),
-      0,
-    );
-    for (let i = 0; i < 14; i++) {
-      const previous = await browser.execute(
-        () => document.activeElement?.outerHTML,
-      );
-      key(48, i >= 7);
-      await wait(() =>
-        browser.execute(
-          (previous) =>
-            Boolean(
-              document.activeElement?.closest(
-                '[role="dialog"][data-state="open"]',
-              ),
-            ) && document.activeElement?.outerHTML !== previous,
-          previous,
-        ),
-      );
-    }
-    key(53);
-    await wait(
-      async () =>
-        !(await browser.$('[role="dialog"][data-state="open"]').isExisting()),
-    );
-    assert.equal(
-      await browser.execute(() =>
-        document.activeElement?.getAttribute("aria-label"),
-      ),
-      "打开主导航",
-    );
-    await browser.$(".composer textarea").setValue("保留键盘验收草稿");
-    await browser.$(".composer textarea").click();
-    assert.equal(
-      await browser.$('.composer button[type="submit"]').isEnabled(),
+      await browser
+        .$('.rss-composer button[aria-label="发送消息"]')
+        .isEnabled(),
       true,
       "draft enables native send control",
     );
@@ -2175,7 +2224,7 @@ try {
       browser.execute(
         () =>
           document.activeElement ===
-          document.querySelector('.composer button[type="submit"]'),
+          document.querySelector('.rss-composer button[aria-label="发送消息"]'),
       ),
     );
     key(48, true);
@@ -2183,20 +2232,23 @@ try {
       browser.execute(
         () =>
           document.activeElement ===
-          document.querySelector(".composer textarea"),
+          document.querySelector(".rss-composer textarea"),
       ),
     );
-    await browser.$(".composer textarea").setValue("");
+    await browser.$(".rss-composer textarea").setValue("");
     assert.equal(
       await browser.execute(
-        () => document.querySelectorAll('[role="log"]').length,
+        () =>
+          [...document.querySelectorAll('[role="log"]')].filter(
+            (node) => node.getClientRects().length > 0,
+          ).length,
       ),
       1,
     );
     assert.equal(
       await browser.execute(() => {
         const r = document
-          .querySelector(".composer textarea")
+          .querySelector(".rss-composer textarea")
           .getBoundingClientRect();
         return r.bottom <= innerHeight && r.left >= 0 && r.right <= innerWidth;
       }),
@@ -2213,7 +2265,7 @@ try {
     await browser.setWindowSize(1100, 760);
     await openHistory();
     await wait(() =>
-      browser.$(".conversation-history-panel .conversation-list").isDisplayed(),
+      browser.$(".rss-session-history:not([hidden])").isDisplayed(),
     );
     result.checks.push(
       "native-tab-shift-tab-escape",
@@ -2223,7 +2275,7 @@ try {
     );
     assert.equal(
       await browser.execute(
-        () => document.querySelectorAll(".conversation-list li").length,
+        () => document.querySelectorAll(".rss-session-history-item").length,
       ),
       1,
       "all first-chat operations share one session",
@@ -2254,22 +2306,21 @@ try {
     assert.equal(pendingReview?.confirmation, null);
     assert.equal((await serviceCall("status")).startRequests, 1);
     result.checks.push("ai-risk-two-waits-for-human-without-start");
-    await text("查看设备操作");
-    await click("查看设备操作");
-    await wait(() =>
-      browser.$('[role="dialog"][data-state="open"]').isDisplayed(),
+    await openNativeTask(
+      afterReview.items.find(
+        (item) =>
+          item.reference.kind === "request" &&
+          item.reference.request === fixture.facts.reviewRequest,
+      ),
     );
-    // Native Escape closes the actual execution inspector and restores its trigger.
+    await text("原动作需要本人核对");
+    // Opening/closing the original retained preparation is read-only.
     key(53);
     await wait(
-      async () =>
-        !(await browser.$('[role="dialog"][data-state="open"]').isExisting()),
+      async () => !(await browser.$(".rss-task-detail").isDisplayed()),
     );
-    assert.equal(
-      await browser.execute(() => document.activeElement?.textContent?.trim()),
-      "查看设备操作",
-    );
-    result.checks.push("ai-original-operation-inspector");
+    assert.equal((await serviceCall("status")).startRequests, 1);
+    result.checks.push("ai-original-preparation-read-without-start");
 
     const proposalsBeforeContext = fixture.facts.proposals.length;
     for (const [width, height] of [
@@ -2285,32 +2336,40 @@ try {
           width < 900,
         ),
       );
-      await navigate("软件管理");
-      await click("企业软件", '//*[@aria-label="软件视图"]');
-      await click("刷新任务", '//*[contains(@class,"software-production")]');
+      await navigate("软件中心");
+      await click("发现");
+      await click("重读结果");
       await wait(() =>
-        browser
-          .$(
-            '//*[contains(@class,"software-production")]//button[normalize-space(.)="刷新任务"]',
-          )
-          .isEnabled(),
+        browser.$(".rss-store-grid .rss-software-card").isDisplayed(),
       );
+      // Collapse the overlay before using the page companion on a narrow window.
+      if (width < 900) {
+        key(53);
+        await wait(
+          async () =>
+            (await browser
+              .$(".rss-desktop-shell")
+              .getAttribute("data-layout-step")) === "0",
+        );
+      }
       await openPageAssistant();
-      assert.equal(await browser.$(".connection-trigger").isExisting(), false);
       assert.equal(
         await browser.execute(
-          () => document.querySelectorAll(".assistant").length,
+          () =>
+            [...document.querySelectorAll(".rss-composer textarea")].filter(
+              (node) => node.getClientRects().length > 0,
+            ).length,
         ),
         1,
       );
       mark(`resource context ${width}×${height}: explicit provider context`);
       await browser
-        .$(".composer textarea")
+        .$(".rss-page-assistant textarea")
         .setValue("GOLDEN_CONTEXT 解释这个软件的版本与限制");
       assert.equal(
         await browser.execute(() => {
           const r = document
-            .querySelector(".composer textarea")
+            .querySelector(".rss-page-assistant textarea")
             .getBoundingClientRect();
           return (
             r.bottom <= innerHeight &&
@@ -2333,17 +2392,16 @@ try {
         await browser.saveScreenshot(
           join(reports, "desktop-native-context-wide.png"),
         );
-      await click("关闭电脑助手侧栏");
+      await click("关闭页面助手");
       await wait(() =>
-        browser.execute(() =>
-          document.activeElement?.classList.contains(
-            "workspace-assistant-entry",
-          ),
+        browser.execute(
+          () =>
+            document.activeElement?.getAttribute("aria-label") === "页面助手",
         ),
       );
       await navigate("AI 助手");
       assert.equal(
-        await browser.$(".composer textarea").getValue(),
+        await browser.$(".rss-assistant-input textarea").getValue(),
         "GOLDEN_CONTEXT 解释这个软件的版本与限制",
       );
     }
@@ -2366,11 +2424,10 @@ try {
     );
     const beforeCollection = originalRequests(await serviceCall("query"));
     const proposalsBeforeCollection = fixture.facts.proposals.length;
-    await navigate("软件管理");
-    await click("已安装", '//*[@aria-label="软件视图"]');
-    await browser.$(".software-sources summary").click();
+    await navigate("软件中心");
+    await click("已安装");
     const collect = browser.$(
-      '//button[normalize-space(.)="采集最新结果" and not(@disabled)]',
+      '//button[normalize-space(.)="采集最新清单" and not(@disabled)]',
     );
     mark("explicit local collection: available native source");
     await wait(() => collect.isDisplayed());
@@ -2389,20 +2446,21 @@ try {
     mark("explicit local collection: Home activity entry");
     await navigate("主页");
     const recent = browser.$(
-      `//button[@data-task-ref='${JSON.stringify(collected.reference)}']`,
+      `.rss-home-activity-row[data-task-reference=${JSON.stringify(JSON.stringify({ kind: "request", request: collected.reference.request }))}]`,
     );
     await wait(() => recent.isDisplayed());
     mark("explicit local collection: reopen original detail from Home");
     await recent.click();
-    await wait(() =>
-      browser.$('.task-center-detail[aria-label="任务详情"]').isDisplayed(),
-    );
+    await wait(() => browser.$(".rss-task-detail").isDisplayed());
     mark("explicit local collection: return Home focus");
-    await click("返回任务列表", '//*[@aria-label="任务详情"]');
+    await click(
+      "关闭",
+      '//*[contains(@class,"rss-task-detail") or contains(@class,"ant-drawer")]',
+    );
     await wait(() =>
       browser.execute(
         (reference) =>
-          document.activeElement?.getAttribute("data-task-ref") ===
+          document.activeElement?.getAttribute("data-task-reference") ===
           JSON.stringify(reference),
         collected.reference,
       ),
@@ -2415,28 +2473,40 @@ try {
     assert.equal(sampling.source, "policy");
     assert.deepEqual(sampling.allowedActions, []);
     await openNativeTask(sampling);
-    assert.equal((await browser.$$(".task-actions button")).length, 0);
+    assert.deepEqual(
+      await Promise.all(
+        (await browser.$$(".rss-task-drawer-actions button")).map((button) =>
+          button.getText(),
+        ),
+      ),
+      ["关闭", "查询原请求"],
+    );
     mark("background history: management coverage and read-only detail");
-    await navigate("请求与任务");
-    await click("管理活动", '//*[@aria-label="任务视图"]');
+    await navigate("任务中心");
+    await click("管理活动", '//*[contains(@class,"rss-secondary-nav")]');
     const managementRef = {
       kind: "activity",
       id: serviceReady.history.activity,
     };
     await wait(() => taskButton(managementRef).isDisplayed());
     await taskButton(managementRef).click();
-    await wait(() =>
-      browser.$('.task-center-detail[aria-label="任务详情"]').isDisplayed(),
+    await wait(() => browser.$(".rss-task-detail").isDisplayed());
+    assert.ok(
+      (await browser.$(".rss-task-coverage").getText()).includes("覆盖不完整"),
     );
     assert.ok(
-      (await browser.$('[aria-label="同步覆盖"]').getText()).includes("部分"),
-    );
-    assert.ok(
-      (await browser.$(".task-center-detail").getText()).includes(
+      (await browser.$(".rss-task-detail").getText()).includes(
         "effect-not-observed",
       ),
     );
-    assert.equal((await browser.$$(".task-actions button")).length, 0);
+    assert.deepEqual(
+      await Promise.all(
+        (await browser.$$(".rss-task-drawer-actions button")).map((button) =>
+          button.getText(),
+        ),
+      ),
+      ["关闭", "查询原请求"],
+    );
     const retainedRequests = originalRequests(await serviceCall("query"));
     await navigate("AI 助手");
     assert.deepEqual(
@@ -2452,19 +2522,17 @@ try {
       "task-navigation-without-ai-or-resubmit",
     );
     const readAppearance = () =>
-      browser.execute(() => ({
-        materialEnabled: document
-          .querySelector(".app-root")
-          .classList.contains("native-material"),
-        reducedMotion: document
-          .querySelector(".app-root")
-          .classList.contains("reduced-motion"),
-        highContrast: document
-          .querySelector(".app-root")
-          .classList.contains("high-contrast"),
-        bodyBackground: getComputedStyle(document.querySelector(".shell main"))
-          .backgroundColor,
-      }));
+      browser.execute(() => {
+        const shell = document.querySelector(".rss-desktop-shell");
+        return {
+          materialEnabled: shell?.dataset.material === "true",
+          reducedMotion: shell?.dataset.reducedMotion === "true",
+          highContrast: shell?.dataset.highContrast === "true",
+          bodyBackground: getComputedStyle(
+            document.querySelector(".rss-shell-main"),
+          ).backgroundColor,
+        };
+      });
     const systemAppearance = JSON.parse(
       execFileSync(
         "/usr/bin/osascript",
@@ -2528,23 +2596,21 @@ try {
     await wait(() =>
       browser.execute(
         (expected) =>
-          !!document.querySelector(".app-root") &&
-          document
-            .querySelector(".app-root")
-            .classList.contains("native-material") === expected,
+          document.querySelector(".rss-desktop-shell")?.dataset.material ===
+          String(expected),
         expectedMaterial,
       ),
     );
     result.checks.push("native-close-control-material-rebind");
     await wait(async () => !(await visibleText("正在读取或切换账户…")));
     await navigate("AI 助手");
-    await wait(() => browser.$(".composer textarea").isDisplayed());
+    await wait(() => browser.$(".rss-composer textarea").isDisplayed());
     await text("GOLDEN_HELLO 查看办公套件");
     mark("restart Host through settings");
     rememberScopes(await readWorkerScopes(), hostPid());
-    await navigate("设置");
+    await openAgentSettings("运行与诊断");
     await click("重启 AI Host");
-    await click("确认重启");
+    await browser.$(".ant-popconfirm .ant-btn-primary").click();
     await wait(() => {
       const pid = hostPid();
       return pid && pid !== initialHostPid;
@@ -2558,9 +2624,10 @@ try {
           .$('//button[normalize-space(.)="重启 AI Host"]')
           .isEnabled(),
     );
-    await click("测试连接");
     await openAgentSettings("AI 与连接");
-    await text("Golden Codex · Codex · 可用");
+    await click("配置 Golden Codex");
+    await click("验证当前已保存配置");
+    await text("已验证");
     mark("restore history and create a new provider session after restart");
     await navigate("AI 助手");
     await text("GOLDEN_HELLO 查看办公套件");
@@ -2593,9 +2660,9 @@ try {
       const restart = async () => {
         const previous = hostPid();
         rememberScopes(await fences(), previous);
-        await navigate("设置");
+        await openAgentSettings("运行与诊断");
         await click("重启 AI Host");
-        await click("确认重启");
+        await browser.$(".ant-popconfirm .ant-btn-primary").click();
         await wait(() => hostPid() && hostPid() !== previous);
         if (previous)
           await wait(() => {
@@ -2710,57 +2777,20 @@ try {
 
       result.processSecurity = proof;
     }
-    mark("caller isolation and credential deletion");
-    await openAgentSettings("账号与组织");
-    if (!(await browser.$(".account-local-workspaces").getAttribute("open")))
-      await browser.$(".account-local-workspaces > summary").click();
-    await browser.$('[aria-label="测试用户名"]').setValue("Golden Bob");
-    await click("进入");
-    await wait(() =>
-      browser.execute(() => {
-        const users = document.querySelector('[aria-label="测试用户"]');
-        const failure = users
-          ?.querySelector('[role="alert"]')
-          ?.textContent?.trim();
-        if (failure) throw Error(failure);
-        return users?.textContent?.includes("当前用户：Golden Bob");
-      }),
+    mark(
+      "credential deletion through the current subject's saved configuration",
     );
-    mark("open connection settings for the acknowledged local workspace");
-    await navigate("设置");
-    await text("个人 AI 连接（0）");
-    await click("稍后配置，前往 AI");
-    assert.equal(await visibleText("GOLDEN_HELLO 查看办公套件"), false);
-    await openAgentSettings("账号与组织");
-    if (!(await browser.$(".account-local-workspaces").getAttribute("open")))
-      await browser.$(".account-local-workspaces > summary").click();
-    await browser.$('[aria-label="测试用户名"]').setValue("Golden Alice");
-    await click("进入");
-    await wait(() =>
-      browser.execute(() => {
-        const users = document.querySelector('[aria-label="测试用户"]');
-        const failure = users
-          ?.querySelector('[role="alert"]')
-          ?.textContent?.trim();
-        if (failure) throw Error(failure);
-        return users?.textContent?.includes("当前用户：Golden Alice");
-      }),
-    );
-    await navigate("设置");
-    await text("个人 AI 连接（1）");
-    await click("删除");
-    await click("确认删除");
-    await text("个人 AI 连接（0）");
+    await openAgentSettings("AI 与连接");
+    await click("配置 Golden Codex");
+    await click("移除连接");
+    await browser.$(".ant-popconfirm .ant-btn-primary").click();
+    await text("还没有 AI 连接");
     assert.equal(
       (await browser.getPageSource()).includes(fixture.secret),
       false,
     );
     assert.equal(logs.includes(fixture.secret), false);
-    result.checks.push(
-      "caller-isolation",
-      "credential-deletion",
-      "secret-redaction",
-    );
+    result.checks.push("credential-deletion", "secret-redaction");
     mark("graceful application menu quit");
     await browser.deleteSession();
     browser = undefined;
@@ -2864,11 +2894,15 @@ try {
         focusedAction: document.activeElement?.getAttribute("data-action"),
         focusedLabel: document.activeElement?.getAttribute("aria-label"),
         focusedClass: document.activeElement?.className,
-        dialogLabels: [
-          ...document.querySelectorAll('[role="dialog"][data-state="open"]'),
-        ].map((el) => el.getAttribute("aria-label")),
+        dialogLabels: [...document.querySelectorAll('[role="dialog"]')]
+          .filter((el) => el.getClientRects().length > 0)
+          .map(
+            (el) =>
+              el.getAttribute("aria-label") ||
+              el.getAttribute("aria-labelledby"),
+          ),
         navigation: [
-          ...document.querySelectorAll(".navigation-primary button"),
+          ...document.querySelectorAll(".rss-primary-nav button"),
         ].map((el) => ({
           text: el.textContent,
           visible: !!el.getClientRects().length,
@@ -2877,24 +2911,15 @@ try {
         })),
         viewport: { width: innerWidth, height: innerHeight },
         compactTriggerPresent: !!document.querySelector(
-          '[aria-label="打开主导航"]',
+          '[aria-label="切换侧栏布局"]',
         ),
       }));
-      result.transportFailure = await browser.execute(() => {
-        const c =
-          document.querySelector(".assistant")?.__vueParentComponent?.props
-            ?.controller;
-        const reason = c?.runtime?.value?.connection?.signal?.reason;
-        return {
-          visible:
-            document.querySelector(".assistant")?.__vueParentComponent?.props
-              .visible,
-          display: document.querySelector(".assistant")?.style.display,
-          state: c?.state?.connection ?? "unknown",
-          code: typeof reason?.code === "string" ? reason.code : "unknown",
-          name: typeof reason?.name === "string" ? reason.name : "unknown",
-        };
-      });
+      result.transportFailure = await browser.execute(() => ({
+        display: document.querySelector(".assistant")?.style.display,
+        state:
+          document.querySelector('[role="alert"]')?.textContent ??
+          "unavailable",
+      }));
     } catch {
       result.transportFailure = { state: "unavailable" };
     }
@@ -2942,7 +2967,6 @@ try {
     }
   }
   await Promise.race([fixture?.close(), delay(2000)]);
-  await Promise.race([visualFixture?.close?.(), delay(2000)]);
   const owned = [
     receipt?.pid,
     result.owner?.hostPid,

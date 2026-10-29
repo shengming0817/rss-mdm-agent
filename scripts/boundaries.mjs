@@ -3,7 +3,6 @@ import { readFileSync, readdirSync } from "node:fs";
 import { resolve, dirname, extname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
-import { parse, compileTemplate } from "vue/compiler-sfc";
 
 const selfServiceCommands = [
   "task_list",
@@ -89,70 +88,10 @@ const nativeAdapters = new Map([
   ["apps/desktop/src/assistant/native.ts", assistantCommands],
 ]);
 const uiDependencies = {
-  "@lucide/vue": "1.49.0",
+  antd: "6.6.8",
+  "@ant-design/icons": "6.3.4",
   "markdown-it": "15.0.2",
-  "reka-ui": "2.10.5",
-  "@internationalized/date": "3.12.4",
 };
-const uiImports = {
-  "apps/desktop/src/App.vue": ["@rss-mdm-agent/ai-ui-bridge"],
-  "apps/desktop/src/assistant/operation-ui/NodeView.ts": [
-    "@a2ui/web_core/v0_9",
-    "@rss-mdm-agent/ai-contract/operations",
-  ],
-  "apps/desktop/src/assistant/operation-ui/OperationCard.vue": [
-    "@rss-mdm-agent/ai-ui-bridge/surface",
-    "@a2ui/web_core/v0_9",
-    "@rss-mdm-agent/ai-contract/operations",
-  ],
-  "apps/desktop/src/assistant/operation-ui/host.ts": [
-    "@rss-mdm-agent/ai-contract/operations",
-  ],
-  "apps/desktop/src/assistant/operation-ui/projection.ts": [
-    "@rss-mdm-agent/ai-contract/operations",
-  ],
-  "packages/ui/src/index.ts": ["@lucide/vue", "reka-ui"],
-  "packages/ui/src/components/AppShell.vue": ["@lucide/vue"],
-  "packages/ui/src/components/MessageComposer.vue": ["@lucide/vue"],
-  "packages/ui/src/internal/markdown.ts": ["markdown-it"],
-};
-const uiFoundations = new Set(
-  [
-    "UiProvider",
-    "UiField",
-    "UiTextInput",
-    "UiNumberInput",
-    "UiSearchInput",
-    "UiCheckbox",
-    "UiSwitch",
-    "UiRadioGroup",
-    "UiSlider",
-    "UiSelect",
-    "UiCombobox",
-    "UiDateInput",
-    "UiTimeInput",
-    "UiDateTimeInput",
-    "UiList",
-    "UiTree",
-    "UiTable",
-    "UiTabs",
-    "UiNavigation",
-    "UiCollapsible",
-    "UiSplitPane",
-    "UiDialog",
-    "UiPopover",
-    "UiMenu",
-    "UiTooltip",
-    "UiToasts",
-    "UiChart",
-  ].map((name) => `packages/ui/src/components/${name}.vue`),
-);
-const uiLogic = new Set([
-  "packages/ui/src/components/primitives.ts",
-  "packages/ui/src/components/feedback.ts",
-  "packages/ui/src/context.ts",
-  "packages/ui/src/field.ts",
-]);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 function files(dir) {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -160,763 +99,723 @@ function files(dir) {
     return entry.isDirectory() ? files(path) : [path];
   });
 }
-// Medium: parse UI and desktop source, including Vue template expressions.
+// Parse TSX directly: presentation cannot acquire network, HTML or native authority.
 export function checkSource(file, source) {
   file = file.replaceAll("\\", "/");
   const errors = [];
+  if (file.endsWith(".vue"))
+    return [`${file}: retired Vue SFC is not a production source`];
+  const desktop = file.startsWith("apps/desktop/src/");
+  const ui = file.startsWith("packages/ui/");
+  const ast = ts.createSourceFile(
+    file,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  const program = ts.createProgram(
+    [file],
+    { noLib: true, noResolve: true, jsx: ts.JsxEmit.ReactJSX },
+    {
+      ...ts.createCompilerHost({}),
+      getSourceFile: (name) => (name === file ? ast : undefined),
+      writeFile() {},
+    },
+  );
+  const checker = program.getTypeChecker();
+  const allowed = new Set(["react", "antd", "@ant-design/icons"]);
+  if (desktop)
+    for (const name of [
+      "valtio",
+      "valtio/vanilla",
+      "valtio/vanilla/utils",
+      "@rss-mdm-agent/ui",
+      "@rss-mdm-agent/ui/style.css",
+      "@rss-mdm-agent/ai-contract",
+      "@rss-mdm-agent/ai-contract/wire",
+      "@rss-mdm-agent/ai-contract/ports",
+    ])
+      allowed.add(name);
+  if (file.startsWith("apps/desktop/src/assistant/"))
+    for (const name of [
+      "@rss-mdm-agent/ai-client",
+      "@rss-mdm-agent/ai-ui-bridge",
+      "@rss-mdm-agent/ai-ui-bridge/surface",
+      "@rss-mdm-agent/ai-contract/operations",
+      "@rss-mdm-agent/execution-bindings",
+      "@rss-mdm-agent/execution-bindings/tasks",
+    ])
+      allowed.add(name);
+  if (file === "packages/ui/src/UiProvider.tsx")
+    allowed.add("antd/locale/zh_CN");
+  if (file === "packages/ui/src/internal/markdown.ts")
+    allowed.add("markdown-it");
   if (
-    /\b(prNumber|pr_number|repository|PullRequestView|usePrStore|useReviewStore)\b/.test(
+    file === "apps/desktop/src/main.tsx" ||
+    file === "apps/desktop/src/assistant/operation-ui/nodes.tsx"
+  )
+    allowed.add("react-dom/client");
+  if (
+    ["nodes.tsx", "OperationNode.tsx", "OperationCard.tsx"].some(
+      (name) => file === `apps/desktop/src/assistant/operation-ui/${name}`,
+    )
+  )
+    allowed.add("@a2ui/web_core/v0_9");
+  if (nativeAdapters.has(file)) allowed.add("@tauri-apps/api/core");
+  if (file === "apps/desktop/src/workspace/window.ts")
+    allowed.add("@tauri-apps/api/window");
+  if (file === "apps/desktop/src/workspace/entry.ts")
+    allowed.add("@tauri-apps/api/event");
+  if (file === "apps/desktop/src/settings/native.ts")
+    allowed.add("@tauri-apps/api/app");
+  if (file === "apps/desktop/src/software/controller.ts")
+    allowed.add("@rss-mdm-agent/ai-ui-bridge");
+  const pureGlobals = new Set([
+    "Math",
+    "Number",
+    "String",
+    "Boolean",
+    "Object",
+    "Array",
+    "Map",
+    "Set",
+    "Date",
+    "JSON",
+    "Error",
+    "Promise",
+    "undefined",
+    "NaN",
+    "Infinity",
+    "Symbol",
+  ]);
+  const ownerGlobals = {
+    "apps/desktop/src/account/AccountPage.tsx": ["crypto"],
+    "apps/desktop/src/settings/ConnectionsPage.tsx": ["crypto", "URL"],
+    "apps/desktop/src/self-service/policy-preparation.ts": ["crypto"],
+    "apps/desktop/src/device-tools/controller.ts": ["crypto"],
+    "apps/desktop/src/shell/DesktopShell.tsx": [
+      "window",
+      "document",
+      "HTMLElement",
+    ],
+    "apps/desktop/src/state/desktop.ts": [
+      "document",
+      "setInterval",
+      "clearInterval",
+    ],
+    "apps/desktop/src/state/workspace.ts": ["crypto"],
+    "apps/desktop/src/assistant/controller.ts": [
+      "AbortController",
+      "setTimeout",
+      "clearTimeout",
+      "setInterval",
+      "clearInterval",
+    ],
+    "apps/desktop/src/assistant/operation-ui/host.ts": ["AbortController"],
+    "apps/desktop/src/task-center/TaskDetailDrawer.tsx": [
+      "document",
+      "HTMLElement",
+      "setInterval",
+      "clearInterval",
+    ],
+    "apps/desktop/src/shell/PolicyDrawer.tsx": ["setInterval", "clearInterval"],
+    "apps/desktop/src/task-center/controller.ts": [
+      "setTimeout",
+      "clearTimeout",
+      "crypto",
+      "document",
+    ],
+    "apps/desktop/src/software/controller.ts": [
+      "setInterval",
+      "clearInterval",
+      "crypto",
+      "document",
+    ],
+    "apps/desktop/src/system-settings/controller.ts": [
+      "setTimeout",
+      "setInterval",
+      "clearInterval",
+      "clearTimeout",
+      "crypto",
+    ],
+    "apps/desktop/src/appearance.ts": [
+      "navigator",
+      "setTimeout",
+      "clearTimeout",
+    ],
+    "apps/desktop/src/assistant/clipboard.ts": ["navigator"],
+    "apps/desktop/src/assistant/SessionHistory.tsx": [
+      "document",
+      "requestAnimationFrame",
+      "cancelAnimationFrame",
+    ],
+    "apps/desktop/src/assistant/scroll.ts": ["ResizeObserver"],
+    "apps/desktop/src/assistant/operation-ui/nodes.tsx": ["WeakMap"],
+    "apps/desktop/src/assistant/operation-ui/OperationCard.tsx": [
+      "AbortController",
+      "setInterval",
+      "clearInterval",
+      "document",
+    ],
+    "apps/desktop/src/main.tsx": ["document", "console"],
+    "packages/ui/src/UiProvider.tsx": ["window"],
+  };
+  for (const name of ownerGlobals[file] ?? []) pureGlobals.add(name);
+  const bannedMembers = new Set([
+    "window",
+    "globalThis",
+    "self",
+    "navigator",
+    "location",
+    "parent",
+    "frames",
+    "fetch",
+    "sendBeacon",
+    "open",
+    "Image",
+    "WebSocket",
+    "XMLHttpRequest",
+    "EventSource",
+    "DOMParser",
+    "eval",
+    "Function",
+    "localStorage",
+    "sessionStorage",
+    "constructor",
+    "__proto__",
+    "ownerDocument",
+    "defaultView",
+    "contentWindow",
+    "contentDocument",
+    "innerHTML",
+    "outerHTML",
+    "insertAdjacentHTML",
+    "parseFromString",
+    "createContextualFragment",
+    "setHTMLUnsafe",
+    "write",
+    "writeln",
+    "__TAURI_INTERNALS__",
+    "__TAURI__",
+  ]);
+  const forbiddenTags = new Set([
+    "a",
+    "area",
+    "iframe",
+    "object",
+    "embed",
+    "script",
+    "link",
+    "base",
+    "meta",
+    "img",
+    "video",
+    "audio",
+    "source",
+  ]);
+  const forbiddenAttributes = new Set([
+    "href",
+    "src",
+    "srcSet",
+    "action",
+    "formAction",
+    "srcDoc",
+    "ping",
+    "dangerouslySetInnerHTML",
+  ]);
+  const dataIndex = {
+    "apps/desktop/src/device-tools/NetworkDrawer.tsx": [
+      "taskPhase",
+      "findings",
+    ],
+    "apps/desktop/src/shell/PolicyDrawer.tsx": [
+      "(raw as Record<string, unknown>)",
+      "values",
+      "properties",
+      "parameters",
+      "(field.enum as unknown[])",
+    ],
+    "apps/desktop/src/settings/ConnectionsPage.tsx": ["providerNames"],
+    "apps/desktop/src/settings/DiagnosticsPage.tsx": [
+      "scopeLabels",
+      "diagnostics.scopes",
+      "workspace.diagnostics.state.scopes",
+      "labels",
+    ],
+    "apps/desktop/src/software/SoftwareDetail.tsx": [
+      "localActionLabels",
+      "taskPhase",
+    ],
+    "apps/desktop/src/software/SoftwarePreparation.tsx": [
+      "localActionLabels",
+      "taskPhase",
+    ],
+    "apps/desktop/src/software/PolicyTasks.tsx": ["taskPhase"],
+    "apps/desktop/src/software/presentation.ts": [
+      "categoryTones",
+      "blockReason",
+    ],
+    "apps/desktop/src/system-settings/SettingsEditor.tsx": ["draft", "labels"],
+    "apps/desktop/src/system-settings/SystemPage.tsx": [
+      "icons",
+      "summaries",
+      "effects",
+      "labels",
+    ],
+    "apps/desktop/src/system-settings/presentation.ts": [
+      "labels",
+      "qualityLabels",
+      "sourceLabels",
+    ],
+    "apps/desktop/src/App.tsx": ["nav.selected", "taskPhase"],
+    "apps/desktop/src/home/HomePage.tsx": ["taskPhase"],
+    "apps/desktop/src/shell/DesktopShell.tsx": ["layouts"],
+    "apps/desktop/src/assistant/AssistantTimeline.tsx": [
+      "view.commands",
+      "view.messages",
+      "view.surfaces",
+      "view.interactions",
+      "view.tools",
+      "view.deliveries",
+    ],
+    "apps/desktop/src/assistant/Questions.tsx": [
+      "view?.interactions",
+      "view.interactions",
+    ],
+    "apps/desktop/src/assistant/operation-ui/OperationNode.tsx": [
+      "state.draft.values",
+      "state.errors",
+      "state.secrets",
+      "labels",
+      "snapshot.current",
+      "phaseLabels",
+    ],
+    "apps/desktop/src/assistant/messages.ts": [
+      "view.commands",
+      "view.messages",
+    ],
+    "apps/desktop/src/shell/GlobalSearch.tsx": ["matches"],
+    "apps/desktop/src/account/LoginDialog.tsx": ["labels"],
+    "apps/desktop/src/account/RegistrationPage.tsx": ["registrationLabels"],
+    "apps/desktop/src/shell/navigation-model.ts": [
+      "moduleIcons",
+      "sections",
+      "descriptions",
+    ],
+    "apps/desktop/src/shell/NavigationMenu.tsx": ["nav.selected"],
+    "apps/desktop/src/state/navigation.ts": ["sections", "state.selected"],
+    "packages/ui/src/theme.ts": ["palette"],
+    "packages/ui/src/UiProvider.tsx": ["palette"],
+    "packages/ui/src/components/Presentation.tsx": ["phases"],
+    "apps/desktop/src/assistant/operation-ui/host.ts": [
+      "event.values",
+      "parameters",
+      "reasons",
+    ],
+    "apps/desktop/src/assistant/operation-ui/projection.ts": [
+      "properties",
+      "action.choice.parameters",
+      "snapshot.proposal",
+    ],
+    "apps/desktop/src/system-settings/facts.ts": ["qualityLabels"],
+    "apps/desktop/src/system-settings/controller.ts": ["families"],
+    "apps/desktop/src/task-center/controller.ts": [
+      "state.items",
+      "taskActionTitles",
+      "managementTitles",
+      "taskPhase",
+    ],
+    "apps/desktop/src/task-center/TaskCenterPage.tsx": [
+      "sourceLabels",
+      "counts",
+    ],
+    "apps/desktop/src/task-center/TaskDetailDrawer.tsx": [
+      "sourceLabels",
+      "actionLabels",
+    ],
+    "apps/desktop/src/task-center/presentation.ts": [
+      "taskPhase",
+      "nodeLabels",
+      "explanations",
+      "activityLabels",
+    ],
+    "apps/desktop/src/task-center/PreparationFacts.tsx": [
+      "localActionLabels",
+      "action.task.parameterSources",
+      "action.choice.parameters",
+    ],
+  };
+  function checkImport(name) {
+    if (!name.startsWith(".") && !allowed.has(name))
+      errors.push(`${file}: unexpected dependency ${name}`);
+    if (name.startsWith(".")) {
+      const resolved = resolve(dirname(resolve(root, file)), name).replaceAll(
+        "\\",
+        "/",
+      );
+      const scope =
+        resolve(root, ui ? "packages/ui" : "apps/desktop/src").replaceAll(
+          "\\",
+          "/",
+        ) + "/";
+      if (!resolved.startsWith(scope))
+        errors.push(`${file}: import escapes presentation source`);
+      const feature = /^apps\/desktop\/src\/(assistant|self-service)\//.exec(
+        file,
+      )?.[1];
+      if (
+        feature &&
+        !resolved.startsWith(
+          resolve(root, `apps/desktop/src/${feature}`).replaceAll("\\", "/") +
+            "/",
+        )
+      ) {
+        const shared = {
+          "apps/desktop/src/assistant/native.ts": [
+            "../test-users",
+            "../self-service/native",
+          ],
+          "apps/desktop/src/self-service/native.ts": ["../test-users"],
+          "apps/desktop/src/assistant/controller.ts": ["../self-service/types"],
+          "apps/desktop/src/assistant/AssistantPage.tsx": [
+            "../state/workspace",
+          ],
+          "apps/desktop/src/assistant/AssistantTimeline.tsx": [
+            "../state/workspace",
+            "../software/presentation",
+          ],
+          "apps/desktop/src/assistant/Questions.tsx": [
+            "../state/workspace",
+            "../software/presentation",
+          ],
+          "apps/desktop/src/assistant/SessionHistory.tsx": [
+            "../state/workspace",
+            "../software/presentation",
+          ],
+          "apps/desktop/src/assistant/operation-ui/OperationCard.tsx": [
+            "../../state/workspace",
+            "../../task-center/PreparationFacts",
+          ],
+          "apps/desktop/src/assistant/resource-context.ts": [
+            "../self-service/types",
+          ],
+        };
+        if (!(shared[file] ?? []).includes(name))
+          errors.push(`${file}: feature import escapes owner`);
+      }
+    }
+  }
+  const factories = new Set();
+  const reactNamespaces = new Set();
+  for (const statement of ast.statements) {
+    if (
+      ts.isImportDeclaration(statement) &&
+      ["react", "react/jsx-runtime"].includes(statement.moduleSpecifier.text)
+    ) {
+      if (statement.importClause?.name)
+        reactNamespaces.add(statement.importClause.name.text);
+      const bindings = statement.importClause?.namedBindings;
+      if (bindings && ts.isNamespaceImport(bindings))
+        reactNamespaces.add(bindings.name.text);
+      if (bindings && ts.isNamedImports(bindings))
+        for (const entry of bindings.elements) {
+          if ((entry.propertyName?.text ?? entry.name.text) === "default")
+            reactNamespaces.add(entry.name.text);
+          if (
+            ["createElement", "cloneElement", "jsx", "jsxs"].includes(
+              entry.propertyName?.text ?? entry.name.text,
+            )
+          )
+            factories.add(entry.name.text);
+        }
+    }
+  }
+  const factoryMembers = new Set([
+    "createElement",
+    "cloneElement",
+    "jsx",
+    "jsxs",
+  ]);
+  function elementFactory(expression) {
+    return (
+      (ts.isIdentifier(expression) && factories.has(expression.text)) ||
+      (ts.isPropertyAccessExpression(expression) &&
+        factoryMembers.has(expression.name.text)) ||
+      (ts.isElementAccessExpression(expression) &&
+        ts.isStringLiteralLike(expression.argumentExpression) &&
+        factoryMembers.has(expression.argumentExpression.text))
+    );
+  }
+  function isBoundaryThis(node) {
+    if (
+      file !== "apps/desktop/src/assistant/operation-ui/nodes.tsx" ||
+      node.kind !== ts.SyntaxKind.ThisKeyword
+    )
+      return false;
+    let owner = node.parent;
+    while (owner && !ts.isClassDeclaration(owner)) owner = owner.parent;
+    return (
+      owner?.name?.text === "CardBoundary" &&
+      owner.heritageClauses?.some(
+        (clause) =>
+          clause.token === ts.SyntaxKind.ExtendsKeyword &&
+          clause.types.some(
+            (type) => type.expression.getText(ast) === "Component",
+          ),
+      ) &&
+      ast.statements.some(
+        (statement) =>
+          ts.isImportDeclaration(statement) &&
+          statement.moduleSpecifier.text === "react" &&
+          statement.importClause?.namedBindings &&
+          ts.isNamedImports(statement.importClause.namedBindings) &&
+          statement.importClause.namedBindings.elements.some(
+            (binding) =>
+              binding.name.text === "Component" && !binding.propertyName,
+          ),
+      )
+    );
+  }
+  function visit(node) {
+    if (ts.isTypeNode(node)) return;
+    if (
+      ts.isImportEqualsDeclaration(node) ||
+      (node.kind === ts.SyntaxKind.ThisKeyword && !isBoundaryThis(node))
+    )
+      errors.push(`${file}: ambient module/this capability`);
+    if (
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+      node.moduleSpecifier &&
+      ts.isStringLiteralLike(node.moduleSpecifier)
+    )
+      checkImport(node.moduleSpecifier.text);
+    if (ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
+      if (forbiddenTags.has(node.tagName.getText(ast)))
+        errors.push(`${file}: non-presentation element`);
+      if (node.tagName.getText(ast) === "form")
+        errors.push(
+          `${file}: use controlled Ant Design Form without native submission`,
+        );
+    }
+    if (
+      ts.isJsxAttribute(node) &&
+      forbiddenAttributes.has(node.name.getText(ast))
+    )
+      errors.push(`${file}: outbound or executable JSX attribute`);
+    if (
+      elementFactory(node) &&
+      !ts.isImportSpecifier(node.parent) &&
+      !(ts.isCallExpression(node.parent) && node.parent.expression === node)
+    )
+      errors.push(`${file}: element factory cannot escape inspection`);
+    if (ts.isJsxSpreadAttribute(node))
+      errors.push(`${file}: unchecked JSX attributes`);
+    if (ts.isBindingElement(node)) {
+      const name = node.propertyName ?? node.name;
+      if (
+        (ts.isIdentifier(name) || ts.isStringLiteralLike(name)) &&
+        factoryMembers.has(name.text)
+      )
+        errors.push(`${file}: destructured element factory escapes inspection`);
+    }
+    if (
+      ts.isExportDeclaration(node) &&
+      node.moduleSpecifier &&
+      ["react", "react/jsx-runtime"].includes(node.moduleSpecifier.text) &&
+      !node.isTypeOnly &&
+      !(
+        node.exportClause &&
+        ts.isNamedExports(node.exportClause) &&
+        node.exportClause.elements.every((entry) => entry.isTypeOnly)
+      )
+    )
+      errors.push(`${file}: React value exports escape capability inspection`);
+    if (ts.isIdentifier(node)) {
+      const parent = node.parent;
+      if (
+        reactNamespaces.has(node.text) &&
+        !ts.isImportClause(parent) &&
+        !ts.isImportSpecifier(parent) &&
+        !ts.isNamespaceImport(parent) &&
+        !(
+          ts.isPropertyAccessExpression(parent) && parent.expression === node
+        ) &&
+        !(ts.isElementAccessExpression(parent) && parent.expression === node)
+      )
+        errors.push(`${file}: React namespace cannot escape member inspection`);
+      const jsxName =
+        (ts.isJsxAttribute(parent) && parent.name === node) ||
+        ((ts.isJsxOpeningElement(parent) ||
+          ts.isJsxClosingElement(parent) ||
+          ts.isJsxSelfClosingElement(parent)) &&
+          parent.tagName === node &&
+          /^[a-z]/.test(node.text));
+      const member =
+        (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+        ((ts.isPropertyAssignment(parent) || ts.isMethodDeclaration(parent)) &&
+          parent.name === node) ||
+        (ts.isBindingElement(parent) && parent.propertyName === node) ||
+        ts.isImportSpecifier(parent) ||
+        ts.isExportSpecifier(parent) ||
+        ts.isMetaProperty(parent);
+      const symbol = ts.isShorthandPropertyAssignment(parent)
+        ? checker.getShorthandAssignmentValueSymbol(parent)
+        : checker.getSymbolAtLocation(node);
+      const local = symbol?.declarations?.some(
+        (decl) =>
+          decl.getSourceFile() === ast &&
+          !(ts.getCombinedModifierFlags(decl) & ts.ModifierFlags.Ambient),
+      );
+      if (!jsxName && !member && !local && !pureGlobals.has(node.text))
+        errors.push(`${file}: ambient capability ${node.text}`);
+      if (
+        node.text === "window" &&
+        file === "packages/ui/src/UiProvider.tsx" &&
+        !(
+          ts.isPropertyAccessExpression(parent) &&
+          parent.name.text === "matchMedia" &&
+          ts.isCallExpression(parent.parent) &&
+          parent.parent.expression === parent
+        )
+      )
+        errors.push(`${file}: only system appearance reads allowed`);
+      if (
+        node.text === "navigator" &&
+        file === "apps/desktop/src/assistant/clipboard.ts"
+      ) {
+        const property = parent,
+          call = parent.parent;
+        if (
+          !(
+            ts.isPropertyAccessExpression(property) &&
+            property.name.text === "clipboard" &&
+            ts.isPropertyAccessExpression(call) &&
+            call.name.text === "writeText" &&
+            ts.isCallExpression(call.parent)
+          )
+        )
+          errors.push(`${file}: only direct clipboard write allowed`);
+      }
+      if (
+        node.text === "invoke" &&
+        nativeAdapters.has(file) &&
+        !ts.isImportSpecifier(parent) &&
+        !(ts.isCallExpression(parent) && parent.expression === node)
+      )
+        errors.push(`${file}: invoke cannot escape adapter`);
+    }
+    if (
+      ts.isImportDeclaration(node) &&
+      node.moduleSpecifier.text === "@tauri-apps/api/core"
+    ) {
+      const bindings = node.importClause?.namedBindings;
+      if (
+        !nativeAdapters.has(file) ||
+        !bindings ||
+        !ts.isNamedImports(bindings) ||
+        bindings.elements.some(
+          (item) =>
+            item.propertyName ||
+            !["invoke", "isTauri"].includes(item.name.text),
+        )
+      )
+        errors.push(`${file}: native capability owner`);
+    }
+    if (ts.isCallExpression(node) && elementFactory(node.expression)) {
+      const tag = node.arguments[0],
+        props = node.arguments[1];
+      if (
+        !tag ||
+        !ts.isStringLiteralLike(tag) ||
+        (ts.isStringLiteralLike(tag) &&
+          (forbiddenTags.has(tag.text) || tag.text === "form"))
+      )
+        errors.push(`${file}: non-presentation factory element`);
+      if (props && props.kind !== ts.SyntaxKind.NullKeyword) {
+        if (!ts.isObjectLiteralExpression(props))
+          errors.push(`${file}: unchecked factory props`);
+        else
+          for (const property of props.properties) {
+            const name =
+              property.name &&
+              (ts.isIdentifier(property.name) ||
+                ts.isStringLiteralLike(property.name))
+                ? property.name.text
+                : null;
+            if (name === null || forbiddenAttributes.has(name))
+              errors.push(`${file}: outbound or executable factory property`);
+          }
+      }
+    }
+    if (ts.isCallExpression(node)) {
+      if (
+        nativeAdapters.has(file) &&
+        node.expression.getText(ast) === "invoke" &&
+        (!ts.isStringLiteral(node.arguments[0]) ||
+          !nativeAdapters.get(file).includes(node.arguments[0].text))
+      )
+        errors.push(
+          `${file}: only declared literal composition commands allowed`,
+        );
+      if (
+        node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+        node.expression.getText(ast) === "require"
+      ) {
+        let fixture = false;
+        if (
+          file === "apps/desktop/src/main.tsx" &&
+          node.arguments.length === 1 &&
+          ts.isStringLiteral(node.arguments[0]) &&
+          node.arguments[0].text === "../../../tests/assistant/main"
+        ) {
+          for (let parent = node.parent; parent; parent = parent.parent)
+            if (
+              ts.isIfStatement(parent) &&
+              parent.expression.getText(ast) ===
+                "import.meta.env.DEV && fixtureSelected"
+            )
+              fixture = true;
+        }
+        if (!fixture) errors.push(`${file}: dynamic module loading`);
+      }
+    }
+    if (
+      ts.isPropertyAccessExpression(node) ||
+      ts.isElementAccessExpression(node)
+    ) {
+      const literal = ts.isPropertyAccessExpression(node)
+        ? node.name.text
+        : ts.isStringLiteralLike(node.argumentExpression) ||
+            ts.isNumericLiteral(node.argumentExpression)
+          ? node.argumentExpression.text
+          : null;
+      if (
+        literal === null &&
+        !(dataIndex[file] ?? []).includes(node.expression.getText(ast))
+      )
+        errors.push(`${file}: dynamic member capability`);
+      // TaskNode.parent is an owner-issued string identity, not a DOM browsing context.
+      if (
+        bannedMembers.has(literal) &&
+        !(
+          file === "apps/desktop/src/task-center/TaskDetailDrawer.tsx" &&
+          node.getText(ast) === "node.parent"
+        )
+      )
+        errors.push(`${file}: non-presentation member ${literal}`);
+    }
+    ts.forEachChild(node, visit);
+  }
+  if (ast.parseDiagnostics.length)
+    errors.push(`${file}: invalid presentation source`);
+  if (
+    /\b(prNumber|pr_number|PullRequestView|usePrStore|useReviewStore)\b/.test(
       source,
     )
   )
     errors.push(`${file}: business coupling`);
-  if (/\bv-html\s*=|\binnerHTML\b|\bouterHTML\b/.test(source))
-    errors.push(`${file}: executable HTML sink`);
-  const desktop = file.startsWith("apps/desktop/src/");
-  const assistant = file.startsWith("apps/desktop/src/assistant/");
-  const feature = /^apps\/desktop\/src\/(assistant|self-service)\//.exec(
-    file,
-  )?.[1];
-  const sourceDir = feature
-    ? `apps/desktop/src/${feature}`
-    : desktop
-      ? "apps/desktop/src"
-      : "packages/ui/src";
-  const allowed = desktop
-    ? [
-        "vue",
-        "@rss-mdm-agent/ui",
-        "@rss-mdm-agent/ui/style.css",
-        "@rss-mdm-agent/ai-contract",
-        "@rss-mdm-agent/ai-contract/wire",
-        "@rss-mdm-agent/ai-contract/ports",
-      ]
-    : ["vue"];
-  allowed.push(...(uiImports[file] ?? []));
-  if (
-    uiFoundations.has(file) ||
-    file === "packages/ui/src/components/feedback.ts"
-  )
-    allowed.push("reka-ui");
-  if (
-    [
-      "packages/ui/src/components/UiDateInput.vue",
-      "packages/ui/src/components/UiTimeInput.vue",
-      "packages/ui/src/components/UiDateTimeInput.vue",
-    ].includes(file)
-  )
-    allowed.push("@internationalized/date");
-  if (file === "apps/desktop/src/self-service/PolicySelfService.vue")
-    allowed.push("ajv");
-  if (nativeAdapters.has(file)) allowed.push("@tauri-apps/api/core");
-  if (file === "apps/desktop/src/workspace/entry.ts")
-    allowed.push("@tauri-apps/api/event");
-  if (file === "apps/desktop/src/workspace/window.ts")
-    allowed.push("@tauri-apps/api/window");
-  if (assistant)
-    allowed.push(
-      "@rss-mdm-agent/ai-client",
-      "@rss-mdm-agent/ai-ui-bridge",
-      "@rss-mdm-agent/execution-bindings",
-      "@rss-mdm-agent/execution-bindings/tasks",
-    );
-  const descriptor = extname(file) === ".vue" ? parse(source).descriptor : null;
-  if (descriptor) {
-    const template = descriptor.template?.content ?? "";
-    // No resource/navigation attributes or dynamic tag/attribute injection in this sample.
-    const templateAst = compileTemplate({
-      source: template,
-      filename: file,
-      id: "boundary",
-    });
-    if (templateAst.errors.length) errors.push(`${file}: invalid template`);
-    function visitTemplate(node) {
-      if (node.type === 1) {
-        const operationRenderer =
-          file ===
-            "apps/desktop/src/assistant/operation-ui/OperationActivity.vue" &&
-          node.tag === "component" &&
-          node.props.some(
-            (p) =>
-              p.type === 7 &&
-              p.name === "bind" &&
-              p.arg?.content === "is" &&
-              p.exp?.content === "renderer",
-          );
-        if (
-          [
-            "a",
-            "area",
-            "iframe",
-            "object",
-            "embed",
-            "script",
-            "link",
-            "base",
-            "meta",
-            "img",
-            "video",
-            "audio",
-            "source",
-            "component",
-          ].includes(node.tag.toLowerCase()) &&
-          !operationRenderer
-        )
-          errors.push(`${file}: non-presentation element ${node.tag}`);
-        for (const prop of node.props) {
-          const name =
-            prop.type === 6
-              ? prop.name
-              : prop.arg?.isStatic
-                ? prop.arg.content
-                : null;
-          if (
-            ([
-              "href",
-              "src",
-              "srcset",
-              "action",
-              "formaction",
-              "srcdoc",
-              "ping",
-              "is",
-            ].includes(name?.toLowerCase()) &&
-              !(name === "is" && operationRenderer)) ||
-            (prop.type === 7 &&
-              ["bind", "on"].includes(prop.name) &&
-              !name &&
-              !(prop.name === "bind" && uiFoundations.has(file)))
-          )
-            errors.push(`${file}: outbound or dynamic template attribute`);
-        }
-        if (
-          node.tag === "form" &&
-          !node.props.some(
-            (p) =>
-              p.type === 7 &&
-              p.name === "on" &&
-              p.arg?.content === "submit" &&
-              p.modifiers.some((m) => (m.content ?? m) === "prevent"),
-          )
-        )
-          errors.push(`${file}: form must prevent native submission`);
-      }
-      for (const child of node.children ?? []) visitTemplate(child);
-    }
-    if (descriptor.template?.ast) visitTemplate(descriptor.template.ast);
-  }
-  const scripts = descriptor
-    ? [
-        descriptor.script?.content,
-        descriptor.scriptSetup?.content,
-        descriptor.template &&
-          compileTemplate({
-            source: descriptor.template.content,
-            filename: file,
-            id: "boundary",
-          }).code,
-      ].filter(Boolean)
-    : [source];
-  for (const script of [scripts.join("\n")]) {
-    const ast = ts.createSourceFile(
-      file + ".ts",
-      script,
-      ts.ScriptTarget.Latest,
-      true,
-    );
-    // Resolve lexical symbols instead of enumerating every browser global. Local aliases
-    // remain checked at their source; ambient value access is a closed allowlist.
-    const program = ts.createProgram(
-      [ast.fileName],
-      { noLib: true, noResolve: true },
-      {
-        ...ts.createCompilerHost({}),
-        getSourceFile: (name) => (name === ast.fileName ? ast : undefined),
-        writeFile() {},
-      },
-    );
-    const checker = program.getTypeChecker();
-    const globals = new Set([
-      "Math",
-      "Number",
-      "undefined",
-      "NaN",
-      "Infinity",
-      "defineProps",
-      "defineEmits",
-      "withDefaults",
-    ]);
-    if (file === "packages/ui/src/components/MarkdownContent.ts") {
-      globals.add("String");
-      globals.add("Boolean");
-    }
-    if (uiFoundations.has(file) || uiLogic.has(file))
-      for (const name of [
-        "defineOptions",
-        "defineExpose",
-        "Object",
-        "Array",
-        "String",
-        "Boolean",
-        "Symbol",
-        "Error",
-      ])
-        globals.add(name);
-    if (file === "packages/ui/src/components/UiDialog.vue")
-      for (const name of ["document", "HTMLElement"]) globals.add(name);
-    if (file === "packages/ui/src/components/UiSearchInput.vue")
-      for (const name of ["setTimeout", "clearTimeout"]) globals.add(name);
-    if (
-      [
-        "packages/ui/src/components/AppShell.vue",
-        "packages/ui/src/components/MessageComposer.vue",
-      ].includes(file)
-    )
-      globals.add("ResizeObserver");
-    if (file === "apps/desktop/src/assistant/clipboard.ts")
-      globals.add("navigator");
-    if (desktop)
-      for (const value of ["Object", "Array", "String", "Map", "Date", "Error"])
-        globals.add(value);
-    if (
-      [
-        "apps/desktop/src/Workspace.vue",
-        "apps/desktop/src/settings/ConnectionSettings.vue",
-      ].includes(file)
-    )
-      globals.add("crypto");
-    if (
-      [
-        "apps/desktop/src/test-users.ts",
-        "apps/desktop/src/settings/native.ts",
-        "apps/desktop/src/settings/ConnectionSettings.vue",
-      ].includes(file)
-    )
-      globals.add("Error");
-    const assistantGlobals = {
-      "packages/ui/src/components/AppShell.vue": ["document", "HTMLElement"],
-      "apps/desktop/src/workspace/CopyEntry.vue": ["Error"],
-      "apps/desktop/src/workspace/EntryPanel.vue": [
-        "document",
-        "Error",
-        "crypto",
-      ],
-      "apps/desktop/src/workspace/BatchDetails.vue": ["Error", "Date"],
-      "apps/desktop/src/workspace/RelatedActivities.vue": ["Error"],
-      "apps/desktop/src/workspace/page-context.ts": ["JSON"],
-      "apps/desktop/src/workspace/identity.ts": ["JSON"],
-      "apps/desktop/src/home/Home.vue": ["JSON"],
-      "apps/desktop/src/self-service/directory.ts": ["Set", "Symbol", "JSON"],
-      "apps/desktop/src/task-center/controller.ts": [
-        "Set",
-        "Symbol",
-        "JSON",
-        "Promise",
-        "crypto",
-        "document",
-        "setTimeout",
-        "clearTimeout",
-      ],
-      "apps/desktop/src/task-center/TaskCenter.vue": ["JSON", "document"],
-      "apps/desktop/src/software/SoftwareManagement.vue": [
-        "JSON",
-        "document",
-        "HTMLElement",
-      ],
-      "apps/desktop/src/device-tools/ToolsPage.vue": ["JSON"],
-      "apps/desktop/src/assistant/operation-ui/NodeView.ts": [
-        "Symbol",
-        "document",
-        "Set",
-      ],
-      "apps/desktop/src/App.vue": ["document", "setInterval", "clearInterval"],
-      "apps/desktop/src/settings/PersonalVault.vue": [
-        "setInterval",
-        "clearInterval",
-        "String",
-      ],
-      "apps/desktop/src/settings/DeviceAccess.vue": ["Promise", "crypto"],
-      "apps/desktop/src/settings/MdmRegistration.vue": [
-        "Promise",
-        "setInterval",
-        "clearInterval",
-      ],
-      "apps/desktop/src/settings/LocalService.vue": [
-        "setInterval",
-        "clearInterval",
-      ],
-      "apps/desktop/src/Workspace.vue": [
-        "JSON",
-        "document",
-        "HTMLElement",
-        "ResizeObserver",
-        "setInterval",
-        "clearInterval",
-      ],
-      "apps/desktop/src/assistant/resource-context.ts": ["JSON"],
-      "apps/desktop/src/self-service/PolicyPreparation.vue": ["JSON"],
-      "apps/desktop/src/self-service/PolicySelfService.vue": [
-        "defineExpose",
-        "JSON",
-        "crypto",
-        "Set",
-      ],
-      "apps/desktop/src/system-settings/controller.ts": [
-        "JSON",
-        "Set",
-        "Promise",
-        "crypto",
-        "Symbol",
-        "setInterval",
-        "clearInterval",
-        "setTimeout",
-      ],
-      "apps/desktop/src/system-settings/SettingDetail.vue": [
-        "JSON",
-        "Boolean",
-        "defineExpose",
-      ],
-      "apps/desktop/src/system-settings/SystemSettings.vue": ["JSON"],
-      "apps/desktop/src/system-settings/presentation.ts": ["JSON"],
-      "apps/desktop/src/device-tools/ConnectionCheck.vue": [
-        "defineExpose",
-        "document",
-        "crypto",
-        "setInterval",
-        "clearInterval",
-      ],
-      "apps/desktop/src/settings/DiagnosticsPanel.vue": ["JSON", "Boolean"],
-      "apps/desktop/src/software/controller.ts": [
-        "document",
-        "setInterval",
-        "clearInterval",
-        "JSON",
-        "Set",
-        "Promise",
-        "crypto",
-        "Symbol",
-      ],
-      "apps/desktop/src/software/LocalSoftwareAction.vue": [
-        "document",
-        "setInterval",
-        "clearInterval",
-      ],
-      "apps/desktop/src/appearance.ts": [
-        "navigator",
-        "Promise",
-        "Error",
-        "setTimeout",
-        "clearTimeout",
-      ],
-      "apps/desktop/src/assistant/controller.ts": [
-        "Set",
-        "Promise",
-        "AbortController",
-        "setTimeout",
-        "clearTimeout",
-        "setInterval",
-        "clearInterval",
-      ],
-      "apps/desktop/src/assistant/Assistant.vue": ["JSON", "ResizeObserver"],
-      "apps/desktop/src/assistant/ExecutionDetails.vue": ["JSON"],
-      "apps/desktop/src/assistant/operation-ui/OperationActivity.vue": [
-        "AbortController",
-        "JSON",
-      ],
-      "apps/desktop/src/assistant/operation-ui/host.ts": ["Set", "JSON"],
-      "apps/desktop/src/assistant/operation-ui/projection.ts": ["JSON"],
-      "apps/desktop/src/assistant/QuestionCard.vue": ["JSON"],
-    };
-    for (const value of assistantGlobals[file] ?? []) globals.add(value);
-    function staticText(node, seen = new Set()) {
-      if (!node || seen.has(node)) return null;
-      seen.add(node);
-      if (ts.isStringLiteralLike(node) || ts.isNumericLiteral(node))
-        return node.text;
-      if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node))
-        return staticText(node.expression, seen);
-      if (
-        ts.isBinaryExpression(node) &&
-        node.operatorToken.kind === ts.SyntaxKind.PlusToken
-      ) {
-        const left = staticText(node.left, new Set(seen)),
-          right = staticText(node.right, new Set(seen));
-        return left !== null && right !== null ? left + right : null;
-      }
-      if (ts.isIdentifier(node)) {
-        const decl = checker.getSymbolAtLocation(node)?.valueDeclaration;
-        if (
-          decl &&
-          ts.isVariableDeclaration(decl) &&
-          decl.parent.flags & ts.NodeFlags.Const
-        )
-          return staticText(decl.initializer, seen);
-      }
-      return null;
-    }
-    const checkImport = (name) => {
-      if (!allowed.includes(name) && !name.startsWith("."))
-        errors.push(`${file}: unexpected dependency ${name}`);
-      if (
-        /(?:^|\/)(api|transport|stores?)(?:[./]|$)/.test(name) &&
-        !(nativeAdapters.has(file) && name === "@tauri-apps/api/core") &&
-        !(
-          file === "apps/desktop/src/workspace/window.ts" &&
-          name === "@tauri-apps/api/window"
-        ) &&
-        !(
-          file === "apps/desktop/src/workspace/entry.ts" &&
-          name === "@tauri-apps/api/event"
-        )
-      )
-        errors.push(`${file}: host dependency ${name}`);
-      if (
-        name.startsWith(".") &&
-        // The assistant shares only this data-only frozen-origin projection.
-        !(
-          [
-            "apps/desktop/src/settings/ConnectionSettings.vue",
-            "apps/desktop/src/assistant/native.ts",
-            "apps/desktop/src/self-service/native.ts",
-            "apps/desktop/src/self-service/PolicySelfService.vue",
-          ].includes(file) && name === "../test-users"
-        ) &&
-        !(
-          [
-            "apps/desktop/src/assistant/controller.ts",
-            "apps/desktop/src/assistant/resource-context.ts",
-          ].includes(file) && name === "../self-service/types"
-        ) &&
-        !(
-          (file === "apps/desktop/src/assistant/Assistant.vue" &&
-            name === "../software/LocalSoftwareAction.vue") ||
-          (file === "apps/desktop/src/assistant/ExecutionDetails.vue" &&
-            name === "../self-service/RequestOrigin.vue") ||
-          (file === "apps/desktop/src/self-service/PolicySelfService.vue" &&
-            [
-              "../task-center/controller",
-              "../workspace/CopyEntry.vue",
-            ].includes(name)) ||
-          (file === "apps/desktop/src/assistant/native.ts" &&
-            name === "../self-service/native")
-        ) &&
-        !resolve(dirname(resolve(root, file)), name)
-          .replaceAll("\\", "/")
-          .startsWith(resolve(root, sourceDir).replaceAll("\\", "/") + "/")
-      )
-        errors.push(`${file}: import escapes presentation source`);
-    };
-    function visit(node) {
-      if (ts.isTypeNode(node)) return;
-      if (ts.isImportEqualsDeclaration(node))
-        errors.push(
-          `${file}: dynamic module loading is not a presentation dependency`,
-        );
-      if (node.kind === ts.SyntaxKind.ThisKeyword)
-        errors.push(`${file}: ambient this is not a presentation value`);
-      if (ts.isIdentifier(node)) {
-        if (
-          file === "apps/desktop/src/assistant/clipboard.ts" &&
-          node.text === "navigator"
-        ) {
-          const clipboard = node.parent,
-            write = clipboard.parent,
-            call = write.parent;
-          if (
-            !(
-              ts.isPropertyAccessExpression(clipboard) &&
-              clipboard.expression === node &&
-              clipboard.name.text === "clipboard" &&
-              ts.isPropertyAccessExpression(write) &&
-              write.expression === clipboard &&
-              write.name.text === "writeText" &&
-              ts.isCallExpression(call) &&
-              call.expression === write
-            )
-          )
-            errors.push(
-              `${file}: only direct user-initiated clipboard write allowed`,
-            );
-        }
-        const parent = node.parent;
-        const memberName =
-          (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
-          ((ts.isPropertyAssignment(parent) ||
-            ts.isMethodDeclaration(parent)) &&
-            parent.name === node) ||
-          (ts.isBindingElement(parent) && parent.propertyName === node) ||
-          ts.isImportSpecifier(parent) ||
-          ts.isExportSpecifier(parent) ||
-          ts.isMetaProperty(parent);
-        const symbol = ts.isShorthandPropertyAssignment(parent)
-          ? checker.getShorthandAssignmentValueSymbol(parent)
-          : checker.getSymbolAtLocation(node);
-        const local = symbol?.declarations?.some(
-          (decl) =>
-            decl.getSourceFile() === ast &&
-            !(ts.getCombinedModifierFlags(decl) & ts.ModifierFlags.Ambient),
-        );
-        if (!memberName && !local && !globals.has(node.text))
-          errors.push(`${file}: ambient capability ${node.text}`);
-      }
-      if (
-        (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
-        node.moduleSpecifier &&
-        ts.isStringLiteral(node.moduleSpecifier)
-      )
-        checkImport(node.moduleSpecifier.text);
-      if (
-        nativeAdapters.has(file) &&
-        ts.isImportDeclaration(node) &&
-        node.moduleSpecifier.text === "@tauri-apps/api/core"
-      ) {
-        const imports = node.importClause?.namedBindings;
-        if (
-          !imports ||
-          !ts.isNamedImports(imports) ||
-          imports.elements.some(
-            (item) =>
-              item.propertyName ||
-              !["invoke", "isTauri"].includes(item.name.text),
-          )
-        )
-          errors.push(`${file}: only direct invoke/isTauri imports allowed`);
-      }
-      if (
-        nativeAdapters.has(file) &&
-        ts.isIdentifier(node) &&
-        node.text === "invoke" &&
-        !ts.isImportSpecifier(node.parent) &&
-        !(ts.isCallExpression(node.parent) && node.parent.expression === node)
-      )
-        errors.push(`${file}: invoke cannot escape the adapter`);
-      if (ts.isCallExpression(node)) {
-        if (
-          nativeAdapters.has(file) &&
-          node.expression.getText(ast) === "invoke" &&
-          (!ts.isStringLiteral(node.arguments[0]) ||
-            !nativeAdapters.get(file).includes(node.arguments[0].text))
-        )
-          errors.push(
-            `${file}: only declared literal composition commands allowed`,
-          );
-        if (
-          node.expression.kind === ts.SyntaxKind.ImportKeyword ||
-          node.expression.getText(ast) === "require"
-        ) {
-          let guardedFixture = false;
-          if (
-            file === "apps/desktop/src/main.ts" &&
-            node.expression.kind === ts.SyntaxKind.ImportKeyword &&
-            node.arguments.length === 1 &&
-            ts.isStringLiteral(node.arguments[0]) &&
-            node.arguments[0].text === "../../../tests/assistant/main"
-          ) {
-            for (let parent = node.parent; parent; parent = parent.parent) {
-              if (
-                ts.isIfStatement(parent) &&
-                parent.expression.getText(ast) ===
-                  "import.meta.env.DEV && fixtureSelected"
-              )
-                guardedFixture = true;
-            }
-          }
-          const lazyPresentation = {
-            "apps/desktop/src/assistant/Assistant.vue":
-              "./operation-ui/QuestionSurface.vue",
-            "apps/desktop/src/assistant/operation-ui/OperationActivity.vue":
-              "./OperationCard.vue",
-          };
-          const fixedPresentation =
-            node.expression.kind === ts.SyntaxKind.ImportKeyword &&
-            node.arguments.length === 1 &&
-            ts.isStringLiteral(node.arguments[0]) &&
-            node.arguments[0].text === lazyPresentation[file];
-          if (!guardedFixture && !fixedPresentation)
-            errors.push(
-              `${file}: dynamic module loading is not a presentation dependency`,
-            );
-        }
-      }
-      const member = ts.isPropertyAccessExpression(node)
-        ? node.name.text
-        : ts.isElementAccessExpression(node)
-          ? staticText(node.argumentExpression)
-          : null;
-      const dataRoots = {
-        "apps/desktop/src/settings/PersonalVault.vue": ["messages"],
-        "packages/ui/src/components/UiList.vue": ["_ctx.modelValue"],
-        "packages/ui/src/components/UiMenu.vue": ["_ctx.items"],
-        "packages/ui/src/components/UiSlider.vue": ["$event!"],
-        "packages/ui/src/components/UiTree.vue": [
-          "_ctx.selected",
-          "selected.value",
-        ],
-        "packages/ui/src/components/UiTable.vue": ["row"],
-        "packages/ui/src/components/UiChart.vue": [
-          "series.values",
-          "props.categories",
-          "colors",
-        ],
-        "packages/ui/src/components/feedback.ts": ["marks"],
-        "apps/desktop/src/assistant/operation-ui/host.ts": [
-          "event.values",
-          "parameters",
-          "reasons",
-        ],
-        "apps/desktop/src/assistant/operation-ui/projection.ts": [
-          "properties",
-          "action.choice.parameters",
-          "snapshot.proposal",
-        ],
-        "apps/desktop/src/assistant/operation-ui/NodeView.ts": [
-          "c.presentation.steps",
-          "nodes",
-          "ids",
-          "s!.draft.values",
-          "s?.errors",
-          "s?.secrets",
-          "snapshot.current",
-          "phaseLabels",
-        ],
-        "apps/desktop/src/self-service/PolicyPreparation.vue": [
-          "action.choice.parameters",
-        ],
-        "apps/desktop/src/software/LocalSoftwareAction.vue": [
-          "actionLabels",
-          "phaseLabels",
-          "_ctx.actionLabels",
-          "_ctx.phaseLabels",
-        ],
-        "apps/desktop/src/software/SoftwareManagement.vue": [
-          "kinds",
-          "actionLabels",
-          "blocks",
-          "_ctx.kinds",
-          "_ctx.actionLabels",
-          "_ctx.blocks",
-        ],
-        "apps/desktop/src/self-service/PolicySelfService.vue": [
-          "inputs.value",
-          "_ctx.inputs",
-          "choice.value?.parameters",
-          "(parameterSchema.value as any)?.properties",
-        ],
-      };
-      dataRoots["apps/desktop/src/device-tools/ToolsPage.vue"] = [
-        "labels",
-        "_ctx.labels",
-      ];
-      dataRoots["apps/desktop/src/device-tools/ConnectionCheck.vue"] = [
-        "labels",
-        "phases",
-        "_ctx.labels",
-        "_ctx.phases",
-      ];
-      dataRoots["apps/desktop/src/settings/DiagnosticsPanel.vue"] = [
-        "s.scopes",
-        "_ctx.s.scopes",
-      ];
-      dataRoots["apps/desktop/src/home/Home.vue"] = [
-        "taskPhase",
-        "_ctx.taskPhase",
-      ];
-      dataRoots["apps/desktop/src/system-settings/facts.ts"] = [
-        "qualityLabels",
-      ];
-      dataRoots["apps/desktop/src/system-settings/controller.ts"] = [
-        "families",
-      ];
-      dataRoots["apps/desktop/src/system-settings/SettingDetail.vue"] = [
-        "proxies",
-        "ports",
-        "factLabels",
-        "names",
-        "effectLabels",
-        "labels",
-        "_ctx.proxies",
-        "_ctx.ports",
-        "_ctx.labels",
-        "_ctx.effectLabels",
-      ];
-      dataRoots["apps/desktop/src/task-center/TaskCenter.vue"] = [
-        "taskPhase",
-        "labels",
-        "reasons",
-        "_ctx.taskPhase",
-        "_ctx.labels",
-        "_ctx.reasons",
-      ];
-      dataRoots["apps/desktop/src/task-center/controller.ts"] = ["state.items"];
-      const dataIndex =
-        ts.isElementAccessExpression(node) &&
-        (dataRoots[file] ?? []).includes(node.expression.getText(ast)) &&
-        !(ts.isCallExpression(node.parent) && node.parent.expression === node);
-      if (ts.isElementAccessExpression(node) && member === null && !dataIndex)
-        errors.push(
-          `${file}: dynamic member access is not a presentation capability`,
-        );
-      if (
-        [
-          "window",
-          "globalThis",
-          "self",
-          "document",
-          "navigator",
-          "location",
-          "parent",
-          "frames",
-          "__TAURI_INTERNALS__",
-          "__TAURI__",
-          "fetch",
-          "sendBeacon",
-          "open",
-          "Image",
-          "WebSocket",
-          "XMLHttpRequest",
-          "EventSource",
-          "DOMParser",
-          "eval",
-          "Function",
-          "localStorage",
-          "sessionStorage",
-          "constructor",
-          "__proto__",
-          "ownerDocument",
-          "defaultView",
-          "contentWindow",
-          "contentDocument",
-          "innerHTML",
-          "outerHTML",
-          "insertAdjacentHTML",
-          "parseFromString",
-          "createContextualFragment",
-          "setHTMLUnsafe",
-          "write",
-          "writeln",
-        ].includes(member) &&
-        !(
-          member === "parent" &&
-          file === "apps/desktop/src/task-center/TaskCenter.vue" &&
-          ts.isPropertyAccessExpression(node) &&
-          ["node", "_ctx.node"].includes(node.expression.getText(ast)) &&
-          !(ts.isCallExpression(node.parent) && node.parent.expression === node)
-        ) &&
-        !(
-          member === "open" &&
-          uiFoundations.has(file) &&
-          ts.isPropertyAccessExpression(node) &&
-          ["props", "_ctx"].includes(node.expression.getText(ast)) &&
-          !(ts.isCallExpression(node.parent) && node.parent.expression === node)
-        )
-      )
-        errors.push(`${file}: non-presentation member ${member}`);
-      ts.forEachChild(node, visit);
-    }
-    if (ast.parseDiagnostics.length)
-      errors.push(`${file}: invalid presentation source`);
-    visit(ast);
-  }
+  visit(ast);
   return errors;
 }
 export function checkTree(treeRoot = root, executable) {
@@ -939,24 +838,27 @@ export function checkTree(treeRoot = root, executable) {
     JSON.stringify(Object.entries(pkg.dependencies ?? {}).sort()) !==
       JSON.stringify(Object.entries(uiDependencies).sort()) ||
     Object.keys(pkg.optionalDependencies ?? {}).length ||
-    Object.keys(pkg.peerDependencies ?? {}).join() !== "vue"
+    Object.keys(pkg.peerDependencies ?? {})
+      .sort()
+      .join() !== "react,react-dom"
   )
     errors.push(
-      "UI production dependencies must be pinned presentation primitives and Markdown parser with Vue peer only",
+      "UI production dependencies must be pinned presentation primitives and Markdown parser with React peers only",
     );
   const desktop = JSON.parse(read("apps/desktop/package.json"));
   if (
     Object.keys(desktop.dependencies ?? {})
       .sort()
       .join() !==
-      "@a2ui/web_core,@rss-mdm-agent/ai-client,@rss-mdm-agent/ai-contract,@rss-mdm-agent/ai-ui-bridge,@rss-mdm-agent/execution-bindings,@rss-mdm-agent/ui,@tauri-apps/api,vue" ||
+      "@a2ui/web_core,@ant-design/icons,@rss-mdm-agent/ai-client,@rss-mdm-agent/ai-contract,@rss-mdm-agent/ai-ui-bridge,@rss-mdm-agent/execution-bindings,@rss-mdm-agent/ui,@tauri-apps/api,antd,react,react-dom,valtio" ||
+    desktop.dependencies?.valtio !== "2.3.2" ||
     desktop.dependencies?.["@a2ui/web_core"] !== "0.11.0" ||
     desktop.dependencies?.["@tauri-apps/api"] !== "2.11.1" ||
     Object.keys(desktop.optionalDependencies ?? {}).length ||
     Object.keys(desktop.peerDependencies ?? {}).length
   )
     errors.push(
-      "desktop production dependencies must be UI, public AI contract/client/bridge, generated execution bindings, pinned A2UI core, Vue and pinned Tauri core only",
+      "desktop production dependencies must be UI, public AI contract/client/bridge, generated execution bindings, pinned A2UI core, React, Ant Design and pinned Tauri core only",
     );
   const config = JSON.parse(read("apps/desktop/src-tauri/tauri.conf.json"));
   const capabilityFiles = files(

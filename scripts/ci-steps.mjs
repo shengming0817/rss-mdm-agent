@@ -32,6 +32,7 @@ export const steps = [
     [
       "--test",
       "scripts/ci-workspace.test.mjs",
+      "scripts/frontend-closure.test.mjs",
       "scripts/native-candidate.test.mjs",
       "scripts/passkey-package.test.mjs",
       "scripts/macos-passkey-package.test.mjs",

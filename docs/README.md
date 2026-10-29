@@ -5,11 +5,12 @@
 - [客户端 PRD](product/rss-mdm-agent-prd.md)：客户端需求唯一入口，包含执行等级、传统自助与 AI 交互、责任边界和阶段验收。
 - [稳定规则](rules/README.md)：范围、依赖、验证与文档维护。
 - [Codex工作方式](guides/codex-workflow.md)：项目指令与本地共享技能入口。
+- [已批准桌面 UI/UX 原型](product/ui-ux/react-antd-desktop.html)：React + Ant Design 重做的布局与交互基准；浏览器离线打开，需求约束见[PRD](product/rss-mdm-agent-prd.md#桌面-uiux-基准)。
 - [桌面开发](guides/desktop-development.md)：启动、构建、组件消费、持久化 S1 装配与本地验收。
 - [UI与桌面壳提取记录](reference/ui-extraction.md)：固定来源、MIT授权和逐文件映射。
 - [契约开发](guides/contracts-development.md)：执行/AI 契约、schema 与生成与验证。
 - [AI Runtime](../packages/ai-contract/README.md)：唯一 schema、三个 ports、可靠性和 ACP–A2UI 约定。
-- [ACP–A2UI 开发](guides/ai-access-development.md)：标准协议、公共客户端、Vue/Lit 接缝与浏览器接入。
+- [ACP–A2UI 开发](guides/ai-access-development.md)：标准协议、公共客户端、React 与官方 A2UI core 接缝与浏览器接入。
 
 - [AI SQLite](../packages/ai-store-sqlite/README.md)与[来源记录](reference/ai-store-sqlite.md)：原子持久化、单 Host 所有权、恢复。
 - [DeepSeek Harness adapter](../packages/ai-adapters/deepseek/README.md)与[来源记录](reference/deepseek-harness.md)：静态原生进程、A01 恢复凭证、受控桥。
@@ -28,7 +29,7 @@
 - [执行核心来源](reference/execution-cores.md)：固定Rust对标及重写边界。
 - [来源与对标](reference/sources.md)：prmonitor 固定源码证据、服务端产品基线及上游参考。
 
-本地文档描述稳定需求与追踪映射。进度、父子关系和滚动波次只在 Azure Boards 的 [EPIC #2392](https://dev.azure.com/shengming0923/rss/_workitems/edit/2392) 维护，不在仓内复制 backlog 状态。
+本地文档描述稳定需求与追踪映射。进度、父子关系和滚动波次在对应 Azure Boards EPIC 维护：[产品能力 #2392](https://dev.azure.com/shengming0923/rss/_workitems/edit/2392)、[React 桌面重做 #3054](https://dev.azure.com/shengming0923/rss/_workitems/edit/3054)，不在仓内复制 backlog 状态。
 
 - [本机安全服务架构](architecture/local-service.md)与[实验室指南](guides/local-service-lab.md)：唯一系统服务、开发 fixture、显式候选刷新与平台验收边界。
 - [本机安全服务来源](reference/local-service.md)：固定上游 revision、公开平台接口和运行包校验来源。

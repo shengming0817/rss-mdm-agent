@@ -1,3 +1,4 @@
+import type { Snapshot } from "valtio/vanilla";
 import type {
   ExecutionTaskDetails,
   SoftwareDiagnostic,
@@ -11,7 +12,6 @@ export function executionPhase(value: TaskPhase): string {
       return "执行准入被拒绝";
     case "confirmationRequired":
       return "等待用户确认本次动作";
-      return "执行服务记录：需要管理员批准";
     case "accepted":
       return "执行意图已记录，尚未确认派发";
     case "running":
@@ -53,7 +53,7 @@ export function softwareStatus(value: SoftwareDiagnostic): string {
   return exhaustive;
 }
 
-export function taskPresentation(details: ExecutionTaskDetails) {
+export function taskPresentation(details: Snapshot<ExecutionTaskDetails>) {
   const s = details.status;
   const label =
     s.phase === "verified"
