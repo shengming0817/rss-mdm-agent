@@ -114,12 +114,18 @@ export function SettingsEditor({
           }
         />
       )}
-      {expected !== revision && dirty && (
-        <Alert
-          type="warning"
-          title="观察版本已变化；保存仍核对开始编辑时的版本。请先重新核对草稿。"
-        />
-      )}
+      {expected !== revision &&
+        dirty &&
+        !(
+          edit?.request &&
+          result?.request === edit.request &&
+          result.effect === "preview"
+        ) && (
+          <Alert
+            type="warning"
+            title="观察版本已变化；保存仍核对开始编辑时的版本。请先重新核对草稿。"
+          />
+        )}
       {draft.kind === "proxy" ? (
         <>
           {(["http", "https", "socks"] as const)
@@ -262,7 +268,13 @@ export function SettingsEditor({
         </>
       )}
       <div className="rss-settings-actions">
-        <small>{dirty ? "有尚未保存的修改" : "修改仅在保存后提交"}</small>
+        <small>
+          {edit?.request && state.pending.has(section)
+            ? "原操作结果待核实"
+            : dirty
+              ? "有尚未保存的修改"
+              : "修改仅在保存后提交"}
+        </small>
         <Button disabled={disabled} onClick={reset}>
           还原草稿
         </Button>

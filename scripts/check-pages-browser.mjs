@@ -290,6 +290,15 @@ export async function checkPagesBrowser(page, fixture) {
   });
   await keepDisplay.waitFor();
   assert.equal(await keepDisplay.isEnabled(), true);
+  assert.equal(
+    await page
+      .getByText(
+        "观察版本已变化；保存仍核对开始编辑时的版本。请先重新核对草稿。",
+        { exact: true },
+      )
+      .count(),
+    0,
+  );
   await capture("display-preview");
   await keepDisplay.click();
   await page.waitForFunction(

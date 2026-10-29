@@ -16,7 +16,7 @@ it("preserves a dirty proxy draft and its original revision after background obs
   const save = vi.fn(async () => undefined),
     owner = {
       save,
-      state: proxy({ observations: proxyMap() }),
+      state: proxy({ observations: proxyMap(), pending: proxyMap() }),
     } as unknown as SystemSettingsController,
     target = {
       id: "wifi",
@@ -68,7 +68,10 @@ it("preserves a dirty proxy draft and its original revision after background obs
 
 it("starts each clean draft from the current observation and ends only its acknowledged applied request", async () => {
   const save = vi.fn(async () => "original-request"),
-    state = proxy({ observations: proxyMap<string, SettingsResponse>() }),
+    state = proxy({
+      observations: proxyMap<string, SettingsResponse>(),
+      pending: proxyMap(),
+    }),
     owner = { save, state } as unknown as SystemSettingsController,
     target = {
       id: "ac",
