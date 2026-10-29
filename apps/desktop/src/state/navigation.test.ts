@@ -43,3 +43,33 @@ it("keeps the history panel open through module and session selection", () => {
   nav.closeHistory();
   expect(nav.state.historyOpen).toBe(false);
 });
+
+it("restores the last visible direction after cycling to hidden, without resetting page or draft owners", () => {
+  const nav = createNavigation();
+  nav.select("software", "updates");
+  nav.cycle();
+  nav.cycle();
+  nav.cycle();
+  expect(nav.state.layoutStep).toBe(0);
+  expect(nav.state.restoreStep).toBe(3);
+  nav.hideOrRestore();
+  expect(nav.state.layoutStep).toBe(3);
+  nav.cycle();
+  expect(nav.state.layoutStep).toBe(0);
+  nav.hideOrRestore();
+  expect(nav.state.layoutStep).toBe(3);
+  nav.cycle();
+  nav.cycle();
+  nav.hideOrRestore();
+  nav.hideOrRestore();
+  expect(nav.state.layoutStep).toBe(1);
+  nav.cycle();
+  expect(nav.state.layoutStep).toBe(2);
+  nav.hideOrRestore();
+  nav.hideOrRestore();
+  expect(nav.state.layoutStep).toBe(2);
+  nav.cycle();
+  expect(nav.state.layoutStep).toBe(3);
+  expect(nav.state.page).toBe("software");
+  expect(nav.state.selected.software).toBe("updates");
+});

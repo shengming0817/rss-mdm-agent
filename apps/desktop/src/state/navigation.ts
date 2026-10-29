@@ -74,6 +74,7 @@ export function createNavigation() {
     },
     cycle() {
       state.layoutStep = ((state.layoutStep + 1) % 4) as LayoutStep;
+      if (state.layoutStep !== 0) state.restoreStep = state.layoutStep;
     },
     hideOrRestore() {
       if (state.layoutStep === 0) state.layoutStep = state.restoreStep;
