@@ -440,3 +440,41 @@
   color: var(--muted);
   background: var(--bg);
 }
+
+/* The conversation owns scrolling and gutters; the shared stream supplies message typography. */
+.rss-assistant-timeline {
+  flex: none;
+  overflow: visible;
+  padding: 0;
+}
+.rss-assistant-timeline .rss-message-assistant {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  column-gap: 11px;
+}
+.rss-assistant-timeline .rss-message-assistant::before {
+  content: "✧";
+  grid-column: 1;
+  grid-row: 1 / span 3;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-top: 2px;
+  border-radius: 8px;
+  background: var(--tint);
+  color: var(--accent);
+  font-size: 21px;
+}
+.rss-assistant-timeline .rss-message-assistant > * {
+  grid-column: 2;
+}
+.rss-assistant-timeline
+  > :is(
+    .rss-question-card,
+    .rss-operation-card,
+    .rss-tool-record,
+    .rss-permission-card
+  ) {
+  margin-left: 39px;
+}
