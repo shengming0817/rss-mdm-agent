@@ -268,12 +268,48 @@ export async function checkTasksBrowser(page, fixture) {
         window.rssDesktop.state.workspace.tasks.state.selected.reference
           .request,
     );
+    if (intent === "update") {
+      const frozen = await page.evaluate(() => {
+        const tasks = window.rssDesktop.state.workspace.tasks.state.selected;
+        const record =
+          window.rssDesktop.state.workspace.policies.state.preparation;
+        return {
+          actual: tasks.softwareState,
+          execution: tasks.facts.value.action.execution,
+          resource: tasks.facts.value.action.operation.resource,
+          task: record.action.task,
+          offer: record.action.offer.presentation.summary,
+        };
+      });
+      assert.deepEqual(frozen.actual, { kind: "present", version: "1.0" });
+      assert.equal(frozen.execution.kind, "softwareProgram");
+      assert.equal(frozen.execution.intent, "install");
+      assert.equal(
+        frozen.execution.steps.at(-1).package,
+        frozen.task.resource.id,
+      );
+      assert.equal(frozen.execution.steps.at(-1).version, "2.0");
+      assert.deepEqual(frozen.resource, {
+        id: frozen.task.resource.id,
+        revision: frozen.task.resource.version,
+      });
+      assert.equal(frozen.offer.steps.at(-1).version, "2.0");
+    }
     await advance(request, "running");
     await advance(request, "executionEnded");
     assert.equal(
       await drawer.getByText("已核实符合预期", { exact: true }).count(),
       0,
     );
+    if (intent === "update")
+      assert.deepEqual(
+        await page.evaluate(
+          () =>
+            window.rssDesktop.state.workspace.tasks.state.selected
+              .softwareState,
+        ),
+        { kind: "present", version: "1.0" },
+      );
     await capture(`${intent}-execution-ended`);
     await advance(
       request,

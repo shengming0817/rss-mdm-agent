@@ -186,7 +186,7 @@ it("keeps paging beyond the cache budget and preserves the current page across d
     };
   });
   const c = createTaskCenter(port, null);
-  await c.load();
+  await c.setQuery({ view: "history", source: "ai" });
   for (let i = 0; i < 17; i++) await c.load(true);
   expect(c.state.page).toBe(18);
   expect(c.state.items).toHaveLength(32);
@@ -200,6 +200,17 @@ it("keeps paging beyond the cache budget and preserves the current page across d
   await c.previousPage();
   expect(c.state.page).toBe(17);
   expect(c.state.next).toBe("17");
+  await c.setQuery({ ...c.state.query });
+  expect(c.state.page).toBe(1);
+  expect(c.state.query).toMatchObject({ view: "history", source: "ai" });
+  expect(c.state.cursor).toBeNull();
+  expect(c.state.items[0].reference).toEqual({
+    kind: "request",
+    request: "page-0-0",
+  });
+  expect(port.list).toHaveBeenLastCalledWith(
+    expect.objectContaining({ view: "history", source: "ai", cursor: null }),
+  );
   c.dispose();
 });
 it("removes a denied original task from cached consumers and drops stale step actions when its owner advances", async () => {

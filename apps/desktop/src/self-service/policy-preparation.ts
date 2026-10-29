@@ -2,7 +2,7 @@ import { proxy, type Snapshot } from "valtio/vanilla";
 import { deepClone } from "valtio/vanilla/utils";
 import type {
   BackendRequest,
-  PolicyChoice,
+  PolicyInvocation,
   PolicyStatus,
   SelfServiceDirectoryItem,
   SelfServicePort,
@@ -15,7 +15,7 @@ export function createPolicyPreparation(
 ) {
   const state = proxy({
     item: null as SelfServiceDirectoryItem | null,
-    choice: null as PolicyChoice | null,
+    submission: null as PolicyInvocation | null,
     status: null as PolicyStatus | null,
     preparation: null as BackendRequest | null,
     busy: false,
@@ -25,7 +25,7 @@ export function createPolicyPreparation(
     epoch = 0;
   async function select(item: SelfServiceDirectoryItem) {
     // An unresolved submission must remain addressable before another selection.
-    if (!active || !port || state.busy || state.choice) return;
+    if (!active || !port || state.busy || state.submission) return;
     const call = ++epoch;
     state.busy = true;
     state.item = null;
@@ -56,7 +56,7 @@ export function createPolicyPreparation(
     }
   }
   const canRestart = (status: Snapshot<PolicyStatus> | null = state.status) => {
-    if (!state.choice || !status) return false;
+    if (!state.submission || !status) return false;
     return status.kind === "preparation"
       ? ["failed", "cancelled"].includes(status.value.state)
       : status.kind === "run" &&
@@ -73,7 +73,7 @@ export function createPolicyPreparation(
       if (!active || call !== epoch) return;
       if (current.policyId !== policyId) throw Error("changed policy");
       state.item = deepClone(current);
-      state.choice = null;
+      state.submission = null;
       state.status = null;
       state.preparation = null;
     } catch {
@@ -84,7 +84,7 @@ export function createPolicyPreparation(
     }
   }
   async function recover() {
-    const request = state.choice?.request;
+    const request = state.submission?.choice.request;
     if (!active || !port || !request || state.busy) return;
     const call = epoch;
     state.busy = true;
@@ -107,29 +107,48 @@ export function createPolicyPreparation(
   }
   async function submit(parameters: Record<string, unknown>) {
     if (!active || !port || !state.item || state.busy) return;
-    if (state.choice && state.status?.kind !== "absent") return;
-    const choice = state.choice
-      ? deepClone(state.choice)
+    if (state.submission && state.status?.kind !== "absent") return;
+    const submission = state.submission
+      ? deepClone(state.submission)
       : {
-          request: identity(),
-          policyId: state.item.policyId,
-          parameters: deepClone(parameters),
+          expected: {
+            version: state.item.policyVersion,
+            revision: state.item.policyRevision,
+          },
+          choice: {
+            request: identity(),
+            policyId: state.item.policyId,
+            parameters: deepClone(parameters),
+          },
         };
-    // Retain the immutable input before the first write, including a lost receipt.
-    state.choice = choice;
+    // Retain the complete immutable precondition and input before any write.
+    state.submission = submission;
     state.status = null;
     state.busy = true;
     state.error = "";
     const call = epoch;
     try {
-      const value = await port.policy_invoke({ choice });
+      const value = await port.policy_invoke(submission);
       if (active && call === epoch) {
         state.status = { kind: "preparation", value: deepClone(value) };
         state.preparation = state.status.value;
       }
-    } catch {
-      if (active && call === epoch)
-        state.error = "提交回执未确认，请查询原请求，不要重复发起。";
+    } catch (error) {
+      if (active && call === epoch) {
+        if (
+          typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          error.code === "policy_selection_changed"
+        ) {
+          // The service guarantees this rejection preceded journal admission.
+          state.item = null;
+          state.submission = null;
+          state.preparation = null;
+          state.error =
+            "发布内容或策略版本已变化，请刷新目录后重新选择；本次未提交执行。";
+        } else state.error = "提交回执未确认，请查询原请求，不要重复发起。";
+      }
     } finally {
       if (active && call === epoch) state.busy = false;
     }
@@ -137,7 +156,7 @@ export function createPolicyPreparation(
   function clear() {
     if (
       state.busy ||
-      (state.choice &&
+      (state.submission &&
         (!state.status ||
           state.status.kind === "absent" ||
           (state.status.kind === "run" &&
@@ -146,7 +165,7 @@ export function createPolicyPreparation(
       return false;
     ++epoch;
     state.item = null;
-    state.choice = null;
+    state.submission = null;
     state.status = null;
     state.preparation = null;
     state.error = "";
@@ -165,7 +184,7 @@ export function createPolicyPreparation(
       active = false;
       ++epoch;
       state.item = null;
-      state.choice = null;
+      state.submission = null;
       state.status = null;
       state.preparation = null;
       state.error = "";

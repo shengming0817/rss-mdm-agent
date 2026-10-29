@@ -50,7 +50,7 @@ export function PolicyDrawer({
       }
     }
     setParameters(open ? values : {});
-  }, [open, item?.policyId, state.choice?.request]);
+  }, [open, item?.policyId, state.submission?.choice.request]);
   const schema =
       item?.task.kind === "script" &&
       typeof item.task.parameterSchema === "object"
@@ -153,7 +153,7 @@ export function PolicyDrawer({
                 )}
               </dl>
             )}
-            {!state.choice &&
+            {!state.submission &&
               inputs.map(({ name, field, supported }) => (
                 <label className="rss-field" key={name}>
                   <span>
@@ -244,9 +244,11 @@ export function PolicyDrawer({
                 title="已读取原执行记录，可在任务中心查看进度与核实结果。"
               />
             )}
-            {state.choice ? (
+            {state.submission ? (
               <>
-                <p className="rss-reference">原请求：{state.choice.request}</p>
+                <p className="rss-reference">
+                  原请求：{state.submission.choice.request}
+                </p>
                 <Button
                   disabled={state.busy}
                   onClick={() => void owner.recover()}
@@ -271,7 +273,7 @@ export function PolicyDrawer({
                 )}
                 <Button
                   onClick={() => {
-                    const request = owner.state.choice?.request;
+                    const request = owner.state.submission?.choice.request;
                     if (request) {
                       onClose();
                       workspace.navigation.select("tasks", "history");

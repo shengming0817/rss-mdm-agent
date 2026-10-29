@@ -2,7 +2,7 @@
 use execution_contract::{Digest, Id, RequestId, VersionedRef};
 use serde::{Deserialize, Serialize};
 /// Current desktop/system IPC. No negotiation or legacy parser exists.
-pub const IPC_VERSION: u8 = 8;
+pub const IPC_VERSION: u8 = 9;
 /// Current protected installation document format.
 pub const DEPLOYMENT_VERSION: u32 = 7;
 
@@ -833,6 +833,8 @@ pub enum Request {
     },
     /// Freeze a Policy choice in the unique journal; neither source nor confirmation is a model field.
     InvokePolicy {
+        /// Exact reviewed publication; never substituted with the current version.
+        expected: execution_contract::PolicyExpectation,
         /// Exact current native context binding.
         context: execution_contract::NativeContextRef,
         /// Exact directory choice and Input values.
@@ -844,6 +846,8 @@ pub enum Request {
     },
     /// Prepare an editable AI operation, without sending or granting consent.
     PreparePolicy {
+        /// Exact reviewed publication; never substituted with the current version.
+        expected: execution_contract::PolicyExpectation,
         /// Current authenticated native binding.
         context: execution_contract::NativeContextRef,
         /// Policy identity and non-authoritative initial suggestions.

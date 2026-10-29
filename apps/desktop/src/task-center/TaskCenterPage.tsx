@@ -246,6 +246,12 @@ export function TaskCenterPage({
         <span>第 {state.page} 页 · 本页搜索不跨未读取的记录</span>
         <div>
           <Button
+            disabled={state.loading || state.page === 1}
+            onClick={() => void owner.setQuery({ ...state.query })}
+          >
+            返回第一页
+          </Button>
+          <Button
             disabled={state.loading || !state.previous.length}
             onClick={() => void owner.previousPage()}
           >

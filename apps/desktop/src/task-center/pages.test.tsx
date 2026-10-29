@@ -230,7 +230,7 @@ it.each(["install", "update", "uninstall"] as const)(
       await act(async () => {
         await f.workspace.policies.select(item);
         await f.workspace.policies.submit({});
-        request = f.workspace.policies.state.choice!.request;
+        request = f.workspace.policies.state.submission!.choice.request;
       });
     }
     await act(async () => {
@@ -245,6 +245,35 @@ it.each(["install", "update", "uninstall"] as const)(
         .closest('[role="dialog"]') as HTMLElement,
     );
     expect(f.workspace.tasks.state.selected?.stage).toBe("accepted");
+    if (intent === "update") {
+      const selected = f.workspace.tasks.state.selected!;
+      expect(selected.softwareState).toEqual({
+        kind: "present",
+        version: "1.0",
+      });
+      const record = f.workspace.policies.state.preparation!;
+      expect(record.action.kind).toBe("policy");
+      if (
+        record.action.kind !== "policy" ||
+        record.action.task.kind !== "software" ||
+        selected.facts.kind !== "execution"
+      )
+        throw Error("software preparation required");
+      expect(selected.facts.value.action.operation.resource).toEqual({
+        id: record.action.task.resource.id,
+        revision: record.action.task.resource.version,
+      });
+      expect(selected.facts.value.action.execution).toMatchObject({
+        kind: "softwareProgram",
+        intent: "install",
+        steps: [{ package: record.action.task.resource.id, version: "2.0" }],
+      });
+      expect(record.action.offer?.presentation.summary).toMatchObject({
+        kind: "software",
+        intent: "install",
+        steps: [{ package: record.action.task.resource.id, version: "2.0" }],
+      });
+    }
     for (const phase of ["running", "executionEnded"] as const) {
       f.pages.advanceTask(request!, phase);
       fireEvent.click(detail.getByRole("button", { name: "查询原请求" }));
@@ -253,6 +282,11 @@ it.each(["install", "update", "uninstall"] as const)(
       );
       expect(detail.queryByText("已核实符合预期")).toBeNull();
     }
+    if (intent === "update")
+      expect(f.workspace.tasks.state.selected?.softwareState).toEqual({
+        kind: "present",
+        version: "1.0",
+      });
     f.pages.advanceTask(
       request!,
       "verified",

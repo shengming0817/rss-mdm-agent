@@ -777,12 +777,17 @@ impl<S: IdentityProvider> DeviceService<S> {
             .map_err(map_app_error)?
         {
             let PreparedAction::Policy {
-                choice: original, ..
+                choice: original,
+                definition,
+                policy_revision,
+                ..
             } = &previous.action
             else {
                 return Err(Error::Conflict);
             };
-            if previous.retry_of != retry_of
+            if expected.as_ref().is_some_and(|(version, revision, _)| {
+                definition.revision.as_str() != version.to_string() || policy_revision != revision
+            }) || previous.retry_of != retry_of
                 || original != choice
                 || previous.trigger != bound_trigger
                 || (!draft && previous.state == BackendRequestState::Draft)
@@ -798,7 +803,9 @@ impl<S: IdentityProvider> DeviceService<S> {
             if expected.as_ref().is_some_and(|(version, revision, _)| {
                 directory.policy_version != *version || directory.policy_revision != *revision
             }) {
-                return Err(Error::Conflict);
+                return Ok(Reply::OperationRejected {
+                    reason: execution_contract::OperationRejection::Conflict,
+                });
             }
             if !directory.self_service.published
                 || (source(origin) == wire::SelfServiceCaller::Ai
@@ -1321,8 +1328,18 @@ impl<S: IdentityProvider> DeviceService<S> {
                         .await?,
                 }
             }
-            Request::InvokePolicy { choice, origin, .. }
-            | Request::PreparePolicy { choice, origin, .. } => {
+            Request::InvokePolicy {
+                choice,
+                expected,
+                origin,
+                ..
+            }
+            | Request::PreparePolicy {
+                choice,
+                expected,
+                origin,
+                ..
+            } => {
                 self.invoke_task_policy(
                     command,
                     &bound,
@@ -1330,7 +1347,15 @@ impl<S: IdentityProvider> DeviceService<S> {
                     choice,
                     matches!(request, Request::PreparePolicy { .. }),
                     None,
-                    None,
+                    Some((
+                        uuid(expected.version.as_str())?,
+                        expected.revision,
+                        execution_contract::EntrySelector::Capability {
+                            selector: wire::CapabilitySelector::Id {
+                                id: uuid(choice.policy_id.as_str())?,
+                            },
+                        },
+                    )),
                     commands,
                 )
                 .await?
@@ -1788,6 +1813,8 @@ impl<S: IdentityProvider> DeviceService<S> {
             request_id,
             source,
             policy_id,
+            policy_version,
+            policy_revision: offered_revision,
             ..
         } = authorization
         else {
@@ -1800,7 +1827,15 @@ impl<S: IdentityProvider> DeviceService<S> {
             .backend_request(&self.core.caller(), &request)
             .map_err(map_app_error)?
             .ok_or(Error::Denied)?;
-        let PreparedAction::Policy { choice, run_id, .. } = &previous.action else {
+        let PreparedAction::Policy {
+            choice,
+            run_id,
+            definition,
+            policy_revision,
+            task,
+            ..
+        } = &previous.action
+        else {
             return Err(Error::Denied);
         };
         let expected_source = if matches!(previous.trigger, BackendTrigger::Ai { .. }) {
@@ -1812,18 +1847,65 @@ impl<S: IdentityProvider> DeviceService<S> {
             || request_id.to_string() != choice.request.as_str()
             || *source != expected_source
             || policy_id.to_string() != choice.policy_id.as_str()
+            || policy_version.to_string() != definition.revision.as_str()
+            || offered_revision != policy_revision
         {
             return Err(Error::Untrusted);
         }
-        if let wire::TaskPayload::Script(spec) = offer.payload() {
-            if choice
-                .parameters
-                .iter()
-                .any(|(key, value)| spec.parameters.get(key) != Some(value))
-            {
-                return Err(Error::Untrusted);
+        // The signature authenticates the new offer, not the employee's original choice.
+        // Compare every execution fact available in the frozen directory contract first.
+        let matches = match (task.as_ref(), offer.payload()) {
+            (
+                wire::SelfServiceTask::Script {
+                    resource,
+                    run_as,
+                    parameter_sources,
+                    ..
+                },
+                wire::TaskPayload::Script(spec),
+            ) => {
+                let resolved = parameter_sources
+                    .iter()
+                    .map(|(key, source)| {
+                        let value = match source {
+                            wire::ScriptParameterSource::Fixed { value } => Some(value),
+                            wire::ScriptParameterSource::Input {} => choice.parameters.get(key),
+                        };
+                        value
+                            .map(|value| (key.clone(), value.clone()))
+                            .ok_or(Error::Untrusted)
+                    })
+                    .collect::<Result<BTreeMap<_, _>, _>>()?;
+                resource == &spec.resource && run_as == &spec.run_as && resolved == spec.parameters
             }
-        } else if !choice.parameters.is_empty() {
+            (
+                wire::SelfServiceTask::Software { run_as, target, .. },
+                wire::TaskPayload::Software(spec),
+            ) => {
+                choice.parameters.is_empty()
+                    && spec.intent == wire::SoftwareTaskIntent::Install
+                    && spec.steps.last().is_some_and(|step| {
+                        &step.target == target
+                            && execution_contract::software_commands(&step.action)
+                                .install
+                                .run_as
+                                == *run_as
+                    })
+            }
+            (
+                wire::SelfServiceTask::Enrollment {
+                    organization,
+                    entry,
+                },
+                wire::TaskPayload::Enrollment(spec),
+            ) => {
+                choice.parameters.is_empty()
+                    && organization == &spec.organization
+                    && entry == &spec.entry
+            }
+            _ => false,
+        };
+        if !matches {
             return Err(Error::Untrusted);
         }
         let task_id = offer.task_id();

@@ -577,6 +577,7 @@ impl ExecutionHandle {
     pub async fn invoke_policy(&self, input: PolicyInvocation) -> ui::Result<BackendRequest> {
         match self
             .request(Request::InvokePolicy {
+                expected: input.expected,
                 context: self.context_ref()?,
                 choice: input.choice,
 
@@ -586,6 +587,12 @@ impl ExecutionHandle {
             .map_err(bad)?
         {
             Reply::PolicyRequest { value } => Ok(*value),
+            Reply::OperationRejected {
+                reason: OperationRejection::Conflict,
+            } => Err(ui::error(
+                "policy_selection_changed",
+                "发布内容或策略版本已变化，请重新核对；未提交执行。",
+            )),
             _ => Err(bad(Error::OutcomeUnknown)),
         }
     }
@@ -629,10 +636,16 @@ impl ExecutionHandle {
                 .to_string(),
         )
         .map_err(|_| mcp::ServiceError::InvalidInput)?;
+        let selected = self.resolve_policy(selector).await?;
         let invocation = PolicyInvocation {
+            expected: execution_contract::PolicyExpectation {
+                version: Id::new(selected.policy_version.to_string())
+                    .map_err(|_| mcp::ServiceError::InvalidInput)?,
+                revision: selected.policy_revision,
+            },
             choice: PolicyChoice {
                 request,
-                policy_id: Id::new(self.resolve_policy(selector).await?.policy_id.to_string())
+                policy_id: Id::new(selected.policy_id.to_string())
                     .map_err(|_| mcp::ServiceError::InvalidInput)?,
                 parameters: input.parameters.into_iter().collect(),
             },
@@ -642,11 +655,18 @@ impl ExecutionHandle {
         } else {
             self.invoke_policy(invocation).await
         }
-        .map_err(|_| mcp::ServiceError::OutcomeUnknown)
+        .map_err(|error| {
+            if error.code == "policy_selection_changed" {
+                mcp::ServiceError::Conflict
+            } else {
+                mcp::ServiceError::OutcomeUnknown
+            }
+        })
     }
     pub async fn prepare_policy(&self, input: PolicyInvocation) -> ui::Result<BackendRequest> {
         match self
             .request(Request::PreparePolicy {
+                expected: input.expected,
                 context: self.context_ref()?,
                 choice: input.choice,
 
@@ -656,6 +676,12 @@ impl ExecutionHandle {
             .map_err(bad)?
         {
             Reply::PolicyRequest { value } => Ok(*value),
+            Reply::OperationRejected {
+                reason: OperationRejection::Conflict,
+            } => Err(ui::error(
+                "policy_selection_changed",
+                "发布内容或策略版本已变化，请重新核对；未提交执行。",
+            )),
             _ => Err(bad(Error::OutcomeUnknown)),
         }
     }

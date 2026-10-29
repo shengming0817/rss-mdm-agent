@@ -115,7 +115,7 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
     if (!item) throw Error("fixture missing");
     return deepClone(item);
   };
-  selfService.policy_invoke = async ({ choice }) => {
+  selfService.policy_invoke = async ({ choice, expected }) => {
     available();
     if (readOnly) throw Error("fixture denied");
     events.push({ operation: "policy_invoke", request: choice.request });
@@ -123,8 +123,14 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
       return deepClone(records.get(choice.request)!);
     const item = published.find((value) => value.policyId === choice.policyId);
     if (!item) throw Error("fixture missing");
+    if (
+      item.policyVersion !== expected.version ||
+      item.policyRevision !== expected.revision
+    )
+      throw { code: "policy_selection_changed" };
     const record = policyRecord(choice.request);
     if (record.action.kind !== "policy") throw Error("fixture type");
+    record.action.policyRevision = item.policyRevision;
     record.action.choice = deepClone(choice);
     record.action.task = deepClone(item.task);
     record.action.presentation = deepClone(item.selfService.presentation);
@@ -186,9 +192,15 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
             runAs: { kind: "system", platform: "macos" },
           })),
         };
-        detail.facts.value.action.operation.resource = deepClone(
-          record.action.definition,
-        );
+        detail.facts.value.action.operation.resource = deepClone({
+          id: item.task.resource.id,
+          revision: item.task.resource.version,
+        });
+        // Explicit detector fixture predates this invocation and is independent of its target.
+        detail.softwareState =
+          item.policyId === "fixture-software-1"
+            ? { kind: "present", version: "1.0" }
+            : { kind: "absent" };
         detail.facts.value.action.operation.action =
           offer.presentation.summary.intent;
         detail.facts.value.status.phase = "accepted";
