@@ -38,7 +38,13 @@ export async function checkPagesBrowser(page, fixture) {
     await page
       .getByRole("button", { name: "RSS MDM Agent 设置", exact: true })
       .click();
-    await page.getByRole("menuitem", { name, exact: true }).click();
+    await page
+      .getByRole("navigation", {
+        name: "RSS MDM Agent 设置二级菜单",
+        exact: true,
+      })
+      .getByRole("button", { name, exact: true })
+      .click();
   };
   const capture = async (name) => {
     await page.evaluate(async () => {
