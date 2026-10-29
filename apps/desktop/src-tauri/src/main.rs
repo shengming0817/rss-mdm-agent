@@ -20,7 +20,8 @@ fn window(app: &tauri::AppHandle) -> tauri::Result<()> {
         window.show()?;
         window.set_focus()?;
     } else {
-        let window_builder = tauri::WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?;
+        let window_builder =
+            tauri::WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?;
         #[cfg(target_os = "windows")]
         let window_builder = window_builder.decorations(false);
         let created = window_builder

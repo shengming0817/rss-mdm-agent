@@ -66,7 +66,7 @@ export function shellFixture() {
   recent.recordedAt = Date.now();
   if (recent.facts.kind === "execution")
     recent.facts.value.status.phase = "executionEnded";
-  const list = vi.fn(async () => taskPage([recent]));
+  const list = vi.fn(async () => ({ ...taskPage([recent]), asOf: Date.now() }));
   const input: WorkspaceInput = {
     environment: {
       kind: "fixture",

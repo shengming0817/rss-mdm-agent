@@ -74,7 +74,7 @@ export function LoginDialog({
       onCancel={close}
       closable={!account.busy}
       keyboard={!account.busy}
-      maskClosable={!account.busy}
+      mask={{ closable: !account.busy }}
       destroyOnHidden
     >
       <p className="rss-muted">选择你的组织，连接工作所需的应用与服务。</p>

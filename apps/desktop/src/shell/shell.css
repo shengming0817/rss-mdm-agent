@@ -129,9 +129,11 @@
   white-space: nowrap;
   font-family: inherit;
 }
-.rss-page-assistant-trigger {
-  font-size: 11px;
-  color: var(--muted);
+.rss-topbar .rss-page-assistant-trigger {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--tint);
 }
 .rss-page-assistant-trigger > span:last-child {
   white-space: nowrap;
@@ -855,5 +857,20 @@
   }
   .rss-ui[data-platform="macos"] [data-native-window="true"] .rss-brand strong {
     display: block;
+  }
+}
+
+@media (max-width: 720px) {
+  .rss-ui[data-platform="windows"]
+    [data-native-window="true"]
+    .rss-window-controls {
+    display: flex !important;
+    margin-right: -8px;
+  }
+  .rss-ui[data-platform="windows"]
+    [data-native-window="true"]
+    .rss-window-controls
+    button {
+    width: 28px;
   }
 }

@@ -41,10 +41,8 @@ export function AppearancePage({ workspace }: { workspace: Workspace }) {
           <Button onClick={workspace.navigation.cycle}>切换导航布局</Button>
         </div>
       </SectionCard>
-      <SectionCard
-        title="系统显示偏好"
-        description="由本机系统提供；系统偏好变化后自动重读。"
-      >
+      <SectionCard title="系统显示偏好">
+        <p className="rss-muted">由本机系统提供；系统偏好变化后自动重读。</p>
         <div className="rss-organization-row">
           <strong className="rss-grow">减少动态效果</strong>
           <Tag>{appearance.reducedMotion ? "系统已开启" : "系统未开启"}</Tag>

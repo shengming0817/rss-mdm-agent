@@ -1,5 +1,8 @@
 import {
-  AppstoreOutlined,
+  CodeSandboxOutlined,
+  DesktopOutlined,
+  FileTextOutlined,
+  StarOutlined,
   ClockCircleOutlined,
   HomeOutlined,
   RobotOutlined,
@@ -22,11 +25,11 @@ import { modules, sections, type PageId } from "../state/navigation";
 import type { ComponentType } from "react";
 const moduleIcons = [
   HomeOutlined,
-  RobotOutlined,
-  AppstoreOutlined,
+  StarOutlined,
+  CodeSandboxOutlined,
   ToolOutlined,
-  SettingOutlined,
-  ClockCircleOutlined,
+  DesktopOutlined,
+  FileTextOutlined,
 ];
 export const moduleEntries = modules.map(([id, title], index) => ({
   id,

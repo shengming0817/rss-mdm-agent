@@ -242,7 +242,7 @@ export async function createFixture() {
       items,
       next: null,
       scope: "fixture-native-scope",
-      asOf: 1000,
+      asOf: Date.now(),
       lastSync: null,
       remoteAvailable: false,
       coverage: [],

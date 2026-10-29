@@ -22,6 +22,7 @@ export function pageResources(
       source: "本机设备概览",
       collectedAt: device.readAt,
       validUntil: device.readAt + 30000,
+      verified: device.readAt <= system.now,
     });
   if (page === "home" || page === "system") {
     const facts = homeFacts(workspace.system, system);
@@ -74,6 +75,11 @@ export function pageResources(
         version: item.version ?? undefined,
         source: "本机安装清单",
         revision: JSON.stringify(item.reference),
+        verified:
+          inventory.complete &&
+          !inventory.error &&
+          inventory.collectedAt != null &&
+          inventory.collectedAt * 1000 <= system.now,
         ...(inventory.collectedAt == null
           ? {}
           : {
@@ -90,8 +96,14 @@ export function pageResources(
         description: `原任务阶段：${item.stage}`,
         status: item.stage,
         source: "当前主体任务记录",
-        revision: String(item.revision),
-        validUntil: tasks.asOf + 30000,
+        revision: JSON.stringify(item.revision),
+        collectedAt: tasks.recentAsOf,
+        validUntil: tasks.recentAsOf + 30000,
+        verified:
+          tasks.recentLoaded &&
+          !tasks.recentError &&
+          tasks.recentAsOf > 0 &&
+          tasks.recentAsOf <= system.now,
       });
   return rows;
 }

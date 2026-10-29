@@ -1,11 +1,31 @@
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 export async function checkShellBrowser(page, fixture) {
   const root = new URL(fixture.url).origin;
   const go = async (parameters = "") => {
     await page.goto(fixture.url + "?desktop" + parameters);
     await page.getByRole("button", { name: "切换侧栏布局" }).waitFor();
     await page.getByRole("heading", { name: /好/ }).waitFor();
+    await page.locator(".fixture-controls").evaluate((node) => {
+      node.style.display = "none";
+    });
+  };
+  mkdirSync(new URL("../.local-ci-runs/", import.meta.url), {
+    recursive: true,
+  });
+  const capture = async (name) => {
+    await page.evaluate(async () => {
+      await document.fonts.ready;
+      await new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      );
+    });
+    await page.screenshot({
+      path: new URL(
+        `../.local-ci-runs/react-shell-${name}.png`,
+        import.meta.url,
+      ).pathname,
+    });
   };
   const shell = page.locator(".rss-desktop-shell"),
     cycle = page.getByRole("button", { name: "切换侧栏布局" });
@@ -17,6 +37,7 @@ export async function checkShellBrowser(page, fixture) {
   for (const step of [1, 2, 3, 0]) {
     await cycle.click();
     assert.equal(await shell.getAttribute("data-layout-step"), String(step));
+    if (step === 2) await capture("full-sidebar");
     const position = await cycle.boundingBox();
     assert.equal(position.x, before.x);
     assert.equal(position.y, before.y);
@@ -79,6 +100,7 @@ export async function checkShellBrowser(page, fixture) {
       inner = option.getBoundingClientRect();
     return inner.top >= outer.top && inner.bottom <= outer.bottom;
   });
+  await capture("search-keyboard");
   await search.fill("Workspace");
   await search.press("Enter");
   await page.getByRole("dialog").waitFor({ state: "hidden" });
@@ -94,6 +116,7 @@ export async function checkShellBrowser(page, fixture) {
   await page
     .getByRole("textbox", { name: "消息" })
     .fill("附上页面展示信息，先不发送");
+  await capture("page-assistant");
   await page.getByRole("button", { name: "移除页面上下文" }).click();
   await page.getByRole("button", { name: "关闭页面助手" }).click();
   assert.equal(
@@ -105,6 +128,7 @@ export async function checkShellBrowser(page, fixture) {
   mkdirSync(new URL("../.local-ci-runs/", import.meta.url), {
     recursive: true,
   });
+  const visualMetrics = [];
   for (const platform of ["macos", "windows"]) {
     await go("&platform=" + platform);
     await page
@@ -131,6 +155,32 @@ export async function checkShellBrowser(page, fixture) {
           false,
           `${platform}/${theme}/${width} document overflow`,
         );
+        await page.evaluate(async () => {
+          await document.fonts.ready;
+          await new Promise((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve)),
+          );
+        });
+        const metrics = await page.evaluate(() => {
+          const bounds = (selector) => {
+            const r = document.querySelector(selector).getBoundingClientRect();
+            return { x: r.x, y: r.y, width: r.width, height: r.height };
+          };
+          return {
+            header: bounds(".rss-topbar"),
+            footer: bounds(".rss-shell-footer"),
+            main: bounds(".rss-shell-main"),
+            heroFont: getComputedStyle(
+              document.querySelector(".rss-device-hero h2"),
+            ).fontSize,
+            headers: document.querySelectorAll(".rss-topbar").length,
+          };
+        });
+        visualMetrics.push({ platform, theme, width, ...metrics });
+        assert.equal(metrics.headers, 1);
+        assert.equal(metrics.header.height, 54);
+        assert.equal(metrics.footer.y, 872);
+        assert.equal(metrics.heroFont, width > 1180 ? "26px" : "24px");
         await page.screenshot({
           path: new URL(
             `../.local-ci-runs/react-shell-${platform}-${theme}-${width}.png`,
@@ -140,11 +190,16 @@ export async function checkShellBrowser(page, fixture) {
       }
     }
   }
+  writeFileSync(
+    new URL("../.local-ci-runs/react-shell-metrics.json", import.meta.url),
+    JSON.stringify(visualMetrics, null, 2),
+  );
   await go();
   await page.setViewportSize({ width: 720, height: 900 });
   await cycle.click();
   await cycle.click();
   assert.equal(await shell.getAttribute("data-layout-step"), "2");
+  await capture("narrow-sidebar-overlay");
   await page.keyboard.press("Escape");
   assert.equal(await shell.getAttribute("data-layout-step"), "3");
   assert.equal(
@@ -171,6 +226,7 @@ export async function checkShellBrowser(page, fixture) {
   await page
     .getByRole("menuitem", { name: "登录企业账号", exact: true })
     .click();
+  await capture("account-login");
   await page.getByRole("textbox", { name: "企业账号" }).fill("scoped-person");
   await page.getByLabel("企业密码", { exact: true }).fill("fixture-secret");
   await page.evaluate(() => {
@@ -204,6 +260,7 @@ export async function checkShellBrowser(page, fixture) {
       await page
         .getByText("已读取部分清单，覆盖尚未完整", { exact: true })
         .waitFor();
+    await capture("home-" + scene);
     if (scene === "error") {
       await page.getByText("设备概览读取失败", { exact: true }).waitFor();
       assert.equal(
@@ -241,6 +298,18 @@ export async function checkShellBrowser(page, fixture) {
       .count(),
     0,
   );
+  await capture("registration-pending");
+  await page.getByRole("button", { name: "用户菜单", exact: true }).click();
+  await page.getByRole("menuitem", { name: "外观与体验", exact: true }).click();
+  const themeChoice = page.getByRole("combobox", { name: "界面主题" });
+  await themeChoice.click();
+  await themeChoice.press("ArrowDown");
+  await themeChoice.press("Enter");
+  await page.waitForFunction(
+    () =>
+      document.querySelector(".rss-ui")?.getAttribute("data-theme") === "light",
+  );
+  await capture("appearance");
   console.log(
     "PASS v4 shell/home: fixed logo and cycle coordinates, full primary/secondary access, directed restore, retained scroll/drafts, search keyboard, page assistant, account/client isolation, registration Unknown, macOS/Windows visual previews, 1280/720/420 light/dark. Windows native remains separate.",
   );

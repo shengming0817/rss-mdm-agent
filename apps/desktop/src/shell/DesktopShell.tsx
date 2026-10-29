@@ -16,7 +16,7 @@ import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
   SearchOutlined,
-  RobotOutlined,
+  StarOutlined,
   UserOutlined,
 } from "@ant-design/icons";
 import type { Workspace } from "../state/workspace";
@@ -272,7 +272,7 @@ export function DesktopShell({
             ref={assistantTrigger}
             className="rss-page-assistant-trigger"
             type="text"
-            icon={<RobotOutlined />}
+            icon={<StarOutlined />}
             aria-label="页面助手"
             onClick={onAssistant}
           >

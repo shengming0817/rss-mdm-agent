@@ -15,43 +15,43 @@ export function selectSection(workspace: Workspace, page: PageId, id: string) {
 function Secondary({ workspace }: { workspace: Workspace }) {
   const nav = useSnapshot(workspace.navigation.state),
     platform = usePlatform();
+  const entries = secondaryEntries(nav.page, platform);
+  if (!entries.length) return null;
   return (
     <nav
       className="rss-secondary-nav"
       aria-label={`${pageTitle(nav.page)}二级菜单`}
     >
-      {secondaryEntries(nav.page, platform).map(
-        ({ id, title, Icon, group }) => (
-          <Fragment key={id}>
-            {group && <span className="rss-nav-group">{group}</span>}
-            <Tooltip title={title} placement="right">
-              <button
-                type="button"
-                className="rss-secondary-button"
-                aria-label={title}
-                aria-current={
-                  nav.page === "assistant"
-                    ? id === "history" && nav.historyOpen
-                      ? "page"
-                      : undefined
-                    : nav.selected[nav.page] === id
-                      ? "page"
-                      : undefined
-                }
-                aria-expanded={
-                  nav.page === "assistant" && id === "history"
-                    ? nav.historyOpen
+      {entries.map(({ id, title, Icon, group }) => (
+        <Fragment key={id}>
+          {group && <span className="rss-nav-group">{group}</span>}
+          <Tooltip title={title} placement="right">
+            <button
+              type="button"
+              className="rss-secondary-button"
+              aria-label={title}
+              aria-current={
+                nav.page === "assistant"
+                  ? id === "history" && nav.historyOpen
+                    ? "page"
                     : undefined
-                }
-                onClick={() => selectSection(workspace, nav.page, id)}
-              >
-                <Icon />
-                <span>{title}</span>
-              </button>
-            </Tooltip>
-          </Fragment>
-        ),
-      )}
+                  : nav.selected[nav.page] === id
+                    ? "page"
+                    : undefined
+              }
+              aria-expanded={
+                nav.page === "assistant" && id === "history"
+                  ? nav.historyOpen
+                  : undefined
+              }
+              onClick={() => selectSection(workspace, nav.page, id)}
+            >
+              <Icon />
+              <span>{title}</span>
+            </button>
+          </Tooltip>
+        </Fragment>
+      ))}
     </nav>
   );
 }

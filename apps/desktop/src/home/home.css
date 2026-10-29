@@ -16,7 +16,7 @@
   color: var(--muted);
   line-height: 1.6;
 }
-.rss-home-heading h1 {
+.rss-home-page .rss-home-heading h1 {
   margin: 8px 0 5px;
 }
 .rss-home-heading .ant-tag {
@@ -41,7 +41,7 @@
   border: 1px solid #e4e7e3;
   border-radius: 14px;
 }
-.rss-device-hero h2 {
+.rss-home-page .rss-device-hero h2 {
   font-size: 26px;
   line-height: 1.5;
   letter-spacing: -0.8px;
@@ -154,13 +154,13 @@
   line-height: 1;
   margin-bottom: 10px;
 }
-.rss-assistant-hero h2 {
+.rss-home-page .rss-assistant-hero h2 {
   font-size: 21px;
   line-height: 1.55;
   letter-spacing: -0.5px;
   color: #3e3756;
 }
-.rss-assistant-hero > p {
+.rss-home-page .rss-assistant-hero > p {
   font-size: 12px;
   line-height: 1.6;
   color: #8b849f;
@@ -296,7 +296,7 @@
   gap: 12px;
   margin-bottom: 17px;
 }
-.rss-home-section-heading h3 {
+.rss-home-page .rss-home-section-heading h3 {
   font-size: 14px;
 }
 .rss-home-section-heading > button,
@@ -468,10 +468,10 @@
   background: #302b45;
   border-color: #423a5e;
 }
-.rss-ui[data-theme="dark"] .rss-assistant-hero h2 {
+.rss-ui[data-theme="dark"] .rss-home-page .rss-assistant-hero h2 {
   color: #e0d9f5;
 }
-.rss-ui[data-theme="dark"] .rss-assistant-hero > p {
+.rss-ui[data-theme="dark"] .rss-home-page .rss-assistant-hero > p {
   color: #a99fc2;
 }
 .rss-ui[data-theme="dark"] .rss-home-ai-symbol {
@@ -512,7 +512,7 @@
   .rss-device-hero {
     min-height: 280px;
   }
-  .rss-device-hero h2 {
+  .rss-home-page .rss-device-hero h2 {
     font-size: 30px;
   }
   .rss-home-laptop {
@@ -539,7 +539,7 @@
   .rss-home-wallpaper strong {
     font-size: 29px;
   }
-  .rss-device-hero h2 {
+  .rss-home-page .rss-device-hero h2 {
     font-size: 23px;
   }
   .rss-home-hero-grid {
@@ -595,7 +595,7 @@
     min-height: 235px;
     padding: 24px;
   }
-  .rss-device-hero h2 {
+  .rss-home-page .rss-device-hero h2 {
     font-size: 24px;
   }
   .rss-home-laptop {
@@ -611,7 +611,7 @@
     min-height: 220px;
     padding: 22px;
   }
-  .rss-assistant-hero h2 {
+  .rss-home-page .rss-assistant-hero h2 {
     font-size: 20px;
   }
   .rss-home-lower {
@@ -645,12 +645,12 @@
     width: 35px;
     height: 35px;
   }
-  .rss-home-heading h1 {
+  .rss-home-page .rss-home-heading h1 {
     font-size: 25px;
   }
 }
 @media (max-width: 440px) {
-  .rss-device-hero h2 {
+  .rss-home-page .rss-device-hero h2 {
     max-width: 100%;
   }
   .rss-home-laptop {

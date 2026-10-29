@@ -99,6 +99,7 @@ export function createTaskCenter(
     recent: [] as TaskRef[],
     recentNext: null as string | null,
     recentLoaded: false,
+    recentAsOf: 0,
     recentLoading: false,
 
     remoteAvailable: false,
@@ -156,6 +157,7 @@ export function createTaskCenter(
     state.recent = [];
     state.recentNext = null;
     state.recentLoaded = false;
+    state.recentAsOf = 0;
     state.items = [];
     state.selected = null;
     state.next = null;
@@ -298,6 +300,7 @@ export function createTaskCenter(
         if (append) recentBrowsing = true;
         state.recentError = "";
         state.recentLoaded = true;
+        state.recentAsOf = page.asOf;
       } catch {
         if (alive && call === epoch)
           state.recentError = "最近任务读取未完成，保留事实待核实";
@@ -317,6 +320,7 @@ export function createTaskCenter(
     state.recent = [];
     state.recentNext = null;
     state.recentLoaded = false;
+    state.recentAsOf = 0;
     state.recentWindowed = false;
     recentBrowsing = false;
     await loadRecent();

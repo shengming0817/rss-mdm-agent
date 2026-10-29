@@ -46,7 +46,7 @@ const collectedTime = (value?: Snapshot<CollectedData>) =>
 // Evidence follows the same inputs as each display projection; never borrow another resource's clock.
 function contextEvidence(
   values: (Snapshot<CollectedData> | undefined)[],
-  native: Snapshot<SettingsSnapshot> | undefined,
+  native: Snapshot<SettingsSnapshot> | null | undefined,
   now: number,
 ) {
   const samples = values.filter((value) => value !== undefined);

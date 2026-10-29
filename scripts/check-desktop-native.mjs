@@ -1285,7 +1285,8 @@ try {
     await browser.execute(() => {
       location.search = "?desktop";
     });
-    await text("查看 Workspace");
+    await wait(() => browser.$('[aria-label="查看 Workspace"]').isDisplayed());
+    mark("v4 shell directed cycle");
     const layout = () =>
       browser.execute(() =>
         document
@@ -1313,6 +1314,7 @@ try {
     await browser
       .$('[aria-label="主页助手草稿"]')
       .setValue("WKWebView 原生草稿");
+    mark("native Command-K and Enter global search");
     key(40, false, true);
     await wait(() =>
       browser
@@ -1329,6 +1331,7 @@ try {
       await browser.$('[aria-label="主页助手草稿"]').getValue(),
       "WKWebView 原生草稿",
     );
+    mark("native page-assistant Escape and focus");
     await click("页面助手");
     await wait(() => browser.$('[aria-label="关闭页面助手"]').isDisplayed());
     key(53);
