@@ -7,7 +7,9 @@ const number = (v: unknown) =>
     : typeof v === "string" && /^\d+$/.test(v)
       ? Number(v)
       : undefined;
-function rows(value?: Snapshot<CollectedData>): Record<string, unknown>[] {
+export function collectedRows(
+  value?: Snapshot<CollectedData>,
+): Record<string, unknown>[] {
   return (
     value?.rows.flatMap((row) =>
       row &&
@@ -94,7 +96,7 @@ export function homeFacts(
     (f) => f.key === "batteryPresent",
   )?.value;
   const provider = source?.fields.find((f) => f.key === "source")?.value;
-  const interfaces = rows(network).filter(
+  const interfaces = collectedRows(network).filter(
     (r) => Array.isArray(r.addresses) && r.addresses.length,
   );
   const route = observations
@@ -107,7 +109,7 @@ export function homeFacts(
     f.source.domains.includes("hardware.os"),
   )?.value;
   const systemDrive = os?.fields["hardware.os.system_drive"];
-  const volume = rows(storage).find(
+  const volume = collectedRows(storage).find(
     (r) =>
       r.system_volume === true ||
       (typeof systemDrive === "string" && r.DeviceID === systemDrive),
@@ -120,7 +122,7 @@ export function homeFacts(
     const container = [...(current?.facts.values() ?? [])]
       .filter((f) => f.source.domains.includes("hardware.containers"))
       .flatMap((entry) =>
-        rows(entry.value).map((row) => ({ row, value: entry.value })),
+        collectedRows(entry.value).map((row) => ({ row, value: entry.value })),
       )
       .find((entry) => entry.row.id === volume.container_id);
     if (container) {

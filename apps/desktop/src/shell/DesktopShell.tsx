@@ -24,7 +24,7 @@ import { layouts, type PageId } from "../state/navigation";
 import { useDesktop, usePlatform } from "../state/react";
 import { WindowControls } from "./WindowControls";
 import { nativeWindow } from "../workspace/window";
-import { pageTitle } from "./navigation-model";
+import { pageTitle, secondaryEntries } from "./navigation-model";
 import { HiddenSecondary, PrimaryNavigation } from "./NavigationMenu";
 import "./shell.css";
 function EntryFeedback({
@@ -84,6 +84,51 @@ function NativeEntryObserver({ workspace }: { workspace: Workspace }) {
         if (result.kind === "task") {
           workspace.navigation.select("tasks", "history");
           return (await workspace.tasks.openTask(result.value)) === "ready";
+        }
+        if (result.kind === "localTool") {
+          if (result.value.kind === "software" && result.value.software) {
+            const original = result.value.software;
+            if (
+              !workspace.software
+                .installed()
+                .some(
+                  (item) =>
+                    JSON.stringify(item.reference) === JSON.stringify(original),
+                )
+            )
+              await workspace.software.discover();
+            if (
+              !workspace.software
+                .installed()
+                .some(
+                  (item) =>
+                    JSON.stringify(item.reference) === JSON.stringify(original),
+                )
+            )
+              return false;
+          }
+          if (
+            result.value.kind === "network" &&
+            result.value.target &&
+            workspace.networkCheck.state.request &&
+            !workspace.networkCheck.ended()
+          )
+            return false;
+          workspace.navigation.stage(result.value);
+          return true;
+        }
+        if (
+          result.kind === "policy" &&
+          result.value.task.kind !== "enrollment"
+        ) {
+          if (!workspace.policies.clear()) return false;
+          await workspace.policies.select(result.value);
+          if (!workspace.policies.state.item) return false;
+          workspace.navigation.select(
+            result.value.task.kind === "software" ? "software" : "tools",
+          );
+          workspace.navigation.showPolicy();
+          return true;
         }
         return false;
       },
@@ -178,9 +223,10 @@ export function DesktopShell({
     enterprise = workspace.identity.identity.mode === "user_device";
   const menu = {
     items: [
-      { key: "account", label: "账号与组织" },
-      { key: "registration", label: "设备注册与 MDM" },
-      { key: "appearance", label: "外观与体验" },
+      ...secondaryEntries("settings", platform).map((entry) => ({
+        key: entry.id,
+        label: entry.title,
+      })),
       { type: "divider" as const },
       { key: "login", label: enterprise ? "切换账号" : "登录企业账号" },
       { key: "logout", label: enterprise ? "退出企业账号" : "刷新本机会话" },
@@ -340,13 +386,17 @@ export function PageContainer({
   current: PageId;
   children: ReactNode;
 }) {
+  const [visited, setVisited] = useState(page === current);
+  useEffect(() => {
+    if (page === current) setVisited(true);
+  }, [page, current]);
   return (
     <section
       className="rss-page-viewport"
       hidden={page !== current}
       aria-label={pageTitle(page)}
     >
-      {children}
+      {visited || page === current ? children : null}
     </section>
   );
 }

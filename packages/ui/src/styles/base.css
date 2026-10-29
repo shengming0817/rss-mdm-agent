@@ -10,6 +10,9 @@
   font-size: 14px;
   line-height: 1.55;
 }
+.rss-ui .ant-tooltip {
+  pointer-events: none;
+}
 .rss-ui,
 .rss-ui * {
   box-sizing: border-box;

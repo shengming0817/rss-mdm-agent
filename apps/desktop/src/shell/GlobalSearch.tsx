@@ -7,11 +7,13 @@ import { usePlatform } from "../state/react";
 import { moduleEntries, secondaryEntries } from "./navigation-model";
 import { selectSection } from "./NavigationMenu";
 import { taskKey, taskTitle } from "../task-center/controller";
+import { policyPresentation } from "../software/presentation";
 type Result = { id: string; title: string; group: string; choose(): void };
 export function GlobalSearch({ workspace }: { workspace: Workspace }) {
   const nav = useSnapshot(workspace.navigation.state),
     software = useSnapshot(workspace.software.state),
     tasks = useSnapshot(workspace.tasks.state),
+    directory = useSnapshot(workspace.directory.state),
     platform = usePlatform(),
     input = useRef<InputRef>(null),
     list = useRef<HTMLDivElement>(null),
@@ -64,6 +66,34 @@ export function GlobalSearch({ workspace }: { workspace: Workspace }) {
           });
         },
       });
+    for (const item of directory.items.filter(
+      (value) => value.task.kind === "software" || value.task.kind === "script",
+    )) {
+      const view = policyPresentation(item),
+        page = item.task.kind === "software" ? "software" : "tools";
+      rows.push({
+        id: `policy:${item.policyId}`,
+        title: view.name,
+        group: "已读取的组织发布目录",
+        choose: () => {
+          workspace.navigation.select(
+            page,
+            page === "software" ? "discover" : "all",
+          );
+          workspace.navigation.locate({
+            kind: "resource",
+            page,
+            id: `policy:${item.policyId}`,
+            revision: JSON.stringify([
+              item.policyId,
+              item.policyVersion,
+              item.policyRevision,
+              item.subject,
+            ]),
+          });
+        },
+      });
+    }
     for (const item of workspace.tasks.recentItems(tasks))
       rows.push({
         id: `task:${taskKey(item.reference)}`,
@@ -75,7 +105,7 @@ export function GlobalSearch({ workspace }: { workspace: Workspace }) {
         },
       });
     return rows;
-  }, [workspace, software, tasks, platform]);
+  }, [workspace, software, tasks, directory, platform]);
   const search = query.trim().toLocaleLowerCase(),
     matches = entries
       .filter(

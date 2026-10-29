@@ -1,5 +1,7 @@
 import type { NavigationTarget } from "../workspace/page-navigation";
 import { proxy } from "valtio/vanilla";
+import { deepClone } from "valtio/vanilla/utils";
+import type { LocalPreparation } from "../self-service/types";
 
 export const modules = [
   ["home", "主页"],
@@ -60,6 +62,8 @@ export function createNavigation() {
     restoreStep: 1 as Exclude<LayoutStep, 0>,
     historyOpen: false,
     searchOpen: false,
+    policyOpen: false,
+    preparation: null as { id: number; input: LocalPreparation } | null,
   });
   return {
     state,
@@ -80,6 +84,32 @@ export function createNavigation() {
     },
     locate(target: NavigationTarget) {
       state.target = target;
+    },
+    showPolicy() {
+      state.policyOpen = true;
+    },
+    closePolicy() {
+      state.policyOpen = false;
+    },
+    stage(input: LocalPreparation) {
+      state.preparation = {
+        id: (state.preparation?.id ?? 0) + 1,
+        input: deepClone(input),
+      };
+      if (input.kind === "network") {
+        state.page = "tools";
+        state.selected.tools = "network";
+      } else if (input.kind === "settings") {
+        state.page = "system";
+        state.selected.system =
+          input.section === "lock" ? "power" : input.section;
+      } else {
+        state.page = "software";
+        state.selected.software = "installed";
+      }
+    },
+    clearPreparation() {
+      state.preparation = null;
     },
     collapse() {
       state.layoutStep = 3;

@@ -116,6 +116,8 @@ export function createFixturePorts() {
 
   const environment: FixtureEnvironment = {
     kind: "fixture",
+    connectionSave: (draft, expected) =>
+      rpc("save-connection", { draft, expected }),
     local: {
       ...fixtureLocalPorts(),
       tasks: {

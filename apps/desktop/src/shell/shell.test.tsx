@@ -32,7 +32,12 @@ async function fixture(
       <Observe />
     </DesktopProvider>,
   );
-  await screen.findByText("Current Device");
+  await screen.findByRole("button", { name: "切换侧栏布局" });
+  await within(
+    app.container.querySelector(
+      '.rss-page-viewport[aria-label="主页"]',
+    ) as HTMLElement,
+  ).findByText("Current Device");
   await waitFor(() =>
     expect(desktop.state.workspace?.assistant.state.connection).toBe(
       "connected",

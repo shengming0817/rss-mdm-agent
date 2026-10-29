@@ -7,6 +7,7 @@ import {
   useDesktop,
 } from "../../apps/desktop/src/state/react";
 import { createFixturePorts } from "./ports";
+import { configurePageFixture } from "./page-fixture";
 /** Explicit development-only assembly of production shell/pages with isolated ports. */
 export function DesktopFixture() {
   const parameters = new URLSearchParams(window.location.search),
@@ -14,6 +15,8 @@ export function DesktopFixture() {
     platform = parameters.get("platform") === "windows" ? "windows" : "macos";
   const input = useMemo(() => {
     const ports = createFixturePorts();
+    const pages = configurePageFixture(ports, scene);
+    Object.assign(window, { rssPageFixture: pages });
     if (scene === "registration-wait") {
       const read = ports.environment.service.requestRegistration;
       let first = true,
@@ -106,7 +109,14 @@ function FixtureControls() {
         defaultValue={
           new URLSearchParams(window.location.search).get("scene") ?? "normal"
         }
-        options={["normal", "empty", "partial", "error"].map((value) => ({
+        options={[
+          "normal",
+          "empty",
+          "partial",
+          "error",
+          "offline",
+          "readonly",
+        ].map((value) => ({
           value,
           label: value,
         }))}

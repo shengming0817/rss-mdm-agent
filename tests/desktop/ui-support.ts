@@ -133,7 +133,19 @@ export function shellFixture() {
           initialize: async () => ({ contractVersion: 1, acp: 1 }),
           listSessions: async () => ({ items: [] }),
           connections: async () => ({
-            connections: [{ connectionId: "cfg", status: "ready" }],
+            connections: [
+              {
+                schemaVersion: 1,
+                kind: "connection",
+                connectionId: "cfg",
+                status: "ready",
+                provider: "codex",
+                configRevision: 1,
+                profile: "conversation",
+                source: { type: "existing_config" },
+                presentation: { name: "Fixture Codex" },
+              },
+            ],
             preferences: {
               schemaVersion: 1,
               kind: "userPreferences",

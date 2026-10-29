@@ -1,0 +1,496 @@
+.rss-software-page .rss-eyebrow {
+  margin-bottom: 9px;
+}
+.rss-store-editorial {
+  display: grid;
+  grid-template-columns: 1.55fr 1fr;
+  gap: 16px;
+  margin-bottom: 30px;
+}
+.rss-software-story,
+.rss-creative-story {
+  position: relative;
+  overflow: hidden;
+  min-height: 230px;
+  padding: 25px 28px;
+  border: 1px solid #e1def0;
+  border-radius: 13px;
+  background: #eeedf7;
+}
+.rss-software-page .rss-software-story h2,
+.rss-software-page .rss-creative-story h2 {
+  position: relative;
+  z-index: 1;
+  font-size: 25px;
+  line-height: 1.5;
+  letter-spacing: -0.7px;
+  margin: 0;
+}
+.rss-software-page .rss-software-story p,
+.rss-software-page .rss-creative-story p {
+  position: relative;
+  z-index: 1;
+  font-size: 11px;
+  color: #81798c;
+  line-height: 1.9;
+  margin: 9px 0 17px;
+}
+.rss-software-story .ant-btn,
+.rss-creative-story .ant-btn {
+  position: relative;
+  z-index: 1;
+}
+.rss-creative-story {
+  background: #ede8e2;
+  border-color: #e3dbd1;
+  padding: 25px;
+}
+.rss-software-page .rss-creative-story h2 {
+  font-size: 23px;
+}
+.rss-software-page .rss-creative-story p {
+  color: #8d7e71;
+}
+.rss-creative-story .rss-eyebrow {
+  color: #9a8779;
+}
+.rss-creative-story .ant-btn-link {
+  color: #8e7560;
+  padding: 0;
+}
+.rss-creative-flower {
+  position: absolute;
+  right: 17px;
+  bottom: 25px;
+  width: 100px;
+  height: 100px;
+  opacity: 0.6;
+  transform: rotate(15deg);
+}
+.rss-creative-flower i {
+  position: absolute;
+  width: 52px;
+  height: 52px;
+  background: #b9b2c3;
+  border-radius: 50% 50% 5px 50%;
+  transform-origin: bottom right;
+}
+.rss-creative-flower i:nth-child(2) {
+  transform: rotate(90deg);
+}
+.rss-creative-flower i:nth-child(3) {
+  transform: rotate(180deg);
+}
+.rss-creative-flower i:nth-child(4) {
+  transform: rotate(270deg);
+}
+.rss-story-icons {
+  position: absolute;
+  right: 28px;
+  bottom: 31px;
+  display: flex;
+  gap: 9px;
+  transform: rotate(-7deg);
+}
+.rss-story-icons i {
+  display: grid;
+  place-items: center;
+  width: 47px;
+  height: 47px;
+  border-radius: 12px;
+  background: #fff;
+  color: #8882a5;
+  box-shadow: 0 8px 20px #70658d16;
+  font-style: normal;
+  font-size: 23px;
+}
+.rss-story-icons i:nth-child(2) {
+  background: #e4c5a9;
+  color: #806651;
+  transform: translateY(-12px) rotate(12deg);
+}
+.rss-software-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 24px 0 17px;
+}
+.rss-software-page .rss-software-section-heading h2 {
+  font-size: 17px;
+  font-weight: 600;
+  margin: 0;
+}
+.rss-software-page .rss-software-section-heading p {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 5px 0 0;
+}
+.rss-software-filterbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 13px;
+}
+.rss-software-filterbar .ant-input-search {
+  max-width: 360px;
+}
+.rss-software-filterbar .ant-select {
+  min-width: 130px;
+}
+.rss-software-filterbar > span {
+  margin-left: auto;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--muted);
+}
+.rss-software-page .rss-software-source {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.8;
+  margin: 0 0 16px;
+}
+.rss-store-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 19px;
+}
+.rss-store-grid .rss-software-card {
+  min-width: 0;
+}
+.rss-software-page .ant-alert {
+  margin: 12px 0;
+}
+.rss-installed-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+.rss-installed-card {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 12px;
+  padding: 20px;
+  min-width: 0;
+}
+.rss-installed-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 15px;
+}
+.rss-installed-card .rss-app-name {
+  max-width: 100%;
+  white-space: normal;
+  height: auto;
+  text-align: left;
+  padding: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.rss-software-page .rss-installed-card p {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.8;
+  margin: 6px 0;
+}
+.rss-installed-card small {
+  font-size: 10px;
+  color: var(--muted);
+}
+.rss-installed-card-actions,
+.rss-inline-actions {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.rss-installed-card-actions {
+  margin-top: 18px;
+}
+.rss-software-page .rss-software-protection {
+  font-size: 10px;
+  color: var(--muted);
+  margin: 12px 0 0;
+}
+.rss-table-sub {
+  display: block;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.rss-software-pagination {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+.rss-category-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.rss-library-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  width: 100%;
+  padding: 23px 25px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  margin: 24px 0;
+}
+.rss-library-banner strong {
+  font-size: 15px;
+  font-weight: 550;
+}
+.rss-library-banner small {
+  display: block;
+  margin-top: 7px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.rss-library-banner > span:last-child {
+  font-size: 11px;
+  color: var(--accent);
+}
+.rss-software-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  margin-bottom: 18px;
+}
+.rss-software-detail-hero {
+  display: flex;
+  align-items: center;
+  gap: 19px;
+  margin-bottom: 25px;
+}
+.rss-detail-app-icon {
+  display: grid;
+  place-items: center;
+  width: 77px;
+  height: 77px;
+  flex-shrink: 0;
+  border-radius: 19px;
+  background: #e8e4f1;
+  color: #88829b;
+  font-size: 32px;
+}
+.rss-software-page .rss-software-detail-hero h1 {
+  font-size: 29px;
+  letter-spacing: -0.6px;
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+.rss-software-page .rss-software-detail-hero p {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0 0 9px;
+}
+.rss-software-detail-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 255px;
+  gap: 26px;
+  align-items: start;
+}
+.rss-software-detail-content {
+  min-width: 0;
+}
+.rss-software-detail-content > .rss-store-art {
+  height: 240px;
+  border-radius: 12px;
+}
+.rss-software-detail-content > .ant-tabs {
+  margin: 15px 0 24px;
+}
+.rss-software-page .rss-software-detail-content h2 {
+  font-size: 19px;
+  font-weight: 600;
+}
+.rss-software-page .rss-software-detail-content p {
+  font-size: 12px;
+  line-height: 1.95;
+  color: var(--muted);
+}
+.rss-software-highlight-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 15px 0;
+}
+.rss-software-highlight-grid article {
+  padding: 18px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.rss-software-page .rss-software-highlight-grid h3 {
+  font-size: 12px;
+  margin: 0 0 8px;
+}
+.rss-software-page .rss-software-highlight-grid p {
+  font-size: 11px;
+  margin: 0;
+}
+.rss-software-help {
+  padding: 23px;
+  border-radius: 12px;
+  background: #eeedf5;
+  margin-top: 12px;
+}
+.rss-software-facts {
+  padding: 22px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  position: sticky;
+  top: 0;
+}
+.rss-software-page .rss-software-facts h3 {
+  font-size: 13px;
+  margin: 0 0 20px;
+}
+.rss-software-facts .rss-account-facts {
+  display: block;
+}
+.rss-software-facts dt {
+  font-size: 10px;
+  color: var(--muted);
+  margin: 13px 0 5px;
+}
+.rss-software-facts dd {
+  font-size: 11px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.rss-software-facts .ant-btn {
+  margin-top: 20px;
+}
+.rss-software-page .rss-software-facts p {
+  font-size: 10px;
+  line-height: 1.9;
+  margin: 15px 0 0;
+}
+.rss-release-entry {
+  padding: 18px 0;
+  border-bottom: 1px solid var(--line);
+}
+.rss-related-task {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  height: auto;
+  padding: 12px;
+  white-space: normal;
+}
+.rss-related-task small {
+  font-size: 10px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.rss-field {
+  display: grid;
+  gap: 9px;
+}
+.rss-field > span {
+  font-size: 12px;
+}
+.rss-reference {
+  overflow-wrap: anywhere;
+}
+.rss-ui[data-theme="dark"] .rss-software-story {
+  background: #2d2b3c;
+  border-color: #403b52;
+}
+.rss-ui[data-theme="dark"] .rss-creative-story {
+  background: #352f2c;
+  border-color: #4b4039;
+}
+.rss-ui[data-theme="dark"] .rss-software-page .rss-software-story h2 {
+  color: #ded7f0;
+}
+.rss-ui[data-theme="dark"] .rss-software-page .rss-creative-story h2 {
+  color: #e4d4c7;
+}
+.rss-ui[data-theme="dark"] .rss-software-page .rss-software-story p,
+.rss-ui[data-theme="dark"] .rss-software-story .rss-eyebrow {
+  color: #b5adc8;
+}
+.rss-ui[data-theme="dark"] .rss-software-page .rss-creative-story p,
+.rss-ui[data-theme="dark"] .rss-creative-story .rss-eyebrow,
+.rss-ui[data-theme="dark"] .rss-creative-story .ant-btn-link {
+  color: #c6b7aa;
+}
+.rss-ui[data-theme="dark"] .rss-software-help {
+  background: #2d2b3c;
+}
+@media (max-width: 1200px) {
+  .rss-installed-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .rss-software-detail-layout {
+    grid-template-columns: minmax(0, 1fr) 220px;
+  }
+  .rss-software-detail-hero .rss-page-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .rss-software-highlight-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 720px) {
+  .rss-store-editorial,
+  .rss-store-grid,
+  .rss-installed-grid,
+  .rss-software-detail-layout {
+    grid-template-columns: 1fr;
+  }
+  .rss-software-story,
+  .rss-creative-story {
+    min-height: 220px;
+  }
+  .rss-software-filterbar {
+    flex-wrap: wrap;
+  }
+  .rss-software-filterbar .ant-input-search {
+    max-width: none;
+    width: 100%;
+  }
+  .rss-software-section-heading {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .rss-software-detail-hero {
+    flex-wrap: wrap;
+    gap: 13px;
+  }
+  .rss-software-page .rss-software-detail-hero h1 {
+    font-size: 22px;
+  }
+  .rss-software-detail-hero .rss-page-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .rss-detail-app-icon {
+    width: 60px;
+    height: 60px;
+  }
+  .rss-software-facts {
+    position: static;
+  }
+  .rss-software-detail-content > .rss-store-art {
+    height: 200px;
+  }
+  .rss-library-banner {
+    flex-wrap: wrap;
+  }
+  .rss-story-icons {
+    right: 17px;
+  }
+}

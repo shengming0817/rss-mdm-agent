@@ -4,9 +4,15 @@ import type {
   MdmStatus,
 } from "./service-contract";
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { boundedJson, decode, accessLimits } from "@rss-mdm-agent/ai-contract";
 import type { HostStatus } from "@rss-mdm-agent/ai-contract/wire";
-import { accountState, accountScope, refreshAccount } from "../test-users";
+import {
+  accountState,
+  accountScope,
+  refreshAccount,
+  saveNativeConnection,
+} from "../test-users";
 const status = (value: unknown): HostStatus => {
   const record = decode(boundedJson(value, accessLimits), accessLimits);
   if (record.kind !== "hostStatus") throw new Error("invalid_response");
@@ -91,6 +97,13 @@ export type PersonalVaultStatus =
 export type PersonalVaultPort = (
   operation: PersonalVaultOperation,
 ) => Promise<PersonalVaultStatus>;
+export type ConnectionSavePort = typeof saveNativeConnection;
+export function nativeConnectionSave(): ConnectionSavePort | undefined {
+  return isTauri() ? saveNativeConnection : undefined;
+}
+export function nativeAppVersion(): (() => Promise<string>) | undefined {
+  return isTauri() ? getVersion : undefined;
+}
 export function nativePersonalVault(): PersonalVaultPort | undefined {
   if (!isTauri()) return undefined;
   return (input) => invoke<PersonalVaultStatus>("personal_vault", { input });

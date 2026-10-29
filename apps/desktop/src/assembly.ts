@@ -34,6 +34,10 @@ export type FixtureEnvironment = {
   identity: { read(): Promise<UserContext>; guest(): Promise<UserContext> };
   host: NonNullable<ReturnType<typeof nativeHost>>;
   service: ServicePort;
+  diagnostics?: import("./settings/native").DiagnosticPort;
+  personalVault?: import("./settings/native").PersonalVaultPort;
+  connectionSave?: import("./settings/native").ConnectionSavePort;
+  appVersion?: () => Promise<string>;
 };
 export function assertFixtureAssembly(input: {
   environment?: FixtureEnvironment;

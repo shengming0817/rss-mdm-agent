@@ -63,6 +63,7 @@ export function UiProvider({
       style={{ ...variables, fontFamily, colorScheme: mode } as CSSProperties}
     >
       <ConfigProvider
+        button={{ autoInsertSpace: false }}
         locale={zhCN}
         theme={productTheme(mode, reduce)}
         getPopupContainer={() => container.current!}

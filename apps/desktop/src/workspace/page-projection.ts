@@ -4,6 +4,8 @@ import type { PageId } from "../state/navigation";
 import type { PageResource } from "./page-navigation";
 import { homeFacts } from "../system-settings/facts";
 import { taskKey, taskTitle } from "../task-center/controller";
+import { policyResource } from "../self-service/directory";
+import { policyPresentation } from "../software/presentation";
 export function pageResources(
   workspace: Workspace,
   page: PageId,
@@ -13,8 +15,26 @@ export function pageResources(
   software: Snapshot<Workspace["software"]["state"]>,
   tasks: Snapshot<Workspace["tasks"]["state"]>,
   now = Date.now(),
+  directory?: Snapshot<Workspace["directory"]["state"]>,
 ): PageResource[] {
   const rows: PageResource[] = [];
+  if (
+    directory &&
+    (page === "tools" ||
+      (page === "software" &&
+        (section === "discover" || section.startsWith("category:"))))
+  ) {
+    for (const item of directory.items
+      .filter((item) =>
+        page === "tools"
+          ? item.task.kind === "script"
+          : item.task.kind === "software" &&
+            (!section.startsWith("category:") ||
+              policyPresentation(item).category === section.slice(9)),
+      )
+      .slice(0, 12))
+      rows.push(policyResource(item, workspace.directory, directory));
+  }
   if (page === "home" && device.value && !device.error && device.readAt != null)
     rows.push({
       id: "device",
