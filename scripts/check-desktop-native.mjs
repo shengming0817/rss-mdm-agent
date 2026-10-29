@@ -319,9 +319,9 @@ const expandNavigation = async () => {
 };
 const openAgentSettings = async (section) => {
   await closeNavigationDialog();
-  await click("用户菜单");
+  await click("RSS MDM Agent 设置");
   const item = await browser.$(
-    `//*[@role="menuitem" and normalize-space(.)=${JSON.stringify(section)}]`,
+    `//nav[@aria-label="RSS MDM Agent 设置二级菜单"]//button[@aria-label=${JSON.stringify(section)}]`,
   );
   await wait(() => item.isDisplayed());
   await item.click();
@@ -1291,7 +1291,12 @@ try {
       .$('[role="combobox"][aria-label="搜索应用、工具和设置"]')
       .setValue("Workspace");
     key(36);
-    await wait(async () => !(await browser.$('[role="dialog"]').isDisplayed()));
+    await wait(
+      async () =>
+        !(await browser
+          .$('[role="listbox"][aria-label="搜索结果"]')
+          .isDisplayed()),
+    );
     await click("主页", "//div[contains(@class,'rss-hidden-primary')]");
     assert.equal(
       await browser.$('[aria-label="主页助手草稿"]').getValue(),
@@ -1571,9 +1576,9 @@ try {
       "production assistant in macOS WKWebView: native keyboard input, fixed secondary history keeps per-session draft, official A2UI binding/answer, original trusted Policy draft edited and submitted once; scripted Host/sample record, no real model or OS execution effect claimed",
     );
     mark("native redacted diagnostic snapshot");
-    await click("用户菜单");
+    await click("RSS MDM Agent 设置");
     const diagnosticMenu =
-      '//*[@role="menuitem" and normalize-space(.)="运行与诊断"]';
+      '//nav[@aria-label="RSS MDM Agent 设置二级菜单"]//button[@aria-label="运行与诊断"]';
     await wait(() => browser.$(diagnosticMenu).isDisplayed());
     await browser.$(diagnosticMenu).click();
     await click("预览脱敏诊断");

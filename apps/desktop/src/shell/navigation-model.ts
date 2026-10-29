@@ -2,7 +2,6 @@ import {
   CodeSandboxOutlined,
   DesktopOutlined,
   FileTextOutlined,
-  StarOutlined,
   ClockCircleOutlined,
   HomeOutlined,
   RobotOutlined,
@@ -21,11 +20,12 @@ import {
   LockOutlined,
   BulbOutlined,
 } from "@ant-design/icons";
+import { SparklesIcon } from "./SparklesIcon";
 import { modules, sections, type PageId } from "../state/navigation";
 import type { ComponentType } from "react";
 const moduleIcons = [
   HomeOutlined,
-  StarOutlined,
+  SparklesIcon,
   CodeSandboxOutlined,
   ToolOutlined,
   DesktopOutlined,
@@ -38,7 +38,7 @@ export const moduleEntries = modules.map(([id, title], index) => ({
 }));
 export const pageTitle = (page: PageId) =>
   page === "settings"
-    ? "账号设置"
+    ? "RSS MDM Agent 设置"
     : (moduleEntries.find((entry) => entry.id === page)?.title ?? "RSS Agent");
 const descriptions: Record<
   string,
@@ -48,7 +48,11 @@ const descriptions: Record<
   new: { title: "新会话", Icon: PlusOutlined },
   history: { title: "历史记录", Icon: HistoryOutlined },
   discover: { title: "发现", Icon: CompassOutlined, group: "软件中心" },
-  installed: { title: "已安装", Icon: CheckCircleOutlined },
+  installed: {
+    title: "已安装",
+    Icon: CheckCircleOutlined,
+    group: "按类别浏览",
+  },
   updates: { title: "更新", Icon: DownloadOutlined },
   all: { title: "全部工具", Icon: ToolOutlined },
   network: { title: "连接与网络", Icon: WifiOutlined },
@@ -76,7 +80,7 @@ export function secondaryEntries(page: PageId, platform: "macos" | "windows") {
         id,
         title: id.slice(9),
         Icon: FolderOutlined,
-        group: id === "category:效率办公" ? "按类别浏览" : undefined,
+        group: undefined,
       };
     const description = descriptions[id];
     const title =

@@ -48,6 +48,10 @@ try {
         );
       }
     }
+    tauriArgs.unshift(
+      "--config",
+      JSON.stringify({ build: { devUrl: "http://127.0.0.1:1420/?desktop" } }),
+    );
     const featureIndex = tauriArgs.indexOf("--features");
     if (featureIndex >= 0) tauriArgs[featureIndex + 1] += ",dev-fixture";
     else tauriArgs.unshift("--features", "dev-fixture");

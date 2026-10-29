@@ -18,13 +18,13 @@ export const sections = {
   assistant: ["new", "history"],
   software: [
     "discover",
-    "installed",
-    "updates",
     "category:效率办公",
     "category:创意设计",
     "category:网络工具",
     "category:开发工具",
     "category:系统工具",
+    "installed",
+    "updates",
   ],
   tools: ["all", "network", "maintenance", "security"],
   system: [

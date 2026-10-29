@@ -6,7 +6,6 @@ import { useDesktop, useWorkspace, usePlatform } from "./state/react";
 import type { Workspace } from "./state/workspace";
 import { modules, type PageId } from "./state/navigation";
 import { DesktopShell, PageContainer } from "./shell/DesktopShell";
-import { GlobalSearch } from "./shell/GlobalSearch";
 import { PageAssistant } from "./shell/PageAssistant";
 import { pageTitle, secondaryEntries } from "./shell/navigation-model";
 import { nativeWindow } from "./workspace/window";
@@ -228,7 +227,6 @@ function WorkspaceView({
   return (
     <DesktopShell
       workspace={workspace}
-      onLogin={onLogin}
       onAssistant={openCompanion}
       assistantTrigger={assistantButton}
       navToggleRef={navButton}
@@ -281,7 +279,6 @@ function WorkspaceView({
         open={companion}
         onClose={closeCompanion}
       />
-      <GlobalSearch workspace={workspace} />
       <PolicyDrawer
         workspace={workspace}
         open={nav.policyOpen}

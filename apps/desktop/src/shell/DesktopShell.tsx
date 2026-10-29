@@ -11,12 +11,10 @@ import {
   type RefObject,
 } from "react";
 import { useSnapshot } from "valtio";
-import { Button, Dropdown, Tooltip } from "antd";
+import { Button, Tooltip, type InputRef } from "antd";
 import {
   MenuFoldOutlined,
   MenuUnfoldOutlined,
-  SearchOutlined,
-  StarOutlined,
   UserOutlined,
 } from "@ant-design/icons";
 import type { Workspace } from "../state/workspace";
@@ -24,8 +22,14 @@ import { layouts, type PageId } from "../state/navigation";
 import { useDesktop, usePlatform } from "../state/react";
 import { WindowControls } from "./WindowControls";
 import { nativeWindow } from "../workspace/window";
-import { pageTitle, secondaryEntries } from "./navigation-model";
-import { HiddenSecondary, PrimaryNavigation } from "./NavigationMenu";
+import { pageTitle } from "./navigation-model";
+import {
+  AppSettingsNavigation,
+  HiddenSecondary,
+  PrimaryNavigation,
+} from "./NavigationMenu";
+import { GlobalSearch } from "./GlobalSearch";
+import { SparklesIcon } from "./SparklesIcon";
 import "./shell.css";
 function EntryFeedback({
   entries,
@@ -141,7 +145,6 @@ function NativeEntryObserver({ workspace }: { workspace: Workspace }) {
 }
 export function DesktopShell({
   workspace,
-  onLogin,
   onAssistant,
   children,
   assistantTrigger,
@@ -150,7 +153,6 @@ export function DesktopShell({
   assistantTrigger?: RefObject<HTMLButtonElement | null>;
   navToggleRef?: RefObject<HTMLButtonElement | null>;
   workspace: Workspace;
-  onLogin(): void;
   onAssistant(): void;
   children: ReactNode;
 }) {
@@ -160,7 +162,8 @@ export function DesktopShell({
     appearance = useSnapshot(desktop.appearance.state),
     assistant = useSnapshot(workspace.assistant.state);
   const controls = useMemo(nativeWindow, []),
-    ownToggle = useRef<HTMLButtonElement>(null);
+    ownToggle = useRef<HTMLButtonElement>(null),
+    searchInput = useRef<InputRef>(null);
   const toggle = navToggleRef ?? ownToggle;
   const layout = layouts[nav.layoutStep];
   const collapse = () => {
@@ -192,6 +195,7 @@ export function DesktopShell({
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         workspace.navigation.setSearch(true);
+        searchInput.current?.focus();
       }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b") {
         if (
@@ -221,40 +225,24 @@ export function DesktopShell({
   }, [workspace]);
   const user = workspace.identity.user,
     enterprise = workspace.identity.identity.mode === "user_device";
-  const menu = {
-    items: [
-      ...secondaryEntries("settings", platform).map((entry) => ({
-        key: entry.id,
-        label: entry.title,
-      })),
-      { type: "divider" as const },
-      { key: "login", label: enterprise ? "切换账号" : "登录企业账号" },
-      { key: "logout", label: enterprise ? "退出企业账号" : "刷新本机会话" },
-    ],
-    onClick: ({ key }: { key: string }) => {
-      if (key === "login") onLogin();
-      else if (key === "logout") void desktop.logout();
-      else workspace.navigation.select("settings", key);
-    },
-  };
   const accountButton = (top = false) => (
-    <Dropdown menu={menu} trigger={["click"]}>
-      <button
-        type="button"
-        className={
-          top ? "rss-account-button rss-account-top" : "rss-account-button"
-        }
-        aria-label="用户菜单"
-      >
-        <span className="rss-avatar">
-          {user.displayName.trim().slice(0, 1) || <UserOutlined />}
-        </span>
-        <span className="rss-account-copy">
-          <strong>{user.displayName}</strong>
-          <small>{enterprise ? "企业账号" : "本机工作区"}</small>
-        </span>
-      </button>
-    </Dropdown>
+    <button
+      type="button"
+      className={
+        top ? "rss-account-button rss-account-top" : "rss-account-button"
+      }
+      aria-label="RSS MDM Agent 设置"
+      aria-current={nav.page === "settings" ? "page" : undefined}
+      onClick={() => workspace.navigation.select("settings")}
+    >
+      <span className="rss-avatar">
+        {user.displayName.trim().slice(0, 1) || <UserOutlined />}
+      </span>
+      <span className="rss-account-copy">
+        <strong>{user.displayName}</strong>
+        <small>{enterprise ? "企业账号" : "本机工作区"}</small>
+      </span>
+    </button>
   );
   return (
     <div
@@ -313,22 +301,13 @@ export function DesktopShell({
         <div className="rss-hidden-primary">
           <PrimaryNavigation workspace={workspace} inline />
         </div>
-        <button
-          type="button"
-          className="rss-top-search"
-          onClick={() => workspace.navigation.setSearch(true)}
-          aria-label="搜索应用、设置与任务"
-        >
-          <SearchOutlined />
-          <span>搜索应用、设置与任务</span>
-          <kbd>{platform === "macos" ? "⌘" : "Ctrl"} K</kbd>
-        </button>
+        <GlobalSearch workspace={workspace} input={searchInput} />
         <Tooltip title="页面助手">
           <Button
             ref={assistantTrigger}
             className="rss-page-assistant-trigger"
             type="text"
-            icon={<StarOutlined />}
+            icon={<SparklesIcon />}
             aria-label="页面助手"
             onClick={onAssistant}
           >
@@ -346,7 +325,12 @@ export function DesktopShell({
       />
       <aside className="rss-sidebar">
         <PrimaryNavigation workspace={workspace} />
-        <div className="rss-sidebar-account">{accountButton()}</div>
+        <div className="rss-sidebar-account">
+          {nav.page === "settings" && (
+            <AppSettingsNavigation workspace={workspace} />
+          )}
+          {accountButton()}
+        </div>
       </aside>
       <div className="rss-hidden-secondary">
         <HiddenSecondary workspace={workspace} />

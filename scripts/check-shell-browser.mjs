@@ -33,6 +33,30 @@ export async function checkShellBrowser(page, fixture) {
   await page
     .getByRole("button", { name: "查看 Workspace", exact: true })
     .waitFor();
+  // Browser geometry validates the native safe-area CSS; native traffic lights remain an OS check.
+  await shell.evaluate((node) =>
+    node.setAttribute("data-native-window", "true"),
+  );
+  for (const width of [1280, 720, 480]) {
+    await page.setViewportSize({ width, height: 760 });
+    const geometry = await page.evaluate(() => {
+      const box = (selector) =>
+        document.querySelector(selector).getBoundingClientRect();
+      return {
+        slot: box(".rss-traffic-slot").width,
+        brand: box(".rss-brand").x,
+        end: box(".rss-topbar").right,
+        toggle: box(".rss-nav-toggle").right,
+      };
+    });
+    assert.ok(geometry.slot >= 76);
+    assert.ok(geometry.brand >= 93);
+    assert.ok(geometry.toggle < geometry.end);
+  }
+  await shell.evaluate((node) =>
+    node.setAttribute("data-native-window", "false"),
+  );
+  await page.setViewportSize({ width: 1280, height: 900 });
   const before = await cycle.boundingBox();
   for (const step of [1, 2, 3, 0]) {
     await cycle.click();
@@ -91,6 +115,25 @@ export async function checkShellBrowser(page, fixture) {
   );
   await page.keyboard.press("Control+k");
   const search = page.getByRole("combobox", { name: "搜索应用、工具和设置" });
+  await page.getByRole("listbox", { name: "搜索结果" }).waitFor();
+  assert.equal(await page.getByRole("dialog").count(), 0);
+  const searchBox = await search.boundingBox(),
+    resultsBox = await page
+      .getByRole("listbox", { name: "搜索结果" })
+      .boundingBox();
+  assert.ok(resultsBox.y >= searchBox.y + searchBox.height);
+  assert.ok(resultsBox.y < searchBox.y + searchBox.height + 48);
+  await search.fill("外观与体验");
+  await page.keyboard.press("Control+k");
+  assert.equal(await search.inputValue(), "外观与体验");
+  assert.equal(
+    await search.evaluate((node) => node === document.activeElement),
+    true,
+  );
+  await search.press("Escape");
+  assert.equal(await shell.getAttribute("data-layout-step"), "0");
+  await search.click();
+  await search.fill("");
   await search.press("ArrowUp");
   await page.waitForFunction(() => {
     const list = document.querySelector(".rss-search-results"),
@@ -103,7 +146,9 @@ export async function checkShellBrowser(page, fixture) {
   await capture("search-keyboard");
   await search.fill("Workspace");
   await search.press("Enter");
-  await page.getByRole("dialog").waitFor({ state: "hidden" });
+  await page
+    .getByRole("listbox", { name: "搜索结果" })
+    .waitFor({ state: "hidden" });
   assert.equal(
     await page
       .locator('.rss-hidden-secondary button[aria-current="page"]')
@@ -203,7 +248,9 @@ export async function checkShellBrowser(page, fixture) {
     });
     await searchSettings.fill(title);
     await searchSettings.press("Enter");
-    await page.getByRole("dialog").waitFor({ state: "hidden" });
+    await page
+      .getByRole("listbox", { name: "搜索结果" })
+      .waitFor({ state: "hidden" });
     assert.equal(
       await page.evaluate(
         () =>
@@ -306,10 +353,10 @@ export async function checkShellBrowser(page, fixture) {
       () => window.rssDesktop.state.workspace.assistant.sessions().length,
     )) > 0,
   );
-  await page.getByRole("button", { name: "用户菜单", exact: true }).click();
   await page
-    .getByRole("menuitem", { name: "登录企业账号", exact: true })
+    .getByRole("button", { name: "RSS MDM Agent 设置", exact: true })
     .click();
+  await page.getByRole("button", { name: "登录企业账号", exact: true }).click();
   await capture("account-login");
   await page.keyboard.press("Control+k");
   assert.equal(
@@ -369,9 +416,15 @@ export async function checkShellBrowser(page, fixture) {
     body: JSON.stringify({ scenario: "unregistered" }),
   });
   await go("&scene=registration-wait");
-  await page.getByRole("button", { name: "用户菜单", exact: true }).click();
   await page
-    .getByRole("menuitem", { name: "设备注册与 MDM", exact: true })
+    .getByRole("button", { name: "RSS MDM Agent 设置", exact: true })
+    .click();
+  await page
+    .getByRole("navigation", {
+      name: "RSS MDM Agent 设置二级菜单",
+      exact: true,
+    })
+    .getByRole("button", { name: "设备注册与 MDM", exact: true })
     .click();
   await page.getByRole("button", { name: "注册这台设备", exact: true }).click();
   await page
@@ -404,8 +457,16 @@ export async function checkShellBrowser(page, fixture) {
     0,
   );
   await capture("registration-pending");
-  await page.getByRole("button", { name: "用户菜单", exact: true }).click();
-  await page.getByRole("menuitem", { name: "外观与体验", exact: true }).click();
+  await page
+    .getByRole("button", { name: "RSS MDM Agent 设置", exact: true })
+    .click();
+  await page
+    .getByRole("navigation", {
+      name: "RSS MDM Agent 设置二级菜单",
+      exact: true,
+    })
+    .getByRole("button", { name: "外观与体验", exact: true })
+    .click();
   const themeChoice = page.getByRole("combobox", { name: "界面主题" });
   await themeChoice.click();
   await themeChoice.press("ArrowDown");
