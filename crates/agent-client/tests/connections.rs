@@ -473,5 +473,11 @@ async fn dns_failure_selects_only_a_signed_candidate_without_replaying_the_reque
         .unwrap();
     assert_eq!(client.drive_connections().await, Err(Error::Unavailable));
     assert_eq!(client.connection_status().unwrap().origin, known);
+    assert_eq!(stored(&root)["failure"]["reason"], "network_unavailable");
+    assert_eq!(server.data.lock().unwrap().connection_get_calls, 0);
+    drop(client);
+    let client = server.client(&root, OpenMode::Existing);
+    assert_eq!(client.connection_status().unwrap().origin, known);
+    assert_eq!(stored(&root)["failure"]["reason"], "network_unavailable");
     assert_eq!(server.data.lock().unwrap().connection_get_calls, 0);
 }

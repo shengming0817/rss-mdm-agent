@@ -977,7 +977,7 @@ pub(crate) fn transport_error(error: reqwest::Error) -> Error {
         return Error::Unavailable;
     }
     let mut source: Option<&(dyn std::error::Error + 'static)> = Some(&error);
-    let mut network = error.is_timeout();
+    let mut network = error.is_timeout() || error.is_dns();
     while let Some(current) = source {
         if current.downcast_ref::<rustls::Error>().is_some() {
             return Error::Unavailable;
@@ -1085,6 +1085,59 @@ fn task_deadline(payload: &wire::TaskPayload) -> Option<i64> {
 #[cfg(test)]
 mod transport_tests {
     use super::*;
+
+    #[derive(Debug)]
+    struct FailingDns {
+        tls: bool,
+    }
+
+    impl reqwest::dns::Resolve for FailingDns {
+        fn resolve(&self, _: reqwest::dns::Name) -> reqwest::dns::Resolving {
+            let tls = self.tls;
+            Box::pin(async move {
+                // InvalidData is deliberately outside the network IO allowlist.
+                // The resolver stage, rather than the OS error kind/text, is authoritative.
+                let error: Box<dyn std::error::Error + Send + Sync> = if tls {
+                    Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        rustls::Error::General("test TLS failure".into()),
+                    ))
+                } else {
+                    Box::new(std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        "test DNS failure",
+                    ))
+                };
+                Err(error)
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn dns_stage_is_network_independent_of_os_error_kind_but_tls_stays_closed() {
+        for tls in [false, true] {
+            let error = reqwest::Client::builder()
+                .no_proxy()
+                .dns_resolver(std::sync::Arc::new(FailingDns { tls }))
+                .build()
+                .unwrap()
+                .get("https://rss-agent-unreachable.invalid")
+                .send()
+                .await
+                .unwrap_err();
+            assert!(error.is_connect());
+            assert!(error.is_dns());
+            assert_eq!(
+                transport_error(error),
+                if tls {
+                    Error::Unavailable
+                } else {
+                    Error::Network
+                }
+            );
+        }
+    }
+
     #[test]
     fn bounded_http_body_finishes_while_owner_checks_os_facts() {
         use std::io::{Read, Write};
