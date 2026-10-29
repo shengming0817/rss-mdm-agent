@@ -165,3 +165,36 @@ it("keeps an offline draft editable while preventing send from clicks or Enter",
   fireEvent.click(screen.getByRole("button", { name: "发送消息" }));
   expect(send).not.toHaveBeenCalled();
 });
+
+it("copies the complete stable message and reports only the actual clipboard result for that version", async () => {
+  const { act } = await import("@testing-library/react"),
+    copy = vi.fn().mockResolvedValue(true);
+  const message = {
+    id: "one",
+    kind: "assistant" as const,
+    stable: true,
+    text: "## 原文\n\n完整段落",
+  };
+  const app = render(<MessageStream messages={[message]} onCopy={copy} />);
+  await act(async () =>
+    fireEvent.click(screen.getByRole("button", { name: "复制这条消息" })),
+  );
+  expect(copy).toHaveBeenCalledWith(message.text);
+  expect(screen.getByText("已复制")).toBeTruthy();
+  app.rerender(
+    <MessageStream
+      messages={[{ ...message, text: "新版原文" }]}
+      onCopy={copy}
+    />,
+  );
+  expect(screen.queryByText("已复制")).toBeNull();
+  copy.mockResolvedValueOnce(false);
+  await act(async () =>
+    fireEvent.click(screen.getByRole("button", { name: "复制这条消息" })),
+  );
+  expect(screen.getByText("复制未完成")).toBeTruthy();
+  app.rerender(
+    <MessageStream messages={[{ ...message, stable: false }]} onCopy={copy} />,
+  );
+  expect(screen.queryByRole("button", { name: "复制这条消息" })).toBeNull();
+});

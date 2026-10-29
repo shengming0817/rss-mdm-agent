@@ -318,7 +318,69 @@ export async function createFixture() {
       const url = new URL(req.url, "http://fixture"),
         peer = peers.get(url.searchParams.get("peer"));
       res.setHeader("content-type", "application/json");
-      if (url.pathname === "/__fixture/connect") {
+      if (url.pathname === "/__fixture/assistant" && req.method === "POST") {
+        let raw = "";
+        for await (const chunk of req) {
+          raw += chunk;
+          if (raw.length > 65536) throw Error("fixture budget");
+        }
+        const input = JSON.parse(raw),
+          { sessionId, action } = input;
+        const command = await fixture.command(sessionId);
+        let value = {};
+        if (action === "surface")
+          value = await fixture.surface(sessionId, command.commandId);
+        else if (action === "question")
+          value = await fixture.question(
+            sessionId,
+            command.commandId,
+            "background-question",
+          );
+        else if (action === "delivery")
+          value = await fixture.operationDelivery(
+            sessionId,
+            command.commandId,
+            input.operationId,
+            input.proposal,
+          );
+        else if (action === "advance")
+          value = unwrap(
+            await host.advance(
+              fixtureCaller,
+              sessionId,
+              command.commandId,
+              input.events,
+            ),
+          );
+        else if (action === "delta") {
+          unwrap(
+            await host.advance(fixtureCaller, sessionId, command.commandId, []),
+          );
+          const namespace = { ...fixtureCaller, sessionId },
+            session = unwrap(await host.store.session(namespace)),
+            record = unwrap(
+              await host.store.command(namespace, command.commandId),
+            ),
+            dispatch = record.dispatch;
+          value = unwrap(
+            await host.publishDelta(fixtureCaller, sessionId, {
+              type: "delta",
+              commandId: command.commandId,
+              attemptId: dispatch.attemptId,
+              binding: {
+                ...activeStage(session).binding,
+                nativeSessionId: dispatch.nativeSessionId,
+                nativeThreadId: dispatch.nativeThreadId,
+                nativeRunId: dispatch.nativeRunId,
+                nativeRequestId: dispatch.nativeRequestId,
+              },
+              messageId: input.messageId,
+              text: input.text,
+            }),
+          );
+        } else throw Error("unknown assistant fixture action");
+        res.end(JSON.stringify(value ?? {}));
+      } else if (url.pathname === "/__fixture/connect") {
         const id = randomUUID(),
           state = { queue: [], closed: false };
         state.connection = service.connect(
@@ -627,6 +689,17 @@ export async function createFixture() {
       commandId,
       operationId = "visual-execution",
     ) {
+      return this.operationDelivery(sessionId, commandId, operationId, {
+        name: "execution_execute",
+        arguments: {
+          request: execution.running.status.operationRequestId,
+          task: "visual-task",
+          attempt: "visual-attempt",
+          revision: "a".repeat(64),
+        },
+      });
+    },
+    async operationDelivery(sessionId, commandId, operationId, proposal) {
       await this.host.advance(fixtureCaller, sessionId, commandId, []);
       const namespace = { ...fixtureCaller, sessionId };
       const session = unwrap(await host.store.session(namespace));
@@ -642,15 +715,7 @@ export async function createFixture() {
           type: "delivery_requested",
           operationId,
           target: "rust-execution",
-          proposal: {
-            name: "execution_execute",
-            arguments: {
-              request: execution.running.status.operationRequestId,
-              task: "visual-task",
-              attempt: "visual-attempt",
-              revision: "a".repeat(64),
-            },
-          },
+          proposal,
         },
       };
       const row = {

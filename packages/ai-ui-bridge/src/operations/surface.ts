@@ -139,8 +139,15 @@ export function createOperationSurface(
     },
   };
 }
+/** One React DOM owner; subsequent official roots update the existing view. */
 export type NodeMount = (
   container: HTMLElement,
-  root: ComponentNode,
-  enabled: boolean,
-) => () => void;
+  onError: (error: unknown) => void,
+) => {
+  render(
+    root: ComponentNode | undefined,
+    enabled: boolean,
+    gate: import("../surface-drafts.js").NodeGate,
+  ): void;
+  dispose(): void;
+};

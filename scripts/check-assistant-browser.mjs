@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { checkShellBrowser } from "./check-shell-browser.mjs";
+import { checkConversationBrowser } from "./check-conversation-browser.mjs";
 import { checkTasksBrowser } from "./check-tasks-browser.mjs";
 import { checkPagesBrowser } from "./check-pages-browser.mjs";
 import { mkdirSync } from "node:fs";
@@ -183,6 +184,7 @@ try {
   await checkShellBrowser(page, fixture);
   await checkPagesBrowser(page, fixture);
   await checkTasksBrowser(page, fixture);
+  await checkConversationBrowser(page, fixture);
   assert.deepEqual(errors, []);
   assert.deepEqual(remote, []);
   console.log(

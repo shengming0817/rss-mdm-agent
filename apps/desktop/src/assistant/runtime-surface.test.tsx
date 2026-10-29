@@ -3,6 +3,7 @@ import { act, render, screen } from "@testing-library/react";
 import { it, expect, vi } from "vitest";
 import {
   RuntimeSurface,
+  SurfaceDrafts,
   useSessionView,
   type SurfaceRendererHandle,
   type RendererFactory,
@@ -24,7 +25,16 @@ function runtime() {
     listeners,
   };
 }
-const mount = () => () => {};
+const mount = () => ({ render() {}, dispose() {} });
+const owners = new WeakMap<RuntimeClient, SurfaceDrafts>();
+function surfaceDrafts(client: RuntimeClient) {
+  let owner = owners.get(client);
+  if (!owner) {
+    owner = new SurfaceDrafts();
+    owners.set(client, owner);
+  }
+  return owner;
+}
 function handle(): SurfaceRendererHandle {
   return {
     canRetry: false,
@@ -45,6 +55,7 @@ it("disposes a renderer that resolves after unmount and never subscribes it", as
   const view = render(
     <RuntimeSurface
       runtime={r.client}
+      drafts={surfaceDrafts(r.client)}
       sessionId="s"
       instanceId="i"
       mount={mount}
@@ -70,6 +81,7 @@ it("replaces subscriptions and renderers when the authenticated owner changes", 
   const view = render(
     <RuntimeSurface
       runtime={first.client}
+      drafts={surfaceDrafts(first.client)}
       sessionId="s"
       instanceId="i"
       mount={mount}
@@ -81,6 +93,7 @@ it("replaces subscriptions and renderers when the authenticated owner changes", 
   view.rerender(
     <RuntimeSurface
       runtime={second.client}
+      drafts={surfaceDrafts(second.client)}
       sessionId="s"
       instanceId="i"
       mount={mount}
@@ -138,6 +151,7 @@ it("removes the previous owner's private card before the next owner's layout and
       <section ref={root}>
         <RuntimeSurface
           runtime={client}
+          drafts={surfaceDrafts(client)}
           sessionId="s"
           instanceId="i"
           mount={mount}

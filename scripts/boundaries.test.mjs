@@ -643,3 +643,28 @@ test("equivalent React default imports and re-exports retain namespace restricti
     [],
   );
 });
+
+// Official nodes and component-owned lifecycle need no transport or native capability.
+test("React A2UI DOM owner remains unable to acquire network and native authority", () => {
+  const file = "apps/desktop/src/assistant/operation-ui/nodes.tsx";
+  assert.deepEqual(
+    checkSource(
+      file,
+      'import {createRoot} from "react-dom/client"; import {getValue} from "@a2ui/web_core/v0_9"; const roots = new WeakMap();',
+    ),
+    [],
+  );
+  for (const source of [
+    'fetch("https://example.invalid")',
+    'window.open("x")',
+    'import {invoke} from "@tauri-apps/api/core"; invoke("execute")',
+    '<iframe src="x"/>',
+  ])
+    assert.ok(checkSource(file, source).length, source);
+  assert.ok(
+    checkSource(
+      "apps/desktop/src/assistant/Questions.tsx",
+      'import {createRoot} from "react-dom/client";',
+    ).length,
+  );
+});

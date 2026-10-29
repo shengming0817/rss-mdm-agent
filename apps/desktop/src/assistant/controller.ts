@@ -1,6 +1,6 @@
 import { deepClone, proxyMap, proxySet } from "valtio/vanilla/utils";
 import { proxy, type Snapshot, ref } from "valtio/vanilla";
-import { OperationDrafts } from "@rss-mdm-agent/ai-ui-bridge";
+import { OperationDrafts, SurfaceDrafts } from "@rss-mdm-agent/ai-ui-bridge";
 import { operationRequestId } from "@rss-mdm-agent/execution-bindings";
 import type {
   Connection,
@@ -992,10 +992,12 @@ export function createAssistant(
     }
   }
   const operationDrafts = new OperationDrafts();
+  const surfaceDrafts = new SurfaceDrafts();
   function dispose() {
     if (disposed) return;
     disposed = true;
     operationDrafts.clear();
+    surfaceDrafts.clear();
     epoch++;
     taskEpoch++;
     connectionOwner?.abort();
@@ -1071,6 +1073,7 @@ export function createAssistant(
     taskDetails,
     executionDetails,
     operationDrafts,
+    surfaceDrafts,
     async submitOperation(
       input: import("../self-service/types").SelfServiceCommands["ai_operation_submit"]["input"],
     ) {

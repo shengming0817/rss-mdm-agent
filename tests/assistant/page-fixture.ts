@@ -20,6 +20,7 @@ import {
   executionTask,
   policyRecord,
   taskDetail,
+  taskFromFacts,
 } from "../self-service/support";
 /** Explicit UI samples. This is never imported by a production assembly. */
 export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
@@ -1000,5 +1001,99 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
       events.push({ operation: "diagnostics_discard", request: snapshot });
     },
   };
-  return { events, published, operations, records, details, advanceTask };
+  // Explicit development seam: real client deliveries bind these records through the production trust adapter.
+  const assistant = input.assistantServices!;
+  const readAssistantTask = assistant.taskDetails!;
+  assistant.taskDetails = async (request, signal) => {
+    if (signal.aborted) throw Error("fixture aborted");
+    return records.has(request)
+      ? deepClone(
+          taskFromFacts({ kind: "preparation", value: records.get(request)! }),
+        )
+      : readAssistantTask(request, signal);
+  };
+  assistant.preparationDetails = async (request) => {
+    const record = records.get(request);
+    if (!record) throw Error("fixture missing operation");
+    return deepClone(record);
+  };
+  assistant.submitOperation = async ({ request, revision, parameters }) => {
+    const record = records.get(request);
+    if (
+      !record ||
+      record.state !== "draft" ||
+      record.revision !== revision ||
+      record.action.kind !== "policy"
+    )
+      throw { code: "operation_conflict" };
+    if (
+      typeof parameters.name !== "string" ||
+      !parameters.name.trim() ||
+      parameters.name.length > 32
+    )
+      throw { code: "operation_invalid_parameters" };
+    events.push({ operation: "ai_operation_submit", request });
+    record.action.choice.parameters = deepClone(parameters);
+    record.state = "submitting";
+    record.revision++;
+    details.set(request, taskFromFacts({ kind: "preparation", value: record }));
+  };
+  assistant.reconcilePolicy = async () => {};
+  const stageAssistantOperation = (sessionId: string, operationId: string) => {
+    const record = policyRecord(operationId);
+    record.state = "draft";
+    record.trigger = {
+      kind: "ai",
+      conversation: sessionId,
+      toolCall: operationId,
+      context: { id: "fixture-binding", generation: "fixture-generation" },
+      config: { id: "fixture", revision: "1" },
+      osSession: {
+        device: "fixture-device",
+        session: "fixture-os-session",
+        account: { platform: "macos", subject: "fixture-account" },
+      },
+    };
+    if (record.action.kind !== "policy") throw Error("fixture type");
+    record.action.presentation = {
+      displayName: "核对组织修复参数",
+      description: "只提交本次样本准备，不执行系统操作",
+      sideEffects: "仅改变隔离样本记录",
+    };
+    record.action.choice.parameters = {
+      name: "AI 建议",
+      path: "/Applications",
+    };
+    record.action.task = {
+      kind: "script",
+      runAs: "system",
+      resource: { id: "repair-fixture", version: "1", variant: "macos" },
+      parameterSources: {
+        name: { kind: "input" },
+        path: { kind: "fixed", value: "/Applications" },
+      },
+      parameterSchema: {
+        type: "object",
+        properties: {
+          name: { type: "string", title: "修复名称", maxLength: 32 },
+          path: { type: "string", title: "固定路径" },
+        },
+        required: ["name", "path"],
+      },
+    };
+    records.set(operationId, record);
+    details.set(
+      operationId,
+      taskFromFacts({ kind: "preparation", value: record }),
+    );
+  };
+  return {
+    events,
+    published,
+    operations,
+    records,
+    details,
+    advanceTask,
+    stageAssistantOperation,
+  };
 }

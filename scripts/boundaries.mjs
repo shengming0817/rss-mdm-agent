@@ -149,7 +149,17 @@ export function checkSource(file, source) {
     allowed.add("antd/locale/zh_CN");
   if (file === "packages/ui/src/internal/markdown.ts")
     allowed.add("markdown-it");
-  if (file === "apps/desktop/src/main.tsx") allowed.add("react-dom/client");
+  if (
+    file === "apps/desktop/src/main.tsx" ||
+    file === "apps/desktop/src/assistant/operation-ui/nodes.tsx"
+  )
+    allowed.add("react-dom/client");
+  if (
+    ["nodes.tsx", "OperationNode.tsx", "OperationCard.tsx"].some(
+      (name) => file === `apps/desktop/src/assistant/operation-ui/${name}`,
+    )
+  )
+    allowed.add("@a2ui/web_core/v0_9");
   if (nativeAdapters.has(file)) allowed.add("@tauri-apps/api/core");
   if (file === "apps/desktop/src/workspace/window.ts")
     allowed.add("@tauri-apps/api/window");
@@ -233,6 +243,19 @@ export function checkSource(file, source) {
       "clearTimeout",
     ],
     "apps/desktop/src/assistant/clipboard.ts": ["navigator"],
+    "apps/desktop/src/assistant/SessionHistory.tsx": [
+      "document",
+      "requestAnimationFrame",
+      "cancelAnimationFrame",
+    ],
+    "apps/desktop/src/assistant/scroll.ts": ["ResizeObserver"],
+    "apps/desktop/src/assistant/operation-ui/nodes.tsx": ["WeakMap"],
+    "apps/desktop/src/assistant/operation-ui/OperationCard.tsx": [
+      "AbortController",
+      "setInterval",
+      "clearInterval",
+      "document",
+    ],
     "apps/desktop/src/main.tsx": ["document", "console"],
     "packages/ui/src/UiProvider.tsx": ["window"],
   };
@@ -346,6 +369,26 @@ export function checkSource(file, source) {
     "apps/desktop/src/App.tsx": ["nav.selected", "taskPhase"],
     "apps/desktop/src/home/HomePage.tsx": ["taskPhase"],
     "apps/desktop/src/shell/DesktopShell.tsx": ["layouts"],
+    "apps/desktop/src/assistant/AssistantTimeline.tsx": [
+      "view.commands",
+      "view.messages",
+      "view.surfaces",
+      "view.interactions",
+      "view.tools",
+      "view.deliveries",
+    ],
+    "apps/desktop/src/assistant/Questions.tsx": [
+      "view?.interactions",
+      "view.interactions",
+    ],
+    "apps/desktop/src/assistant/operation-ui/OperationNode.tsx": [
+      "state.draft.values",
+      "state.errors",
+      "state.secrets",
+      "labels",
+      "snapshot.current",
+      "phaseLabels",
+    ],
     "apps/desktop/src/assistant/messages.ts": [
       "view.commands",
       "view.messages",
@@ -433,6 +476,25 @@ export function checkSource(file, source) {
           ],
           "apps/desktop/src/self-service/native.ts": ["../test-users"],
           "apps/desktop/src/assistant/controller.ts": ["../self-service/types"],
+          "apps/desktop/src/assistant/AssistantPage.tsx": [
+            "../state/workspace",
+          ],
+          "apps/desktop/src/assistant/AssistantTimeline.tsx": [
+            "../state/workspace",
+            "../software/presentation",
+          ],
+          "apps/desktop/src/assistant/Questions.tsx": [
+            "../state/workspace",
+            "../software/presentation",
+          ],
+          "apps/desktop/src/assistant/SessionHistory.tsx": [
+            "../state/workspace",
+            "../software/presentation",
+          ],
+          "apps/desktop/src/assistant/operation-ui/OperationCard.tsx": [
+            "../../state/workspace",
+            "../../task-center/PreparationFacts",
+          ],
           "apps/desktop/src/assistant/resource-context.ts": [
             "../self-service/types",
           ],
@@ -483,11 +545,41 @@ export function checkSource(file, source) {
         factoryMembers.has(expression.argumentExpression.text))
     );
   }
+  function isBoundaryThis(node) {
+    if (
+      file !== "apps/desktop/src/assistant/operation-ui/nodes.tsx" ||
+      node.kind !== ts.SyntaxKind.ThisKeyword
+    )
+      return false;
+    let owner = node.parent;
+    while (owner && !ts.isClassDeclaration(owner)) owner = owner.parent;
+    return (
+      owner?.name?.text === "CardBoundary" &&
+      owner.heritageClauses?.some(
+        (clause) =>
+          clause.token === ts.SyntaxKind.ExtendsKeyword &&
+          clause.types.some(
+            (type) => type.expression.getText(ast) === "Component",
+          ),
+      ) &&
+      ast.statements.some(
+        (statement) =>
+          ts.isImportDeclaration(statement) &&
+          statement.moduleSpecifier.text === "react" &&
+          statement.importClause?.namedBindings &&
+          ts.isNamedImports(statement.importClause.namedBindings) &&
+          statement.importClause.namedBindings.elements.some(
+            (binding) =>
+              binding.name.text === "Component" && !binding.propertyName,
+          ),
+      )
+    );
+  }
   function visit(node) {
     if (ts.isTypeNode(node)) return;
     if (
       ts.isImportEqualsDeclaration(node) ||
-      node.kind === ts.SyntaxKind.ThisKeyword
+      (node.kind === ts.SyntaxKind.ThisKeyword && !isBoundaryThis(node))
     )
       errors.push(`${file}: ambient module/this capability`);
     if (
