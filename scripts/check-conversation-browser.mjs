@@ -581,7 +581,10 @@ export async function checkConversationBrowser(page, fixture) {
     .click();
   await finishOptions();
   await primary("AI 助手");
-  await page.getByText("下一条输入将带入已确认历史", { exact: true }).waitFor();
+  await page
+    .getByRole("region", { name: "AI 会话", exact: true })
+    .getByText("下一条输入将带入已确认历史", { exact: true })
+    .waitFor();
   const carried = await sendCurrent(
     optionsSession,
     "只带入本人确认的这一次历史",
