@@ -119,3 +119,42 @@ test("fixture supplies isolated current identity and Host operations with genera
     500,
   );
 });
+
+test("account rotation closes old peers and keeps Host session history inside each actual caller namespace", async (t) => {
+  const f = await startFixture();
+  t.after(() => f.close());
+  const origin = new URL(f.url).origin;
+  const post = (path, value) =>
+    fetch(origin + "/__fixture/" + path, {
+      method: "POST",
+      body: JSON.stringify(value),
+    });
+  const guest = await (await fetch(origin + "/__fixture/identity")).json();
+  await f.seed(2);
+  const peer = await (await post("connect", {})).text();
+  const login = await (
+    await post("account", { organization: "beichen", login: "alice" })
+  ).json();
+  assert.notEqual(login.generation, guest.generation);
+  assert.equal(login.identity.organizationId, "beichen");
+  assert.equal(
+    (await fetch(origin + "/__fixture/receive?peer=" + peer)).status,
+    410,
+  );
+  const caller = login.identity;
+  const page = await f.host.store.listSessions(caller, { limit: 100 });
+  assert.equal(page.ok, true);
+  assert.equal(page.value.items.length, 0);
+  const original = await f.host.store.listSessions(guest.identity, {
+    limit: 100,
+  });
+  assert.equal(original.value.items.length, 2);
+  const restored = await (await post("account", { guest: true })).json();
+  assert.notEqual(restored.generation, guest.generation);
+  assert.deepEqual(restored.identity, guest.identity);
+  assert.equal(
+    (await f.host.store.listSessions(restored.identity, { limit: 100 })).value
+      .items.length,
+    2,
+  );
+});

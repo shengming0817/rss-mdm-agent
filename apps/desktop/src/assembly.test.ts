@@ -39,6 +39,15 @@ it("requires every fixture port and sends AI confirmation/cancellation to the ex
       }),
     ).toThrow("incomplete");
   }
+  expect(() =>
+    assertFixtureAssembly({
+      ...ports,
+      environment: {
+        ...ports.environment,
+        identity: { read: ports.environment.identity.read },
+      } as never,
+    }),
+  ).toThrow("incomplete");
   const fetch = vi.fn(async (url: string, ..._options: unknown[]) => ({
     ok: true,
     json: async () =>

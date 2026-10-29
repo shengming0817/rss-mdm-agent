@@ -38,7 +38,7 @@ function EntryFeedback({
       type="warning"
       showIcon
       title={state.notice}
-      action={
+      description={
         <div>
           <Button size="small" onClick={() => void entries.retry()}>
             重试入口

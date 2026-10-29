@@ -115,7 +115,7 @@ export function BindingNotice() {
         account.notice ||
         "账号状态尚未确认，请先恢复或清理原绑定。"
       }
-      action={
+      description={
         recovery ? (
           <div className="rss-account-actions">
             <Button

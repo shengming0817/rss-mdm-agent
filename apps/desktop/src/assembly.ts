@@ -51,6 +51,7 @@ export function assertFixtureAssembly(input: {
     !input.environment.local.tasks.control ||
     !input.environment.local ||
     !input.environment.identity?.read ||
+    !input.environment.identity.guest ||
     !input.environment.device?.read ||
     !input.environment.host?.read ||
     !input.environment.host.restart ||

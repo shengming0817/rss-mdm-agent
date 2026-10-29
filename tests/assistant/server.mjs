@@ -520,6 +520,11 @@ export async function createFixture() {
           return;
         }
         res.end(JSON.stringify(details(url.searchParams.get("request"))));
+      } else if (url.pathname === "/__fixture/disconnect") {
+        peer?.connection?.close();
+        if (peer) peer.closed = true;
+        peers.delete(url.searchParams.get("peer"));
+        res.end("{}");
       } else if (!peer || peer.closed) {
         res.statusCode = 410;
         res.end("{}");

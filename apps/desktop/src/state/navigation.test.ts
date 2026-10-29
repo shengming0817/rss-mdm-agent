@@ -50,6 +50,7 @@ it("restores the last visible direction after cycling to hidden, without resetti
   nav.cycle();
   nav.cycle();
   nav.cycle();
+  nav.cycle();
   expect(nav.state.layoutStep).toBe(0);
   expect(nav.state.restoreStep).toBe(3);
   nav.hideOrRestore();

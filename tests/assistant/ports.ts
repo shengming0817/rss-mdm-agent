@@ -44,7 +44,12 @@ export function createFixturePorts() {
                 if (!abort.signal.aborted) disconnect();
               }
             })();
-            return () => abort.abort();
+            return () => {
+              abort.abort();
+              void fetch(`/__fixture/disconnect?peer=${peer}`, {
+                method: "POST",
+              }).catch(() => {});
+            };
           },
         }),
         options,

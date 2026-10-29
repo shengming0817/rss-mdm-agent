@@ -290,6 +290,7 @@ export function checkSource(file, source) {
   const dataIndex = {
     "apps/desktop/src/App.tsx": ["nav.selected", "taskPhase"],
     "apps/desktop/src/home/HomePage.tsx": ["taskPhase"],
+    "apps/desktop/src/shell/DesktopShell.tsx": ["layouts"],
     "apps/desktop/src/assistant/messages.ts": [
       "view.commands",
       "view.messages",

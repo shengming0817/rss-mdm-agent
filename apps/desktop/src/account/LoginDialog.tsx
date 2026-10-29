@@ -207,6 +207,7 @@ function LoginForm({
                     block
                     type="primary"
                     htmlType="submit"
+                    aria-label="登录"
                     loading={account.busy}
                     disabled={!selected || !login.trim() || !password}
                   >

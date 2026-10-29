@@ -99,7 +99,7 @@ export function createLoginFixture(
       try {
         await complete(expected);
       } catch {
-        state.error = "扫码确认已取消或过期。";
+        if (expected === epoch) state.error = "扫码确认已取消或过期。";
       }
     },
     async discover() {

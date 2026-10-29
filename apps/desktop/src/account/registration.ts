@@ -26,9 +26,9 @@ export function createRegistration(port?: ServicePort) {
       const current = ++epoch;
       state.loading = true;
       const [service, registration, mdm] = await Promise.allSettled([
-        port.read(),
-        port.registration(),
-        port.mdmStatus(),
+        Promise.resolve().then(() => port.read()),
+        Promise.resolve().then(() => port.registration()),
+        Promise.resolve().then(() => port.mdmStatus()),
       ]);
       if (!active || current !== epoch) return;
       if (service.status === "fulfilled") {

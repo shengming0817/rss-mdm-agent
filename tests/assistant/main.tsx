@@ -1,3 +1,4 @@
+import { DesktopFixture } from "./desktop";
 import { StateFixture } from "./state";
 import { createRoot } from "react-dom/client";
 import { useRef, useState } from "react";
@@ -19,6 +20,8 @@ import "@rss-mdm-agent/ui/style.css";
 
 /** Explicit browser fixture only. No fixture content is reachable in production builds. */
 export function FixtureApp() {
+  if (new URLSearchParams(window.location.search).has("desktop"))
+    return <DesktopFixture />;
   return new URLSearchParams(window.location.search).has("state") ? (
     <StateFixture />
   ) : (

@@ -270,7 +270,7 @@ const native = (source, requireForeground = true) =>
   script(
     `tell application "System Events"\n tell (first application process whose unix id is ${receipt.pid})\n set frontmost to true\n if (count of windows) > 0 then perform action "AXRaise" of window 1\n repeat 40 times\n if frontmost then exit repeat\n set frontmost to true\n delay 0.1\n end repeat\n delay 0.2\n ${requireForeground ? 'if not frontmost then error "Owned application foreground unavailable"' : ""}\n ${source}\n end tell\nend tell`,
   );
-const key = (code, shift = false) => {
+const key = (code, shift = false, command = false) => {
   const foreground = native("get frontmost", false);
   if (foreground !== "true")
     result.foregroundFailure = script(
@@ -281,7 +281,9 @@ const key = (code, shift = false) => {
     "true",
     "native application must own foreground keyboard focus",
   );
-  native(`key code ${code}${shift ? " using shift down" : ""}`);
+  native(
+    `key code ${code}${command ? " using command down" : shift ? " using shift down" : ""}`,
+  );
 };
 const menu = (label) =>
   native(
@@ -1237,7 +1239,7 @@ try {
     );
     await browser.$('[aria-label="状态层草稿"]').setValue("原生状态草稿");
     await click("选择软件更新");
-    for (const expected of ["2:full", "3:rail", "0:hidden"]) {
+    for (const expected of ["1:rail", "2:full", "3:rail", "0:hidden"]) {
       await click("切换布局");
       await wait(
         async () =>
@@ -1278,6 +1280,74 @@ try {
       "drawer Escape and focus restoration",
       "controlled message input",
       "inert Markdown",
+    );
+    mark("v4 shell and home in the product WKWebView");
+    await browser.execute(() => {
+      location.search = "?desktop";
+    });
+    await text("查看 Workspace");
+    const layout = () =>
+      browser.execute(() =>
+        document
+          .querySelector(".rss-desktop-shell")
+          ?.getAttribute("data-layout-step"),
+      );
+    await wait(async () => (await layout()) === "0");
+    const origin = await browser.execute(() => {
+      const bounds = document
+        .querySelector('[aria-label="切换侧栏布局"]')
+        .getBoundingClientRect();
+      return { x: bounds.x, y: bounds.y };
+    });
+    for (const step of [1, 2, 3, 0]) {
+      await click("切换侧栏布局");
+      await wait(async () => (await layout()) === String(step));
+      const position = await browser.execute(() => {
+        const bounds = document
+          .querySelector('[aria-label="切换侧栏布局"]')
+          .getBoundingClientRect();
+        return { x: bounds.x, y: bounds.y };
+      });
+      assert.deepEqual(position, origin);
+    }
+    await browser
+      .$('[aria-label="主页助手草稿"]')
+      .setValue("WKWebView 原生草稿");
+    key(40, false, true);
+    await wait(() =>
+      browser
+        .$('[role="combobox"][aria-label="搜索应用、工具和设置"]')
+        .isDisplayed(),
+    );
+    await browser
+      .$('[role="combobox"][aria-label="搜索应用、工具和设置"]')
+      .setValue("Workspace");
+    key(36);
+    await wait(async () => !(await browser.$('[role="dialog"]').isDisplayed()));
+    await click("主页", "//nav[contains(@class,'rss-hidden-primary')]");
+    assert.equal(
+      await browser.$('[aria-label="主页助手草稿"]').getValue(),
+      "WKWebView 原生草稿",
+    );
+    await click("页面助手");
+    await wait(() => browser.$('[aria-label="关闭页面助手"]').isDisplayed());
+    key(53);
+    await wait(() =>
+      browser.execute(
+        () => document.activeElement?.getAttribute("aria-label") === "页面助手",
+      ),
+    );
+    await browser.execute(() => {
+      document.querySelector(".fixture-controls").style.display = "none";
+    });
+    await browser.saveScreenshot(
+      join(reports, "desktop-native-shell-home.png"),
+    );
+    result.checks.push(
+      "v4 shell/home uses the product macOS WKWebView",
+      "fixed RSS toggle coordinates through 0-1-2-3-0",
+      "native Command-K/Enter search and Escape page-assistant focus",
+      "native shell navigation retains original assistant draft",
     );
     result.status = "passed";
   } else if (visualOnly) {

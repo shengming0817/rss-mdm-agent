@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { checkShellBrowser } from "./check-shell-browser.mjs";
 import { mkdirSync } from "node:fs";
 import { chromium } from "playwright-core";
 import { prepareRun } from "./preparation.mjs";
@@ -149,7 +150,7 @@ try {
     await page.getByTestId("state-page").textContent(),
     "software:updates",
   );
-  for (const expected of ["2:full", "3:rail", "0:hidden"]) {
+  for (const expected of ["1:rail", "2:full", "3:rail", "0:hidden"]) {
     await page.getByRole("button", { name: "切换布局" }).click();
     assert.equal(
       await page.getByTestId("state-layout").textContent(),
@@ -174,6 +175,7 @@ try {
     "保留原会话草稿",
   );
   assert.ok(Number(await page.getByTestId("state-sessions").textContent()) > 0);
+  await checkShellBrowser(page, fixture);
   assert.deepEqual(errors, []);
   assert.deepEqual(remote, []);
   console.log(

@@ -141,3 +141,27 @@ it.each([true, false])(
     }
   },
 );
+
+it("keeps an offline draft editable while preventing send from clicks or Enter", () => {
+  const send = vi.fn();
+  function Offline() {
+    const [value, setValue] = useState("offline draft");
+    return (
+      <UiProvider>
+        <MessageComposer
+          value={value}
+          onChange={setValue}
+          onSend={send}
+          canSend={false}
+        />
+      </UiProvider>
+    );
+  }
+  render(<Offline />);
+  const input = screen.getByRole("textbox", { name: "消息" });
+  fireEvent.change(input, { target: { value: "new offline draft" } });
+  expect((input as HTMLTextAreaElement).value).toBe("new offline draft");
+  fireEvent.keyDown(input, { key: "Enter" });
+  fireEvent.click(screen.getByRole("button", { name: "发送消息" }));
+  expect(send).not.toHaveBeenCalled();
+});

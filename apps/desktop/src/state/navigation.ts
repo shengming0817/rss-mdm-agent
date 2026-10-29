@@ -56,7 +56,7 @@ export function createNavigation() {
     selected: Object.fromEntries(
       Object.entries(sections).map(([id, values]) => [id, values[0]]),
     ) as Record<PageId, string>,
-    layoutStep: 1 as LayoutStep,
+    layoutStep: 0 as LayoutStep,
     restoreStep: 1 as Exclude<LayoutStep, 0>,
     historyOpen: false,
     searchOpen: false,
