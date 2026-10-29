@@ -70,7 +70,8 @@
     "react-dom": "19.3.1",
     "antd": "6.6.8",
     "@ant-design/icons": "6.3.4",
-    "@rss-mdm-agent/ui": "workspace:*"
+    "@rss-mdm-agent/ui": "workspace:*",
+    "valtio": "2.3.2"
   },
   "type": "module"
 }

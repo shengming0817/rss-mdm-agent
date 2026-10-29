@@ -1,3 +1,5 @@
+import { deepClone, proxyMap, proxySet } from "valtio/vanilla/utils";
+import { proxy, type Snapshot } from "valtio/vanilla";
 import type {
   CollectedData,
   DataAccessPort,
@@ -48,20 +50,34 @@ export function createSystemSettings(
   identity: () => string = () => crypto.randomUUID(),
   tasks: import("../task-center/controller").Controller | null = null,
 ) {
-  const state = {
-    observations: new Map<SettingsSection, SettingsResponse>(),
-    facts: new Map<string, { source: QueryDescriptor; value: CollectedData }>(),
+  const state = proxy({
+    observations: proxyMap<SettingsSection, SettingsResponse>(),
+    facts: proxyMap<
+      string,
+      { source: Snapshot<QueryDescriptor>; value: CollectedData }
+    >(),
     sources: [] as QueryDescriptor[],
-    busy: new Set<SettingsSection>(),
-    errors: new Map<SettingsSection, string>(),
-    pending: new Map<
+    busy: proxySet<SettingsSection>(),
+    errors: proxyMap<SettingsSection, string>(),
+    pending: proxyMap<
       SettingsSection,
       { request: string; operation: SettingsOperation }
     >(),
     now: Date.now(),
-  };
+  });
+  type ReadState = Snapshot<typeof state>;
   let active = true,
     epoch = 0;
+  const waits = new Map<ReturnType<typeof setTimeout>, () => void>();
+  function pause() {
+    return new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        waits.delete(timer);
+        resolve();
+      }, 250);
+      waits.set(timer, resolve);
+    });
+  }
   function ageFact(value: CollectedData) {
     const at = value.collectedAt;
     if (
@@ -71,8 +87,8 @@ export function createSystemSettings(
     )
       value.stale = true;
   }
-  const relevant = (section: SettingsSection) =>
-    state.sources.filter((s) =>
+  const relevant = (section: SettingsSection, current: ReadState = state) =>
+    current.sources.filter((s) =>
       s.domains.some((d) => families[section].some((p) => d.startsWith(p))),
     );
   const timer = setInterval(() => {
@@ -94,6 +110,7 @@ export function createSystemSettings(
   };
   function accept(section: SettingsSection, response: SettingsResponse) {
     if (!active) return;
+    response = deepClone(response);
     const pending = state.pending.get(section);
     if (!response.request && pending) return;
     state.observations.set(section, response);
@@ -115,7 +132,7 @@ export function createSystemSettings(
       for (const source of page.items)
         if (source.kind === "native" && !seen.has(source.reference.id)) {
           seen.add(source.reference.id);
-          sources.push(source);
+          sources.push(deepClone(source));
         }
       if (!page.next) {
         if (active) state.sources = sources;
@@ -152,18 +169,20 @@ export function createSystemSettings(
             n < 240;
             n++
           ) {
-            await new Promise((resolve) => setTimeout(resolve, 250));
+            await pause();
             if (!active || call !== epoch) return;
             status = await data.query_status({ request });
           }
         }
         if (!active || call !== epoch) return;
-        const value = await data.data_read({
-          selection: { kind: "query", query: source.reference },
-          after: null,
-          limit: 128,
-          maxAgeSeconds: queryMaxAgeSeconds,
-        });
+        const value = deepClone(
+          await data.data_read({
+            selection: { kind: "query", query: source.reference },
+            after: null,
+            limit: 128,
+            maxAgeSeconds: queryMaxAgeSeconds,
+          }),
+        );
         if (active && call === epoch) {
           ageFact(value);
           state.facts.set(source.reference.id, { source, value });
@@ -188,7 +207,7 @@ export function createSystemSettings(
           response.reason ?? "系统未确认打开设置，请重试。",
         );
       if (response.finished) return;
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      await pause();
     }
   }
   async function run(section: SettingsSection, operation: SettingsOperation) {
@@ -305,18 +324,23 @@ export function createSystemSettings(
     if (!pending || state.busy.has(section)) return;
     await run(section, pending.operation);
   }
-  const summary = () => ({
-    network: [...state.facts.values()].find((v) =>
+  const summary = (current: ReadState = state) => ({
+    network: [...current.facts.values()].find((v) =>
       v.source.domains.includes("hardware.network"),
     )?.value,
-    storage: [...state.facts.values()].find((v) =>
+    storage: [...current.facts.values()].find((v) =>
       v.source.domains.includes("hardware.volumes"),
     )?.value,
-    power: [...state.facts.values()].find((v) =>
+    power: [...current.facts.values()].find((v) =>
       v.source.domains.includes("hardware.battery"),
     )?.value,
   });
   function dispose() {
+    for (const [timer, resolve] of waits) {
+      clearTimeout(timer);
+      resolve();
+    }
+    waits.clear();
     if (!active) return;
     // The original worker owns its preview timeout and restoration after UI disposal.
     active = false;
@@ -325,6 +349,9 @@ export function createSystemSettings(
     state.observations.clear();
     state.facts.clear();
     state.pending.clear();
+    state.sources = [];
+    state.errors.clear();
+    state.busy.clear();
   }
   return {
     state,

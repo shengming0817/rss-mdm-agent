@@ -1,3 +1,4 @@
+import { proxy, type Snapshot } from "valtio/vanilla";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { AppearanceSnapshot } from "./self-service/types";
 const solid = (): AppearanceSnapshot => ({
@@ -10,13 +11,13 @@ export function createAppearance(
     ? () => invoke<AppearanceSnapshot>("appearance_snapshot")
     : undefined,
 ) {
-  const state = solid();
+  const state = proxy(solid());
   let disposed = false,
     reading = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   async function refresh() {
     if (!read || disposed || reading) return;
     reading = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const next = await Promise.race([
         read(),
@@ -46,6 +47,7 @@ export function createAppearance(
     refresh,
     dispose() {
       disposed = true;
+      clearTimeout(timer);
       Object.assign(state, solid());
     },
   };

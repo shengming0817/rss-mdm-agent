@@ -10,6 +10,7 @@ await using run = await prepareRun([
 ]);
 const { startFixture } = await import("../tests/assistant/server.mjs");
 const fixture = await startFixture();
+await fixture.seed();
 let browser;
 try {
   browser = await chromium.launch({
@@ -77,20 +78,14 @@ try {
     );
     const warningBackground =
       colorScheme === "light" ? "rgb(255, 245, 223)" : "rgb(62, 52, 35)";
-    await page.waitForFunction((expected) => {
+    const background = await page.waitForFunction((expected) => {
       const alert = document.querySelector(".ant-alert-warning");
       return (
         alert?.isConnected &&
         getComputedStyle(alert).backgroundColor === expected
       );
     }, warningBackground);
-    assert.equal(
-      await page
-        .locator(".ant-alert-warning")
-        .first()
-        .evaluate((node) => getComputedStyle(node).backgroundColor),
-      warningBackground,
-    );
+    assert.equal(await background.jsonValue(), true);
     for (const width of [1280, 720, 420]) {
       await page.setViewportSize({ width, height: 900 });
       const overflow = await page.evaluate(
@@ -141,10 +136,48 @@ try {
     await trigger.evaluate((node) => node === document.activeElement),
     true,
   );
+  await page.goto(fixture.url + "?state");
+  await page
+    .getByTestId("state-connection")
+    .getByText("connected", { exact: true })
+    .waitFor();
+  await page
+    .getByRole("textbox", { name: "状态层草稿" })
+    .fill("保留原会话草稿");
+  await page.getByRole("button", { name: "选择软件更新" }).click();
+  assert.equal(
+    await page.getByTestId("state-page").textContent(),
+    "software:updates",
+  );
+  for (const expected of ["2:full", "3:rail", "0:hidden"]) {
+    await page.getByRole("button", { name: "切换布局" }).click();
+    assert.equal(
+      await page.getByTestId("state-layout").textContent(),
+      expected,
+    );
+  }
+  await page.getByRole("button", { name: "隐藏或恢复侧栏" }).click();
+  assert.equal(await page.getByTestId("state-layout").textContent(), "3:rail");
+  await page.getByRole("button", { name: "切换布局" }).click();
+  assert.equal(
+    await page.getByTestId("state-layout").textContent(),
+    "0:hidden",
+  );
+  await page.getByRole("button", { name: "读取软件" }).click();
+  await page
+    .getByTestId("state-inventory")
+    .getByText("4", { exact: true })
+    .waitFor();
+  await page.getByRole("button", { name: "回到助手" }).click();
+  assert.equal(
+    await page.getByRole("textbox", { name: "状态层草稿" }).inputValue(),
+    "保留原会话草稿",
+  );
+  assert.ok(Number(await page.getByTestId("state-sessions").textContent()) > 0);
   assert.deepEqual(errors, []);
   assert.deepEqual(remote, []);
   console.log(
-    "PASS React foundation: v4 light/dark, 1280/720/420, forms, menu/drawer keyboard and focus, draft, message IME unit seam, unknown read-only recovery, inert Markdown. Business pages and native platform acceptance are separate.",
+    "PASS React foundation: v4 light/dark, 1280/720/420, forms, menu/drawer keyboard and focus, draft, message IME unit seam, unknown read-only recovery, inert Markdown. React state owner also connects the real client to the test Host, retains drafts through the directed sidebar cycle and projects async inventory. Business pages and native platform acceptance are separate.",
   );
 } finally {
   await browser?.close();

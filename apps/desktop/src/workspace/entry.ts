@@ -1,6 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { currentUser } from "../test-users";
+import { accountState } from "../test-users";
 import type { SelfServiceCommands } from "../self-service/types";
 
 export type NavigationInput = SelfServiceCommands["navigation"]["input"];
@@ -12,7 +12,7 @@ export const nativeNavigation = (): NavigationPort | undefined =>
   isTauri()
     ? (input) =>
         invoke("navigation", {
-          generation: currentUser.current?.generation,
+          generation: accountState.user?.generation,
           input,
         })
     : undefined;

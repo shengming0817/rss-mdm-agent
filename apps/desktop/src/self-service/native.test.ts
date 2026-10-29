@@ -1,11 +1,11 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { currentUser } from "../test-users";
+import { accountState } from "../test-users";
 import { nativePort, nativeDataPort, nativeTaskPort } from "./native";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(), isTauri: vi.fn() }));
 beforeEach(() => {
-  currentUser.current = {
+  accountState.user = {
     schemaVersion: 1,
     kind: "userContext",
     user: {

@@ -125,6 +125,9 @@ export function checkSource(file, source) {
   const allowed = new Set(["react", "antd", "@ant-design/icons"]);
   if (desktop)
     for (const name of [
+      "valtio",
+      "valtio/vanilla",
+      "valtio/vanilla/utils",
       "@rss-mdm-agent/ui",
       "@rss-mdm-agent/ui/style.css",
       "@rss-mdm-agent/ai-contract",
@@ -152,6 +155,8 @@ export function checkSource(file, source) {
     allowed.add("@tauri-apps/api/window");
   if (file === "apps/desktop/src/workspace/entry.ts")
     allowed.add("@tauri-apps/api/event");
+  if (file === "apps/desktop/src/software/controller.ts")
+    allowed.add("@rss-mdm-agent/ai-ui-bridge");
   const pureGlobals = new Set([
     "Math",
     "Number",
@@ -171,6 +176,12 @@ export function checkSource(file, source) {
     "Symbol",
   ]);
   const ownerGlobals = {
+    "apps/desktop/src/state/desktop.ts": [
+      "document",
+      "setInterval",
+      "clearInterval",
+    ],
+    "apps/desktop/src/state/workspace.ts": ["crypto"],
     "apps/desktop/src/assistant/controller.ts": [
       "AbortController",
       "setTimeout",
@@ -195,6 +206,7 @@ export function checkSource(file, source) {
       "setTimeout",
       "setInterval",
       "clearInterval",
+      "clearTimeout",
       "crypto",
     ],
     "apps/desktop/src/appearance.ts": [
@@ -270,6 +282,7 @@ export function checkSource(file, source) {
     "dangerouslySetInnerHTML",
   ]);
   const dataIndex = {
+    "apps/desktop/src/state/navigation.ts": ["sections", "state.selected"],
     "packages/ui/src/theme.ts": ["palette"],
     "packages/ui/src/UiProvider.tsx": ["palette"],
     "packages/ui/src/components/Presentation.tsx": ["phases"],
@@ -635,7 +648,8 @@ export function checkTree(treeRoot = root, executable) {
     Object.keys(desktop.dependencies ?? {})
       .sort()
       .join() !==
-      "@a2ui/web_core,@ant-design/icons,@rss-mdm-agent/ai-client,@rss-mdm-agent/ai-contract,@rss-mdm-agent/ai-ui-bridge,@rss-mdm-agent/execution-bindings,@rss-mdm-agent/ui,@tauri-apps/api,antd,react,react-dom" ||
+      "@a2ui/web_core,@ant-design/icons,@rss-mdm-agent/ai-client,@rss-mdm-agent/ai-contract,@rss-mdm-agent/ai-ui-bridge,@rss-mdm-agent/execution-bindings,@rss-mdm-agent/ui,@tauri-apps/api,antd,react,react-dom,valtio" ||
+    desktop.dependencies?.valtio !== "2.3.2" ||
     desktop.dependencies?.["@a2ui/web_core"] !== "0.11.0" ||
     desktop.dependencies?.["@tauri-apps/api"] !== "2.11.1" ||
     Object.keys(desktop.optionalDependencies ?? {}).length ||
