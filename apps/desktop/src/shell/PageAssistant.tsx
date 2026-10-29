@@ -34,6 +34,12 @@ export function PageAssistant({
       className="rss-page-assistant"
       aria-label="页面助手"
       hidden={!open}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.stopPropagation();
+          onClose();
+        }
+      }}
     >
       <header>
         <div>

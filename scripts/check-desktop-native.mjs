@@ -1324,7 +1324,7 @@ try {
       .setValue("Workspace");
     key(36);
     await wait(async () => !(await browser.$('[role="dialog"]').isDisplayed()));
-    await click("主页", "//nav[contains(@class,'rss-hidden-primary')]");
+    await click("主页", "//div[contains(@class,'rss-hidden-primary')]");
     assert.equal(
       await browser.$('[aria-label="主页助手草稿"]').getValue(),
       "WKWebView 原生草稿",

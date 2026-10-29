@@ -166,3 +166,45 @@ it("keeps registration and MDM unknown observations independent", async () => {
   expect(screen.getAllByText("尚未注册").length).toBeGreaterThan(0);
   f.app.unmount();
 });
+
+it("clears unsubmitted account credentials on passive generation change and identity invalidation", async () => {
+  const f = await fixture();
+  await act(async () => {
+    f.desktop.state.workspace!.navigation.select("settings", "account");
+  });
+  fireEvent.click(screen.getByRole("button", { name: "登录企业账号" }));
+  const password = await screen.findByLabelText("企业密码"),
+    login = screen.getByLabelText("企业账号");
+  fireEvent.change(login, { target: { value: "private-person" } });
+  fireEvent.change(password, { target: { value: "UNSUBMITTED SECRET" } });
+  await act(async () => {
+    f.desktop.account.user = {
+      ...f.current(),
+      generation: "passive-new-generation",
+    };
+  });
+  expect((password as HTMLInputElement).value).toBe("");
+  expect((login as HTMLInputElement).value).toBe("");
+  fireEvent.change(password, { target: { value: "ANOTHER SECRET" } });
+  await act(async () => {
+    f.desktop.account.user = undefined;
+  });
+  expect((password as HTMLInputElement).value).toBe("");
+  f.app.unmount();
+});
+it("changes appearance through the existing desktop owner without replacing the workspace", async () => {
+  const f = await fixture(),
+    workspace = f.desktop.state.workspace;
+  await act(async () => {
+    workspace!.navigation.select("settings", "appearance");
+  });
+  expect(screen.getByRole("combobox", { name: "界面主题" })).toBeTruthy();
+  await act(async () => {
+    f.desktop.setTheme("dark");
+  });
+  expect(
+    f.app.container.querySelector(".rss-ui")?.getAttribute("data-theme"),
+  ).toBe("dark");
+  expect(f.desktop.state.workspace).toBe(workspace);
+  f.app.unmount();
+});

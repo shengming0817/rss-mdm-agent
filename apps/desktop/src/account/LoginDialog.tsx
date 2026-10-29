@@ -15,6 +15,7 @@ import { useSnapshot } from "valtio";
 import { StatePanel } from "@rss-mdm-agent/ui";
 import { useDesktop } from "../state/react";
 import { createOrganizations } from "./organizations";
+import { workspaceIdentity } from "../workspace/identity";
 import type { FixtureLoginPort } from "./types";
 export function LoginDialog({
   open,
@@ -112,6 +113,14 @@ function LoginForm({
     [login, setLogin] = useState(""),
     [password, setPassword] = useState(""),
     [method, setMethod] = useState("password");
+  const subject = workspaceIdentity(account.user);
+  useEffect(() => {
+    setPassword("");
+    setLogin("");
+    setOrganization("");
+    // An initiated login owns its in-flight authority call; passive subject changes retire discovery.
+    if (!desktop.account.busy) desktop.fixture?.account?.cancel();
+  }, [subject, desktop]);
   const selected = organization || state.selected;
   useEffect(() => {
     clear.current = () => setPassword("");

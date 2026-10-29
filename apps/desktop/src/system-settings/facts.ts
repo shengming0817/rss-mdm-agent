@@ -1,5 +1,5 @@
 import type { Snapshot } from "valtio/vanilla";
-import type { CollectedData } from "../self-service/types";
+import type { CollectedData, SettingsSnapshot } from "../self-service/types";
 import type { SystemSettingsController } from "./controller";
 const number = (v: unknown) =>
   typeof v === "number" && Number.isFinite(v)
@@ -43,6 +43,32 @@ const collectedTime = (value?: Snapshot<CollectedData>) =>
   value?.collectedAt == null
     ? ""
     : ` · ${new Date(value.collectedAt * 1000).toLocaleTimeString()}`;
+// Evidence follows the same inputs as each display projection; never borrow another resource's clock.
+function contextEvidence(
+  values: (Snapshot<CollectedData> | undefined)[],
+  native: Snapshot<SettingsSnapshot> | undefined,
+  now: number,
+) {
+  const samples = values.filter((value) => value !== undefined);
+  const times = samples.map((value) =>
+    value.collectedAt == null ? NaN : value.collectedAt * 1000,
+  );
+  const deadlines = times.map((at) => at + 300000);
+  if (native) {
+    times.push(native.collectedAtUnixMs);
+    deadlines.push(native.collectedAtUnixMs + 30000);
+  }
+  const known =
+    times.length > 0 && times.every((at) => Number.isFinite(at) && at <= now);
+  return {
+    collectedAt: known ? Math.min(...times) : undefined,
+    validUntil: known ? Math.min(...deadlines) : undefined,
+    verified:
+      known &&
+      values.every((value) => value?.quality === "complete" && !value.stale) &&
+      deadlines.every((at) => at > now),
+  };
+}
 export function homeFacts(
   controller?: SystemSettingsController,
   current:
@@ -76,9 +102,10 @@ export function homeFacts(
   const routeInterface = route?.fields.find(
     (f) => f.key === "interface",
   )?.value;
-  const systemDrive = [...(current?.facts.values() ?? [])].find((f) =>
+  const os = [...(current?.facts.values() ?? [])].find((f) =>
     f.source.domains.includes("hardware.os"),
-  )?.value.fields["hardware.os.system_drive"];
+  )?.value;
+  const systemDrive = os?.fields["hardware.os.system_drive"];
   const volume = rows(storage).find(
     (r) =>
       r.system_volume === true ||
@@ -116,7 +143,31 @@ export function homeFacts(
     total > 0 &&
     free >= 0 &&
     free <= total;
+  const now = current?.now ?? Date.now();
   return {
+    networkContext: contextEvidence(
+      [network],
+      typeof routeInterface === "string"
+        ? observations?.get("network")?.snapshot
+        : undefined,
+      now,
+    ),
+    storageContext: contextEvidence(
+      [
+        storage,
+        capacity,
+        ...(volume && volume.system_volume !== true ? [os] : []),
+      ],
+      undefined,
+      now,
+    ),
+    powerContext: contextEvidence(
+      [power],
+      typeof provider === "string" || typeof batteryPresent === "boolean"
+        ? observations?.get("power")?.snapshot
+        : undefined,
+      now,
+    ),
     network:
       typeof routeInterface === "string"
         ? routeInterface

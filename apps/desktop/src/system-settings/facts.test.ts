@@ -121,3 +121,33 @@ it("reports old native power state even when the battery collection is fresh", (
   expect(homeFacts(controller).battery).toBe("50%");
   expect(homeFacts(controller).batteryDetail).toContain("供电状态已过期");
 });
+
+it("keeps each page attachment within its own source clock and native observation deadline", () => {
+  put("volume", "hardware.volumes", [
+    { system_volume: true, size_bytes: 1000, free_bytes: 500 },
+  ]);
+  let facts = homeFacts(controller);
+  expect(facts.storageContext.verified).toBe(true);
+  expect(facts.networkContext.collectedAt).toBeUndefined();
+  expect(facts.networkContext.verified).toBe(false);
+  expect(facts.powerContext.verified).toBe(false);
+  put("network", "hardware.network", [{ addresses: ["192.0.2.1"] }]);
+  controller.state.observations.set("network", {
+    snapshot: {
+      section: "network",
+      revision: "test",
+      collectedAtUnixMs: controller.state.now - 45000,
+      source: "native",
+      targets: [
+        { id: "active-network", fields: [{ key: "interface", value: "en0" }] },
+      ],
+    },
+  } as never);
+  facts = homeFacts(controller);
+  expect(facts.networkContext.verified).toBe(false);
+  expect(facts.networkContext.validUntil).toBe(controller.state.now - 15000);
+  expect(facts.storageContext.verified).toBe(true);
+  controller.state.observations.get("network")!.snapshot!.collectedAtUnixMs =
+    controller.state.now + 1;
+  expect(homeFacts(controller).networkContext.verified).toBe(false);
+});

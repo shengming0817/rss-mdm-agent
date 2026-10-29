@@ -14,6 +14,7 @@ export function GlobalSearch({ workspace }: { workspace: Workspace }) {
     tasks = useSnapshot(workspace.tasks.state),
     platform = usePlatform(),
     input = useRef<InputRef>(null),
+    list = useRef<HTMLDivElement>(null),
     listId = useId(),
     [query, setQuery] = useState(""),
     [selected, setSelected] = useState(0);
@@ -80,6 +81,12 @@ export function GlobalSearch({ workspace }: { workspace: Workspace }) {
       )
       .slice(0, 30),
     active = Math.min(selected, Math.max(0, matches.length - 1));
+  useEffect(() => {
+    if (nav.searchOpen)
+      list.current
+        ?.querySelector('[aria-selected="true"]')
+        ?.scrollIntoView({ block: "nearest" });
+  }, [nav.searchOpen, query, active]);
   const close = () => workspace.navigation.setSearch(false),
     choose = (entry?: Result) => {
       if (entry) {
@@ -138,6 +145,7 @@ export function GlobalSearch({ workspace }: { workspace: Workspace }) {
         }}
       />
       <div
+        ref={list}
         className="rss-search-results"
         id={listId}
         role="listbox"

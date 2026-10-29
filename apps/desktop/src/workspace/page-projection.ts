@@ -24,37 +24,42 @@ export function pageResources(
       validUntil: device.readAt + 30000,
     });
   if (page === "home" || page === "system") {
-    const facts = homeFacts(workspace.system, system),
-      at = Math.min(
-        ...[...system.facts.values()].map((value) =>
-          value.value.collectedAt == null
-            ? Infinity
-            : value.value.collectedAt * 1000,
-        ),
-      );
-    if (Number.isFinite(at))
-      for (const [id, title, text] of [
-        ["network", "网络接口", facts.network + " · " + facts.networkDetail],
-        [
-          "storage",
-          "存储空间",
-          facts.storageFree + " GB · " + facts.storageDetail,
-        ],
-        ["power", "电池与电源", facts.battery + " · " + facts.batteryDetail],
-      ] as const) {
-        if (
-          (page === "home" || section === "overview" || section === id) &&
-          !system.errors.has(id)
-        )
-          rows.push({
-            id,
-            title,
-            description: text,
-            source: "本机系统观察",
-            collectedAt: at,
-            validUntil: at + 300000,
-          });
-      }
+    const facts = homeFacts(workspace.system, system);
+    for (const [id, title, text, evidence] of [
+      [
+        "network",
+        "网络接口",
+        facts.network + " · " + facts.networkDetail,
+        facts.networkContext,
+      ],
+      [
+        "storage",
+        "存储空间",
+        facts.storageFree + " GB · " + facts.storageDetail,
+        facts.storageContext,
+      ],
+      [
+        "power",
+        "电池与电源",
+        facts.battery + " · " + facts.batteryDetail,
+        facts.powerContext,
+      ],
+    ] as const) {
+      if (
+        (page === "home" || section === "overview" || section === id) &&
+        evidence.collectedAt != null &&
+        !system.errors.has(id)
+      )
+        rows.push({
+          id,
+          title,
+          description: text,
+          source: "本机系统观察",
+          collectedAt: evidence.collectedAt,
+          validUntil: evidence.validUntil,
+          verified: evidence.verified,
+        });
+    }
   }
   if (
     page === "home" ||

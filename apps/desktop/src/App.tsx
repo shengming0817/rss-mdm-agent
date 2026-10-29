@@ -22,6 +22,7 @@ import {
   BindingNotice,
   OrganizationManager,
 } from "./account/AccountPage";
+import { AppearancePage } from "./account/AppearancePage";
 import { LoginDialog } from "./account/LoginDialog";
 import { RegistrationPage } from "./account/RegistrationPage";
 import { createRegistration } from "./account/registration";
@@ -329,9 +330,14 @@ function SettingsContent({
           <StatePanel kind="loading" title="正在读取设备注册" />
         )}
       </div>
-      {section !== "account" && section !== "registration" && (
-        <PendingModule page="settings" section={section} />
-      )}
+      <div hidden={section !== "appearance"}>
+        <AppearancePage workspace={workspace} />
+      </div>
+      {section !== "account" &&
+        section !== "registration" &&
+        section !== "appearance" && (
+          <PendingModule page="settings" section={section} />
+        )}
     </>
   );
 }

@@ -20,7 +20,6 @@ const { channelStream } = await import(
 );
 const {
   FakeHost,
-  fixtureCaller: initialCaller,
   fixtures,
   surfaceCommit,
   readSnapshot,
@@ -39,7 +38,15 @@ const options = {
   profile: "conversation",
 };
 export async function createFixture() {
-  let fixtureCaller = { ...initialCaller };
+  const guest = fixtures.valid.find(
+    (value) => value.kind === "userContext",
+  ).identity;
+  const guestCaller = {
+    authorityId: guest.authorityId,
+    tenantId: guest.tenantId,
+    principalId: guest.principalId,
+  };
+  let fixtureCaller = { ...guestCaller };
   const host = new FakeHost(
     undefined,
     { now: Date.now },
@@ -372,7 +379,7 @@ export async function createFixture() {
             }
             if (input.guest) {
               Object.assign(identity, structuredClone(guestIdentity));
-              fixtureCaller = { ...initialCaller };
+              fixtureCaller = { ...guestCaller };
             } else {
               const organization =
                 input.organization === "beichen" ? "beichen" : "qinghe";
@@ -788,6 +795,9 @@ export async function startFixture() {
   await server.listen();
   return {
     ...fixture,
+    get caller() {
+      return fixture.caller;
+    },
     url: `http://127.0.0.1:${server.httpServer.address().port}/tests/assistant/`,
     async close() {
       await fixture.close();

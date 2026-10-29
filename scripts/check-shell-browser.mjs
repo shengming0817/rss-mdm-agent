@@ -70,6 +70,15 @@ export async function checkShellBrowser(page, fixture) {
   );
   await page.keyboard.press("Control+k");
   const search = page.getByRole("combobox", { name: "搜索应用、工具和设置" });
+  await search.press("ArrowUp");
+  await page.waitForFunction(() => {
+    const list = document.querySelector(".rss-search-results"),
+      option = list?.querySelector('[aria-selected="true"]');
+    if (!list || !option) return false;
+    const outer = list.getBoundingClientRect(),
+      inner = option.getBoundingClientRect();
+    return inner.top >= outer.top && inner.bottom <= outer.bottom;
+  });
   await search.fill("Workspace");
   await search.press("Enter");
   await page.getByRole("dialog").waitFor({ state: "hidden" });
@@ -144,6 +153,20 @@ export async function checkShellBrowser(page, fixture) {
   );
   await page.setViewportSize({ width: 1280, height: 900 });
   await cycle.click();
+  await page.evaluate(async () => {
+    const assistant = window.rssDesktop.state.workspace.assistant;
+    await assistant.create();
+    assistant.draft.set("PRIVATE PRE-LOGIN DRAFT");
+  });
+  assert.equal(
+    await page.getByRole("textbox", { name: "主页助手草稿" }).inputValue(),
+    "PRIVATE PRE-LOGIN DRAFT",
+  );
+  assert.ok(
+    (await page.evaluate(
+      () => window.rssDesktop.state.workspace.assistant.sessions().length,
+    )) > 0,
+  );
   await page.getByRole("button", { name: "用户菜单", exact: true }).click();
   await page
     .getByRole("menuitem", { name: "登录企业账号", exact: true })
