@@ -302,7 +302,12 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
         };
       },
     };
-  const snapshots = new Map<string, SettingsResponse>();
+  const snapshots = new Map<string, SettingsResponse>(),
+    settingValues = new Map<string, unknown>(),
+    settingRevisions = new Map<string, number>(),
+    previewsBefore = new Map<string, SettingsResponse>();
+  const advanceRevision = (section: string) =>
+    settingRevisions.set(section, (settingRevisions.get(section) ?? 1) + 1);
   const observed = (
     section: import("../../apps/desktop/src/self-service/types").SettingsSection,
   ): SettingsResponse => {
@@ -385,6 +390,12 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
                 options: [],
                 reason: null,
               };
+    for (const field of target.fields) {
+      const key = `${section}:${field.key}`;
+      if (!settingValues.has(key))
+        settingValues.set(key, deepClone(field.value));
+      field.value = deepClone(settingValues.get(key)) as typeof field.value;
+    }
     return {
       request: null,
       digest: null,
@@ -393,7 +404,9 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
       writeAllowed: !readOnly,
       snapshot: {
         section,
-        revision: "1".repeat(64),
+        revision: (settingRevisions.get(section) ?? 1)
+          .toString(16)
+          .padStart(64, "0"),
         collectedAtUnixMs: Date.now(),
         source: "显式 UI 样本",
         targets: empty ? [] : [target],
@@ -408,9 +421,21 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
     if (operation.kind === "status" || operation.kind === "keepDisplay") {
       const response = snapshots.get(operation.request);
       if (!response) throw Error("fixture missing");
-      if (operation.kind === "keepDisplay") {
-        response.effect = "applied";
-        response.finished = true;
+      if (response.effect === "preview") {
+        if (Date.now() >= (response.keepBeforeUnixMs ?? 0)) {
+          const before = previewsBefore.get(operation.request)!;
+          for (const field of before.snapshot!.targets[0].fields)
+            settingValues.set(`display:${field.key}`, deepClone(field.value));
+          advanceRevision("display");
+          response.snapshot = observed("display").snapshot;
+          response.effect = "restored";
+          response.finished = true;
+        } else if (operation.kind === "keepDisplay") {
+          if (operation.digest !== response.digest)
+            throw Error("fixture digest conflict");
+          response.effect = "applied";
+          response.finished = true;
+        }
       }
       return deepClone(response);
     }
@@ -423,6 +448,19 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
             ? "display"
             : "power"
         : operation.section;
+    const previous = snapshots.get(operation.request);
+    if (previous) return deepClone(previous);
+    const before = observed(section);
+    if (operation.kind === "change") {
+      if (operation.expected !== before.snapshot?.revision)
+        throw Error("fixture revision conflict");
+      if (operation.patch.target !== before.snapshot.targets[0]?.id)
+        throw Error("fixture target missing");
+      for (const [key, value] of Object.entries(operation.patch))
+        if (!["kind", "target"].includes(key) && value !== null)
+          settingValues.set(`${section}:${key}`, deepClone(value));
+      advanceRevision(section);
+    }
     const response = observed(section);
     response.request = operation.request;
     response.digest = "a".repeat(64);
@@ -432,6 +470,12 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
       operation: `settings_${operation.kind}`,
       request: operation.request,
     });
+    if (operation.kind === "change" && section === "display") {
+      response.effect = "preview";
+      response.finished = false;
+      response.keepBeforeUnixMs = Date.now() + 15000;
+      previewsBefore.set(operation.request, before);
+    }
     snapshots.set(operation.request, response);
     return deepClone(response);
   };

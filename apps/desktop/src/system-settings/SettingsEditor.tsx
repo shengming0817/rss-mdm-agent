@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Alert, Button, Input, InputNumber, Select, Switch } from "antd";
+import { useSnapshot } from "valtio";
 import type { Snapshot } from "valtio/vanilla";
 import type {
   LocalPreparation,
@@ -57,23 +58,37 @@ export function SettingsEditor({
       };
     return null;
   };
-  const [draft, setDraft] = useState(initial),
-    [expected, setExpected] = useState(revision),
-    [dirty, setDirty] = useState(false),
+  const [edit, setEdit] = useState<{
+      patch: SettingsPatch;
+      expected: string;
+      request?: string;
+    } | null>(null),
+    state = useSnapshot(owner.state),
+    result = state.observations.get(section),
+    draft = edit?.patch ?? initial(),
+    expected = edit?.expected ?? revision,
+    dirty = !!edit,
     writable = (key: string) =>
       !disabled &&
       !!target.fields.find((field) => field.key === key && field.writable),
     value = (key: string) =>
       target.fields.find((field) => field.key === key)?.value;
+  useEffect(() => {
+    if (
+      edit?.request &&
+      result?.request === edit.request &&
+      result.finished &&
+      result.effect === "applied"
+    ) {
+      setEdit(null);
+    }
+  }, [edit?.request, result?.request, result?.finished, result?.effect]);
   if (!draft) return null;
   const update = (patch: SettingsPatch) => {
-      setDraft(patch);
-      setDirty(true);
+      setEdit({ patch, expected });
     },
     reset = () => {
-      setDraft(initial());
-      setExpected(revision);
-      setDirty(false);
+      setEdit(null);
     };
   return (
     <div className="rss-system-editor rss-stack">
@@ -86,9 +101,10 @@ export function SettingsEditor({
               disabled={disabled}
               onClick={() => {
                 if (entry.patch && entry.patch.kind === draft.kind) {
-                  setDraft(deepClone(entry.patch) as SettingsPatch);
-                  setExpected(entry.expected ?? revision);
-                  setDirty(true);
+                  setEdit({
+                    patch: deepClone(entry.patch) as SettingsPatch,
+                    expected: entry.expected ?? revision,
+                  });
                   onEntryUsed?.();
                 }
               }}
@@ -253,7 +269,18 @@ export function SettingsEditor({
         <Button
           type="primary"
           disabled={disabled || !dirty}
-          onClick={() => void owner.save(draft, expected)}
+          onClick={() => {
+            const submitted = edit;
+            if (!submitted) return;
+            void owner
+              .save(submitted.patch, submitted.expected)
+              .then((request) => {
+                if (request)
+                  setEdit((current) =>
+                    current === submitted ? { ...current, request } : current,
+                  );
+              });
+          }}
         >
           保存更改
         </Button>

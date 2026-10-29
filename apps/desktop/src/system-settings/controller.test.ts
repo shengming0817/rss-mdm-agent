@@ -110,8 +110,9 @@ it("preview keep uses the exact frozen digest and does not allocate another oper
       keepBeforeUnixMs: Date.now() + 15000,
     });
   });
-  const refresh = controller.load("display", true);
-  await vi.advanceTimersByTimeAsync(1);
+  await controller.load("display", true);
+  expect(controller.state.busy.has("display")).toBe(false);
+  expect(calls.filter((call) => call.kind === "status")).toHaveLength(0);
   expect(controller.state.observations.get("display")?.effect).toBe("preview");
   await controller.keep("display");
   expect(calls.find((c) => c.kind === "keepDisplay")).toEqual({
@@ -122,7 +123,6 @@ it("preview keep uses the exact frozen digest and does not allocate another oper
   expect(identity).toHaveBeenCalledTimes(1);
   controller.dispose();
   await vi.advanceTimersByTimeAsync(250);
-  await refresh;
   expect(
     calls.every((c) =>
       ["refresh", "status", "keepDisplay", "snapshot"].includes(c.kind),
@@ -180,4 +180,31 @@ it("missing status preserves the original write UUID; native settings remain ind
   expect(controller.state.pending.get("display")?.request).toBe(
     "00000000-0000-4000-8000-000000000001",
   );
+});
+
+it("releases the page when polling reaches preview and rejects an expired keep without another mutation", async () => {
+  vi.useFakeTimers();
+  const calls: SettingsOperation[] = [];
+  const { controller } = setup(async (operation) => {
+    calls.push(operation);
+    if (operation.kind === "snapshot") return response();
+    return response({
+      request: "00000000-0000-4000-8000-000000000001",
+      digest: "c".repeat(64),
+      finished: false,
+      effect: operation.kind === "change" ? "pending" : "preview",
+      keepBeforeUnixMs: Date.now() + 15000,
+    });
+  });
+  await controller.load("display");
+  await controller.save(
+    { kind: "display", target: "display", mode: "large", origin: null },
+    snapshot.revision,
+  );
+  expect(controller.state.busy.has("display")).toBe(false);
+  expect(controller.state.pending.has("display")).toBe(true);
+  await vi.advanceTimersByTimeAsync(15001);
+  await controller.keep("display");
+  expect(calls.some((value) => value.kind === "keepDisplay")).toBe(false);
+  expect(calls.filter((value) => value.kind === "change")).toHaveLength(1);
 });

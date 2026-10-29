@@ -243,7 +243,8 @@ export function createSystemSettings(
           section,
           response.reason ?? "系统未确认打开设置，请重试。",
         );
-      if (response.finished) return;
+      if (response.finished || (publish && response.effect === "preview"))
+        return response;
       await pause();
     }
   }
@@ -279,8 +280,9 @@ export function createSystemSettings(
           section,
           response.reason ?? "系统未确认打开设置，请重试。",
         );
-      if (request && !response.finished)
-        await poll(section, request, call, !navigation);
+      if (request && !response.finished && response.effect !== "preview")
+        return await poll(section, request, call, !navigation);
+      return response;
     } catch (error) {
       if (active && call === epoch) state.errors.set(section, message(error));
     } finally {
@@ -335,33 +337,43 @@ export function createSystemSettings(
           ? "display"
           : "power";
     const snapshot = state.observations.get(section)?.snapshot;
-    if (!snapshot) return;
+    if (
+      !snapshot ||
+      !active ||
+      state.busy.has(section) ||
+      state.pending.has(section)
+    )
+      return;
+    const request = identity();
     await run(section, {
       kind: "change",
-      request: identity(),
+      request,
       expected: expected ?? snapshot.revision,
       patch,
     });
+    return request;
   }
   async function keep(section: SettingsSection) {
     const response = state.observations.get(section);
     if (
+      !active ||
       !port ||
+      state.busy.has(section) ||
       !response?.request ||
       !response.digest ||
       response.effect !== "preview"
     )
       return;
-    try {
-      const value = await port({
-        kind: "keepDisplay",
-        request: response.request,
-        digest: response.digest,
-      });
-      if (active) accept(section, value);
-    } catch (error) {
-      if (active) state.errors.set(section, message(error));
-    }
+    if (
+      response.keepBeforeUnixMs == null ||
+      Date.now() >= response.keepBeforeUnixMs
+    )
+      return;
+    await run(section, {
+      kind: "keepDisplay",
+      request: response.request,
+      digest: response.digest,
+    });
   }
   async function cancel(section: SettingsSection) {
     const pending = state.pending.get(section);

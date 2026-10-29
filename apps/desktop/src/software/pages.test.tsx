@@ -162,3 +162,75 @@ it("retains system drafts across secondary navigation and rereads every overview
   ]);
   f.app.unmount();
 });
+
+it("can explicitly re-prepare the same failed organization project with fresh fields and a new request", async () => {
+  const f = await mount();
+  const item = f.pages.published.find((value) => value.task.kind === "script")!;
+  await act(async () => {
+    await f.workspace.policies.select(item);
+    f.workspace.navigation.showPolicy();
+  });
+  const dialog = () => within(screen.getByRole("dialog"));
+  fireEvent.change(dialog().getByRole("textbox", { name: "interface" }), {
+    target: { value: "en0" },
+  });
+  fireEvent.click(dialog().getByRole("button", { name: "确认并提交" }));
+  await dialog().findByRole("button", { name: "查询原请求" });
+  const original = f.workspace.policies.state.choice!.request;
+  f.pages.records.get(original)!.state = "failed";
+  fireEvent.click(dialog().getByRole("button", { name: "查询原请求" }));
+  fireEvent.click(await dialog().findByRole("button", { name: "重新准备" }));
+  const input = await dialog().findByRole("textbox", { name: "interface" });
+  expect((input as HTMLInputElement).value).toBe("");
+  expect(
+    f.pages.events.filter((value) => value.operation === "policy_invoke"),
+  ).toHaveLength(1);
+  fireEvent.change(input, { target: { value: "en1" } });
+  fireEvent.click(dialog().getByRole("button", { name: "确认并提交" }));
+  await waitFor(() =>
+    expect(
+      f.pages.events.filter((value) => value.operation === "policy_invoke"),
+    ).toHaveLength(2),
+  );
+  const choice = f.workspace.policies.state.choice!;
+  expect(choice.request).not.toBe(original);
+  expect(choice.parameters).toMatchObject({ interface: "en1" });
+  f.app.unmount();
+});
+it("ends a verified settings save before the next edit using the new CAS revision", async () => {
+  const f = await mount();
+  act(() => f.workspace.navigation.select("system", "network"));
+  const input = await f
+    .page("系统设置")
+    .findByRole("textbox", { name: "HTTP 代理服务器" });
+  fireEvent.change(input, { target: { value: "proxy.one.invalid" } });
+  fireEvent.click(f.page("系统设置").getByRole("button", { name: "保存更改" }));
+  await waitFor(() =>
+    expect(
+      (
+        f
+          .page("系统设置")
+          .getByRole("button", { name: "保存更改" }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true),
+  );
+  await waitFor(() =>
+    expect(f.workspace.system.state.observations.get("network")?.effect).toBe(
+      "applied",
+    ),
+  );
+  const revision =
+    f.workspace.system.state.observations.get("network")!.snapshot!.revision;
+  fireEvent.change(input, { target: { value: "proxy.two.invalid" } });
+  fireEvent.click(f.page("系统设置").getByRole("button", { name: "保存更改" }));
+  await waitFor(() =>
+    expect(
+      f.pages.events.filter((value) => value.operation === "settings_change"),
+    ).toHaveLength(2),
+  );
+  expect(
+    f.workspace.system.state.observations.get("network")?.snapshot?.revision,
+  ).not.toBe(revision);
+  expect(f.workspace.system.state.errors.size).toBe(0);
+  f.app.unmount();
+});

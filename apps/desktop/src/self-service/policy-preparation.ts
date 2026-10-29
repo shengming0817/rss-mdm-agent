@@ -1,4 +1,4 @@
-import { proxy } from "valtio/vanilla";
+import { proxy, type Snapshot } from "valtio/vanilla";
 import { deepClone } from "valtio/vanilla/utils";
 import type {
   PolicyChoice,
@@ -48,6 +48,33 @@ export function createPolicyPreparation(
     } catch {
       if (active && call === epoch)
         state.error = "当前发布项目不可用，请刷新目录或检查连接。";
+    } finally {
+      if (active && call === epoch) state.busy = false;
+    }
+  }
+  const canRestart = (status: Snapshot<PolicyStatus> | null = state.status) => {
+    if (!state.choice || !status) return false;
+    return status.kind === "preparation"
+      ? ["failed", "cancelled"].includes(status.value.state)
+      : status.kind === "run" &&
+          ["succeeded", "failed"].includes(status.value.state.execution);
+  };
+  async function restart() {
+    if (!active || !port || state.busy || !state.item || !canRestart()) return;
+    const call = ++epoch,
+      policyId = state.item.policyId;
+    state.busy = true;
+    state.error = "";
+    try {
+      const current = await port.policy_resolve({ kind: "id", id: policyId });
+      if (!active || call !== epoch) return;
+      if (current.policyId !== policyId) throw Error("changed policy");
+      state.item = deepClone(current);
+      state.choice = null;
+      state.status = null;
+    } catch {
+      if (active && call === epoch)
+        state.error = "无法重新读取当前发布项目，原请求仍可查询。";
     } finally {
       if (active && call === epoch) state.busy = false;
     }
@@ -125,7 +152,15 @@ export function createPolicyPreparation(
     }
   }
   function clear() {
-    if (state.busy || (state.choice && !state.status)) return false;
+    if (
+      state.busy ||
+      (state.choice &&
+        (!state.status ||
+          state.status.kind === "absent" ||
+          (state.status.kind === "run" &&
+            state.status.value.state.execution === "unknown")))
+    )
+      return false;
     ++epoch;
     state.item = null;
     state.choice = null;
@@ -139,6 +174,8 @@ export function createPolicyPreparation(
     select,
     submit,
     recover,
+    canRestart,
+    restart,
     confirm,
     clear,
     dispose() {

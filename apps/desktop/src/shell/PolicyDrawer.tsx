@@ -42,7 +42,7 @@ export function PolicyDrawer({
       }
     }
     setParameters(open ? values : {});
-  }, [open, item?.policyId]);
+  }, [open, item?.policyId, state.choice?.request]);
   const schema =
       item?.task.kind === "script" &&
       typeof item.task.parameterSchema === "object"
@@ -229,6 +229,14 @@ export function PolicyDrawer({
                     onClick={() => void owner.confirm()}
                   >
                     确认原准备
+                  </Button>
+                )}
+                {owner.canRestart(state.status) && (
+                  <Button
+                    disabled={state.busy}
+                    onClick={() => void owner.restart()}
+                  >
+                    重新准备
                   </Button>
                 )}
                 <Button

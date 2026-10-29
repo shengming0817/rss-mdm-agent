@@ -37,7 +37,8 @@ export function ConnectionsPage({
       draft: ConnectionDraft;
       expected: number | null;
     } | null>(null),
-    [secret, setSecret] = useState("");
+    [secret, setSecret] = useState(""),
+    [stale, setStale] = useState(false);
   useEffect(() => {
     if (!active) {
       setSecret("");
@@ -52,6 +53,7 @@ export function ConnectionsPage({
   const close = () => {
       setSecret("");
       setEditing(null);
+      setStale(false);
     },
     patch = (update: Partial<ConnectionDraft>) => {
       setSecret("");
@@ -63,6 +65,7 @@ export function ConnectionsPage({
     },
     edit = (connection: Connection) => {
       setSecret("");
+      setStale(false);
       setEditing({
         expected: connection.configRevision,
         draft: {
@@ -356,6 +359,12 @@ export function ConnectionsPage({
             <p className="rss-muted">
               保存核对当前配置版本；验证可能访问提供方服务。密钥不会进入页面上下文、搜索或诊断内容。
             </p>
+            {stale && (
+              <Alert
+                type="warning"
+                title="此配置已变化或移除，请关闭并重新打开当前配置后继续。"
+              />
+            )}
             <div className="rss-settings-actions">
               <Button onClick={close}>关闭</Button>
               <Button
@@ -392,8 +401,12 @@ export function ConnectionsPage({
                         );
                       if (connection) {
                         setSecret("");
-                        void workspace.connections.test(deepClone(connection));
-                      }
+                        void workspace.connections
+                          .test(deepClone(connection))
+                          .then((tested) => {
+                            if (tested) close();
+                          });
+                      } else setStale(true);
                     }}
                   >
                     验证当前已保存配置
@@ -415,6 +428,7 @@ export function ConnectionsPage({
                           .then((removed) => {
                             if (removed) close();
                           });
+                      else setStale(true);
                     }}
                   >
                     <Button

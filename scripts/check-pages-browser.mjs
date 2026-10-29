@@ -256,6 +256,50 @@ export async function checkPagesBrowser(page, fixture) {
       (event) => event.operation === "settings_change",
     ),
   );
+  await page.waitForFunction(
+    () =>
+      !window.rssDesktop.state.workspace.system.state.pending.has("network"),
+  );
+  await page
+    .getByRole("textbox", { name: "HTTP 代理服务器", exact: true })
+    .fill("proxy.second.invalid");
+  await page.getByRole("button", { name: "保存更改", exact: true }).click();
+  await page.waitForFunction(
+    () =>
+      window.rssPageFixture.events.filter(
+        (event) => event.operation === "settings_change",
+      ).length === 2,
+  );
+  await page.waitForFunction(
+    () =>
+      !window.rssDesktop.state.workspace.system.state.pending.has("network"),
+  );
+  await section("显示器");
+  const displayMode = page.getByRole("combobox", {
+    name: "内建显示器 显示模式",
+    exact: true,
+  });
+  await displayMode.focus();
+  await displayMode.press("ArrowDown");
+  await displayMode.press("ArrowDown");
+  await displayMode.press("Enter");
+  await page.getByRole("button", { name: "保存更改", exact: true }).click();
+  const keepDisplay = page.getByRole("button", {
+    name: "保留显示设置",
+    exact: true,
+  });
+  await keepDisplay.waitFor();
+  assert.equal(await keepDisplay.isEnabled(), true);
+  await capture("display-preview");
+  await keepDisplay.click();
+  await page.waitForFunction(
+    () =>
+      !window.rssDesktop.state.workspace.system.state.pending.has("display"),
+  );
+  assert.equal(await keepDisplay.count(), 0);
+  evidence.checks.push(
+    "consecutive settings saves use changed CAS revisions; original display preview permits explicit keep before deadline",
+  );
   await primary("工具中心");
   await section("连接与网络");
   await page.getByRole("button", { name: /开始检查/ }).click();
@@ -309,6 +353,49 @@ export async function checkPagesBrowser(page, fixture) {
   await capture("published-tool");
   await page.keyboard.press("Escape");
   await policy.waitFor({ state: "hidden" });
+  await page.evaluate(() => {
+    const request =
+      window.rssDesktop.state.workspace.policies.state.choice.request;
+    window.rssPageFixture.records.get(request).state = "failed";
+  });
+  await page
+    .locator(".rss-tool-card")
+    .filter({
+      has: page.getByRole("heading", { name: "组织网络观察", exact: true }),
+    })
+    .getByRole("button", { name: /查看并准备/ })
+    .click();
+  await policy.getByRole("button", { name: "查询原请求", exact: true }).click();
+  await policy.getByRole("button", { name: "重新准备", exact: true }).click();
+  const freshInput = policy.getByRole("textbox", {
+    name: "interface",
+    exact: true,
+  });
+  await freshInput.waitFor();
+  assert.equal(await freshInput.inputValue(), "");
+  await freshInput.fill("en1");
+  const beforeRestart = await page.evaluate(
+    () => window.rssDesktop.state.workspace.policies.state.choice,
+  );
+  assert.equal(beforeRestart, null);
+  await policy.getByRole("button", { name: "确认并提交", exact: true }).click();
+  await page.waitForFunction(
+    () =>
+      window.rssPageFixture.events.filter(
+        (event) => event.operation === "policy_invoke",
+      ).length === 3,
+  );
+  const invocations = await page.evaluate(() =>
+    window.rssPageFixture.events
+      .filter((event) => event.operation === "policy_invoke")
+      .map((event) => event.request),
+  );
+  assert.equal(new Set(invocations).size, 3);
+  await page.keyboard.press("Escape");
+  await policy.waitFor({ state: "hidden" });
+  evidence.checks.push(
+    "same organization project explicitly re-resolves after failure; parameters reset; a new human submission gets a distinct request",
+  );
   evidence.checks.push(
     "eight system sections; frozen proxy draft; four tool groups; explicit DNS/TCP and published script invocation",
   );
