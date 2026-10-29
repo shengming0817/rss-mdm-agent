@@ -63,7 +63,10 @@ function policyFields(action: Policy, editable: boolean) {
     const id = `field${bindings.length}`;
     const f: OperationField = {
       id,
-      label: key,
+      label:
+        typeof spec.title === "string" && spec.title.trim()
+          ? spec.title.trim().slice(0, 256)
+          : key,
       component: "TextField",
       required: required.includes(key),
     };

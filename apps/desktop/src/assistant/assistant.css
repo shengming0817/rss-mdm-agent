@@ -478,3 +478,13 @@
   ) {
   margin-left: 39px;
 }
+
+.rss-ai-preparation-facts > summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.8;
+}
+.rss-ai-preparation-facts[open] > summary {
+  margin-bottom: 14px;
+}

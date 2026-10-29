@@ -185,10 +185,13 @@ function LoadedOperation({
         </Tag>
       </header>
       {raw.facts.kind === "preparation" && (
-        <PolicyFacts
-          record={raw.facts.value}
-          parameterSummary={raw.parameterSummary}
-        />
+        <details className="rss-ai-preparation-facts">
+          <summary>核对原准备、版本与发起来源</summary>
+          <PolicyFacts
+            record={raw.facts.value}
+            parameterSummary={raw.parameterSummary}
+          />
+        </details>
       )}
       {raw.facts.kind === "execution" && (
         <details className="rss-ai-execution-facts">

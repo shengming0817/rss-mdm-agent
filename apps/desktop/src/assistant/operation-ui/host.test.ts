@@ -145,11 +145,19 @@ describe("production operation adapter", () => {
   it("submits edited current values and preserves fixed parameters at the service boundary", async () => {
     const f = fixture(),
       stop = new AbortController();
+    if (
+      f.record.action.kind !== "policy" ||
+      f.record.action.task.kind !== "script"
+    )
+      throw Error("fixture");
+    (f.record.action.task.parameterSchema as any).properties.name.title =
+      "修复名称";
     const bridge = await connectOperation(
       f.controller,
       "delivery",
       stop.signal,
     );
+    expect(bridge.presentation.fields[0].label).toBe("修复名称");
     const card = createOperationController(
       bridge.presentation,
       bridge.snapshot,

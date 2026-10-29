@@ -92,6 +92,7 @@ export async function checkConversationBrowser(page, fixture) {
     await page.screenshot({
       path: new URL(file, directory).pathname,
       animations: "disabled",
+      style: ".fixture-controls { display:none!important; }",
     });
     evidence.captures.push({ file, ...geometry });
   };
@@ -143,7 +144,9 @@ export async function checkConversationBrowser(page, fixture) {
     assert.ok(
       (await history.locator(".rss-session-history-item").count()) >= 1,
     );
-    await history.locator(".rss-session-history-item").first().click();
+    await history
+      .locator('.rss-session-history-item[aria-current="page"]')
+      .click();
     assert.equal(await history.isVisible(), true);
     assert.equal(await input.inputValue(), "留在当前会话的草稿");
     await history.getByRole("textbox", { name: "搜索历史会话" }).fill("");
@@ -205,8 +208,12 @@ export async function checkConversationBrowser(page, fixture) {
       await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
       for (const width of [1280, 720, 420]) {
         await page.setViewportSize({ width, height: 900 });
-        await card.scrollIntoViewIfNeeded();
+        await card.evaluate((node) => node.scrollIntoView({ block: "start" }));
         await capture(`${platform}-${theme}-${width}`, "operation");
+        await card
+          .locator(".rss-ai-operation-footer")
+          .evaluate((node) => node.scrollIntoView({ block: "end" }));
+        await capture(`${platform}-${theme}-${width}`, "operation-end");
       }
     }
     await card
@@ -236,9 +243,15 @@ export async function checkConversationBrowser(page, fixture) {
     });
     await card.getByRole("button", { name: "查看原任务" }).click();
     await page.getByRole("dialog", { name: /任务详情/ }).waitFor();
+    await page.waitForFunction(
+      (id) =>
+        window.rssDesktop.state.workspace.tasks.state.selected?.reference
+          .request === id,
+      operationId,
+    );
     await page.keyboard.press("Escape");
     evidence.checks.push(
-      `${platform}: fixed history, retained current draft, 18 captures, trusted delivery to edited original Policy draft and one concrete confirmation; no extra dialog or terminal effect claimed`,
+      `${platform}: fixed history, retained current draft, 24 captures, trusted delivery to edited original Policy draft and one concrete confirmation; no extra dialog or terminal effect claimed`,
     );
   }
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -292,10 +305,10 @@ export async function checkConversationBrowser(page, fixture) {
     (_, i) => `第 ${i + 1} 段 · 流式阅读中的设备状态。\n\n`,
   ).join("");
   await drive(stream, { action: "delta", messageId: "stream", text: long });
-  await page
+  const viewport = page.getByLabel("会话内容", { exact: true });
+  await viewport
     .getByText("第 50 段 · 流式阅读中的设备状态。", { exact: false })
     .waitFor();
-  const viewport = page.getByLabel("会话内容", { exact: true });
   await viewport.evaluate((node) => {
     node.scrollTop = 80;
     node.dispatchEvent(new Event("scroll"));
@@ -341,6 +354,6 @@ export async function checkConversationBrowser(page, fixture) {
     JSON.stringify(evidence, null, 2),
   );
   console.log(
-    "PASS React assistant: fixed history, scoped draft, ordinary/A2UI answers, one-shot permissions, trusted R05 action, streaming/stop and 36 v4 visual captures. Scripted Host and sample records are not provider or OS effect proof.",
+    "PASS React assistant: fixed history, scoped draft, ordinary/A2UI answers, one-shot permissions, trusted R05 action, streaming/stop and 36 v4 matrix captures plus 12 operation footer captures. Scripted Host and sample records are not provider or OS effect proof.",
   );
 }
