@@ -452,7 +452,15 @@ export async function checkConversationBrowser(page, fixture) {
     assert.notEqual(command.commandId, before);
     return command;
   };
-  const originalCommand = await fixture.command(stream);
+  // Use a completed ordinary conversation: the earlier cancellation journey deliberately
+  // retains its original cancel receipt and must not be repurposed as a settled context.
+  const optionsSession = await send("会话选项验收");
+  await finishPrompt(
+    optionsSession,
+    "会话选项的已完成原文本。",
+    "options-original",
+  );
+  const originalCommand = await fixture.command(optionsSession);
   await settings();
   await page.getByRole("button", { name: "重读连接", exact: true }).click();
   await page
@@ -491,13 +499,17 @@ export async function checkConversationBrowser(page, fixture) {
     );
   }, alternate);
   assert.equal(
-    (await fixture.command(stream)).commandId,
+    (await fixture.command(optionsSession)).commandId,
     originalCommand.commandId,
   );
   await finishOptions();
   await primary("AI 助手");
-  const switched = await sendCurrent(stream, "连接切换后明确发送");
-  await finishPrompt(stream, "连接 B 的稳定完成文本。", "options-switched");
+  const switched = await sendCurrent(optionsSession, "连接切换后明确发送");
+  await finishPrompt(
+    optionsSession,
+    "连接 B 的稳定完成文本。",
+    "options-switched",
+  );
   assert.equal(switched.input.type, "prompt");
   await settings();
   await openOptions();
@@ -508,7 +520,10 @@ export async function checkConversationBrowser(page, fixture) {
     const c = window.rssDesktop.state.workspace.assistant;
     return c.view().connectionPending && !c.state.optionBusy;
   });
-  assert.equal((await fixture.command(stream)).commandId, switched.commandId);
+  assert.equal(
+    (await fixture.command(optionsSession)).commandId,
+    switched.commandId,
+  );
   await page
     .getByRole("spinbutton", { name: "历史轮数", exact: true })
     .fill("1");
@@ -526,7 +541,10 @@ export async function checkConversationBrowser(page, fixture) {
     ),
     0,
   );
-  assert.equal((await fixture.command(stream)).commandId, switched.commandId);
+  assert.equal(
+    (await fixture.command(optionsSession)).commandId,
+    switched.commandId,
+  );
   const frozen = await page.evaluate(() =>
     JSON.parse(
       JSON.stringify(
@@ -564,21 +582,28 @@ export async function checkConversationBrowser(page, fixture) {
   await finishOptions();
   await primary("AI 助手");
   await page.getByText("下一条输入将带入已确认历史", { exact: true }).waitFor();
-  const carried = await sendCurrent(stream, "只带入本人确认的这一次历史");
+  const carried = await sendCurrent(
+    optionsSession,
+    "只带入本人确认的这一次历史",
+  );
   assert.deepEqual(carried.input.history, frozen);
-  await finishPrompt(stream, "已收到明确带入的文本。", "options-carried");
+  await finishPrompt(
+    optionsSession,
+    "已收到明确带入的文本。",
+    "options-carried",
+  );
   assert.equal(
     await page.evaluate(
       () => window.rssDesktop.state.workspace.assistant.state.history.size,
     ),
     0,
   );
-  const plainNext = await sendCurrent(stream, "下一条恢复默认不带历史");
+  const plainNext = await sendCurrent(optionsSession, "下一条恢复默认不带历史");
   assert.equal(plainNext.input.history, undefined);
-  await finishPrompt(stream, "下一条没有显式历史。", "options-next");
+  await finishPrompt(optionsSession, "下一条没有显式历史。", "options-next");
   await settings();
   await openOptions();
-  const resumedBefore = (await fixture.command(stream)).commandId;
+  const resumedBefore = (await fixture.command(optionsSession)).commandId;
   await page
     .getByRole("button", { name: "读取原会话状态", exact: true })
     .click();
@@ -591,12 +616,15 @@ export async function checkConversationBrowser(page, fixture) {
   await page.waitForFunction(
     () => !window.rssDesktop.state.workspace.assistant.state.opening,
   );
-  assert.equal((await fixture.command(stream)).commandId, resumedBefore);
+  assert.equal(
+    (await fixture.command(optionsSession)).commandId,
+    resumedBefore,
+  );
   assert.equal(
     await page.evaluate(
       () => window.rssDesktop.state.workspace.assistant.state.selected,
     ),
-    stream,
+    optionsSession,
   );
   await finishOptions();
   await primary("AI 助手");
