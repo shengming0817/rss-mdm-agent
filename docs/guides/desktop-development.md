@@ -96,11 +96,11 @@ CI 在本轮准备阶段构建选中的包与 Rust helper，后续检查复用�
 
 自动回归由本地 CI 的单元、协议、SQLite、adapter 和浏览器检查承担，不要求系统授权弹窗。`pnpm check:desktop-native --visual` 是额外的原生视觉验收，从仓库根启动 `pnpm dev --fixture`，加载产品 main 和真实 WKWebView。它复用既有 assistant fixture 装配同一个产品 App：资源快照和 AI Host 为显式测试来源，任务阶段、过程与效果取自 Rust 生成的测试投影，AI 关联为测试绑定。它不连接云端模型、不执行设备操作，不证明生产执行授权或效果。
 
-该路径限定 macOS arm64，需要已解锁桌面及 System Events 辅助功能权限；环境不满足直接失败。检查浅深主题、1100×760 / 1440×960 / 480×400、会话与资源布局、任务抽屉、原生键盘与焦点、关闭重开。存在已启用的中文拼音输入源时，用物理键验证候选确认不发送及显式发送，并恢复原输入源；系统主题同样在结束后恢复。无实际入口或环境的缩放、其它显示比例及 Windows 项目明确标记未验证。
+该路径限定 macOS arm64，需要已解锁桌面及 System Events 辅助功能权限；环境不满足直接失败。检查浅深主题、1100×760 / 1440×960 / 480×400、会话与资源布局、任务抽屉和关闭重开；系统主题在结束后恢复。无实际入口或环境的缩放、其它显示比例及 Windows 项目明确标记未验证。
 
 真实执行旅程需要显式 `--controlled-service`，使用受保护固定候选、真实认证 IPC 和服务 journal；普通开发启动不会自动安装服务。调试构建的真实 AI 路径使用隔离 macOS 文件钥匙串，退出后删除并核对默认钥匙串与搜索列表未改变；fixture 路径不创建钥匙串。正式签名应用的钥匙串授权另行验收。
 
-驱动使用固定 `webdriverio@9.32.0` 与 `tauri-plugin-wdio-webdriver@1.4.0` 的标准 WebDriver 接口。`native-e2e` 只允许调试构建，并要求显式 nonce、动态 loopback 端口和隔离 `--test-data-dir`；release 携带该 feature 会编译失败。脚本核对主进程与监听端口归属；固定的 [本地上游补丁](../../vendor/tauri-plugin-wdio-webdriver/NOTICE.md) 对每个请求校验运行凭据，缺失或错误凭据一律拒绝，启动日志仅记录凭据摘要。脚本不调用 WebView 内部 IPC、不替换业务回复。视觉模式的关闭/重开通过 WebDriver 原生 `window.close()` 与应用“显示窗口”菜单验证；开发窗口的标题栏关闭按钮未向 AX 暴露，物理按钮点击单独标为未验证。Tab、Shift+Tab、Escape 和应用菜单操作由 macOS System Events 发出；WebDriver 键盘事件不能替代这些证据。开发构建验收期间保持源码不变；固定候选验收允许源码变化。不要并发启动同一 worktree 的开发服务。
+驱动使用固定 `webdriverio@9.32.0` 与 `tauri-plugin-wdio-webdriver@1.4.0` 的标准 WebDriver 接口。`native-e2e` 只允许调试构建，并要求显式 nonce、动态 loopback 端口和隔离 `--test-data-dir`；release 携带该 feature 会编译失败。脚本核对主进程与监听端口归属；固定的 [本地上游补丁](../../vendor/tauri-plugin-wdio-webdriver/NOTICE.md) 对每个请求校验运行凭据，缺失或错误凭据一律拒绝，启动日志仅记录凭据摘要。脚本不调用 WebView 内部 IPC、不替换业务回复。视觉模式的关闭/重开通过 WebDriver 原生 `window.close()` 与应用“显示窗口”菜单验证；开发窗口的标题栏关闭按钮未向 AX 暴露，物理按钮点击单独标为未验证。业务交互使用可见产品按钮；应用菜单操作由 macOS System Events 发出。开发构建验收期间保持源码不变；固定候选验收允许源码变化。不要并发启动同一 worktree 的开发服务。
 
 `.local-ci-runs/desktop-native.json` 记录实际模式、当前工具运行环境、运行包摘要、进程归属与完成项；固定候选保留冻结时来源，开发构建路径另记源码与锁文件摘要，截图和脱敏日志在同目录。旅程结果、wrapper 退出和清理确认分别记录；wrapper 非零退出或清理未确认时，即使旅程断言通过，总结果仍失败。失败回执不能解释为通过。fixture 模式证明产品 WebView 与显式样本装配；controlled-service 模式分别保留真实服务 journal、后台回执及独立设备效果证据。本地模型响应仍是受控样本，不证明真实模型能力。
 
