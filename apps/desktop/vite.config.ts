@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { frontendClosure } from "../../scripts/frontend-closure.mjs";
 export default defineConfig(async ({ command }) => {
   const fixture = process.env.RSS_DESKTOP_ASSEMBLY === "fixture";
   if (fixture && command !== "serve")
@@ -15,6 +16,7 @@ export default defineConfig(async ({ command }) => {
   return {
     plugins: [
       react(),
+      frontendClosure("desktop"),
       ...(owner
         ? [
             owner.plugin,

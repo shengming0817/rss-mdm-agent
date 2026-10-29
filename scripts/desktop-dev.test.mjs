@@ -58,22 +58,38 @@ test("appearance evidence waits for all flags and reports the recovered snapshot
   assert.equal(actual, recovered);
 });
 
-test("visual development cannot silently consume a fixed candidate option", () => {
-  const result = spawnSync(
-    process.execPath,
-    [
-      fileURLToPath(new URL("check-desktop-native.mjs", import.meta.url)),
-      "--visual",
+test("native acceptance requires one explicit mode and rejects retired or conflicting options", async () => {
+  const { nativeOptions } = await import("./native-options.mjs");
+  for (const args of [
+    [],
+    ["--foundation"],
+    ["--visual", "--controlled-service"],
+    ["--visual", "--candidate", "unused.json"],
+    ["--visual", "--security"],
+    ["--controlled-service", "--baseline"],
+    ["--controlled-service", "--candidate"],
+    ["--visual", "--visual"],
+    ["--controlled-service", "--authorization-password-file", "relative"],
+  ])
+    assert.throws(() => nativeOptions(args));
+  assert.equal(nativeOptions(["--visual", "--baseline"]).visualOnly, true);
+  assert.deepEqual(
+    nativeOptions([
       "--controlled-service",
+      "--security",
       "--candidate",
-      "unused-candidate.json",
-    ],
-    { encoding: "utf8" },
-  );
-  assert.notEqual(result.status, 0);
-  assert.match(
-    result.stderr,
-    /candidate is unavailable in visual development mode/,
+      "fixed.json",
+      "--authorization-password-file",
+      "/tmp/protected",
+    ]),
+    {
+      visualOnly: false,
+      controlledService: true,
+      security: true,
+      baseline: false,
+      candidatePath: "fixed.json",
+      authorizationPasswordFile: "/tmp/protected",
+    },
   );
 });
 

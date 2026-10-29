@@ -1,7 +1,8 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { frontendClosure } from "../../scripts/frontend-closure.mjs";
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), frontendClosure("ui")],
   build: {
     lib: {
       entry: "runtime.ts",

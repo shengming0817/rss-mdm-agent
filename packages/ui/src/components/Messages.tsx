@@ -96,7 +96,12 @@ export function MessageEntry({
   const stable =
     message.kind === "user" || (message.kind === "assistant" && message.stable);
   return (
-    <article className={`rss-message rss-message-${message.kind}`}>
+    <article
+      className={`rss-message rss-message-${message.kind}`}
+      data-message-key={message.id}
+      data-message-kind={message.kind}
+      data-stable={stable ? "true" : "false"}
+    >
       <div className="rss-message-label">
         {message.kind === "user"
           ? "你"

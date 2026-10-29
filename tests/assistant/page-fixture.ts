@@ -101,7 +101,15 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
   const available = () => {
     if (offline || scene === "error") throw Error("fixture unavailable");
   };
+  let releaseDirectory!: () => void;
+  const directoryRead =
+    scene === "loading"
+      ? new Promise<void>((resolve) => {
+          releaseDirectory = resolve;
+        })
+      : Promise.resolve();
   selfService.policy_directory = async () => {
+    await directoryRead;
     available();
     return {
       items: empty ? [] : deepClone(published),
@@ -1089,6 +1097,7 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
   };
   return {
     events,
+    releaseDirectory: () => releaseDirectory?.(),
     published,
     operations,
     records,

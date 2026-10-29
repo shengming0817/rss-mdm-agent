@@ -176,6 +176,10 @@ it("copies the complete stable message and reports only the actual clipboard res
     text: "## 原文\n\n完整段落",
   };
   const app = render(<MessageStream messages={[message]} onCopy={copy} />);
+  const row = app.container.querySelector("article")!;
+  expect(row.getAttribute("data-message-key")).toBe(message.id);
+  expect(row.getAttribute("data-message-kind")).toBe("assistant");
+  expect(row.getAttribute("data-stable")).toBe("true");
   await act(async () =>
     fireEvent.click(screen.getByRole("button", { name: "复制这条消息" })),
   );
@@ -197,4 +201,5 @@ it("copies the complete stable message and reports only the actual clipboard res
     <MessageStream messages={[{ ...message, stable: false }]} onCopy={copy} />,
   );
   expect(screen.queryByRole("button", { name: "复制这条消息" })).toBeNull();
+  expect(row.getAttribute("data-stable")).toBe("false");
 });

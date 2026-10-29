@@ -10,7 +10,7 @@
 - [UI与桌面壳提取记录](reference/ui-extraction.md)：固定来源、MIT授权和逐文件映射。
 - [契约开发](guides/contracts-development.md)：执行/AI 契约、schema 与生成与验证。
 - [AI Runtime](../packages/ai-contract/README.md)：唯一 schema、三个 ports、可靠性和 ACP–A2UI 约定。
-- [ACP–A2UI 开发](guides/ai-access-development.md)：标准协议、公共客户端、Vue/Lit 接缝与浏览器接入。
+- [ACP–A2UI 开发](guides/ai-access-development.md)：标准协议、公共客户端、React 与官方 A2UI core 接缝与浏览器接入。
 
 - [AI SQLite](../packages/ai-store-sqlite/README.md)与[来源记录](reference/ai-store-sqlite.md)：原子持久化、单 Host 所有权、恢复。
 - [DeepSeek Harness adapter](../packages/ai-adapters/deepseek/README.md)与[来源记录](reference/deepseek-harness.md)：静态原生进程、A01 恢复凭证、受控桥。

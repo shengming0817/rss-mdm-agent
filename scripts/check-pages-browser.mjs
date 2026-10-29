@@ -530,6 +530,37 @@ export async function checkPagesBrowser(page, fixture) {
       await settings("AI 与连接");
       await capture(`settings-${theme}-${width}`);
     }
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await go("loading");
+  await primary("软件中心");
+  const loadingPage = page.locator('.rss-page-viewport[aria-label="软件中心"]');
+  await loadingPage.getByText("正在读取发布目录", { exact: true }).waitFor();
+  assert.equal(
+    await loadingPage
+      .getByRole("button", { name: "重读结果", exact: true })
+      .isDisabled(),
+    true,
+  );
+  assert.equal(await loadingPage.locator(".rss-software-card").count(), 0);
+  assert.equal(
+    await page.evaluate(() => window.rssPageFixture.events.length),
+    0,
+  );
+  await capture("directory-loading");
+  await page.evaluate(() => window.rssPageFixture.releaseDirectory());
+  await loadingPage
+    .getByRole("button", { name: "工作空间", exact: true })
+    .waitFor();
+  assert.equal(
+    await loadingPage
+      .getByRole("button", { name: "重读结果", exact: true })
+      .isEnabled(),
+    true,
+  );
+  evidence.checks.push(
+    "observable pending directory read disables duplicate refresh; releasing the same read renders results without executing",
+  );
+
   for (const scene of ["empty", "partial", "error", "offline", "readonly"]) {
     await page.setViewportSize({ width: 1280, height: 900 });
     await go(scene);

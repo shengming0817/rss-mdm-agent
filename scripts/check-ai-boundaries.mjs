@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, dirname, resolve } from "node:path";
 import ts from "typescript";
@@ -134,17 +134,35 @@ for (const [name, dependencies] of Object.entries(allowed)) {
   )
     errors.push(`${name}: unexpected dependency closure`);
   for (const file of walk(join(dir, "src"))) {
-    if (!file.endsWith(".ts")) continue;
+    if (file.endsWith(".vue")) {
+      errors.push(`${name}: retired Vue SFC source`);
+      continue;
+    }
+    if (!/\.tsx?$/.test(file)) continue;
     const source = readFileSync(file, "utf8"),
-      ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+      ast = ts.createSourceFile(
+        file,
+        source,
+        ts.ScriptTarget.Latest,
+        true,
+        file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+      );
+    if (ast.parseDiagnostics.length)
+      errors.push(`${name}: invalid TypeScript source`);
     const check = (value, runtime = true) => {
       if (value.startsWith(".")) {
-        const target = resolve(dirname(file), value.replace(/\.js$/, ".ts"));
+        let target = resolve(dirname(file), value.replace(/\.js$/, ".ts"));
+        if (
+          !existsSync(target) &&
+          target.endsWith(".ts") &&
+          existsSync(target.slice(0, -3) + ".tsx")
+        )
+          target = target.slice(0, -3) + ".tsx";
         if (!target.startsWith(join(dir, "src") + "/"))
           errors.push(`${name}: relative import escapes package`);
         if (runtime) {
           const edges = runtimeEdges.get(file) ?? [];
-          edges.push(resolve(dirname(file), value.replace(/\.js$/, ".ts")));
+          edges.push(target);
           runtimeEdges.set(file, edges);
         }
         return;
@@ -215,7 +233,7 @@ for (const [name, dependencies] of Object.entries(allowed)) {
     }
     visit(ast);
     if (
-      /\binnerHTML\b|\bouterHTML\b|\bunsafeHTML\s*\(|\beval\s*\(|new\s+Function\s*\(/.test(
+      /\bdangerouslySetInnerHTML\b|\binnerHTML\b|\bouterHTML\b|\bunsafeHTML\s*\(|\beval\s*\(|new\s+Function\s*\(/.test(
         source,
       )
     )

@@ -63,6 +63,22 @@ test("AI boundary gate covers app dependencies, builtins and computed imports", 
     assert.match(failed.stderr, /apps\/ai-host/);
     writeFileSync(source, original);
   }
+  for (const [extension, injected] of [
+    ["tsx", 'import fs from "node:fs"; export const View=()=> <div/>;'],
+    [
+      "tsx",
+      'export const View=()=> <div dangerouslySetInnerHTML={{__html:"untrusted"}}/>;',
+    ],
+    ["vue", "<template><div>retired</div></template>"],
+  ]) {
+    const file = join(
+      fixture,
+      `packages/ai-ui-bridge/src/injected.${extension}`,
+    );
+    writeFileSync(file, injected);
+    assert.notEqual(run().status, 0, injected);
+    rmSync(file);
+  }
   const manifest = join(fixture, "apps/ai-host/package.json");
   const packageJson = JSON.parse(readFileSync(manifest, "utf8"));
   for (const mutate of [

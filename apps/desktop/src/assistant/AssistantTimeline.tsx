@@ -30,6 +30,7 @@ export function AssistantTimeline({
   return (
     <div
       className="rss-messages rss-assistant-timeline"
+      data-busy={owner.busy(state) ? "true" : "false"}
       role="log"
       aria-label="对话消息"
     >

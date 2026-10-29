@@ -395,34 +395,39 @@ test(
   },
 );
 
-test("native completion waits for the original new turn rather than older matching text", () => {
+test("native completion binds the original prompt, stable reply and idle production timeline", () => {
   const window = new Window();
   try {
     const doc = window.document;
-    doc.body.innerHTML = `<div class="assistant-timeline">
-      <article data-message-key="prompt:old"></article>
-      <article data-message-key="message:old">完成 READ</article>
-      <article data-message-key="prompt:new"><p class="command-state">处理中</p></article>
-    </div><form class="composer"></form>`;
-    assert.equal(nativeReplyComplete("prompt:new", "完成 READ", doc), false);
-    const timeline = doc.querySelector(".assistant-timeline");
+    assert.equal(nativeReplyComplete("new", "完成 READ", doc), false);
+    doc.body.innerHTML = `<div class="rss-assistant-timeline" data-busy="true">
+      <article data-message-key="old" data-message-kind="user"></article>
+      <article data-message-key="old-reply" data-message-kind="assistant" data-stable="true">完成 READ</article>
+      <article data-message-key="new" data-message-kind="user"></article>
+    </div>`;
+    const timeline = doc.querySelector(".rss-assistant-timeline");
+    timeline.setAttribute("data-busy", "false");
+    assert.equal(nativeReplyComplete("new", "完成 READ", doc), false);
     timeline.insertAdjacentHTML(
       "beforeend",
-      '<article data-message-key="message:new">完成 READ</article>',
+      '<article data-message-key="reply" data-message-kind="assistant" data-stable="false">完成 READ</article>',
     );
-    assert.equal(nativeReplyComplete("prompt:new", "完成 READ", doc), false);
-    doc.querySelector(".command-state").remove();
-    doc.querySelector(".composer").innerHTML =
-      '<button data-action="cancel">停止回复</button>';
-    assert.equal(nativeReplyComplete("prompt:new", "完成 READ", doc), false);
-    doc.querySelector(".composer").innerHTML = "";
-    assert.equal(nativeReplyComplete("prompt:new", "完成 READ", doc), true);
-    doc.querySelector('[data-message-key="message:new"]').remove();
+    assert.equal(nativeReplyComplete("new", "完成 READ", doc), false);
+    const reply = doc.querySelector('[data-message-key="reply"]');
+    reply.setAttribute("data-stable", "true");
+    timeline.setAttribute("data-busy", "true");
+    assert.equal(nativeReplyComplete("new", "完成 READ", doc), false);
+    timeline.setAttribute("data-busy", "false");
+    assert.equal(nativeReplyComplete("new", "完成 READ", doc), true);
+    assert.equal(nativeReplyComplete("reply", "完成 READ", doc), false);
+    reply.remove();
     timeline.insertAdjacentHTML(
       "beforeend",
-      '<article data-message-key="prompt:future"></article><article data-message-key="message:future">完成 READ</article>',
+      '<article data-message-key="future" data-message-kind="user"></article><article data-message-key="future-reply" data-message-kind="assistant" data-stable="true">完成 READ</article>',
     );
-    assert.equal(nativeReplyComplete("prompt:new", "完成 READ", doc), false);
+    assert.equal(nativeReplyComplete("new", "完成 READ", doc), false);
+    timeline.removeAttribute("data-busy");
+    assert.equal(nativeReplyComplete("future", "完成 READ", doc), false);
   } finally {
     window.happyDOM.abort();
   }

@@ -263,6 +263,8 @@ export function DesktopShell({
       data-layout={layout}
       data-layout-step={nav.layoutStep}
       data-material={appearance.materialEnabled}
+      data-reduced-motion={appearance.reducedMotion}
+      data-high-contrast={appearance.highContrast}
     >
       <header className="rss-topbar" data-tauri-drag-region>
         <div className="rss-chrome-leading" data-tauri-drag-region>
