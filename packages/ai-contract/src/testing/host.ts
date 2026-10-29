@@ -489,7 +489,9 @@ export class FakeHost implements HostPort {
           eventId: `script-${s.lastSequence + index + 1}`,
           sequence: s.lastSequence + index + 1,
           commandId,
-          attemptId: record.dispatch!.attemptId,
+          ...(body.type === "error"
+            ? {}
+            : { attemptId: record.dispatch!.attemptId }),
           generation: activeStage(s).binding.generation,
           body,
         }) as Event,

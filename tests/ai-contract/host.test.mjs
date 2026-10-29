@@ -333,6 +333,22 @@ test("scripted Host activates explicitly selected/fresh contexts only on a new p
       stageB.binding.generation,
     );
     assert.equal(fresh.freshContext, undefined);
+    unwrap(
+      await host.advance(fixtureCaller, session.namespace.sessionId, "third", [
+        {
+          type: "error",
+          failure: { code: "unavailable", retry: "reconcile_first" },
+        },
+      ]),
+    );
+    const events = unwrap(await host.store.events(session.namespace, 0, 256));
+    const failure = events.find((event) => event.body.type === "error");
+    assert.equal(failure.body.failure.code, "unavailable");
+    assert.equal(
+      failure.attemptId,
+      undefined,
+      "local failure never asserts provider-attempt evidence",
+    );
   } finally {
     unwrap(await host.close(budget()));
   }
