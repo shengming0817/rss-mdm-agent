@@ -1,4 +1,16 @@
 import type { CommandView } from "@rss-mdm-agent/ai-client";
+export function failureNote(command: CommandView) {
+  switch (command.failure?.retry) {
+    case "same_command":
+      return "仅允许核对同一原命令；保留原 ID、内容和期限，不生成替代请求。";
+    case "reconcile_first":
+      return "先读取原会话与原命令，核实接纳和执行状态，再按原服务结果处理。";
+    case "never":
+      return "原服务不允许重试此命令；读取原记录，不重新发送。";
+    default:
+      return "";
+  }
+}
 export function cancelNote(command: CommandView) {
   if (command.acknowledgement?.type === "queued_cancelled")
     return "已取消排队，未发送给模型。";

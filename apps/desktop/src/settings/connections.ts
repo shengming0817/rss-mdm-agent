@@ -36,6 +36,27 @@ export function createConnectionSettings(
   return {
     state,
     canSave: !!savePort,
+    setDefault(connection: Connection) {
+      const client = assistant.runtime.current;
+      if (
+        !client ||
+        connection.status !== "ready" ||
+        !assistant.state.connections.some(
+          (row) =>
+            row.connectionId === connection.connectionId &&
+            row.configRevision === connection.configRevision &&
+            row.status === "ready",
+        )
+      )
+        return Promise.resolve(false);
+      return run(
+        () =>
+          client.savePreferences({
+            defaultConnectionId: { set: connection.connectionId },
+          }),
+        "新会话默认连接已更新；已有会话的选择保持原样。",
+      );
+    },
     save(draft: ConnectionDraft, expected: number | null, secret?: string) {
       if (!savePort) return Promise.resolve(false);
       const pending = run(() => {

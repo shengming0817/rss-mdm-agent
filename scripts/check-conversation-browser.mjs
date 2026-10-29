@@ -392,11 +392,299 @@ export async function checkConversationBrowser(page, fixture) {
   evidence.checks.push(
     "real client/Host ordinary answer, one-request permission, official A2UI input/action, stable answer through navigation, genuine transient deltas preserve reading position, explicit latest, original cancellation command and terminal fact",
   );
+  // Additional controls use the production settings entry and the same authenticated client/Host.
+  const catalog = await fixture.host.store.connections(fixture.caller);
+  assert.equal(catalog.ok, true);
+  const alternate = "cfg-options-B";
+  const seeded = await fixture.host.store.saveConnection(
+    fixture.caller,
+    {
+      ...catalog.value.find((row) => row.connectionId === "cfg"),
+      connectionId: alternate,
+      presentation: { name: "选项连接 B" },
+      configRevision: 1,
+    },
+    null,
+  );
+  assert.equal(seeded.ok, true);
+  const settings = async () => {
+    await page.getByRole("button", { name: "用户菜单", exact: true }).click();
+    await page
+      .getByRole("menuitem", { name: "AI 与连接", exact: true })
+      .click();
+  };
+  const openOptions = () =>
+    page.getByRole("button", { name: "会话选项", exact: true }).click();
+  const finishOptions = () =>
+    page
+      .getByRole("dialog", { name: "会话选项" })
+      .getByRole("button", { name: "完成", exact: true })
+      .click();
+  const finishPrompt = async (sessionId, text, messageId) => {
+    await drive(sessionId, {
+      action: "advance",
+      events: [
+        { type: "text", messageId, text },
+        { type: "terminal", outcome: "completed" },
+      ],
+    });
+    await page.waitForFunction(
+      () => !window.rssDesktop.state.workspace.assistant.busy(),
+    );
+  };
+  const sendCurrent = async (sessionId, text) => {
+    const before = (await fixture.command(sessionId)).commandId;
+    await input.fill(text);
+    await input.press("Enter");
+    await page.waitForFunction((previous) => {
+      const c = window.rssDesktop.state.workspace.assistant;
+      return (
+        c.busy() &&
+        Object.values(c.view().commands).some(
+          (row) =>
+            row.command.input.type === "prompt" &&
+            row.command.commandId !== previous &&
+            row.state !== "terminal",
+        )
+      );
+    }, before);
+    const command = await fixture.command(sessionId);
+    assert.notEqual(command.commandId, before);
+    return command;
+  };
+  const originalCommand = await fixture.command(stream);
+  await settings();
+  await page.getByRole("button", { name: "重读连接", exact: true }).click();
+  await page
+    .getByRole("button", { name: "将 选项连接 B 设为新会话默认", exact: true })
+    .click();
+  await page.waitForFunction(
+    (id) =>
+      window.rssDesktop.state.workspace.assistant.state.preferences
+        .defaultConnectionId === id,
+    alternate,
+  );
+  const preferences = await fixture.host.store.preferences(fixture.caller);
+  assert.equal(preferences.ok, true);
+  assert.equal(preferences.value.defaultConnectionId, alternate);
+  assert.equal(
+    await page.evaluate(() =>
+      window.rssDesktop.state.workspace.assistant.selectedConnectionId(),
+    ),
+    "cfg",
+  );
+  await openOptions();
+  await page.getByRole("combobox", { name: "本会话连接", exact: true }).click();
+  await page
+    .locator(
+      ".ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option-content",
+    )
+    .getByText("选项连接 B · codex · 版本 1", { exact: true })
+    .click();
+  await page.getByRole("button", { name: "应用会话连接", exact: true }).click();
+  await page.waitForFunction((id) => {
+    const c = window.rssDesktop.state.workspace.assistant;
+    return (
+      c.selectedConnectionId() === id &&
+      c.view().connectionPending &&
+      !c.state.optionBusy
+    );
+  }, alternate);
+  assert.equal(
+    (await fixture.command(stream)).commandId,
+    originalCommand.commandId,
+  );
+  await finishOptions();
+  await primary("AI 助手");
+  const switched = await sendCurrent(stream, "连接切换后明确发送");
+  await finishPrompt(stream, "连接 B 的稳定完成文本。", "options-switched");
+  assert.equal(switched.input.type, "prompt");
+  await settings();
+  await openOptions();
+  await page
+    .getByRole("button", { name: "下次输入开始新上下文", exact: true })
+    .click();
+  await page.waitForFunction(() => {
+    const c = window.rssDesktop.state.workspace.assistant;
+    return c.view().connectionPending && !c.state.optionBusy;
+  });
+  assert.equal((await fixture.command(stream)).commandId, switched.commandId);
+  await page
+    .getByRole("spinbutton", { name: "历史轮数", exact: true })
+    .fill("1");
+  await page
+    .getByRole("button", { name: "预览已完成文本", exact: true })
+    .click();
+  const previewNode = page.locator(".rss-history-preview");
+  await previewNode.waitFor();
+  assert.ok(
+    (await previewNode.innerText()).includes("连接 B 的稳定完成文本。"),
+  );
+  assert.equal(
+    await page.evaluate(
+      () => window.rssDesktop.state.workspace.assistant.state.history.size,
+    ),
+    0,
+  );
+  assert.equal((await fixture.command(stream)).commandId, switched.commandId);
+  const frozen = await page.evaluate(() =>
+    JSON.parse(
+      JSON.stringify(
+        window.rssDesktop.state.workspace.assistant.state.historyPreview,
+      ),
+    ),
+  );
+  assert.equal(frozen.connectionId, alternate);
+  assert.deepEqual(frozen.commandIds, [switched.commandId]);
+  assert.ok(frozen.text.includes("连接 B 的稳定完成文本。"));
+  for (const width of [1280, 420]) {
+    await page.setViewportSize({ width, height: 900 });
+    const geometry = await page
+      .getByRole("dialog", { name: "会话选项" })
+      .evaluate((node) => ({
+        viewport: innerWidth,
+        documentWidth: document.documentElement.scrollWidth,
+        drawerWidth: node.getBoundingClientRect().width,
+        contentWidth: node.scrollWidth,
+      }));
+    assert.ok(geometry.documentWidth <= width + 1);
+    assert.ok(geometry.drawerWidth <= width + 1);
+    assert.ok(geometry.contentWidth <= Math.ceil(geometry.drawerWidth) + 1);
+    const file = `react-assistant-session-options-${width}.png`;
+    await page.screenshot({
+      path: new URL(file, directory).pathname,
+      animations: "disabled",
+    });
+    evidence.captures.push({ file, ...geometry });
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page
+    .getByRole("button", { name: "确认带入这些文本", exact: true })
+    .click();
+  await finishOptions();
+  await primary("AI 助手");
+  await page.getByText("下一条输入将带入已确认历史", { exact: true }).waitFor();
+  const carried = await sendCurrent(stream, "只带入本人确认的这一次历史");
+  assert.deepEqual(carried.input.history, frozen);
+  await finishPrompt(stream, "已收到明确带入的文本。", "options-carried");
+  assert.equal(
+    await page.evaluate(
+      () => window.rssDesktop.state.workspace.assistant.state.history.size,
+    ),
+    0,
+  );
+  const plainNext = await sendCurrent(stream, "下一条恢复默认不带历史");
+  assert.equal(plainNext.input.history, undefined);
+  await finishPrompt(stream, "下一条没有显式历史。", "options-next");
+  await settings();
+  await openOptions();
+  const resumedBefore = (await fixture.command(stream)).commandId;
+  await page
+    .getByRole("button", { name: "读取原会话状态", exact: true })
+    .click();
+  await page.waitForFunction(
+    () => !window.rssDesktop.state.workspace.assistant.state.opening,
+  );
+  await page
+    .getByRole("button", { name: "恢复原模型上下文", exact: true })
+    .click();
+  await page.waitForFunction(
+    () => !window.rssDesktop.state.workspace.assistant.state.opening,
+  );
+  assert.equal((await fixture.command(stream)).commandId, resumedBefore);
+  assert.equal(
+    await page.evaluate(
+      () => window.rssDesktop.state.workspace.assistant.state.selected,
+    ),
+    stream,
+  );
+  await finishOptions();
+  await primary("AI 助手");
+  const failureSession = await send("异步失败诊断");
+  const failedCommand = await fixture.command(failureSession);
+  await drive(failureSession, {
+    action: "advance",
+    events: [
+      {
+        type: "error",
+        failure: { code: "unavailable", retry: "reconcile_first" },
+      },
+      { type: "terminal", outcome: "failed" },
+    ],
+  });
+  await page.getByText(/代码：unavailable/).waitFor();
+  await page.getByText(/先读取原会话与原命令/).waitFor();
+  assert.equal(
+    await page.evaluate(
+      () => window.rssDesktop.state.workspace.assistant.state.errors.size,
+    ),
+    0,
+  );
+  assert.ok(
+    (await page.locator(".rss-ai-run-notes").innerText()).includes(
+      failedCommand.commandId,
+    ),
+  );
+  await capture("asynchronous-failure", "diagnostic");
+  await settings();
+  await page
+    .getByRole("button", { name: "配置 选项连接 B", exact: true })
+    .click();
+  await page.getByRole("button", { name: "移除连接", exact: true }).click();
+  await page.locator(".ant-popconfirm-buttons .ant-btn-primary").click();
+  await page
+    .getByRole("dialog", { name: "配置 AI 连接" })
+    .waitFor({ state: "hidden" });
+  await page.waitForFunction(
+    () =>
+      !window.rssDesktop.state.workspace.assistant.state.preferences
+        .defaultConnectionId,
+  );
+  await primary("AI 助手");
+  await secondary("新会话");
+  assert.equal(
+    await page.evaluate(() =>
+      window.rssDesktop.state.workspace.assistant.canSend(),
+    ),
+    false,
+  );
+  await settings();
+  await page
+    .getByRole("button", { name: "将 默认连接 设为新会话默认", exact: true })
+    .click();
+  await page.waitForFunction(
+    () =>
+      window.rssDesktop.state.workspace.assistant.state.preferences
+        .defaultConnectionId === "cfg",
+  );
+  await primary("AI 助手");
+  await input.fill("删除默认连接后选择剩余连接继续");
+  await input.press("Enter");
+  await page.waitForFunction(() =>
+    window.rssDesktop.state.workspace.assistant.busy(),
+  );
+  const recoveredSession = await page.evaluate(
+    () => window.rssDesktop.state.workspace.assistant.state.selected,
+  );
+  assert.equal(
+    await page.evaluate(() =>
+      window.rssDesktop.state.workspace.assistant.selectedConnectionId(),
+    ),
+    "cfg",
+  );
+  await finishPrompt(
+    recoveredSession,
+    "使用剩余已验证连接成功发送。",
+    "options-default-recovered",
+  );
+  evidence.checks.push(
+    "production user settings + real protocol: default/current choices independent, switching/fresh context never sends, stable history preview requires confirmation and is carried exactly once, original-session readonly/resume never replay prompts, asynchronous Host failure retains code/retry/original ID, deleting default permits explicit remaining-ready selection; 1280/420 drawer captures without horizontal overflow",
+  );
   writeFileSync(
     new URL("react-assistant-evidence.json", directory),
     JSON.stringify(evidence, null, 2),
   );
   console.log(
-    "PASS React assistant: fixed history, scoped draft, ordinary/A2UI answers, one-shot permissions, trusted R05 action, streaming/stop and 36 v4 matrix captures plus 12 operation footer captures. Scripted Host and sample records are not provider or OS effect proof.",
+    "PASS React assistant: fixed history, scoped draft, ordinary/A2UI answers, one-shot permissions, trusted R05 action, streaming/stop, session options, exact one-shot history and safe asynchronous diagnostics; v4 matrix and narrow settings captures. Scripted Host and sample records are not provider or OS effect proof.",
   );
 }

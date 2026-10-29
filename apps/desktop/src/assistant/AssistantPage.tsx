@@ -111,11 +111,50 @@ export function AssistantPage({ workspace }: { workspace: Workspace }) {
                   </Button>
                 </StatePanel>
               )}
+            {state.cleanupError && (
+              <StatePanel
+                kind="unknown"
+                title="前次 AI 资源清理尚未确认"
+                description="不能据此确认模型已停止或设备任务已取消；请先核对原运行状态。"
+              >
+                <Button
+                  onClick={() =>
+                    workspace.navigation.select("settings", "diagnostics")
+                  }
+                >
+                  打开运行与诊断
+                </Button>
+              </StatePanel>
+            )}
             {view?.sessionStatus === "retired" && (
               <StatePanel
                 kind="readonly"
                 title="这条会话已退休，仅可阅读"
                 description="从二级菜单开始新对话；历史与草稿不会自动带入。"
+              />
+            )}
+            {view?.sessionStatus === "recovery_required" && (
+              <StatePanel
+                kind="readonly"
+                title="原模型上下文需要恢复"
+                description="读取会话只恢复历史视图。可在用户菜单的 AI 与连接 → 会话选项中，核对恢复能力或明确开始新上下文。"
+                onRead={() => void owner.restore()}
+              >
+                <Button
+                  onClick={() =>
+                    workspace.navigation.select("settings", "connection")
+                  }
+                >
+                  打开连接设置
+                </Button>
+              </StatePanel>
+            )}
+            {state.optionPending.has(state.selected) && (
+              <StatePanel
+                kind="unknown"
+                title="原会话操作回执尚未确认"
+                description="先读取同一会话，核对连接与上下文状态，不重复发送。"
+                onRead={() => void owner.restore()}
               />
             )}
             {view &&
@@ -137,6 +176,22 @@ export function AssistantPage({ workspace }: { workspace: Workspace }) {
           </div>
         </div>
         <div className="rss-assistant-input">
+          {state.history.has(state.selected) && (
+            <div className="rss-context-chip">
+              <span>
+                {owner.historyCurrent(state)
+                  ? "下一条输入将带入已确认历史"
+                  : "历史预览已变化，请重新预览或移除"}
+              </span>
+              <Button
+                type="text"
+                size="small"
+                aria-label="移除待带入历史"
+                icon={<CloseOutlined />}
+                onClick={owner.clearHistory}
+              />
+            </div>
+          )}
           {stream.newOutput && (
             <Button
               className="rss-latest-output"

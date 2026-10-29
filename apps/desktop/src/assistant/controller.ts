@@ -159,6 +159,10 @@ export function createAssistant(
     views: proxyMap<string, SessionView>(),
     drafts: proxyMap<string, Composition>(),
     history: proxyMap<string, HistoryPreview>(),
+    historyPreview: undefined as HistoryPreview | undefined,
+    optionBusy: false,
+    optionError: "",
+    optionPending: proxySet<string>(),
     pending: proxyMap<string, Pending>(),
     sending: proxySet<string>(),
     errors: proxyMap<string, string>(),
@@ -178,6 +182,9 @@ export function createAssistant(
   let selectionVersion = 0,
     blankChosen = false;
   let openingTask: Promise<void> | undefined;
+  let previewScope:
+    | { epoch: number; selection: number; generation: string; cursor: number }
+    | undefined;
   let preferenceTask = Promise.resolve();
   let creation:
     | {
@@ -196,6 +203,13 @@ export function createAssistant(
   function recordView(next: SessionView) {
     next = deepClone(next);
     state.views.set(next.namespace.sessionId, next);
+    if (
+      state.historyPreview?.sessionId === next.namespace.sessionId &&
+      (previewScope?.generation !== next.generation ||
+        previewScope?.cursor !== next.cursor ||
+        state.historyPreview.connectionId !== next.selectedConnectionId)
+    )
+      discardHistoryPreview();
     state.sessions.set(next.namespace.sessionId, {
       presentation: { title: "新对话" },
       lastActivityAtMs: 0,
@@ -223,12 +237,14 @@ export function createAssistant(
   const promptPreview = (current: ReadState = state) =>
     composePrompt(composition(current), current.now);
   const compositionError = (current: ReadState = state) =>
-    context(current)?.stale ||
-    (context(current)?.expiresAt ?? Infinity) <= current.now
-      ? "资源信息已变更，请移除附件或从最新资源详情重新选择。"
-      : draft.get(current).trim() && !promptPreview(current)
-        ? "消息与上下文超过发送预算，请精简后发送。"
-        : "";
+    current.history.has(current.selected) && !historyCurrent(current)
+      ? "已确认的历史预览已变化，请移除或重新预览后再发送。"
+      : context(current)?.stale ||
+          (context(current)?.expiresAt ?? Infinity) <= current.now
+        ? "资源信息已变更，请移除附件或从最新资源详情重新选择。"
+        : draft.get(current).trim() && !promptPreview(current)
+          ? "消息与上下文超过发送预算，请精简后发送。"
+          : "";
   function stageContext(value: ResourceContext) {
     state.drafts.set(state.selected, { ...composition(), context: value });
   }
@@ -286,14 +302,20 @@ export function createAssistant(
         row.status === "ready",
     );
   const canSend = (current: ReadState = state) =>
-    !current.selected
-      ? current.connection === "connected" && !current.opening
+    !current.optionBusy &&
+    !current.optionPending.has(current.selected) &&
+    (!current.selected
+      ? current.connection === "connected" &&
+        !current.opening &&
+        connectionReady(current)
       : live(view(current), current) &&
         connectionReady(current) &&
         !(busy(current) && view(current)?.connectionPending) &&
         !current.pending.has(current.selected) &&
-        !current.sending.has(current.selected);
+        !current.sending.has(current.selected));
   const canSteer = (current: ReadState = state) =>
+    !current.optionBusy &&
+    !current.optionPending.has(current.selected) &&
     live(view(current), current) &&
     active(current)?.state === "running" &&
     active(current)?.dispatch?.certainty === "submitted" &&
@@ -326,9 +348,31 @@ export function createAssistant(
   const resumeReason = (current: ReadState = state) => {
     const v = view(current);
     if (v?.sessionStatus === "retired") return "retired";
-    if (!live(v, current)) return "not-attached";
+    if (!v || current.connection !== "connected" || v.connection !== "attached")
+      return "not-attached";
+    if (
+      current.optionPending.has(current.selected) ||
+      current.pending.has(current.selected)
+    )
+      return "reconcile-first";
+    if (
+      current.optionBusy ||
+      current.opening ||
+      current.sending.has(current.selected)
+    )
+      return "busy";
+    if (v.connectionPending)
+      return v.sessionStatus === "recovery_required"
+        ? "context-pending-recovery"
+        : "context-pending";
+    if (!connectionReady(current)) return "connection-required";
     if (v!.capabilities.continuation === "unknown") return "unknown";
     if (v!.capabilities.continuation === "unsupported") return "unsupported";
+    if (
+      v.sessionStatus === "recovery_required" &&
+      v.capabilities.continuation !== "across_processes"
+    )
+      return "context-unavailable";
     if (
       commands(current).some(
         (c) => c.state === "running" || c.state === "dispatching",
@@ -481,6 +525,9 @@ export function createAssistant(
     state.taskError = "";
     for (const cached of state.views.values()) cached.connection = "detached";
     state.history.clear();
+    discardHistoryPreview();
+    state.optionBusy = false;
+    state.optionError = "";
     state.sending.clear();
     state.errors.clear();
     state.next = undefined;
@@ -632,17 +679,26 @@ export function createAssistant(
   }
   async function select(id: string) {
     if (!state.sessions.has(id)) return;
+    discardHistoryPreview();
+    state.history.delete(state.selected);
+    state.optionError = "";
     selectionVersion++;
     state.selected = id;
     if (!runtime.current || state.connection !== "connected") return;
     void remember(id);
-    if (state.views.get(id)?.connection === "attached") return;
+    if (
+      state.views.get(id)?.connection === "attached" &&
+      !state.optionPending.has(id)
+    )
+      return;
     const current = epoch;
     state.errors.delete(id);
     try {
       const next = await runtime.current.restore(id);
       if (current === epoch) {
         state.views.set(id, deepClone(next));
+        state.optionPending.delete(id);
+        if (id === state.selected) state.optionError = "";
         state.errors.delete(id);
       }
     } catch (error) {
@@ -654,6 +710,10 @@ export function createAssistant(
     creation = undefined;
     openingTask = undefined;
     state.opening = false;
+    discardHistoryPreview();
+    state.history.delete(state.selected);
+    state.blankConnectionId = undefined;
+    state.optionError = "";
     selectionVersion++;
     blankChosen = true;
     state.selected = "";
@@ -669,7 +729,12 @@ export function createAssistant(
       selectedAtStart = selectionVersion,
       original = composition(),
       text = composePrompt(original, now());
-    if (!client || state.connection !== "connected" || !text)
+    if (
+      !client ||
+      state.connection !== "connected" ||
+      state.optionBusy ||
+      !text
+    )
       return Promise.resolve();
     if (!creation && !connectionReady()) {
       state.createError = "connection_required";
@@ -808,6 +873,7 @@ export function createAssistant(
     await retry(id);
   }
   async function prompt(policy: "queue_next" | "steer" = "queue_next") {
+    if (compositionError()) return;
     if (!state.selected && policy === "queue_next") return firstPrompt();
     const original = composition(),
       text = composePrompt(original, now());
@@ -866,20 +932,236 @@ export function createAssistant(
       Math.min(item.expiresAtMs, now() + 60_000),
     );
   }
+  function discardHistoryPreview() {
+    state.historyPreview = undefined;
+    previewScope = undefined;
+  }
+  function clearHistory() {
+    state.history.delete(state.selected);
+    discardHistoryPreview();
+  }
+  function historyCurrent(current: ReadState = state) {
+    const history = current.history.get(current.selected),
+      v = view(current);
+    return (
+      !!history &&
+      !!v &&
+      !!v.connectionPending &&
+      history.sessionId === current.selected &&
+      history.connectionId === selectedConnectionId(current) &&
+      history.throughSequence === v.cursor &&
+      current.connections.some(
+        (row) =>
+          row.connectionId === history.connectionId &&
+          row.configRevision === history.configRevision &&
+          row.status === "ready",
+      )
+    );
+  }
+  function previewCurrent() {
+    const preview = state.historyPreview,
+      v = view();
+    return (
+      !!preview &&
+      !!v &&
+      !!previewScope &&
+      !!v.connectionPending &&
+      previewScope.epoch === epoch &&
+      previewScope.selection === selectionVersion &&
+      previewScope.generation === v.generation &&
+      previewScope.cursor === v.cursor &&
+      preview.sessionId === state.selected &&
+      preview.connectionId === selectedConnectionId() &&
+      preview.throughSequence === v.cursor &&
+      state.connections.some(
+        (row) =>
+          row.connectionId === preview.connectionId &&
+          row.configRevision === preview.configRevision &&
+          row.status === "ready",
+      )
+    );
+  }
+  function confirmHistory() {
+    if (
+      !previewCurrent() ||
+      state.optionBusy ||
+      state.optionPending.has(state.selected)
+    ) {
+      state.optionError = "revision_conflict";
+      discardHistoryPreview();
+      return false;
+    }
+    state.history.set(state.selected, deepClone(state.historyPreview!));
+    return true;
+  }
+  function uncertainOption(code: string) {
+    return [
+      "request_failed",
+      "transport_closed",
+      "transport_failed",
+      "unavailable",
+      "invalid_response",
+    ].includes(code);
+  }
+  async function chooseConnection(connectionId: string, freshContext = false) {
+    const client = runtime.current,
+      current = epoch,
+      selection = selectionVersion,
+      id = state.selected,
+      v = view();
+    if (
+      !client ||
+      state.connection !== "connected" ||
+      state.optionBusy ||
+      state.opening
+    )
+      return false;
+    if (
+      !state.connections.some(
+        (row) => row.connectionId === connectionId && row.status === "ready",
+      )
+    ) {
+      state.optionError = "connection_required";
+      return false;
+    }
+    if (
+      state.optionPending.has(id) ||
+      state.pending.has(id) ||
+      state.sending.has(id) ||
+      (!id && creation)
+    ) {
+      state.optionError = "reconciliation_required";
+      return false;
+    }
+    if (!id) {
+      if (freshContext) return false;
+      state.blankConnectionId = connectionId;
+      state.optionError = "";
+      return true;
+    }
+    if (!v || v.connection !== "attached" || v.sessionStatus === "retired")
+      return false;
+    if (
+      freshContext &&
+      (busy() ||
+        (v.connectionPending && v.sessionStatus !== "recovery_required"))
+    )
+      return false;
+    clearHistory();
+    state.optionBusy = true;
+    state.optionError = "";
+    try {
+      const next = await client.selectConnection(
+        id,
+        connectionId,
+        freshContext,
+      );
+      if (current !== epoch) return false;
+      if (selection === selectionVersion && id === state.selected)
+        recordView(next);
+      else {
+        // A late reply must not leave an apparently attached stale choice in the old cache.
+        const cached = state.views.get(id);
+        if (cached) cached.connection = "detached";
+      }
+      return true;
+    } catch (error) {
+      if (current === epoch) {
+        const code = fail(error);
+        if (uncertainOption(code)) state.optionPending.add(id);
+        if (selection === selectionVersion) state.optionError = code;
+      }
+      return false;
+    } finally {
+      if (current === epoch) state.optionBusy = false;
+    }
+  }
+  async function prepareHistory(recent?: number) {
+    const client = runtime.current,
+      current = epoch,
+      selection = selectionVersion,
+      id = state.selected,
+      v = view(),
+      connectionId = selectedConnectionId();
+    if (
+      !client ||
+      !id ||
+      !v ||
+      !live(v) ||
+      !v.connectionPending ||
+      !connectionId ||
+      !connectionReady() ||
+      state.optionBusy ||
+      state.opening ||
+      busy() ||
+      state.pending.has(id) ||
+      state.optionPending.has(id) ||
+      state.sending.has(id)
+    )
+      return false;
+    if (
+      recent !== undefined &&
+      (!Number.isInteger(recent) || recent < 1 || recent > 10000)
+    )
+      return false;
+    const generation = v.generation,
+      cursor = v.cursor,
+      revision = state.connections.find(
+        (row) => row.connectionId === connectionId,
+      )!.configRevision;
+    clearHistory();
+    state.optionBusy = true;
+    state.optionError = "";
+    try {
+      const preview = await client.previewHistory(id, connectionId, recent);
+      if (
+        current !== epoch ||
+        selection !== selectionVersion ||
+        id !== state.selected
+      )
+        return false;
+      state.historyPreview = deepClone(preview);
+      previewScope = { epoch: current, selection, generation, cursor };
+      if (preview.configRevision !== revision || !previewCurrent()) {
+        discardHistoryPreview();
+        state.optionError = "revision_conflict";
+        return false;
+      }
+      return true;
+    } catch (error) {
+      if (current === epoch && selection === selectionVersion)
+        state.optionError = fail(error);
+      return false;
+    } finally {
+      if (current === epoch) state.optionBusy = false;
+    }
+  }
   async function restore(resume = false) {
     const id = state.selected,
       client = runtime.current,
       current = epoch;
-    if (!client || (resume && !canResume()) || state.opening) return;
+    if (
+      !client ||
+      (resume && !canResume()) ||
+      state.opening ||
+      state.optionBusy
+    )
+      return;
     state.opening = true;
     try {
       const next = await (resume ? client.resume(id) : client.restore(id));
       if (current === epoch) {
-        state.views.set(id, deepClone(next));
+        recordView(next);
+        state.optionPending.delete(id);
+        if (id === state.selected) state.optionError = "";
         state.errors.delete(id);
       }
     } catch (error) {
-      if (current === epoch) state.errors.set(id, fail(error));
+      if (current === epoch) {
+        const code = fail(error);
+        state.errors.set(id, code);
+        if (resume && uncertainOption(code)) state.optionPending.add(id);
+      }
     } finally {
       if (current === epoch) state.opening = false;
     }
@@ -1016,6 +1298,10 @@ export function createAssistant(
     state.drafts.clear();
     state.pending.clear();
     state.history.clear();
+    discardHistoryPreview();
+    state.optionBusy = false;
+    state.optionPending.clear();
+    state.optionError = "";
     state.sending.clear();
     state.errors.clear();
     state.preferenceSave = undefined;
@@ -1035,6 +1321,13 @@ export function createAssistant(
   return {
     state,
     sessions,
+    chooseConnection,
+    prepareHistory,
+    confirmHistory,
+    clearHistory,
+    discardHistoryPreview,
+    previewCurrent,
+    historyCurrent,
     selectedConnectionId,
     runtime,
     refreshConnections,

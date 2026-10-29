@@ -3,6 +3,7 @@ const flushPromises = () =>
 import { taskFromFacts } from "../../../../tests/self-service/support";
 
 import { activeStage } from "@rss-mdm-agent/ai-contract";
+import { deepClone } from "valtio/vanilla/utils";
 import { describe, expect, it, vi } from "vitest";
 import {
   ClientError,
@@ -1128,4 +1129,284 @@ it("keeps an unchanged page revision after a repeat observation without renewing
   expect(c.context()?.stale).toBe(true);
   expect(c.draft.get()).toBe("解释这个任务");
   c.dispose();
+});
+
+function historyPreview(
+  sessionId = "session-1",
+  connectionId = "config-1",
+  throughSequence = 0,
+) {
+  return {
+    schemaVersion: 1 as const,
+    kind: "historyPreview" as const,
+    sessionId,
+    connectionId,
+    configRevision: 1,
+    throughSequence,
+    commandIds: ["completed-command"],
+    messageIds: ["completed-message"],
+    text: "已完成的稳定原文",
+    contentHash: "a".repeat(64),
+  };
+}
+function alternative(t: ReturnType<typeof setup>) {
+  t.c.state.connections.push({
+    ...t.c.state.connections[0],
+    connectionId: "config-2",
+    presentation: { name: "Alternative" },
+  });
+}
+it("chooses a ready connection for an empty conversation after deletion of the default, without creating or sending until the user submits", async () => {
+  const t = setup();
+  await t.c.connect();
+  alternative(t);
+  t.c.create();
+  t.c.state.connections[0].status = "deleted";
+  delete t.c.state.preferences.defaultConnectionId;
+  expect(t.c.canSend()).toBe(false);
+  expect(await t.c.chooseConnection("config-2")).toBe(true);
+  expect(t.c.canSend()).toBe(true);
+  expect(t.c.state.preferences.defaultConnectionId).toBeUndefined();
+  expect(t.client.createSession).not.toHaveBeenCalled();
+  expect(t.submit).not.toHaveBeenCalled();
+  vi.mocked(t.client.restore).mockImplementation(async (id) => ({
+    ...structuredClone(t.view),
+    namespace: { ...t.view.namespace, sessionId: id },
+    selectedConnectionId: "config-2",
+  }));
+  t.c.draft.set("明确发送");
+  await t.c.prompt();
+  expect(t.client.createSession).toHaveBeenCalledWith({
+    sessionId: expect.any(String),
+    connectionId: "config-2",
+  });
+  expect(t.submit).toHaveBeenCalledOnce();
+  t.c.dispose();
+});
+it("keeps an uncertain connection change read-only until the original session is read, and ignores a late result after reconnect", async () => {
+  const t = setup();
+  await t.c.connect();
+  await t.c.select("session-1");
+  alternative(t);
+  const choose = vi
+    .fn()
+    .mockRejectedValueOnce(new ClientError("transport_failed"));
+  Object.assign(t.client, { selectConnection: choose });
+  expect(await t.c.chooseConnection("config-2")).toBe(false);
+  expect(t.c.state.optionPending.has("session-1")).toBe(true);
+  expect(t.c.canSend()).toBe(false);
+  await t.c.chooseConnection("config-2");
+  expect(choose).toHaveBeenCalledOnce();
+  await t.c.restore();
+  expect(t.c.state.optionPending.size).toBe(0);
+  let finish!: (view: SessionView) => void;
+  choose.mockImplementationOnce(
+    () =>
+      new Promise<SessionView>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const pending = t.c.chooseConnection("config-2");
+  expect(t.c.state.optionBusy).toBe(true);
+  await t.c.connect();
+  finish({ ...t.view, selectedConnectionId: "config-2" });
+  await pending;
+  expect(t.c.selectedConnectionId()).toBe("config-1");
+  expect(t.c.state.optionBusy).toBe(false);
+  t.c.dispose();
+});
+it("previews without carrying history, binds explicit confirmation to the exact payload and consumes it only once", async () => {
+  const t = setup();
+  await t.c.connect();
+  await t.c.select("session-1");
+  t.c.state.views.get("session-1")!.connectionPending = true;
+  const preview = historyPreview();
+  const read = vi.fn().mockResolvedValue(preview);
+  Object.assign(t.client, { previewHistory: read });
+  expect(await t.c.prepareHistory(2)).toBe(true);
+  expect(read).toHaveBeenCalledWith("session-1", "config-1", 2);
+  expect(t.c.state.history.has("session-1")).toBe(false);
+  expect(t.submit).not.toHaveBeenCalled();
+  t.c.draft.set("预览后未确认的输入");
+  await t.c.prompt();
+  expect(vi.mocked(t.client.submit).mock.calls[0][0].input).not.toHaveProperty(
+    "history",
+  );
+  await t.c.prepareHistory();
+  expect(t.c.confirmHistory()).toBe(true);
+  t.c.draft.set("本人确认后的输入");
+  await t.c.prompt();
+  expect(vi.mocked(t.client.submit).mock.calls[1][0].input).toMatchObject({
+    history: preview,
+  });
+  expect(t.c.state.history.size).toBe(0);
+  t.c.draft.set("下一条");
+  await t.c.prompt();
+  expect(vi.mocked(t.client.submit).mock.calls[2][0].input).not.toHaveProperty(
+    "history",
+  );
+  t.c.dispose();
+});
+it("fences history previews by selection, source watermark and connection revision and blocks stale confirmed history", async () => {
+  const t = setup();
+  await t.c.connect();
+  await t.c.select("session-1");
+  t.view.connectionPending = true;
+  t.emit();
+  const read = vi.fn().mockResolvedValue(historyPreview());
+  Object.assign(t.client, { previewHistory: read });
+  await t.c.prepareHistory(1);
+  t.c.state.connections[0].configRevision = 2;
+  expect(t.c.confirmHistory()).toBe(false);
+  expect(t.c.state.history.size).toBe(0);
+  t.c.state.connections[0].configRevision = 1;
+  await t.c.prepareHistory(1);
+  expect(t.c.confirmHistory()).toBe(true);
+  t.emit({ ...t.view, cursor: 1 });
+  t.c.draft.set("不能隐式丢弃历史并发送");
+  expect(t.c.compositionError()).toContain("历史预览已变化");
+  await t.c.prompt();
+  expect(t.submit).not.toHaveBeenCalled();
+  t.c.clearHistory();
+  let resolve!: (preview: ReturnType<typeof historyPreview>) => void;
+  read.mockImplementationOnce(
+    () =>
+      new Promise((finish) => {
+        resolve = finish;
+      }),
+  );
+  const pending = t.c.prepareHistory(1);
+  t.c.state.sessions.set("second", {
+    ...t.c.state.sessions.get("session-1")!,
+    namespace: { ...t.view.namespace, sessionId: "second" },
+  });
+  vi.mocked(t.client.restore).mockImplementationOnce(async (id) => ({
+    ...t.view,
+    namespace: { ...t.view.namespace, sessionId: id },
+  }));
+  await t.c.select("second");
+  resolve(historyPreview());
+  await pending;
+  expect(t.c.state.historyPreview).toBeUndefined();
+  expect(t.c.state.history.size).toBe(0);
+  t.c.dispose();
+});
+it("permits explicit across-process recovery from recovery_required, never auto-resumes on read and respects unknown/unsupported capabilities", async () => {
+  const t = setup();
+  await t.c.connect();
+  await t.c.select("session-1");
+  t.view.sessionStatus = "recovery_required";
+  t.view.capabilities.continuation = "across_processes";
+  t.emit();
+  expect(t.c.canSend()).toBe(false);
+  expect(t.c.canResume()).toBe(true);
+  await t.c.restore();
+  expect(t.client.resume).not.toHaveBeenCalled();
+  await t.c.restore(true);
+  expect(t.client.resume).toHaveBeenCalledExactlyOnceWith("session-1");
+  expect(t.submit).not.toHaveBeenCalled();
+  t.view.capabilities.continuation = "same_process";
+  t.emit();
+  expect(t.c.resumeReason()).toBe("context-unavailable");
+  t.view.capabilities.continuation = "unknown";
+  t.emit();
+  expect(t.c.canResume()).toBe(false);
+  t.view.capabilities.continuation = "unsupported";
+  t.emit();
+  expect(t.c.canResume()).toBe(false);
+  t.c.dispose();
+});
+
+it("requires a fresh read of the old conversation after a connection reply arrives while another conversation is selected", async () => {
+  const t = setup();
+  await t.c.connect();
+  await t.c.select("session-1");
+  alternative(t);
+  let finish!: (view: SessionView) => void;
+  Object.assign(t.client, {
+    selectConnection: vi.fn(
+      () =>
+        new Promise<SessionView>((resolve) => {
+          finish = resolve;
+        }),
+    ),
+  });
+  const pending = t.c.chooseConnection("config-2");
+  t.c.state.sessions.set("second", {
+    ...t.c.state.sessions.get("session-1")!,
+    namespace: { ...t.view.namespace, sessionId: "second" },
+  });
+  vi.mocked(t.client.restore).mockImplementationOnce(async (id) => ({
+    ...structuredClone(t.view),
+    namespace: { ...t.view.namespace, sessionId: id },
+  }));
+  await t.c.select("second");
+  finish({ ...t.view, selectedConnectionId: "config-2" });
+  await pending;
+  expect(t.c.state.selected).toBe("second");
+  expect(t.c.selectedConnectionId()).toBe("config-1");
+  expect(t.c.state.views.get("session-1")!.connection).toBe("detached");
+  vi.mocked(t.client.restore).mockResolvedValueOnce({
+    ...t.view,
+    selectedConnectionId: "config-2",
+  });
+  await t.c.select("session-1");
+  expect(t.c.selectedConnectionId()).toBe("config-2");
+  t.c.dispose();
+});
+it("keeps an uncertain resume fenced until a readonly original-session restore succeeds", async () => {
+  const t = setup();
+  await t.c.connect();
+  await t.c.select("session-1");
+  t.view.capabilities.continuation = "across_processes";
+  t.emit();
+  vi.mocked(t.client.resume).mockRejectedValueOnce(
+    new ClientError("transport_failed"),
+  );
+  await t.c.restore(true);
+  expect(t.c.state.optionPending.has("session-1")).toBe(true);
+  expect(t.c.canResume()).toBe(false);
+  expect(t.c.canSend()).toBe(false);
+  await t.c.restore(true);
+  expect(t.client.resume).toHaveBeenCalledOnce();
+  await t.c.restore();
+  expect(t.c.state.optionPending.size).toBe(0);
+  expect(t.c.canSend()).toBe(true);
+  expect(t.submit).not.toHaveBeenCalled();
+  t.c.dispose();
+});
+
+it("requires an explicitly pending new context before previewing history and lets a recovering switched conversation explicitly start fresh", async () => {
+  const t = setup();
+  await t.c.connect();
+  await t.c.select("session-1");
+  alternative(t);
+  const preview = vi.fn().mockResolvedValue(historyPreview());
+  const choose = vi.fn(
+    async (_id: string, connectionId: string, fresh: boolean) => ({
+      ...deepClone(t.c.view()!),
+      selectedConnectionId: connectionId,
+      connectionPending: true,
+      sessionStatus: fresh ? ("active" as const) : t.c.view()!.sessionStatus,
+    }),
+  );
+  Object.assign(t.client, {
+    previewHistory: preview,
+    selectConnection: choose,
+  });
+  expect(await t.c.prepareHistory(1)).toBe(false);
+  expect(preview).not.toHaveBeenCalled();
+  t.view.sessionStatus = "recovery_required";
+  t.emit();
+  expect(await t.c.chooseConnection("config-2")).toBe(true);
+  expect(t.c.canSend()).toBe(false);
+  expect(t.c.resumeReason()).toBe("context-pending-recovery");
+  expect(await t.c.chooseConnection("config-2", true)).toBe(true);
+  expect(choose).toHaveBeenLastCalledWith("session-1", "config-2", true);
+  expect(t.c.canSend()).toBe(true);
+  expect(t.submit).not.toHaveBeenCalled();
+  preview.mockResolvedValue(historyPreview("session-1", "config-2"));
+  expect(await t.c.prepareHistory(1)).toBe(true);
+  expect(t.c.confirmHistory()).toBe(true);
+  t.c.dispose();
 });

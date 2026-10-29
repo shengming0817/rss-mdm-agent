@@ -95,6 +95,7 @@ export function StatePanel({
           {kind === "unknown" ? "查询原请求" : "重新读取"}
         </Button>
       )}
+      {children}
     </div>
   );
 }

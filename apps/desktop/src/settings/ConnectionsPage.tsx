@@ -10,6 +10,7 @@ import type {
   ConnectionSource,
 } from "@rss-mdm-agent/ai-contract/wire";
 import type { Workspace } from "../state/workspace";
+import { SessionOptions } from "./SessionOptions";
 const providerNames = {
   codex: "Codex",
   claude: "Claude",
@@ -38,10 +39,12 @@ export function ConnectionsPage({
       expected: number | null;
     } | null>(null),
     [secret, setSecret] = useState(""),
+    [sessionOptions, setSessionOptions] = useState(false),
     [stale, setStale] = useState(false);
   useEffect(() => {
     if (!active) {
       setSecret("");
+      setSessionOptions(false);
     }
   }, [active]);
   useEffect(
@@ -104,6 +107,7 @@ export function ConnectionsPage({
         description="每个会话使用所选连接；更改配置不会自动重发已有输入。"
         actions={
           <>
+            <Button onClick={() => setSessionOptions(true)}>会话选项</Button>
             <Button
               disabled={state.busy || assistant.connection !== "connected"}
               onClick={() => void workspace.connections.refresh()}
@@ -172,6 +176,27 @@ export function ConnectionsPage({
               <Tag color={connection.status === "ready" ? "green" : "gold"}>
                 {connection.status === "ready" ? "已验证" : "待验证"}
               </Tag>
+              {assistant.preferences?.defaultConnectionId ===
+              connection.connectionId ? (
+                <Tag>新会话默认</Tag>
+              ) : (
+                <Button
+                  size="small"
+                  disabled={
+                    state.busy ||
+                    assistant.connection !== "connected" ||
+                    connection.status !== "ready"
+                  }
+                  aria-label={`将 ${connection.presentation.name} 设为新会话默认`}
+                  onClick={() =>
+                    void workspace.connections.setDefault(
+                      deepClone(connection) as Connection,
+                    )
+                  }
+                >
+                  设为默认
+                </Button>
+              )}
               <Button
                 type="text"
                 aria-label={`配置 ${connection.presentation.name}`}
@@ -194,6 +219,12 @@ export function ConnectionsPage({
           title="已保存的秘密材料不会回显。新密钥只通过本机受保护保存入口提交。"
         />
       </div>
+      {active && sessionOptions && (
+        <SessionOptions
+          workspace={workspace}
+          onClose={() => setSessionOptions(false)}
+        />
+      )}
       <Modal
         open={active && !!editing}
         title={editing?.expected == null ? "添加 AI 连接" : "配置 AI 连接"}

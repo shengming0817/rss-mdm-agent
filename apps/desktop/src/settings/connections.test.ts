@@ -56,3 +56,32 @@ it("suppresses duplicate writes and ignores an old workspace's save completion",
   expect(refreshConnections).not.toHaveBeenCalled();
   expect(owner.state.message).toBe("");
 });
+
+it("sets only the explicitly chosen ready default through preferences and rejects stale or unverified metadata", async () => {
+  const connection = {
+    connectionId: "B",
+    configRevision: 2,
+    status: "ready",
+  } as import("@rss-mdm-agent/ai-contract/wire").Connection;
+  const savePreferences = vi.fn().mockResolvedValue({}),
+    refreshConnections = vi.fn();
+  const assistant = {
+    state: { connections: [connection] },
+    runtime: { current: { savePreferences } },
+    refreshConnections,
+  } as unknown as AssistantController;
+  const owner = createConnectionSettings(assistant);
+  expect(await owner.setDefault({ ...connection, configRevision: 1 })).toBe(
+    false,
+  );
+  expect(await owner.setDefault({ ...connection, status: "unverified" })).toBe(
+    false,
+  );
+  expect(savePreferences).not.toHaveBeenCalled();
+  expect(await owner.setDefault(connection)).toBe(true);
+  expect(savePreferences).toHaveBeenCalledExactlyOnceWith({
+    defaultConnectionId: { set: "B" },
+  });
+  expect(refreshConnections).toHaveBeenCalledOnce();
+  owner.dispose();
+});

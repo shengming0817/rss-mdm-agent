@@ -263,3 +263,44 @@ it("renders original prompt identity and projection completion state for the rea
   expect(reply.getAttribute("data-stable")).toBe("true");
   expect(timeline.getAttribute("data-busy")).toBe("false");
 });
+
+it("projects asynchronous command failures and each server retry constraint even when no page-level request error exists", async () => {
+  const f = await fixture();
+  await act(async () => {
+    f.c.draft.set("服务端异步失败");
+    await f.c.prompt();
+  });
+  const command = (f.submit.mock.calls as unknown as [Command][])[0][0];
+  await act(async () => {
+    const view = f.c.state.views.get(f.c.state.selected)!;
+    view.commands[command.commandId] = {
+      command,
+      state: "invalidated",
+      failure: { code: "unavailable", retry: "reconcile_first" },
+    };
+    view.timeline = [{ kind: "prompt", key: command.commandId, sequence: 1 }];
+  });
+  expect(f.c.state.errors.size).toBe(0);
+  expect(screen.getByText(/代码：unavailable/)).toBeTruthy();
+  expect(screen.getByText(/先读取原会话与原命令/)).toBeTruthy();
+  await act(async () => {
+    f.c.state.views.get(f.c.state.selected)!.commands[
+      command.commandId
+    ].failure!.retry = "same_command";
+  });
+  expect(screen.getByText(/保留原 ID、内容和期限/)).toBeTruthy();
+  await act(async () => {
+    f.c.state.views.get(f.c.state.selected)!.commands[
+      command.commandId
+    ].failure!.retry = "never";
+  });
+  expect(screen.getByText(/原服务不允许重试此命令/)).toBeTruthy();
+  await act(async () => {
+    f.c.state.cleanupError = "cleanup_failed";
+  });
+  expect(screen.getByText("前次 AI 资源清理尚未确认")).toBeTruthy();
+  await act(async () =>
+    fireEvent.click(screen.getByRole("button", { name: "打开运行与诊断" })),
+  );
+  expect(f.workspace.navigation.state.selected.settings).toBe("diagnostics");
+});

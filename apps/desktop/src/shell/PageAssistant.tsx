@@ -23,7 +23,10 @@ export function PageAssistant({
     view = workspace.assistant.view(state),
     messages = conversationMessages(view),
     error =
-      state.errors.get(state.selected) || state.createError || state.error;
+      state.errors.get(state.selected) ||
+      state.createError ||
+      state.error ||
+      state.optionError;
   useLayoutEffect(() => {
     if (open) root.current?.querySelector("textarea")?.focus();
   }, [open]);
@@ -91,7 +94,12 @@ export function PageAssistant({
         )}
         {error && (
           <StatePanel
-            kind={state.pending.has(state.selected) ? "unknown" : "error"}
+            kind={
+              state.pending.has(state.selected) ||
+              state.optionPending.has(state.selected)
+                ? "unknown"
+                : "error"
+            }
             title={operationMessage(error)}
             onRead={
               state.selected
@@ -124,6 +132,22 @@ export function PageAssistant({
         )}
       </div>
       <div className="rss-companion-composer">
+        {state.history.has(state.selected) && (
+          <div className="rss-context-chip">
+            <span>
+              {workspace.assistant.historyCurrent(state)
+                ? "下一条输入将带入已确认历史"
+                : "历史预览已变化，请重新预览或移除"}
+            </span>
+            <Button
+              type="text"
+              size="small"
+              aria-label="移除待带入历史"
+              icon={<CloseOutlined />}
+              onClick={workspace.assistant.clearHistory}
+            />
+          </div>
+        )}
         {workspace.assistant.context(state) && (
           <div className="rss-context-chip">
             <span>

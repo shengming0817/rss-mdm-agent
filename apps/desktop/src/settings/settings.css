@@ -137,3 +137,19 @@
     margin-left: 0;
   }
 }
+.rss-history-preview {
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.rss-session-options .ant-select {
+  width: 100%;
+}
+
+.rss-connection-card {
+  flex-wrap: wrap;
+}

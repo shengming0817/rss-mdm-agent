@@ -1,11 +1,12 @@
 import { useSnapshot } from "valtio";
-import { Button, Tag } from "antd";
+import { Alert, Button, Tag } from "antd";
 import { MessageEntry } from "@rss-mdm-agent/ui";
 import { RuntimeSurface } from "@rss-mdm-agent/ai-ui-bridge";
 import type { Workspace } from "../state/workspace";
 import { boundedText } from "../software/presentation";
 import { copyText } from "./clipboard";
-import { cancelNote } from "./command-presentation";
+import { cancelNote, failureNote } from "./command-presentation";
+import { operationMessage } from "./controller";
 import { QuestionCard, QuestionFacts, PermissionCards } from "./Questions";
 import { mountQuestionNode } from "./operation-ui/nodes";
 import { OperationCard } from "./operation-ui/OperationCard";
@@ -144,7 +145,28 @@ export function AssistantTimeline({
       <div className="rss-ai-run-notes" aria-label="当前回复状态">
         {Object.values(view.commands).flatMap((command) => {
           const note = cancelNote(command);
-          return note ? [<p key={command.command.commandId}>{note}</p>] : [];
+          return note || command.failure
+            ? [
+                <div key={command.command.commandId}>
+                  {note && <p>{note}</p>}
+                  {command.failure && (
+                    <Alert
+                      type="warning"
+                      title={operationMessage(command.failure.code)}
+                      description={
+                        <>
+                          <p className="rss-reference">
+                            原命令：{command.command.commandId} · 代码：
+                            {command.failure.code}
+                          </p>
+                          <p>{failureNote(command)}</p>
+                        </>
+                      }
+                    />
+                  )}
+                </div>,
+              ]
+            : [];
         })}
         {owner.busy(state) && (
           <Tag>{owner.canCancel(state) ? "回复进行中" : "原消息仍在处理"}</Tag>
