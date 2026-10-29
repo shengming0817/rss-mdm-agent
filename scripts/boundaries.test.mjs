@@ -617,3 +617,29 @@ test("React namespace destructuring and cloneElement cannot escape props checks"
   ])
     assert.ok(checkSource("packages/ui/src/Attack.tsx", source).length, source);
 });
+
+test("equivalent React default imports and re-exports retain namespace restrictions", () => {
+  for (const source of [
+    'import {default as React} from "react"; const {createElement}=React; export const View=()=>createElement("img",{src:"https://attacker.invalid/leak"});',
+    'import {"default" as R} from "react"; const {createElement:h}=R; h("img",{src:"x"});',
+    'export {default as React} from "react";',
+    'export {createElement as h} from "react";',
+    'export * from "react";',
+    'export * as R from "react";',
+  ])
+    assert.ok(checkSource("packages/ui/src/Attack.tsx", source).length, source);
+  assert.deepEqual(
+    checkSource(
+      "packages/ui/src/Safe.tsx",
+      'import {default as React} from "react"; export const View=()=>React.createElement("div",{className:"safe"},"text");',
+    ),
+    [],
+  );
+  assert.deepEqual(
+    checkSource(
+      "packages/ui/src/Safe.tsx",
+      'export type {ReactNode} from "react";',
+    ),
+    [],
+  );
+});

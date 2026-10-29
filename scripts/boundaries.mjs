@@ -342,6 +342,8 @@ export function checkSource(file, source) {
         reactNamespaces.add(bindings.name.text);
       if (bindings && ts.isNamedImports(bindings))
         for (const entry of bindings.elements) {
+          if ((entry.propertyName?.text ?? entry.name.text) === "default")
+            reactNamespaces.add(entry.name.text);
           if (
             ["createElement", "cloneElement", "jsx", "jsxs"].includes(
               entry.propertyName?.text ?? entry.name.text,
@@ -401,17 +403,32 @@ export function checkSource(file, source) {
       errors.push(`${file}: element factory cannot escape inspection`);
     if (ts.isJsxSpreadAttribute(node))
       errors.push(`${file}: unchecked JSX attributes`);
+    if (ts.isBindingElement(node)) {
+      const name = node.propertyName ?? node.name;
+      if (
+        (ts.isIdentifier(name) || ts.isStringLiteralLike(name)) &&
+        factoryMembers.has(name.text)
+      )
+        errors.push(`${file}: destructured element factory escapes inspection`);
+    }
     if (
-      ts.isBindingElement(node) &&
-      node.propertyName &&
-      factoryMembers.has(node.propertyName.getText(ast))
+      ts.isExportDeclaration(node) &&
+      node.moduleSpecifier &&
+      ["react", "react/jsx-runtime"].includes(node.moduleSpecifier.text) &&
+      !node.isTypeOnly &&
+      !(
+        node.exportClause &&
+        ts.isNamedExports(node.exportClause) &&
+        node.exportClause.elements.every((entry) => entry.isTypeOnly)
+      )
     )
-      errors.push(`${file}: destructured element factory escapes inspection`);
+      errors.push(`${file}: React value exports escape capability inspection`);
     if (ts.isIdentifier(node)) {
       const parent = node.parent;
       if (
         reactNamespaces.has(node.text) &&
         !ts.isImportClause(parent) &&
+        !ts.isImportSpecifier(parent) &&
         !ts.isNamespaceImport(parent) &&
         !(
           ts.isPropertyAccessExpression(parent) && parent.expression === node
