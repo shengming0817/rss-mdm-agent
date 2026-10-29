@@ -18,7 +18,19 @@ if (
 const tauriArgs = args.filter((value) => value !== "--fixture");
 const lock = join(root, ".cache/desktop-dev.lock");
 let stage = "assembly selection",
-  locked = false;
+  locked = false,
+  preparationCleanupConfirmed = true;
+async function prepare(command, args, environment) {
+  preparationCleanupConfirmed = false;
+  const result = await runPreparation(command, args, root, environment);
+  preparationCleanupConfirmed = result.cleanup.confirmed;
+  if (result.code !== 0) {
+    process.exitCode = result.code;
+    throw new Error(
+      result.cancellation ? "preparation cancelled" : "preparation failed",
+    );
+  }
+}
 function mark(value) {
   stage = value;
   console.log(`[desktop dev] ${value}`);
@@ -40,13 +52,7 @@ try {
       ["build:ai-access"],
       ["--filter", "@rss-mdm-agent/ui", "build"],
     ]) {
-      const code = await runPreparation("pnpm", preparation, root, buildEnv);
-      if (code !== 0) {
-        process.exitCode = code;
-        throw new Error(
-          code >= 128 ? "preparation cancelled" : "fixture dependencies failed",
-        );
-      }
+      await prepare("pnpm", preparation, buildEnv);
     }
     tauriArgs.unshift(
       "--config",
@@ -74,7 +80,7 @@ try {
         : resolve(override);
     const preparationEnv = { ...buildEnv };
     delete preparationEnv[organizationBuildInput];
-    const code = await runPreparation(
+    await prepare(
       process.execPath,
       [
         join(root, "scripts/desktop-dev-runtime.mjs"),
@@ -83,22 +89,16 @@ try {
         directory,
         override === undefined ? "build" : "override",
       ],
-      root,
       preparationEnv,
     );
-    if (code !== 0) {
-      process.exitCode = code;
-      throw new Error(
-        code >= 128 ? "preparation cancelled" : "AI Host preparation failed",
-      );
-    }
   }
   rmSync(lock, { recursive: true });
   locked = false;
   mark(
     `Tauri build/start (${fixture ? "fixture" : "production"}); window remains open until explicit quit`,
   );
-  process.exitCode = await runDesktop(root, directory, tauriArgs, buildEnv);
+  const result = await runDesktop(root, directory, tauriArgs, buildEnv);
+  process.exitCode = result.code;
   console.log(
     `[desktop dev] ${stage} ${process.exitCode >= 128 ? "cancelled" : "finished"}: ${process.exitCode}`,
   );
@@ -108,5 +108,10 @@ try {
   );
   process.exitCode ||= 1;
 } finally {
-  if (locked) rmSync(lock, { recursive: true, force: true });
+  if (locked && preparationCleanupConfirmed)
+    rmSync(lock, { recursive: true, force: true });
+  else if (locked)
+    console.error(
+      "[desktop dev] preparation lock retained: process group cleanup unconfirmed; verify owned processes have exited before removing .cache/desktop-dev.lock",
+    );
 }

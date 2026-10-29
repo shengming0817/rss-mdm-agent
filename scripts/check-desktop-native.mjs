@@ -39,6 +39,7 @@ import {
   waitForAppearance,
   nativeReplyComplete,
   sampledNativeTask,
+  finishNativeResult,
 } from "./native-evidence.mjs";
 import {
   verifyCandidate,
@@ -884,7 +885,7 @@ try {
           ],
         ])
       assert.equal(
-        await runPreparation(command, args, root, env),
+        (await runPreparation(command, args, root, env)).code,
         0,
         "native candidate preparation failed",
       );
@@ -2801,7 +2802,6 @@ try {
       () => child.exitCode !== null || child.signalCode !== null,
       15000,
     );
-    result.exit = { code: child.exitCode, signal: child.signalCode };
     assert.equal(child.exitCode, 0);
     await wait(() => {
       try {
@@ -2935,217 +2935,259 @@ try {
   }
   process.exitCode = 1;
 } finally {
-  let scopeObservationFailed = false;
-  if (scopeRuntime && directory && existsSync(join(directory, "ai.sqlite"))) {
-    try {
-      rememberScopes(
-        await readWorkerScopes(),
-        result.owner?.restartedHostPid ?? result.owner?.hostPid,
-      );
-    } catch {
-      scopeObservationFailed = true;
-    }
-  }
-  awake?.kill("SIGTERM");
-  if (browser) {
-    browserClosing ??= browser.deleteSession().catch(() => {});
-    await Promise.race([browserClosing, delay(5000)]);
-  }
-  if (rootAlive()) {
-    if (receipt?.pid) {
+  result.journeyStatus = result.status;
+  let cleanupComplete = false,
+    keychainClean = false;
+  try {
+    let scopeObservationFailed = false;
+    if (scopeRuntime && directory && existsSync(join(directory, "ai.sqlite"))) {
       try {
-        menu("退出 RSS MDM Agent");
-      } catch {}
+        rememberScopes(
+          await readWorkerScopes(),
+          result.owner?.restartedHostPid ?? result.owner?.hostPid,
+        );
+      } catch {
+        scopeObservationFailed = true;
+      }
     }
-    await Promise.race([exited.catch(() => {}), delay(7000)]);
+    awake?.kill("SIGTERM");
+    if (browser) {
+      browserClosing ??= browser.deleteSession().catch(() => {});
+      await Promise.race([browserClosing, delay(5000)]);
+    }
     if (rootAlive()) {
-      signalRoot("SIGTERM");
+      if (receipt?.pid) {
+        try {
+          menu("退出 RSS MDM Agent");
+        } catch {}
+      }
       await Promise.race([exited.catch(() => {}), delay(7000)]);
-    }
-    if (rootAlive()) {
-      signalRoot("SIGKILL");
-      await Promise.race([exited.catch(() => {}), delay(1000)]);
-      result.cleanup = "forced-wrapper-stop";
-    }
-  }
-  await Promise.race([fixture?.close(), delay(2000)]);
-  const owned = [
-    receipt?.pid,
-    result.owner?.hostPid,
-    result.owner?.restartedHostPid,
-  ].filter(Boolean);
-  const alive = () =>
-    owned.filter((pid) => {
-      try {
-        process.kill(pid, 0);
-        return true;
-      } catch (error) {
-        if (error.code !== "ESRCH") throw error;
-        return false;
+      if (rootAlive()) {
+        signalRoot("SIGTERM");
+        await Promise.race([exited.catch(() => {}), delay(7000)]);
       }
-    });
-  const cleanupDeadline = Date.now() + 7000;
-  while ((alive().length || rootAlive()) && Date.now() < cleanupDeadline)
-    await delay(100);
-  const scopeCleanup = [];
-  for (const entry of ownedWorkerScopes.values()) {
-    const absent = () =>
-      scopeAbsentWithin(scopeRuntime, entry.scope, {
-        timeoutMs: 1000,
-        signal: new AbortController().signal,
+      if (rootAlive()) {
+        signalRoot("SIGKILL");
+        await Promise.race([exited.catch(() => {}), delay(1000)]);
+        result.cleanup = "forced-wrapper-stop";
+      }
+    }
+    await Promise.race([fixture?.close(), delay(2000)]);
+    const owned = [
+      receipt?.pid,
+      result.owner?.hostPid,
+      result.owner?.restartedHostPid,
+    ].filter(Boolean);
+    const alive = () =>
+      owned.filter((pid) => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch (error) {
+          if (error.code !== "ESRCH") throw error;
+          return false;
+        }
       });
-    let confirmed = false;
-    try {
-      confirmed = await absent();
-      if (!confirmed && terminateObservedScope(entry)) {
-        const deadline = Date.now() + 7000;
-        do {
-          confirmed = await absent();
-          if (confirmed) break;
-          await delay(100);
-        } while (Date.now() < deadline);
-      }
-    } catch {
-      scopeObservationFailed = true;
-    }
-    scopeCleanup.push({
-      scope: entry.scope,
-      launchId: entry.launchId,
-      confirmed,
-      ownershipObserved: !!entry.anchor,
-    });
-  }
-  result.processScopeProof = {
-    runtimeTreeSha256: scopeRuntime?.runtimeTreeSha256,
-    observationComplete: !scopeObservationFailed && faultScopeConfirmed,
-    scopes: scopeCleanup,
-  };
-  const cleanupComplete =
-    alive().length === 0 &&
-    !rootAlive() &&
-    !scopeObservationFailed &&
-    faultScopeConfirmed &&
-    scopeCleanup.every((row) => row.confirmed);
-  if (!cleanupComplete) {
-    result.cleanup = "owned-processes-still-present";
-    result.status = cancelled ? "cancelled" : "failed";
-    process.exitCode = 1;
-  }
-  let keychainClean = cleanupComplete;
-  if (!visualOnly && directory && cleanupComplete) {
-    try {
-      const path = ["native-e2e.keychain", "native-e2e.keychain-db"]
-        .map((name) => join(directory, name))
-        .find(existsSync);
-      if (path)
-        execFileSync("/usr/bin/security", ["delete-keychain", path], {
-          timeout: 10000,
-          stdio: "pipe",
+    const cleanupDeadline = Date.now() + 7000;
+    while ((alive().length || rootAlive()) && Date.now() < cleanupDeadline)
+      await delay(100);
+    const scopeCleanup = [];
+    for (const entry of ownedWorkerScopes.values()) {
+      const absent = () =>
+        scopeAbsentWithin(scopeRuntime, entry.scope, {
+          timeoutMs: 1000,
+          signal: new AbortController().signal,
         });
-      assert.deepEqual(systemKeychains(), keychainState);
-      result.keychainCleanup =
-        "removed; default keychain and search list unchanged";
-    } catch {
-      keychainClean = false;
-      result.cleanup = "isolated-keychain-cleanup-unconfirmed";
+      let confirmed = false;
+      try {
+        confirmed = await absent();
+        if (!confirmed && terminateObservedScope(entry)) {
+          const deadline = Date.now() + 7000;
+          do {
+            confirmed = await absent();
+            if (confirmed) break;
+            await delay(100);
+          } while (Date.now() < deadline);
+        }
+      } catch {
+        scopeObservationFailed = true;
+      }
+      scopeCleanup.push({
+        scope: entry.scope,
+        launchId: entry.launchId,
+        confirmed,
+        ownershipObserved: !!entry.anchor,
+      });
+    }
+    result.processScopeProof = {
+      runtimeTreeSha256: scopeRuntime?.runtimeTreeSha256,
+      observationComplete: !scopeObservationFailed && faultScopeConfirmed,
+      scopes: scopeCleanup,
+    };
+    cleanupComplete =
+      alive().length === 0 &&
+      !rootAlive() &&
+      !scopeObservationFailed &&
+      faultScopeConfirmed &&
+      scopeCleanup.every((row) => row.confirmed);
+    if (!cleanupComplete) {
+      result.cleanup = "owned-processes-still-present";
       result.status = cancelled ? "cancelled" : "failed";
       process.exitCode = 1;
     }
-  }
-  if (serviceWorker) {
-    if (
-      serviceReady &&
-      serviceWorker.exitCode === null &&
-      serviceWorker.signalCode === null
-    ) {
+    keychainClean = cleanupComplete;
+    if (!visualOnly && directory && cleanupComplete) {
       try {
-        serviceFinishing = true;
-        await serviceCall("finish", {
-          status: result.status,
-          request: fixture?.facts.request,
-          processScopeEmpty: cleanupComplete,
-          processScopeProof: result.processScopeProof,
-        });
+        const path = ["native-e2e.keychain", "native-e2e.keychain-db"]
+          .map((name) => join(directory, name))
+          .find(existsSync);
+        if (path)
+          execFileSync("/usr/bin/security", ["delete-keychain", path], {
+            timeout: 10000,
+            stdio: "pipe",
+          });
+        assert.deepEqual(systemKeychains(), keychainState);
+        result.keychainCleanup =
+          "removed; default keychain and search list unchanged";
       } catch {
-        result.status = "failed";
+        keychainClean = false;
+        result.cleanup = "isolated-keychain-cleanup-unconfirmed";
+        result.status = cancelled ? "cancelled" : "failed";
         process.exitCode = 1;
       }
     }
-    console.log("[native] bounded controlled service owner cleanup");
-    serviceWorker.stdin.end();
-    result.serviceWorkerCleanup = await reapOwnedProcessGroup(serviceWorker);
-    if (
-      !result.serviceWorkerCleanup.confirmed ||
-      result.serviceWorkerCleanup.forced
-    ) {
-      result.status = cancelled ? "cancelled" : "failed";
-      result.serviceFailure = {
-        stage,
-        code: "native_service_worker_cleanup_forced",
-        detail: "controlled service worker required bounded termination",
-      };
-      result.failure ??= result.serviceFailure;
-      process.exitCode = 1;
-    }
-    const serviceReceipt =
-      result.serviceEvidence && join(result.serviceEvidence, "receipt.json");
-    if (serviceReceipt && existsSync(serviceReceipt))
-      result.serviceReceipt = JSON.parse(readFileSync(serviceReceipt, "utf8"));
-    result.serviceCleanup =
-      result.serviceReceipt?.cleanup === "complete"
-        ? result.serviceReceipt.installationCreated
-          ? "owned registration and default pin removed; persistent service state retained"
-          : "no owned system registration created; preparation resources cleaned"
-        : "unconfirmed; retained installation evidence";
-    if (serviceWorker.exitCode !== 0) {
-      result.status =
-        result.serviceReceipt?.status === "cancelled" || cancelled
-          ? "cancelled"
-          : "failed";
-      if (result.serviceReceipt?.error)
+    if (serviceWorker) {
+      if (
+        serviceReady &&
+        serviceWorker.exitCode === null &&
+        serviceWorker.signalCode === null
+      ) {
+        try {
+          serviceFinishing = true;
+          await serviceCall("finish", {
+            status: result.status,
+            request: fixture?.facts.request,
+            processScopeEmpty: cleanupComplete,
+            processScopeProof: result.processScopeProof,
+          });
+        } catch {
+          result.status = "failed";
+          process.exitCode = 1;
+        }
+      }
+      console.log("[native] bounded controlled service owner cleanup");
+      serviceWorker.stdin.end();
+      result.serviceWorkerCleanup = await reapOwnedProcessGroup(serviceWorker);
+      if (
+        !result.serviceWorkerCleanup.confirmed ||
+        result.serviceWorkerCleanup.forced
+      ) {
+        result.status = cancelled ? "cancelled" : "failed";
         result.serviceFailure = {
           stage,
-          code: "native_service_journey_incomplete",
-          detail: result.serviceReceipt.error,
+          code: "native_service_worker_cleanup_forced",
+          detail: "controlled service worker required bounded termination",
         };
-      result.failure ??= result.serviceFailure;
-      process.exitCode = 1;
-    } else {
-      if (!visualOnly && result.status === "passed") {
-        const records = result.serviceReceipt.journalProof.records.filter(
-          (row) => row.request === fixture.facts.request,
+        result.failure ??= result.serviceFailure;
+        process.exitCode = 1;
+      }
+      const serviceReceipt =
+        result.serviceEvidence && join(result.serviceEvidence, "receipt.json");
+      if (serviceReceipt && existsSync(serviceReceipt))
+        result.serviceReceipt = JSON.parse(
+          readFileSync(serviceReceipt, "utf8"),
         );
-        assert.equal(records.length, 1);
-        assert.equal(records[0].snapshot.attempts, 1);
-        assert.equal(records[0].process.finished, true);
-        assert.equal(
-          records[0].process.attemptId,
-          result.completion.record.status.attemptId,
-        );
-        assert.equal(
-          records[0].process.exitCode,
-          result.completion.record.status.process.exitCode,
-        );
-        assert.equal(result.serviceReceipt.journeyStatus, "passed");
+      result.serviceCleanup =
+        result.serviceReceipt?.cleanup === "complete"
+          ? result.serviceReceipt.installationCreated
+            ? "owned registration and default pin removed; persistent service state retained"
+            : "no owned system registration created; preparation resources cleaned"
+          : "unconfirmed; retained installation evidence";
+      if (serviceWorker.exitCode !== 0) {
+        result.status =
+          result.serviceReceipt?.status === "cancelled" || cancelled
+            ? "cancelled"
+            : "failed";
+        if (result.serviceReceipt?.error)
+          result.serviceFailure = {
+            stage,
+            code: "native_service_journey_incomplete",
+            detail: result.serviceReceipt.error,
+          };
+        result.failure ??= result.serviceFailure;
+        process.exitCode = 1;
+      } else {
+        if (!visualOnly && result.status === "passed") {
+          const records = result.serviceReceipt.journalProof.records.filter(
+            (row) => row.request === fixture.facts.request,
+          );
+          assert.equal(records.length, 1);
+          assert.equal(records[0].snapshot.attempts, 1);
+          assert.equal(records[0].process.finished, true);
+          assert.equal(
+            records[0].process.attemptId,
+            result.completion.record.status.attemptId,
+          );
+          assert.equal(
+            records[0].process.exitCode,
+            result.completion.record.status.process.exitCode,
+          );
+          assert.equal(result.serviceReceipt.journeyStatus, "passed");
+        }
       }
     }
+    if (
+      result.status === "passed" &&
+      result.serviceReceipt?.security.status !== "passed" &&
+      controlledService
+    ) {
+      result.status = "partial";
+    }
+  } catch (error) {
+    result.status = cancelled ? "cancelled" : "failed";
+    result.cleanup = "cleanup-observation-failed";
+    result.failure ??= {
+      stage: "cleanup",
+      code: "native_cleanup_failed",
+      detail: String(error)
+        .replaceAll(nonce, "[redacted-capability]")
+        .replaceAll(fixture?.secret ?? "<none>", "[redacted]")
+        .replaceAll(directory ?? "<none>", "[isolated-data]")
+        .replaceAll(root, "[worktree]")
+        .slice(0, 2048),
+    };
+    cleanupComplete = false;
+    // A failed observation must still give both owned leaders a bounded reap.
+    if (child)
+      result.wrapperRecovery = await reapOwnedProcessGroup(child, {
+        graceMs: 0,
+      });
+    if (serviceWorker)
+      result.serviceWorkerCleanup = await reapOwnedProcessGroup(serviceWorker, {
+        graceMs: 0,
+      });
+  } finally {
+    finishNativeResult(result, {
+      exit: child ? { code: child.exitCode, signal: child.signalCode } : null,
+      cleanupConfirmed:
+        cleanupComplete &&
+        keychainClean &&
+        (!serviceWorker ||
+          (result.serviceWorkerCleanup?.confirmed === true &&
+            result.serviceReceipt?.cleanup === "complete")),
+      cancelled,
+    });
+    if (result.status !== "passed" && result.status !== "partial")
+      process.exitCode = 1;
+    writeReport();
+    writeFileSync(
+      join(reports, "desktop-native.log"),
+      logs
+        .replaceAll(nonce, "[redacted-capability]")
+        .replaceAll(fixture?.secret ?? "<none>", "[redacted]")
+        .replaceAll(directory ?? "<none>", "[isolated-data]"),
+    );
+    if (directory && result.cleanupConfirmed)
+      rmSync(directory, { recursive: true, force: true });
   }
-  result.journeyStatus = result.status;
-  if (
-    result.status === "passed" &&
-    result.serviceReceipt?.security.status !== "passed" &&
-    controlledService
-  ) {
-    result.status = "partial";
-  }
-  writeReport();
-  writeFileSync(
-    join(reports, "desktop-native.log"),
-    logs
-      .replaceAll(nonce, "[redacted-capability]")
-      .replaceAll(fixture?.secret ?? "<none>", "[redacted]")
-      .replaceAll(directory ?? "<none>", "[isolated-data]"),
-  );
-  if (directory && cleanupComplete && keychainClean)
-    rmSync(directory, { recursive: true, force: true });
 }

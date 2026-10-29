@@ -148,7 +148,8 @@ export async function runOwnedScopeProbe(
     try {
       if (
         child &&
-        !(await reapOwnedProcessGroup(child, 0, 500, 1500)).confirmed
+        !(await reapOwnedProcessGroup(child, { graceMs: 0, terminateMs: 500 }))
+          .confirmed
       )
         throw Error("owned scope executor cleanup unconfirmed");
     } finally {
@@ -173,7 +174,14 @@ export async function runOwnedScopeProbe(
         )
           throw Error("actor scope ownership unconfirmed");
         if (parentAlive || groupAlive) {
-          if (!(await reapOwnedProcessGroup(actor, 0, 500, 1500)).confirmed)
+          if (
+            !(
+              await reapOwnedProcessGroup(actor, {
+                graceMs: 0,
+                terminateMs: 500,
+              })
+            ).confirmed
+          )
             throw Error("actor group cleanup unconfirmed");
         } else {
           actor.stdout?.destroy();
@@ -205,140 +213,170 @@ export function runDesktop(
   );
 }
 
-// Preparation shares the existing owned process-group lifecycle and live output.
-export function runPreparation(command, args, cwd, environment = process.env) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd,
-      stdio: "inherit",
-      detached: true,
-      env: environment,
-    });
-    let exitCode, cancellation, cleanupFailed, timer, deadline;
-    const signalCode = (signal) =>
-      ({ SIGINT: 130, SIGTERM: 143, SIGHUP: 129 })[signal] ?? 1;
-    const alive = () => {
-      try {
-        process.kill(-child.pid, 0);
-        return true;
-      } catch (error) {
-        if (error.code === "ESRCH") return false;
-        throw error;
-      }
-    };
-    const send = (signal) => {
-      try {
-        process.kill(-child.pid, signal);
-      } catch (error) {
-        if (error.code !== "ESRCH") throw error;
-      }
-    };
-    const finish = () => {
-      clearInterval(timer);
-      process.off("SIGINT", interrupt);
-      process.off("SIGTERM", terminate);
-      process.off("SIGHUP", hangup);
-      resolve(
-        cleanupFailed ? 1 : cancellation ? signalCode(cancellation) : exitCode,
-      );
-    };
-    const stop = (signal) => {
-      send(signal);
-      if (timer) return;
-      deadline = Date.now() + 5000;
-      timer = setInterval(() => {
-        if (!alive() && exitCode !== undefined) finish();
-        else if (Date.now() >= deadline + 1000) {
-          console.error("[desktop dev] process group cleanup unconfirmed");
-          cleanupFailed = true;
-          finish();
-        } else if (Date.now() >= deadline) send("SIGKILL");
-      }, 50);
-    };
-    const cancel = (signal) => {
-      cancellation ??= signal;
-      stop(signal);
-    };
-    const interrupt = () => cancel("SIGINT");
-    const terminate = () => cancel("SIGTERM");
-    const hangup = () => cancel("SIGHUP");
-    process.on("SIGINT", interrupt);
-    process.on("SIGTERM", terminate);
-    process.on("SIGHUP", hangup);
-    child.once("error", (error) => {
-      clearInterval(timer);
-      process.off("SIGINT", interrupt);
-      process.off("SIGTERM", terminate);
-      process.off("SIGHUP", hangup);
-      reject(error);
-    });
-    child.once("exit", (code, signal) => {
-      exitCode = code ?? signalCode(signal);
-      stop("SIGTERM");
-    });
+// Event callbacks only report state. The same bounded reaper owns every signal/probe.
+export async function runPreparation(
+  command,
+  args,
+  cwd,
+  environment = process.env,
+  { spawnChild = spawn, signals = process, reap = reapOwnedProcessGroup } = {},
+) {
+  const child = spawnChild(command, args, {
+    cwd,
+    stdio: "inherit",
+    detached: true,
+    env: environment,
   });
+  let cancellation = null,
+    spawnError,
+    pendingSignal;
+  let notify;
+  const stopped = new Promise((resolve) => {
+    notify = resolve;
+  });
+  const onExit = () => notify();
+  const onError = (error) => {
+    spawnError = error.code ?? "spawn_failed";
+    notify();
+  };
+  const handlers = new Map(
+    ["SIGINT", "SIGTERM", "SIGHUP"].map((signal) => [
+      signal,
+      () => {
+        cancellation ??= signal;
+        pendingSignal = signal;
+        notify();
+      },
+    ]),
+  );
+  child.once("exit", onExit);
+  child.once("error", onError);
+  for (const [signal, handler] of handlers) signals.on(signal, handler);
+  try {
+    await stopped;
+    pendingSignal = undefined;
+    const cleanup = await reap(child, {
+      groupSignal: cancellation ?? "SIGTERM",
+      terminateMs: 5000,
+      killMs: 1000,
+      takeSignal() {
+        const signal = pendingSignal;
+        pendingSignal = undefined;
+        return signal;
+      },
+    });
+    const exit = { code: child.exitCode, signal: child.signalCode };
+    const code =
+      !cleanup.confirmed || spawnError
+        ? 1
+        : cancellation
+          ? signalExitCode(cancellation)
+          : (exit.code ?? signalExitCode(exit.signal));
+    if (!cleanup.confirmed)
+      console.error(
+        "[desktop dev] process group cleanup unconfirmed: " +
+          JSON.stringify({ pid: child.pid, exit, cancellation, cleanup }),
+      );
+    return {
+      code,
+      exit,
+      cancellation,
+      cleanup,
+      ...(spawnError && { error: spawnError }),
+    };
+  } finally {
+    for (const [signal, handler] of handlers) signals.off(signal, handler);
+    child.off("exit", onExit);
+    child.off("error", onError);
+  }
 }
 
-// The controlled service worker owns its backend and private authorization channel.
-// Give that owner time to clean up, then reap only its dedicated process group.
+const signalExitCode = (signal) =>
+  ({ SIGINT: 130, SIGTERM: 143, SIGHUP: 129 })[signal] ?? 1;
+
+// The controlled worker gets owner-first grace. Preparation stops its group
+// immediately. Both paths share signal/probe semantics and one monotonic budget.
+// ref: Node.js v24.14.1 lib/internal/child_process.js (exit is not group termination).
 export async function reapOwnedProcessGroup(
   child,
-  graceMs = 120000,
-  terminateMs = 5000,
-  killMs = 1500,
+  {
+    graceMs = 120000,
+    terminateMs = 5000,
+    killMs = 1500,
+    groupSignal,
+    takeSignal = () => undefined,
+  } = {},
+  {
+    kill = process.kill,
+    now = () => performance.now(),
+    delay = waitMilliseconds,
+  } = {},
 ) {
-  const { setTimeout: delay } = await import("node:timers/promises");
   const exited = () =>
     !child.pid || child.exitCode !== null || child.signalCode !== null;
+  let forced = false,
+    confirmed = false,
+    error;
   const alive = () => {
     if (!child.pid) return false;
     try {
-      process.kill(-child.pid, 0);
+      kill(-child.pid, 0);
       return true;
-    } catch (error) {
-      if (error.code === "ESRCH") return false;
-      if (error.code === "EPERM") return true;
-      throw error;
+    } catch (failure) {
+      if (failure.code === "ESRCH") return false;
+      // Permission denial and failed observation cannot prove absence.
+      error ??= failure.code ?? "probe_failed";
+      return true;
     }
   };
   const send = (signal, group) => {
     if (!child.pid) return;
     try {
-      process.kill(group ? -child.pid : child.pid, signal);
-    } catch (error) {
-      if (error.code !== "ESRCH" && error.code !== "EPERM") throw error;
+      kill(group ? -child.pid : child.pid, signal);
+    } catch (failure) {
+      if (failure.code !== "ESRCH") error ??= failure.code ?? "signal_failed";
     }
   };
   const wait = async (budget, group = false) => {
-    const deadline = performance.now() + budget;
-    while ((!exited() || (group && alive())) && performance.now() < deadline)
-      await delay(25);
+    const deadline = now() + budget;
+    while ((!exited() || (group && alive())) && now() < deadline) {
+      const signal = takeSignal();
+      if (signal) send(signal, true);
+      await delay(Math.min(25, Math.max(0, deadline - now())));
+    }
   };
-  let forced = false,
-    confirmed = false;
   try {
-    await wait(graceMs);
-    if (!exited()) {
-      forced = true;
-      send("SIGTERM", false); // Python runs its finally while the backend still exists.
-      await wait(terminateMs);
+    if (groupSignal) {
+      // The leader may already be reaped; probe before sending to remaining group members.
+      if (!exited() || alive()) {
+        send(groupSignal, true);
+        await wait(terminateMs, true);
+      }
+    } else {
+      await wait(graceMs);
+      if (!exited()) {
+        forced = true;
+        send("SIGTERM", false); // Let the worker run finally while its backend exists.
+        await wait(terminateMs);
+      }
+      if (alive()) {
+        forced = true;
+        send("SIGTERM", true);
+        await wait(terminateMs, true);
+      }
     }
-    if (alive()) {
+    if (!exited() || alive()) {
       forced = true;
-      send("SIGTERM", true);
-      await wait(terminateMs, true);
-    }
-    if (alive()) {
       send("SIGKILL", true);
       await wait(killMs, true);
     }
     confirmed = exited() && !alive();
   } finally {
-    // A failed reap must not leave active pipe handles keeping this caller alive forever.
+    // Unconfirmed termination must not leave pipe handles keeping the caller alive.
     child.stdin?.destroy();
     child.stdout?.destroy();
     child.stderr?.destroy();
     if (!confirmed) child.unref();
   }
-  return { confirmed, forced };
+  return { confirmed, forced, ...(error && { error }) };
 }

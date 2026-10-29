@@ -18,6 +18,26 @@ export function waitForAppearance(readSnapshot, preferences, wait) {
       : false;
   });
 }
+// The UI journey, wrapper exit and cleanup are independent observations.
+export function finishNativeResult(
+  result,
+  { exit, cleanupConfirmed, cancelled },
+) {
+  result.exit = exit;
+  result.cleanupConfirmed = cleanupConfirmed;
+  if (cleanupConfirmed && exit?.code === 0 && !cancelled) return;
+  result.status = cancelled ? "cancelled" : "failed";
+  result.failure ??= {
+    stage: "cleanup",
+    code: cleanupConfirmed
+      ? "native_wrapper_exit_failed"
+      : "native_cleanup_unconfirmed",
+    detail: cleanupConfirmed
+      ? "desktop wrapper did not exit successfully"
+      : "owned resource cleanup could not be confirmed",
+  };
+}
+
 export function sourceEvidence(root) {
   const git = (...args) =>
     execFileSync(process.platform === "win32" ? "git" : "/usr/bin/git", args, {
