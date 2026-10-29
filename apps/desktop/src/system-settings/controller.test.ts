@@ -1,11 +1,41 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { createSystemSettings, type SettingsPort } from "./controller";
+import { fixtureLocalPorts } from "../../../../tests/assistant/local-ports";
 import type {
   SettingsOperation,
   SettingsResponse,
   SettingsSnapshot,
 } from "../self-service/types";
 const controllers: ReturnType<typeof createSystemSettings>[] = [];
+it("retains a lost collection UUID and queries it before another refresh, while ordinary reads never submit", async () => {
+  const data = fixtureLocalPorts().data!;
+  data.query_submit = vi.fn(async () => {
+    throw Error("lost");
+  });
+  data.query_status = vi.fn(async ({ request }) => ({
+    request,
+    query: { id: "hardware.network", revision: "1".repeat(64) },
+    phase: "completed" as const,
+    cancelRequested: false,
+    preparation: null,
+  }));
+  let counter = 0;
+  const controller = createSystemSettings(
+    async (operation) =>
+      response({ request: "request" in operation ? operation.request : null }),
+    data,
+    () => `request-${++counter}`,
+  );
+  controllers.push(controller);
+  await controller.load("network");
+  expect(data.query_submit).not.toHaveBeenCalled();
+  await controller.load("network", true);
+  const original = [...controller.state.queries.values()][0].request;
+  expect(data.query_submit).toHaveBeenCalledTimes(1);
+  await controller.load("network", true);
+  expect(data.query_submit).toHaveBeenCalledTimes(1);
+  expect(data.query_status).toHaveBeenCalledWith({ request: original });
+});
 afterEach(() => {
   for (const controller of controllers.splice(0)) controller.dispose();
   vi.useRealTimers();

@@ -4,6 +4,7 @@ import type {
   CollectedData,
   DataAccessPort,
   QueryDescriptor,
+  QueryStatus,
   SettingsOperation,
   SettingsPatch,
   SettingsResponse,
@@ -58,6 +59,8 @@ export function createSystemSettings(
     >(),
     sources: [] as QueryDescriptor[],
     busy: proxySet<SettingsSection>(),
+    reads: proxySet<SettingsSection>(),
+    queries: proxyMap<string, QueryStatus>(),
     errors: proxyMap<SettingsSection, string>(),
     pending: proxyMap<
       SettingsSection,
@@ -162,25 +165,49 @@ export function createSystemSettings(
     await Promise.all(
       relevant(section).map(async (source) => {
         if (refresh && source.available) {
-          const request = identity();
-          let status = await data.query_submit({
-            request,
-            query: source.reference,
-            parameters: {},
-          });
+          const key = JSON.stringify(source.reference),
+            previous = state.queries.get(key),
+            resume =
+              previous &&
+              !["completed", "failed", "cancelled"].includes(previous.phase),
+            request = resume ? previous.request : identity();
+          // Keep the original query before submission, even if its receipt is lost.
+          if (!resume)
+            state.queries.set(key, {
+              request,
+              query: deepClone(source.reference),
+              phase: "unknown",
+              cancelRequested: false,
+              preparation: null,
+            });
+          let status = resume
+            ? await data.query_status({ request })
+            : await data.query_submit({
+                request,
+                query: source.reference,
+                parameters: {},
+              });
+          if (!active || call !== epoch) return;
+          state.queries.set(key, deepClone(status));
           for (
             let n = 0;
             active &&
             call === epoch &&
-            !["completed", "failed", "cancelled", "unknown"].includes(
-              status.phase,
-            ) &&
+            ![
+              "completed",
+              "failed",
+              "cancelled",
+              "unknown",
+              "awaitingConfirmation",
+            ].includes(status.phase) &&
             n < 240;
             n++
           ) {
             await pause();
             if (!active || call !== epoch) return;
             status = await data.query_status({ request });
+            if (active && call === epoch)
+              state.queries.set(key, deepClone(status));
           }
         }
         if (!active || call !== epoch) return;
@@ -261,8 +288,9 @@ export function createSystemSettings(
     }
   }
   async function load(section: SettingsSection, refresh = false) {
-    if (!active || state.busy.has(section)) return;
+    if (!active || state.busy.has(section) || state.reads.has(section)) return;
     const call = epoch;
+    state.reads.add(section);
     const local = run(
       section,
       refresh &&
@@ -275,6 +303,28 @@ export function createSystemSettings(
     } catch {
       if (active && call === epoch)
         state.errors.set(section, "部分本机采集数据不可用，请查看各项状态。");
+    } finally {
+      if (active && call === epoch) state.reads.delete(section);
+    }
+  }
+  async function recoverQuery(section: SettingsSection, request: string) {
+    if (!active || !data || state.reads.has(section)) return;
+    const entry = [...state.queries.entries()].find(
+      ([, value]) => value.request === request,
+    );
+    if (!entry) return;
+    const call = epoch;
+    state.reads.add(section);
+    try {
+      const value = await data.query_status({ request });
+      if (!active || call !== epoch) return;
+      state.queries.set(entry[0], deepClone(value));
+      await readFacts(section, false, call);
+    } catch {
+      if (active && call === epoch)
+        state.errors.set(section, "原采集请求结果未确认，请继续查询原请求。");
+    } finally {
+      if (active && call === epoch) state.reads.delete(section);
     }
   }
   async function save(patch: SettingsPatch, expected?: string) {
@@ -362,6 +412,8 @@ export function createSystemSettings(
     state.sources = [];
     state.errors.clear();
     state.busy.clear();
+    state.reads.clear();
+    state.queries.clear();
   }
   return {
     state,
@@ -373,6 +425,7 @@ export function createSystemSettings(
     keep,
     cancel,
     recover,
+    recoverQuery,
     retry,
     summary,
     openNative: (section: SettingsSection) =>

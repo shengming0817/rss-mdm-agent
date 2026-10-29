@@ -347,6 +347,7 @@ export async function createFixture() {
           "/__fixture/registration",
           "/__fixture/mdm-registration",
           "/__fixture/policy_directory",
+          "/__fixture/save-connection",
           "/__fixture/registration-request",
           "/__fixture/state",
           "/__fixture/scenario",
@@ -370,6 +371,24 @@ export async function createFixture() {
         }
         let value;
         switch (url.pathname) {
+          case "/__fixture/save-connection": {
+            available();
+            if (req.method !== "POST") throw Error("fixture save method");
+            value = unwrap(
+              await host.store.saveConnection(
+                fixtureCaller,
+                {
+                  ...input.draft,
+                  schemaVersion: 1,
+                  kind: "connection",
+                  configRevision: (input.expected ?? 0) + 1,
+                  status: "unverified",
+                },
+                input.expected,
+              ),
+            );
+            break;
+          }
           case "/__fixture/account": {
             if (req.method !== "POST") throw Error("fixture account method");
             for (const peer of peers.values()) {

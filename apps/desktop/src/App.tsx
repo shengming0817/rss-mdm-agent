@@ -29,6 +29,15 @@ import { createRegistration } from "./account/registration";
 import { pageContext } from "./workspace/page-context";
 import { pageResources } from "./workspace/page-projection";
 import { taskPhase, taskTitle } from "./task-center/controller";
+import { SoftwarePage } from "./software/SoftwarePage";
+import { SystemPage } from "./system-settings/SystemPage";
+import { ToolsPage } from "./device-tools/ToolsPage";
+import { ConnectionsPage } from "./settings/ConnectionsPage";
+import { PersonalVaultPage } from "./settings/PersonalVaultPage";
+import { DiagnosticsPage } from "./settings/DiagnosticsPage";
+import { AboutPage } from "./settings/AboutPage";
+import { PolicyDrawer } from "./shell/PolicyDrawer";
+import "./settings/settings.css";
 /** Account dialogs survive transitions; every private business subtree is keyed to its subject. */
 export function App() {
   const desktop = useDesktop(),
@@ -160,6 +169,7 @@ function WorkspaceView({
     system = useSnapshot(workspace.system.state),
     software = useSnapshot(workspace.software.state),
     tasks = useSnapshot(workspace.tasks.state),
+    directory = useSnapshot(workspace.directory.state),
     [registration, setRegistration] = useState<ReturnType<
       typeof createRegistration
     > | null>(null),
@@ -196,6 +206,7 @@ function WorkspaceView({
         software,
         tasks,
         now,
+        directory,
       ),
       workspace.key,
       now,
@@ -236,6 +247,25 @@ function WorkspaceView({
                 section={nav.selected.settings}
                 registration={registration}
                 onLogin={onLogin}
+                active={nav.page === "settings"}
+              />
+            ) : page === "software" ? (
+              <SoftwarePage
+                workspace={workspace}
+                section={nav.selected.software}
+                active={nav.page === "software"}
+              />
+            ) : page === "system" ? (
+              <SystemPage
+                workspace={workspace}
+                section={nav.selected.system}
+                active={nav.page === "system"}
+              />
+            ) : page === "tools" ? (
+              <ToolsPage
+                workspace={workspace}
+                section={nav.selected.tools}
+                active={nav.page === "tools"}
               />
             ) : (
               <PendingModule page={page} section={nav.selected[page]} />
@@ -249,6 +279,11 @@ function WorkspaceView({
         onClose={closeCompanion}
       />
       <GlobalSearch workspace={workspace} />
+      <PolicyDrawer
+        workspace={workspace}
+        open={nav.policyOpen}
+        onClose={() => workspace.navigation.closePolicy()}
+      />
       <DetailDrawer
         open={nav.page === "tasks" && !!tasks.requested}
         onClose={() => workspace.tasks.closeTask()}
@@ -316,11 +351,13 @@ function SettingsContent({
   section,
   registration,
   onLogin,
+  active,
 }: {
   workspace: Workspace;
   section: string;
   registration: ReturnType<typeof createRegistration> | null;
   onLogin(): void;
+  active: boolean;
 }) {
   return (
     <>
@@ -339,11 +376,31 @@ function SettingsContent({
       <div hidden={section !== "appearance"}>
         <AppearancePage workspace={workspace} />
       </div>
-      {section !== "account" &&
-        section !== "registration" &&
-        section !== "appearance" && (
-          <PendingModule page="settings" section={section} />
-        )}
+      <div hidden={section !== "connection"}>
+        <ConnectionsPage
+          workspace={workspace}
+          active={active && section === "connection"}
+        />
+      </div>
+      <div hidden={section !== "personal-vault"}>
+        <PersonalVaultPage
+          workspace={workspace}
+          active={active && section === "personal-vault"}
+        />
+      </div>
+      <div hidden={section !== "diagnostics"}>
+        <DiagnosticsPage
+          workspace={workspace}
+          registration={registration}
+          active={active && section === "diagnostics"}
+        />
+      </div>
+      <div hidden={section !== "about"}>
+        <AboutPage
+          workspace={workspace}
+          active={active && section === "about"}
+        />
+      </div>
     </>
   );
 }

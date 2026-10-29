@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { checkShellBrowser } from "./check-shell-browser.mjs";
+import { checkPagesBrowser } from "./check-pages-browser.mjs";
 import { mkdirSync } from "node:fs";
 import { chromium } from "playwright-core";
 import { prepareRun } from "./preparation.mjs";
@@ -176,6 +177,7 @@ try {
   );
   assert.ok(Number(await page.getByTestId("state-sessions").textContent()) > 0);
   await checkShellBrowser(page, fixture);
+  await checkPagesBrowser(page, fixture);
   assert.deepEqual(errors, []);
   assert.deepEqual(remote, []);
   console.log(

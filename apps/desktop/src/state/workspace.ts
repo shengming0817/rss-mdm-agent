@@ -10,6 +10,8 @@ import { createTaskCenter } from "../task-center/controller";
 import { createSoftware } from "../software/controller";
 import { createSystemSettings } from "../system-settings/controller";
 import { createDirectory } from "../self-service/directory";
+import { createPolicyPreparation } from "../self-service/policy-preparation";
+import { createNetworkCheck } from "../device-tools/controller";
 import {
   nativeDataPort,
   nativeNetworkCheckPort,
@@ -24,10 +26,14 @@ import { createDeviceOverview } from "../home/device";
 import { nativeDeviceOverview } from "../home/native";
 import { createHostSettings } from "../settings/controller";
 import { createDiagnostics } from "../settings/diagnostics";
+import { createConnectionSettings } from "../settings/connections";
+import { createPersonalVault } from "../settings/personal-vault";
 import {
   nativeDiagnostics,
   nativeHost,
   nativePersonalVault,
+  nativeConnectionSave,
+  nativeAppVersion,
 } from "../settings/native";
 import { workspaceIdentity } from "../workspace/identity";
 import { createNavigation } from "./navigation";
@@ -66,6 +72,8 @@ export function createWorkspace(
     tasks,
   );
   const directory = createDirectory(tasks.port);
+  const policies = createPolicyPreparation(selfService);
+  const networkCheck = createNetworkCheck(local.network);
   const assistant = createAssistant(
     environment ? input.assistantServices : nativeAssistant(tasks),
     () => crypto.randomUUID(),
@@ -79,11 +87,18 @@ export function createWorkspace(
     environment ? environment.host : nativeHost(),
   );
   const diagnostics = createDiagnostics(
-    environment ? undefined : nativeDiagnostics(),
+    environment ? environment.diagnostics : nativeDiagnostics(),
   );
   const navigation = createNavigation();
   const deviceAccess = environment ? undefined : nativeDeviceAccessPort();
-  const personalVault = environment ? undefined : nativePersonalVault();
+  const personalVault = environment
+    ? environment.personalVault
+    : nativePersonalVault();
+  const vault = createPersonalVault(personalVault);
+  const connections = createConnectionSettings(
+    assistant,
+    environment ? environment.connectionSave : nativeConnectionSave(),
+  );
   let alive = true,
     started = false;
   const visibility = () =>
@@ -106,6 +121,8 @@ export function createWorkspace(
     software,
     system,
     directory,
+    policies,
+    networkCheck,
     assistant,
     device,
     host,
@@ -113,6 +130,9 @@ export function createWorkspace(
     network: local.network,
     deviceAccess,
     personalVault,
+    vault,
+    connections,
+    appVersion: environment ? environment.appVersion : nativeAppVersion(),
     start() {
       if (!alive || started) return;
       started = true;
@@ -127,12 +147,16 @@ export function createWorkspace(
       stopNavigation();
       assistant.dispose();
       directory.dispose();
+      policies.dispose();
+      networkCheck.dispose();
       software.dispose();
       system.dispose();
       tasks.dispose();
       device.dispose();
       host.dispose();
       diagnostics.dispose();
+      vault.dispose();
+      connections.dispose();
     },
   };
 }

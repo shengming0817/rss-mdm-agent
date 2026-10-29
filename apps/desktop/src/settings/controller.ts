@@ -1,5 +1,5 @@
 import { deepClone } from "valtio/vanilla/utils";
-import { proxy } from "valtio/vanilla";
+import { proxy, type Snapshot } from "valtio/vanilla";
 import type { HostStatus } from "@rss-mdm-agent/ai-contract/wire";
 import type { nativeHost } from "./native";
 export function createHostSettings(port: ReturnType<typeof nativeHost>) {
@@ -65,7 +65,7 @@ export function createHostSettings(port: ReturnType<typeof nativeHost>) {
   };
 }
 export type HostSettings = ReturnType<typeof createHostSettings>;
-export const diagnosticMessage = (status?: HostStatus) => {
+export const diagnosticMessage = (status?: Snapshot<HostStatus>) => {
   switch (status?.diagnostic?.code) {
     case "runtime_missing":
       return status.source === "development_override"

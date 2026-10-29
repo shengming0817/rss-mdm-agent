@@ -1,0 +1,214 @@
+.rss-system-page .rss-eyebrow {
+  margin-bottom: 9px;
+}
+.rss-system-banner {
+  padding: 22px;
+  display: flex;
+  gap: 22px;
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  margin: 0 0 22px;
+}
+.rss-system-banner > .anticon {
+  font-size: 65px;
+  color: #9391aa;
+}
+.rss-system-page .rss-system-banner h2 {
+  font-size: 21px;
+  letter-spacing: -0.4px;
+  font-weight: 600;
+  margin: 0 0 9px;
+}
+.rss-system-page .rss-system-banner p {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.8;
+  margin: 3px 0;
+}
+.rss-system-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 13px;
+}
+.rss-system-card {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 11px;
+  text-align: left;
+}
+.rss-system-card:hover {
+  border-color: var(--accent);
+  background: var(--hover);
+}
+.rss-system-glyph {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 37px;
+  height: 37px;
+  border-radius: 10px;
+  background: #eeeaf7;
+  color: #8173b1;
+  font-size: 20px;
+}
+.rss-system-glyph.blue {
+  background: #e8eff8;
+  color: #7390b4;
+}
+.rss-system-glyph.green {
+  background: #e8f0e9;
+  color: #78947b;
+}
+.rss-system-glyph.orange {
+  background: #f6ede2;
+  color: #b69971;
+}
+.rss-system-glyph.pink {
+  background: #f5e9ec;
+  color: #b48493;
+}
+.rss-system-page .rss-system-card h3 {
+  font-size: 13px;
+  font-weight: 550;
+  margin: 0 0 5px;
+}
+.rss-system-page .rss-system-card p {
+  font-size: 10px;
+  line-height: 1.7;
+  color: var(--muted);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.rss-system-card > .anticon {
+  font-size: 11px;
+  color: var(--muted);
+}
+.rss-system-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.rss-system-page .rss-system-section-heading h2 {
+  font-size: 18px;
+  margin: 0;
+}
+.rss-system-observation {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 10px;
+  color: var(--muted);
+  align-items: center;
+}
+.rss-setting-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  min-height: 69px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.rss-setting-row:last-child {
+  border-bottom: 0;
+}
+.rss-setting-row strong {
+  font-weight: 500;
+}
+.rss-setting-row small {
+  display: block;
+  margin-top: 5px;
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.8;
+}
+.rss-setting-value {
+  max-width: 65%;
+  text-align: right;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.rss-system-editor {
+  margin-top: 16px;
+}
+.rss-form-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 130px;
+  gap: 16px;
+}
+.rss-proxy-editor {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.rss-proxy-editor legend {
+  font-size: 13px;
+  font-weight: 550;
+  margin-bottom: 10px;
+}
+.rss-system-editor .ant-input-number {
+  width: 100%;
+}
+.rss-settings-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+  margin-top: 15px;
+}
+.rss-settings-actions small {
+  margin-right: auto;
+  font-size: 11px;
+  color: var(--muted);
+}
+.rss-storage-number {
+  font-size: 42px;
+  letter-spacing: -1.5px;
+  margin: 20px 0;
+}
+.rss-storage-number small {
+  font-size: 12px;
+  letter-spacing: 0;
+  color: var(--muted);
+}
+.rss-system-page .rss-system-source {
+  font-size: 10px;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+@media (max-width: 720px) {
+  .rss-system-cards {
+    grid-template-columns: 1fr;
+  }
+  .rss-system-banner {
+    gap: 15px;
+    padding: 20px;
+  }
+  .rss-system-banner > .anticon {
+    font-size: 46px;
+  }
+  .rss-system-page .rss-system-banner h2 {
+    font-size: 19px;
+  }
+  .rss-form-grid {
+    grid-template-columns: 1fr;
+  }
+  .rss-setting-row {
+    gap: 12px;
+  }
+  .rss-system-section-heading {
+    flex-wrap: wrap;
+  }
+  .rss-setting-value {
+    max-width: 60%;
+  }
+}

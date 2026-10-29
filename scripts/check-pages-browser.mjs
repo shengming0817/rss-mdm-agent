@@ -1,0 +1,354 @@
+import assert from "node:assert/strict";
+import { mkdirSync, writeFileSync } from "node:fs";
+export async function checkPagesBrowser(page, fixture) {
+  const directory = new URL("../.local-ci-runs/", import.meta.url);
+  mkdirSync(directory, { recursive: true });
+  const evidence = {
+    assembly: "explicit UI fixtures in production React pages",
+    platformProof: false,
+    captures: [],
+    checks: [],
+  };
+  const go = async (scene = "normal") => {
+    await page.goto(`${fixture.url}?desktop&scene=${scene}`);
+    await page
+      .getByRole("button", { name: "切换侧栏布局", exact: true })
+      .waitFor();
+    await page.locator(".fixture-controls").evaluate((node) => {
+      node.style.display = "none";
+    });
+  };
+  const primary = (name) =>
+    page
+      .locator(".rss-hidden-primary")
+      .getByRole("button", { name, exact: true })
+      .click();
+  const section = (name) =>
+    page
+      .locator(".rss-hidden-secondary")
+      .getByRole("button", { name, exact: true })
+      .click();
+  const settings = async (name) => {
+    await page.getByRole("button", { name: "用户菜单", exact: true }).click();
+    await page.getByRole("menuitem", { name, exact: true }).click();
+  };
+  const capture = async (name) => {
+    await page.evaluate(async () => {
+      await document.fonts.ready;
+      await new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      );
+    });
+    const file = `react-pages-${name}.png`;
+    await page.screenshot({ path: new URL(file, directory).pathname });
+    const dimensions = await page.evaluate(() => ({
+      scroll: document.documentElement.scrollWidth,
+      viewport: innerWidth,
+      header: document.querySelector(".rss-topbar").getBoundingClientRect()
+        .height,
+    }));
+    assert.equal(dimensions.header, 54);
+    assert.ok(
+      dimensions.scroll <= dimensions.viewport,
+      `${name}: horizontal overflow`,
+    );
+    evidence.captures.push({ file, ...dimensions });
+  };
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await go();
+  await primary("软件中心");
+  await page.getByRole("button", { name: "工作空间", exact: true }).waitFor();
+  assert.equal(await page.locator(".rss-store-editorial > section").count(), 2);
+  assert.equal(
+    await page.evaluate(() => window.rssPageFixture.events.length),
+    0,
+  );
+  await capture("discover");
+  for (const category of [
+    "效率办公",
+    "创意设计",
+    "网络工具",
+    "开发工具",
+    "系统工具",
+  ]) {
+    await section(category);
+    await page.getByRole("heading", { name: category, exact: true }).waitFor();
+    assert.equal(
+      await page.locator(".rss-store-grid .rss-software-card").count(),
+      1,
+    );
+  }
+  await section("创意设计");
+  await page.getByRole("button", { name: "创作画板", exact: true }).click();
+  await page.getByRole("heading", { name: "创作画板", exact: true }).waitFor();
+  await capture("detail-overview");
+  for (const tab of ["版本记录", "权限与范围", "相关任务"]) {
+    await page.getByRole("tab", { name: tab, exact: true }).click();
+    await capture(`detail-${tab}`);
+  }
+  await section("已安装");
+  await page.getByRole("button", { name: "Workspace", exact: true }).waitFor();
+  const first = page.locator(".rss-installed-card").first();
+  assert.equal(
+    await first.getByRole("button", { name: "卸载", exact: true }).isDisabled(),
+    true,
+  );
+  assert.match(await first.textContent(), /由组织保护/);
+  await capture("installed-cards");
+  await page
+    .locator(".ant-segmented")
+    .getByText("列表", { exact: true })
+    .click();
+  await page
+    .getByRole("columnheader", { name: "安装版本", exact: true })
+    .waitFor();
+  await capture("installed-list");
+  await page
+    .locator(".ant-segmented")
+    .getByText("卡片", { exact: true })
+    .click();
+  const notes = page
+    .locator(".rss-installed-card")
+    .filter({ has: page.getByRole("button", { name: "Notes", exact: true }) });
+  await notes.getByRole("button", { name: "卸载", exact: true }).click();
+  const preparation = page.getByRole("dialog");
+  await preparation
+    .getByRole("button", { name: "确认卸载", exact: true })
+    .waitFor();
+  assert.equal(
+    await page.evaluate(() =>
+      window.rssPageFixture.events.some(
+        (event) => event.operation === "software_submit",
+      ),
+    ),
+    false,
+  );
+  await capture("software-preparation");
+  await preparation
+    .getByRole("button", { name: "确认卸载", exact: true })
+    .click();
+  await page.waitForFunction(() =>
+    window.rssPageFixture.events.some(
+      (event) => event.operation === "software_submit",
+    ),
+  );
+  const requests = await page.evaluate(() =>
+    window.rssPageFixture.events
+      .filter((event) => event.operation.startsWith("software_"))
+      .map((event) => event.request),
+  );
+  assert.equal(new Set(requests).size, 1);
+  await page.keyboard.press("Escape");
+  await preparation.waitFor({ state: "hidden" });
+  await section("更新");
+  assert.equal(await page.locator(".rss-installed-card").count(), 1);
+  await capture("updates");
+  evidence.checks.push(
+    "all categories; full detail tabs; protected uninstall; cards/list; exact original preparation and explicit submit",
+  );
+
+  await primary("系统设置");
+  await page
+    .getByRole("heading", { name: "Studio Mac", exact: true })
+    .waitFor();
+  await capture("system-overview");
+  for (const title of [
+    "网络",
+    "显示器",
+    "声音",
+    "电池与电源",
+    "存储空间",
+    "隐私与安全性",
+    "关于这台电脑",
+  ]) {
+    await section(title);
+    await page.getByRole("heading", { name: title, exact: true }).waitFor();
+    await capture(`system-${title}`);
+  }
+  await section("网络");
+  await page
+    .getByRole("textbox", { name: "HTTP 代理服务器", exact: true })
+    .fill("proxy.fixture.invalid");
+  await page.getByRole("button", { name: "保存更改", exact: true }).click();
+  await page.waitForFunction(() =>
+    window.rssPageFixture.events.some(
+      (event) => event.operation === "settings_change",
+    ),
+  );
+  await primary("工具中心");
+  await section("连接与网络");
+  await page.getByRole("button", { name: /开始检查/ }).click();
+  const network = page.getByRole("dialog");
+  await network
+    .getByRole("textbox", { name: "网络检测主机", exact: true })
+    .waitFor();
+  assert.equal(
+    await page.evaluate(() =>
+      window.rssPageFixture.events.some(
+        (event) => event.operation === "network_run",
+      ),
+    ),
+    false,
+  );
+  await network.getByRole("button", { name: "开始检测", exact: true }).click();
+  await network
+    .getByRole("heading", { name: "实际检测结果", exact: true })
+    .waitFor();
+  await capture("network-result");
+  await page.keyboard.press("Escape");
+  await network.waitFor({ state: "hidden" });
+  await section("全部工具");
+  await page
+    .getByRole("heading", { name: "组织网络观察", exact: true })
+    .waitFor();
+  await page
+    .locator(".rss-tool-card")
+    .filter({
+      has: page.getByRole("heading", { name: "组织网络观察", exact: true }),
+    })
+    .getByRole("button", { name: /查看并准备/ })
+    .click();
+  const policy = page.getByRole("dialog");
+  await policy
+    .getByRole("textbox", { name: "interface", exact: true })
+    .fill("en0");
+  assert.equal(
+    await page.evaluate(() =>
+      window.rssPageFixture.events.some(
+        (event) => event.operation === "policy_invoke",
+      ),
+    ),
+    false,
+  );
+  await policy.getByRole("button", { name: "确认并提交", exact: true }).click();
+  await policy
+    .getByRole("button", { name: "查询原请求", exact: true })
+    .waitFor();
+  await capture("published-tool");
+  await page.keyboard.press("Escape");
+  await policy.waitFor({ state: "hidden" });
+  evidence.checks.push(
+    "eight system sections; frozen proxy draft; four tool groups; explicit DNS/TCP and published script invocation",
+  );
+
+  await settings("AI 与连接");
+  await page.getByRole("button", { name: "添加连接", exact: true }).click();
+  const connection = page.getByRole("dialog");
+  await connection
+    .getByRole("textbox", { name: "连接名称", exact: true })
+    .fill("工作 API");
+  await connection
+    .getByRole("combobox", { name: "AI 配置来源", exact: true })
+    .click();
+  await page.getByRole("option", { name: "自定义 API", exact: true }).click();
+  await connection
+    .getByRole("textbox", { name: "AI API 地址", exact: true })
+    .fill("https://api.fixture.invalid");
+  await connection
+    .getByRole("textbox", { name: "AI 模型", exact: true })
+    .fill("fixed-model");
+  await connection
+    .locator('input[aria-label="AI 新密钥"]')
+    .fill("ui-secret-proof");
+  await connection
+    .getByRole("textbox", { name: "AI API 地址", exact: true })
+    .fill("https://other.fixture.invalid");
+  assert.equal(
+    await connection.locator('input[aria-label="AI 新密钥"]').inputValue(),
+    "",
+  );
+  await connection
+    .locator('input[aria-label="AI 新密钥"]')
+    .fill("ui-secret-proof");
+  await connection
+    .getByRole("button", { name: "保存连接", exact: true })
+    .click();
+  await connection.waitFor({ state: "hidden" });
+  await page.getByRole("heading", { name: "工作 API", exact: true }).waitFor();
+  assert.equal(
+    await page.evaluate(() =>
+      JSON.stringify(
+        window.rssDesktop.state.workspace.connections.state,
+      ).includes("ui-secret-proof"),
+    ),
+    false,
+  );
+  await capture("connections");
+  await settings("个人 Passkey");
+  await page
+    .getByRole("button", { name: "通过系统验证解锁", exact: true })
+    .click();
+  await page.getByText("work.fixture.invalid", { exact: true }).waitFor();
+  assert.equal(
+    await page
+      .locator(
+        '.rss-page-viewport[aria-label="账号设置"] input[type="password"]',
+      )
+      .count(),
+    0,
+  );
+  await capture("personal-passkey");
+  await settings("运行与诊断");
+  await page.getByRole("button", { name: "预览脱敏诊断", exact: true }).click();
+  const diagnostic = page.getByRole("dialog");
+  await diagnostic.getByText(/"credentials": "redacted"/).waitFor();
+  await capture("diagnostics-preview");
+  await diagnostic
+    .getByRole("button", { name: "保存此脱敏快照", exact: true })
+    .click();
+  await diagnostic.getByText("已取消导出。", { exact: true }).waitFor();
+  await page.keyboard.press("Escape");
+  await diagnostic.waitFor({ state: "hidden" });
+  assert.equal(
+    await page.evaluate(
+      () => window.rssDesktop.state.workspace.diagnostics.state.preview == null,
+    ),
+    true,
+  );
+  await settings("关于与隐私");
+  await capture("about");
+  evidence.checks.push(
+    "native-only secret save boundary UI, endpoint secret clear, Passkey metadata, redacted fixed snapshot and export cancellation/discard",
+  );
+
+  for (const theme of ["light", "dark"])
+    for (const width of [1280, 720, 420]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.evaluate((mode) => window.rssDesktop.setTheme(mode), theme);
+      for (const [module, child, name] of [
+        ["软件中心", "发现", "software"],
+        ["系统设置", "概览", "system"],
+        ["工具中心", "全部工具", "tools"],
+      ]) {
+        await primary(module);
+        await section(child);
+        await capture(`${name}-${theme}-${width}`);
+      }
+      await settings("AI 与连接");
+      await capture(`settings-${theme}-${width}`);
+    }
+  for (const scene of ["empty", "partial", "error", "offline", "readonly"]) {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await go(scene);
+    await primary("软件中心");
+    await section("已安装");
+    await page.waitForFunction(
+      () =>
+        !window.rssDesktop.state.workspace.software.state.loading &&
+        !window.rssDesktop.state.workspace.software.state.sources.some(
+          (source) => source.busy,
+        ),
+    );
+    await capture(`software-${scene}`);
+    await primary("系统设置");
+    await section("网络");
+    await capture(`system-${scene}`);
+  }
+  writeFileSync(
+    new URL("react-pages-evidence.json", directory),
+    JSON.stringify(evidence, null, 2),
+  );
+  console.log(
+    "PASS React business pages: explicit original operations, secrets and diagnostics boundaries, v4 page matrix 1280/720/420 light/dark and empty/partial/error/offline/read-only. OS effects and Windows native remain separate.",
+  );
+}

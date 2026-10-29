@@ -84,14 +84,14 @@ export function SoftwareCard({
   cover,
   icon,
   onDetails,
-  action,
+  trailing,
 }: {
   title: string;
   description: string;
   cover: ReactNode;
   icon?: ReactNode;
   onDetails(): void;
-  action?: ReactNode;
+  trailing?: ReactNode;
 }) {
   return (
     <Card
@@ -117,7 +117,7 @@ export function SoftwareCard({
           </Button>
           <p>{description}</p>
         </div>
-        {action}
+        {trailing}
       </div>
     </Card>
   );

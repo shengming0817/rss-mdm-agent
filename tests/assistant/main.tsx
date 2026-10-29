@@ -120,7 +120,7 @@ function FoundationFixture() {
                 />
               }
               onDetails={openDetails}
-              action={<Button onClick={openDetails}>查看</Button>}
+              trailing={<Button onClick={openDetails}>查看</Button>}
             />
             <SoftwareCard
               title="设计工具"

@@ -1,5 +1,5 @@
 import { deepClone } from "valtio/vanilla/utils";
-import { proxy } from "valtio/vanilla";
+import { proxy, type Snapshot } from "valtio/vanilla";
 import type { SelfServiceDirectoryItem, SelfServicePort } from "./types";
 
 /** One current-subject directory; cursors are discovery positions, never permissions. */
@@ -89,8 +89,9 @@ export type DirectoryController = ReturnType<typeof createDirectory>;
 
 /** A Resource-owned display projection; parameters and native credentials never enter it. */
 export function policyResource(
-  item: SelfServiceDirectoryItem,
+  item: Snapshot<SelfServiceDirectoryItem>,
   catalog: DirectoryController,
+  current: Snapshot<DirectoryController["state"]> = catalog.state,
 ): import("../workspace/page-navigation").PageResource {
   const text = (value: unknown) => (typeof value === "string" ? value : "");
   return {
@@ -100,10 +101,22 @@ export function policyResource(
     version: item.policyVersion,
     status: `${item.task.kind} · 风险 ${item.selfService.riskLevel} · 当前目录可见，执行仍需服务核验`,
     source: "授权 Policy 目录",
-    revision: item.policyId,
-    validUntil: catalog.state.readAt + 30_000,
+    revision: JSON.stringify([
+      item.policyId,
+      item.policyVersion,
+      item.policyRevision,
+      item.subject,
+    ]),
+    collectedAt: current.readAt,
+    validUntil: current.readAt + 30_000,
     verified:
-      !catalog.state.error &&
-      catalog.state.items.some((current) => current.policyId === item.policyId),
+      !current.error &&
+      current.readAt > 0 &&
+      current.items.some(
+        (value) =>
+          value.policyId === item.policyId &&
+          value.policyVersion === item.policyVersion &&
+          value.policyRevision === item.policyRevision,
+      ),
   };
 }

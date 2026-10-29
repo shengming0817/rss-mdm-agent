@@ -155,6 +155,8 @@ export function checkSource(file, source) {
     allowed.add("@tauri-apps/api/window");
   if (file === "apps/desktop/src/workspace/entry.ts")
     allowed.add("@tauri-apps/api/event");
+  if (file === "apps/desktop/src/settings/native.ts")
+    allowed.add("@tauri-apps/api/app");
   if (file === "apps/desktop/src/software/controller.ts")
     allowed.add("@rss-mdm-agent/ai-ui-bridge");
   const pureGlobals = new Set([
@@ -177,6 +179,9 @@ export function checkSource(file, source) {
   ]);
   const ownerGlobals = {
     "apps/desktop/src/account/AccountPage.tsx": ["crypto"],
+    "apps/desktop/src/settings/ConnectionsPage.tsx": ["crypto", "URL"],
+    "apps/desktop/src/self-service/policy-preparation.ts": ["crypto"],
+    "apps/desktop/src/device-tools/controller.ts": ["crypto"],
     "apps/desktop/src/shell/DesktopShell.tsx": [
       "window",
       "document",
@@ -288,6 +293,43 @@ export function checkSource(file, source) {
     "dangerouslySetInnerHTML",
   ]);
   const dataIndex = {
+    "apps/desktop/src/device-tools/NetworkDrawer.tsx": [
+      "taskPhase",
+      "findings",
+    ],
+    "apps/desktop/src/shell/PolicyDrawer.tsx": [
+      "(raw as Record<string, unknown>)",
+      "values",
+      "properties",
+      "parameters",
+      "(field.enum as unknown[])",
+    ],
+    "apps/desktop/src/settings/ConnectionsPage.tsx": ["providerNames"],
+    "apps/desktop/src/settings/DiagnosticsPage.tsx": [
+      "scopeLabels",
+      "diagnostics.scopes",
+      "workspace.diagnostics.state.scopes",
+      "labels",
+    ],
+    "apps/desktop/src/software/SoftwareDetail.tsx": [
+      "localActionLabels",
+      "taskPhase",
+    ],
+    "apps/desktop/src/software/SoftwarePreparation.tsx": [
+      "localActionLabels",
+      "taskPhase",
+    ],
+    "apps/desktop/src/software/presentation.ts": [
+      "categoryTones",
+      "blockReason",
+    ],
+    "apps/desktop/src/system-settings/SettingsEditor.tsx": ["draft", "labels"],
+    "apps/desktop/src/system-settings/SystemPage.tsx": [
+      "icons",
+      "summaries",
+      "effects",
+      "labels",
+    ],
     "apps/desktop/src/App.tsx": ["nav.selected", "taskPhase"],
     "apps/desktop/src/home/HomePage.tsx": ["taskPhase"],
     "apps/desktop/src/shell/DesktopShell.tsx": ["layouts"],

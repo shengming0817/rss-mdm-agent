@@ -1352,6 +1352,58 @@ try {
       "native Command-K/Enter search and Escape page-assistant focus",
       "native shell navigation retains original assistant draft",
     );
+    mark("v4 business pages in the product WKWebView, explicit sample ports");
+    for (const [name, ready, file] of [
+      ["软件中心", '.rss-store-grid [aria-label="查看 工作空间"]', "software"],
+      ["系统设置", ".rss-system-banner", "system"],
+      ["工具中心", ".rss-tool-grid", "tools"],
+    ]) {
+      await click(name, "//div[contains(@class,'rss-hidden-primary')]");
+      await wait(() => browser.$(ready).isDisplayed());
+      await browser.execute(async () => {
+        await document.fonts.ready;
+        await new Promise((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        );
+      });
+      await browser.saveScreenshot(
+        join(reports, `desktop-native-pages-${file}.png`),
+      );
+    }
+    await click("开始检查");
+    await wait(() => browser.$('[aria-label="网络检测主机"]').isDisplayed());
+    assert.equal(
+      await browser.execute(() =>
+        window.rssPageFixture.events.some(
+          (event) => event.operation === "network_run",
+        ),
+      ),
+      false,
+    );
+    key(53);
+    await wait(
+      async () =>
+        !(await browser.$('[aria-label="网络检测主机"]').isDisplayed()),
+    );
+    await click("用户菜单");
+    await click("运行与诊断");
+    await click("预览脱敏诊断");
+    await wait(() => browser.$(".rss-diagnostic-preview").isDisplayed());
+    await browser.saveScreenshot(
+      join(reports, "desktop-native-pages-diagnostic.png"),
+    );
+    key(53);
+    await wait(() =>
+      browser.execute(
+        () =>
+          window.rssDesktop.state.workspace.diagnostics.state.preview == null,
+      ),
+    );
+    result.checks.push(
+      "v4 software covers, system overview and utility cards in WKWebView",
+      "native Escape closes staged network check without running it",
+      "native diagnostic preview uses and discards the original redacted sample snapshot; no OS export effect claimed",
+    );
     result.status = "passed";
   } else if (visualOnly) {
     mark("visual fixture in the product main WKWebView");

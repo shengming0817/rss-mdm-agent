@@ -85,6 +85,51 @@ function NativeEntryObserver({ workspace }: { workspace: Workspace }) {
           workspace.navigation.select("tasks", "history");
           return (await workspace.tasks.openTask(result.value)) === "ready";
         }
+        if (result.kind === "localTool") {
+          if (result.value.kind === "software" && result.value.software) {
+            const original = result.value.software;
+            if (
+              !workspace.software
+                .installed()
+                .some(
+                  (item) =>
+                    JSON.stringify(item.reference) === JSON.stringify(original),
+                )
+            )
+              await workspace.software.discover();
+            if (
+              !workspace.software
+                .installed()
+                .some(
+                  (item) =>
+                    JSON.stringify(item.reference) === JSON.stringify(original),
+                )
+            )
+              return false;
+          }
+          if (
+            result.value.kind === "network" &&
+            result.value.target &&
+            workspace.networkCheck.state.request &&
+            !workspace.networkCheck.ended()
+          )
+            return false;
+          workspace.navigation.stage(result.value);
+          return true;
+        }
+        if (
+          result.kind === "policy" &&
+          result.value.task.kind !== "enrollment"
+        ) {
+          if (!workspace.policies.clear()) return false;
+          await workspace.policies.select(result.value);
+          if (!workspace.policies.state.item) return false;
+          workspace.navigation.select(
+            result.value.task.kind === "software" ? "software" : "tools",
+          );
+          workspace.navigation.showPolicy();
+          return true;
+        }
         return false;
       },
     );
@@ -340,13 +385,17 @@ export function PageContainer({
   current: PageId;
   children: ReactNode;
 }) {
+  const [visited, setVisited] = useState(page === current);
+  useEffect(() => {
+    if (page === current) setVisited(true);
+  }, [page, current]);
   return (
     <section
       className="rss-page-viewport"
       hidden={page !== current}
       aria-label={pageTitle(page)}
     >
-      {children}
+      {visited || page === current ? children : null}
     </section>
   );
 }
