@@ -1877,6 +1877,10 @@ async fn policy_offer_binds_the_original_journal_and_signed_start_before_dispatc
                         }
                         7 => {
                             spec.run_as = wire::ExecutionIdentity::LoggedInUser;
+                            spec.execution_target = wire::SoftwareExecutionTarget::User {
+                                identity: "501".into(),
+                                session_id: uuid::Uuid::new_v4(),
+                            };
                         }
                         8 => {
                             spec.parameters

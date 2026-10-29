@@ -51,7 +51,8 @@ export async function checkTasksBrowser(page, fixture) {
     const geometry = await page.evaluate(() => ({
       scroll: document.documentElement.scrollWidth,
       viewport: innerWidth,
-      rows: document.querySelectorAll(".rss-task-table tbody tr").length,
+      rows: document.querySelectorAll(".rss-task-table tbody tr[data-row-key]")
+        .length,
     }));
     assert.ok(
       geometry.scroll <= geometry.viewport + 1,
@@ -154,7 +155,14 @@ export async function checkTasksBrowser(page, fixture) {
   await page.waitForFunction(
     () => window.rssDesktop.state.workspace.tasks.state.query.source === "ai",
   );
-  assert.equal(await page.locator(".rss-task-table tbody tr").count(), 1);
+  await page
+    .locator(".rss-task-table")
+    .getByText("fixture-ai-unknown", { exact: true })
+    .waitFor();
+  assert.equal(
+    await page.locator(".rss-task-table tbody tr[data-row-key]").count(),
+    1,
+  );
   await capture("source-ai");
   await source.focus();
   await source.press("ArrowDown");

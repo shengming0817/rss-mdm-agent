@@ -1389,9 +1389,21 @@ try {
         !(await browser.$('[aria-label="网络检测主机"]').isDisplayed()),
     );
     mark("v4 task center and original cancellation in WKWebView");
+    const previousDocument = await browser.execute(
+      () => performance.timeOrigin,
+    );
     await browser.execute(() => {
       location.search = "?desktop&scene=tasks";
     });
+    await wait(() =>
+      browser.execute(
+        (before) =>
+          performance.timeOrigin !== before &&
+          !!window.rssPageFixture &&
+          !!document.querySelector(".fixture-controls"),
+        previousDocument,
+      ),
+    );
     await wait(() => browser.$('[aria-label="切换侧栏布局"]').isDisplayed());
     await browser.execute(() => {
       document.querySelector(".fixture-controls").style.display = "none";

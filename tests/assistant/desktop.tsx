@@ -13,10 +13,9 @@ export function DesktopFixture() {
   const parameters = new URLSearchParams(window.location.search),
     scene = parameters.get("scene") ?? "normal",
     platform = parameters.get("platform") === "windows" ? "windows" : "macos";
-  const input = useMemo(() => {
+  const assembly = useMemo(() => {
     const ports = createFixturePorts();
     const pages = configurePageFixture(ports, scene);
-    Object.assign(window, { rssPageFixture: pages });
     if (scene === "registration-wait") {
       const read = ports.environment.service.requestRegistration;
       let first = true,
@@ -69,10 +68,17 @@ export function DesktopFixture() {
         return page;
       };
     }
-    return ports;
+    return { ports, pages };
   }, [scene]);
+  // Publish only the committed assembly; StrictMode may discard a memo calculation.
+  useEffect(() => {
+    Object.assign(window, { rssPageFixture: assembly.pages });
+    return () => {
+      Object.assign(window, { rssPageFixture: undefined });
+    };
+  }, [assembly]);
   return (
-    <DesktopProvider input={input} platform={platform}>
+    <DesktopProvider input={assembly.ports} platform={platform}>
       <App />
       <FixtureControls />
     </DesktopProvider>

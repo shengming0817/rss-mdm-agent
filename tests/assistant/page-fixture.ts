@@ -181,6 +181,24 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
         detail.facts.kind === "execution" &&
         offer.presentation.summary.kind === "software"
       ) {
+        detail.facts.value.action.initiator = {
+          kind: "backend",
+          task: offer.task,
+          attempt: offer.attempt,
+          trigger: deepClone(record.trigger),
+        };
+        detail.facts.value.action.actor = "fixture-system";
+        detail.facts.value.action.policy = deepClone(record.action.definition);
+        detail.facts.value.action.target = {
+          device: "fixture-device",
+          platform: "macos",
+          scope: { kind: "device" },
+        };
+        detail.facts.value.action.runAs = { kind: "system", platform: "macos" };
+        detail.facts.value.action.validity = {
+          notBeforeUnixMs: Date.now(),
+          expiresAtUnixMs: Date.now() + 60_000,
+        };
         detail.facts.value.action.execution = {
           kind: "softwareProgram",
           intent: offer.presentation.summary.intent,
@@ -459,6 +477,25 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
       detail.taskKind = "software";
       detail.recordedAt = Date.now();
       if (detail.facts.kind === "execution") {
+        detail.facts.value.action.initiator = {
+          kind: "human",
+          osSession: {
+            device: "fixture-device",
+            account: { platform: "macos", subject: "501" },
+            session: "fixture-session",
+          },
+        };
+        detail.facts.value.action.actor = "fixture-system";
+        detail.facts.value.action.target = {
+          device: "fixture-device",
+          platform: "macos",
+          scope: { kind: "device" },
+        };
+        detail.facts.value.action.runAs = { kind: "system", platform: "macos" };
+        detail.facts.value.action.validity = {
+          notBeforeUnixMs: Date.now(),
+          expiresAtUnixMs: Date.now() + 60_000,
+        };
         detail.facts.value.status.mode = "test";
         detail.facts.value.action.operation.action =
           request === "fixture-update" ? "update" : "install";
