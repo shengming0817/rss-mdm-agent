@@ -48,14 +48,12 @@ import {
 import { verifyRuntimeIntegrity } from "./ai-host-artifacts.mjs";
 
 import { nativeOptions } from "./native-options.mjs";
-const {
-  visualOnly,
-  baseline,
-  controlledService,
-  security,
+let visualOnly = false,
+  baseline = false,
+  controlledService = false,
+  security = false,
   candidatePath,
-  authorizationPasswordFile,
-} = nativeOptions(process.argv.slice(2));
+  authorizationPasswordFile;
 let serviceWorker,
   serviceReady,
   serviceFinishing = false,
@@ -97,17 +95,12 @@ const nonce = randomBytes(16).toString("hex");
 mkdirSync(reports, { recursive: true });
 const result = {
   status: "running",
-  mode: "pnpm-dev-main",
-  modelFixture: !visualOnly,
-  credentials:
-    "synthetic-loopback-only; not exercised until preflight succeeds",
-  provider: visualOnly
-    ? "scripted fixture Host; not yet exercised"
-    : "codex-0.155.0; not yet exercised",
+  mode: "preflight",
+  modelFixture: false,
+  credentials: "not exercised; preflight pending",
+  provider: "not configured; preflight pending",
   executor: "not exercised; preflight pending",
-  keychain: visualOnly
-    ? "not used"
-    : "isolated keychain planned; not yet created",
+  keychain: "not accessed; preflight pending",
   messageInput:
     "visible product submit button; physical Return delivery unverified on this interactive desktop",
   checks: [],
@@ -712,6 +705,26 @@ const task = async () => {
   );
 };
 try {
+  ({
+    visualOnly,
+    baseline,
+    controlledService,
+    security,
+    candidatePath,
+    authorizationPasswordFile,
+  } = nativeOptions(process.argv.slice(2)));
+  Object.assign(result, {
+    mode: visualOnly ? "pnpm-dev-main-react-visual" : "pnpm-dev-main",
+    modelFixture: !visualOnly,
+    credentials:
+      "synthetic-loopback-only; not exercised until preflight succeeds",
+    provider: visualOnly
+      ? "scripted fixture Host; not yet exercised"
+      : "codex-0.155.0; not yet exercised",
+    keychain: visualOnly
+      ? "not used"
+      : "isolated keychain planned; not yet created",
+  });
   result.acceptanceEnvironment = {
     platform: process.platform,
     architecture: process.arch,
@@ -720,10 +733,6 @@ try {
   if (!candidatePath) result.developmentSource = sourceEvidence(root);
   assert.equal(process.platform, "darwin");
   assert.equal(process.arch, "arm64");
-  if (!visualOnly && !controlledService)
-    throw new Error(
-      "real execution acceptance requires explicit --controlled-service; no service is installed by ordinary UI development",
-    );
   keychainState = visualOnly ? undefined : systemKeychains();
   assert.equal(
     execFileSync(
@@ -1876,16 +1885,20 @@ try {
             "native-explicit-Return-send",
           );
         } finally {
-          await browser.execute(() => {
-            const input = document.querySelector(".rss-composer textarea");
-            for (const type of ["compositionstart", "compositionend"])
-              input?.removeEventListener(type, window.nativeImeListener);
-            delete window.nativeImeListener;
-          });
-          selectInputSource(sources.current);
-          result.inputSourceRestored =
-            inputSources().current === sources.current;
-          assert.equal(result.inputSourceRestored, true);
+          try {
+            await browser.execute(() => {
+              const input = document.querySelector(".rss-composer textarea");
+              for (const type of ["compositionstart", "compositionend"])
+                input?.removeEventListener(type, window.nativeImeListener);
+              delete window.nativeImeListener;
+            });
+          } finally {
+            // System restoration must not depend on a surviving WebDriver session.
+            selectInputSource(sources.current);
+            result.inputSourceRestored =
+              inputSources().current === sources.current;
+            assert.equal(result.inputSourceRestored, true);
+          }
         }
       } else
         result.ime = {
