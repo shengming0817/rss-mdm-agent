@@ -133,6 +133,7 @@ let directory,
   spawnError,
   keychainState;
 let scopeRuntime, productModules, scopeAbsentWithin;
+let preparationCleanupConfirmed = true;
 const ownedWorkerScopes = new Map();
 const processIdentity = processField;
 const rememberScopes = (rows, host) => {
@@ -865,12 +866,16 @@ try {
               "rss-execution-service",
             ],
           ],
-        ])
+        ]) {
+      preparationCleanupConfirmed = false;
+      result.preparation = await runPreparation(command, args, root, env);
+      preparationCleanupConfirmed = result.preparation.cleanup.confirmed;
       assert.equal(
-        (await runPreparation(command, args, root, env)).code,
+        result.preparation.code,
         0,
         "native candidate preparation failed",
       );
+    }
     productModules = nativeProductModules(root, candidate?.runtime.path);
     ({ scopeAbsentWithin } = await import(productModules.process));
     mark(
@@ -2685,6 +2690,7 @@ try {
       scopes: scopeCleanup,
     };
     cleanupComplete =
+      preparationCleanupConfirmed &&
       alive().length === 0 &&
       !rootAlive() &&
       !scopeObservationFailed &&
