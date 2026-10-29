@@ -176,6 +176,7 @@ export function checkSource(file, source) {
     "Symbol",
   ]);
   const ownerGlobals = {
+    "apps/desktop/src/account/AccountPage.tsx": ["crypto"],
     "apps/desktop/src/shell/DesktopShell.tsx": [
       "window",
       "document",
@@ -287,6 +288,8 @@ export function checkSource(file, source) {
     "dangerouslySetInnerHTML",
   ]);
   const dataIndex = {
+    "apps/desktop/src/account/LoginDialog.tsx": ["labels"],
+    "apps/desktop/src/account/RegistrationPage.tsx": ["registrationLabels"],
     "apps/desktop/src/shell/navigation-model.ts": [
       "moduleIcons",
       "sections",

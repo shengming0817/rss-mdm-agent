@@ -277,6 +277,12 @@ export function accountErrorMessage(error: unknown): string {
       if (status.failure) return accountFailureMessage(status.failure);
     } catch {}
   }
+  if (code === "registration_login_required")
+    return "设备注册需要企业账号核验，请登录后重试。";
+  if (code === "registration_organization_mismatch")
+    return "当前账号与设备配置的组织不一致，请核对组织。";
+  if (code === "registration_cancelled")
+    return "已停止等待注册；已受理的设备状态仍需重新读取。";
   if (code === "binding_unknown") return "登录确认尚未完成，请重试原操作。";
   if (code === "binding_conflict")
     return "当前使用者发生冲突，请清理后重新登录。";

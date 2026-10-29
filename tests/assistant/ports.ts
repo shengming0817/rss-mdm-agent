@@ -120,7 +120,9 @@ export function createFixturePorts() {
         controlStatus: (input) => rpc("task-control-status", input),
       },
     },
-    account: createLoginFixture(() => rpc<UserContext>("identity")),
+    account: createLoginFixture((organization, login) =>
+      rpc<UserContext>("account", { organization, login }),
+    ),
     device: {
       async read() {
         return {
@@ -132,7 +134,10 @@ export function createFixturePorts() {
         };
       },
     },
-    identity: { read: () => rpc<UserContext>("identity") },
+    identity: {
+      read: () => rpc<UserContext>("identity"),
+      guest: () => rpc<UserContext>("account", { guest: true }),
+    },
     host: {
       read: () => rpc<HostStatus>("host"),
       restart: (generation) => rpc<HostStatus>("host-restart", { generation }),

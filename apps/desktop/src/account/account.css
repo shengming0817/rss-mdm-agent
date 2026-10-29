@@ -1,0 +1,115 @@
+.rss-account-form {
+  display: grid;
+  gap: 18px;
+  padding-top: 18px;
+}
+.rss-account-form .ant-form-item {
+  margin-bottom: 18px;
+}
+.rss-account-form .ant-tabs-tab {
+  font-size: 12px;
+}
+.rss-account-form-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.rss-account-profile {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.rss-account-profile > .rss-avatar {
+  width: 48px;
+  height: 48px;
+  flex-basis: 48px;
+  border-radius: 14px;
+  font-size: 22px;
+}
+.rss-account-profile h2 {
+  font-size: 19px;
+}
+.rss-account-profile p {
+  margin-top: 5px;
+}
+.rss-account-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 18px 0;
+}
+.rss-organizations {
+  display: grid;
+  gap: 8px;
+}
+.rss-organization-row,
+.rss-client-login-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+.rss-organization-row:last-child,
+.rss-client-login-row:last-child {
+  border-bottom: 0;
+}
+.rss-organization-row strong,
+.rss-client-login-row strong {
+  font-size: 13px;
+  margin-right: 8px;
+}
+.rss-organization-row p {
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+}
+.rss-qr-login {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 0;
+}
+.rss-account-facts {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 12px;
+  margin: 20px 0;
+}
+.rss-account-facts dt {
+  font-size: 12px;
+  color: var(--muted);
+}
+.rss-account-facts dd {
+  margin: 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.rss-client-login-row {
+  padding: 12px 0;
+}
+.rss-account-profile .rss-grow {
+  min-width: 0;
+}
+.rss-account-profile h2 {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 560px) {
+  .rss-account-profile {
+    flex-wrap: wrap;
+  }
+  .rss-account-profile > .ant-btn {
+    width: 100%;
+  }
+  .rss-account-facts {
+    grid-template-columns: 90px minmax(0, 1fr);
+  }
+  .rss-account-form-footer {
+    gap: 4px;
+  }
+  .rss-account-form-footer .ant-btn {
+    padding-inline: 4px;
+  }
+}
