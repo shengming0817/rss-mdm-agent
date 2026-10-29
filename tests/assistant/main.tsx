@@ -1,3 +1,4 @@
+import { StateFixture } from "./state";
 import { createRoot } from "react-dom/client";
 import { useRef, useState } from "react";
 import { Button, Dropdown, Form, Input, Select, Switch, Table } from "antd";
@@ -18,6 +19,13 @@ import "@rss-mdm-agent/ui/style.css";
 
 /** Explicit browser fixture only. No fixture content is reachable in production builds. */
 export function FixtureApp() {
+  return new URLSearchParams(window.location.search).has("state") ? (
+    <StateFixture />
+  ) : (
+    <FoundationFixture />
+  );
+}
+function FoundationFixture() {
   const [theme, setTheme] = useState<ThemePreference>("system");
   const [open, setOpen] = useState(false);
   const menuTrigger = useRef<HTMLButtonElement>(null);
