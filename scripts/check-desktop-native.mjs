@@ -1693,13 +1693,14 @@ try {
         result.systemThemeRestored = true;
       }
       // A physical Shift-Return adds a newline without creating a session.
+      mark("native Shift-Return without submitting");
       await browser.setWindowSize(1100, 760);
       await browser.$(".rss-assistant-input textarea").click();
       const sessionsBefore = await browser.execute(
         () => window.rssDesktop.state.workspace.assistant.sessions().length,
       );
       key(36, true);
-      assert.ok(
+      await wait(async () =>
         (await browser.$(".rss-assistant-input textarea").getValue()).includes(
           "\n",
         ),
