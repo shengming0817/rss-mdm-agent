@@ -196,7 +196,7 @@ AI 使用实际注册的 Policy 工具，风险 2 的原请求需要本人在桌
 主题、表单、菜单、软件封面、状态、消息和详情抽屉。`pnpm dev --fixture` 在真实
 Tauri main/WKWebView 中打开同一显式开发装配。这些入口不进入生产导航。
 
-`pnpm check:desktop-native --visual` 验证 React 组件、业务页面、任务和 A2UI 的显式 fixture，以及真实 WKWebView 键盘、主题和窗口生命周期；不执行设备任务。真实服务验收使用独立的 `--controlled-service` 模式。浏览器中的平台预览不证明 Windows 原生行为。
+`pnpm check:desktop-native --visual` 验证 React 组件、业务页面、任务和 A2UI 的显式 fixture，以及真实 WKWebView 主题和窗口生命周期；不执行设备任务。真实服务验收使用独立的 `--controlled-service` 模式。浏览器中的平台预览不证明 Windows 原生行为。
 实际 OS/build、浏览器和原生检查结果随交付 PR 记录。
 
 主页设备信息使用本地 IPC v15，桌面和本机服务必须作为同一候选更新；旧版本不降级或猜测字段。此变更不新增网络探测、设备写操作或 AI 设备信息附件。Windows 原生结果需在目标系统验证。
