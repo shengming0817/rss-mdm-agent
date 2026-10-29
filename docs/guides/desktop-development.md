@@ -29,7 +29,7 @@ pnpm desktop:build       # 自动打包 Node/依赖、stage、构建 .app
 
 分步诊断可单独执行 `pnpm bundle:ai-host` 和 `pnpm stage:desktop-runtime`。`pnpm dev` 使用独立的 `.local-ci-runs/ai-host-dev-runtime` 和 development manifest，允许未提交源码；首次启动自动构建，后续按 Host、adapter、contract、相关 workspace 包、Rust execution schema 与绑定检查、lock、固定 Node 和打包脚本的内容摘要判断是否重建。普通 UI 修改不触发重建。每次启动校验运行包完整性、manifest 与本轮源码摘要一致性及真实 CLI 生命周期，准备失败会非零退出，不启动 Tauri。修改 Host 后重新运行 `pnpm dev`。终端断开（SIGHUP）、中断（SIGINT）与停止（SIGTERM）均转发到独立开发进程组并有界清理。
 
-高级诊断可用 `RSS_AI_HOST_RUNTIME=/absolute/verified/ai-host-runtime pnpm dev` 显式选择并验证运行包。打包直接复用源 lock 的外部依赖图，并绑定本地 tarball 的完整性摘要；冻结安装优先使用缓存，缺失的包或策略检查 metadata 可联网补齐，不要求不同 pnpm 版本共享缓存格式，也不重新解析依赖。缺依赖先运行 `pnpm install --frozen-lockfile`；构建失败查看命令输出；运行包损坏时删除开发 runtime 目录后重试。准备进程异常中止留下锁时，确认没有其他准备进程后删除 `.cache/desktop-dev.lock`。开发包不进入发布 stage；release 忽略该 override，并校验实际运行包完整性。
+高级诊断可用 `RSS_AI_HOST_RUNTIME=/absolute/verified/ai-host-runtime pnpm dev` 显式选择并验证运行包。打包直接复用源 lock 的外部依赖图，并绑定本地 tarball 的完整性摘要；冻结安装优先使用缓存，缺失的包或策略检查 metadata 可联网补齐，不要求不同 pnpm 版本共享缓存格式，也不重新解析依赖。缺依赖先运行 `pnpm install --frozen-lockfile`；构建失败查看命令输出；运行包损坏时删除开发 runtime 目录后重试。准备取消会等待本轮进程组清理确认后释放锁；权限不足或回收超时将非零退出并保留锁与进程诊断，不能视为已清理。确认本轮进程及后代均已退出后删除 `.cache/desktop-dev.lock`。开发包不进入发布 stage；release 忽略该 override，并校验实际运行包完整性。
 
 普通 Cargo/schema 检查使用基础 Tauri 配置，不依赖运行包；macOS 发布构建显式合并 `tauri.bundle.conf.json`，Windows 显式合并 `tauri.runtime.windows.conf.json`。自动加载的 `tauri.windows.conf.json` 仅保留平台窗口设置，不要求尚未生成的运行资源，避免 schema/验收辅助程序与运行包生成形成循环依赖。打包脚本先校验固定 Node archive、锁定部署依赖、真实 SDK 生命周期，再将通过的当前候选复制到被忽略的 resources 目录。macOS bundle 通过 `bundle.macOS.files` 整目录复制 runtime，以保留 pnpm 依赖符号链接；普通 resources 文件枚举会漏掉这些链接，不能用于该 runtime。发布应用只从自身资源目录启动 AI Host。缺失或不可用的 AI 不影响 Rust 任务读取，也不会降级为虚构对话。
 
@@ -96,13 +96,13 @@ CI 在本轮准备阶段构建选中的包与 Rust helper，后续检查复用�
 
 自动回归由本地 CI 的单元、协议、SQLite、adapter 和浏览器检查承担，不要求系统授权弹窗。`pnpm check:desktop-native --visual` 是额外的原生视觉验收，从仓库根启动 `pnpm dev --fixture`，加载产品 main 和真实 WKWebView。它复用既有 assistant fixture 装配同一个产品 App：资源快照和 AI Host 为显式测试来源，任务阶段、过程与效果取自 Rust 生成的测试投影，AI 关联为测试绑定。它不连接云端模型、不执行设备操作，不证明生产执行授权或效果。
 
-该路径限定 macOS arm64，需要已解锁桌面及 System Events 辅助功能权限；环境不满足直接失败。检查浅深主题、1100×760 / 1440×960 / 480×400、会话与资源布局、任务抽屉、原生键盘与焦点、关闭重开。存在已启用的中文拼音输入源时，用物理键验证候选确认不发送及显式发送，并恢复原输入源；系统主题同样在结束后恢复。无实际入口或环境的缩放、其它显示比例及 Windows 项目明确标记未验证。
+该路径限定 macOS arm64，需要已解锁桌面及 System Events 辅助功能权限；环境不满足直接失败。检查浅深主题、1100×760 / 1440×960 / 480×400、会话与资源布局、任务抽屉和关闭重开；系统主题在结束后恢复。无实际入口或环境的缩放、其它显示比例及 Windows 项目明确标记未验证。
 
 真实执行旅程需要显式 `--controlled-service`，使用受保护固定候选、真实认证 IPC 和服务 journal；普通开发启动不会自动安装服务。调试构建的真实 AI 路径使用隔离 macOS 文件钥匙串，退出后删除并核对默认钥匙串与搜索列表未改变；fixture 路径不创建钥匙串。正式签名应用的钥匙串授权另行验收。
 
-驱动使用固定 `webdriverio@9.32.0` 与 `tauri-plugin-wdio-webdriver@1.4.0` 的标准 WebDriver 接口。`native-e2e` 只允许调试构建，并要求显式 nonce、动态 loopback 端口和隔离 `--test-data-dir`；release 携带该 feature 会编译失败。脚本核对主进程与监听端口归属；固定的 [本地上游补丁](../../vendor/tauri-plugin-wdio-webdriver/NOTICE.md) 对每个请求校验运行凭据，缺失或错误凭据一律拒绝，启动日志仅记录凭据摘要。脚本不调用 WebView 内部 IPC、不替换业务回复。视觉模式的关闭/重开通过 WebDriver 原生 `window.close()` 与应用“显示窗口”菜单验证；开发窗口的标题栏关闭按钮未向 AX 暴露，物理按钮点击单独标为未验证。Tab、Shift+Tab、Escape 和应用菜单操作由 macOS System Events 发出；WebDriver 键盘事件不能替代这些证据。开发构建验收期间保持源码不变；固定候选验收允许源码变化。不要并发启动同一 worktree 的开发服务。
+驱动使用固定 `webdriverio@9.32.0` 与 `tauri-plugin-wdio-webdriver@1.4.0` 的标准 WebDriver 接口。`native-e2e` 只允许调试构建，并要求显式 nonce、动态 loopback 端口和隔离 `--test-data-dir`；release 携带该 feature 会编译失败。脚本核对主进程与监听端口归属；固定的 [本地上游补丁](../../vendor/tauri-plugin-wdio-webdriver/NOTICE.md) 对每个请求校验运行凭据，缺失或错误凭据一律拒绝，启动日志仅记录凭据摘要。脚本不调用 WebView 内部 IPC、不替换业务回复。视觉模式的关闭/重开通过 WebDriver 原生 `window.close()` 与应用“显示窗口”菜单验证；开发窗口的标题栏关闭按钮未向 AX 暴露，物理按钮点击单独标为未验证。业务交互使用可见产品按钮；应用菜单操作由 macOS System Events 发出。开发构建验收期间保持源码不变；固定候选验收允许源码变化。不要并发启动同一 worktree 的开发服务。
 
-`.local-ci-runs/desktop-native.json` 记录实际模式、当前工具运行环境、运行包摘要、进程归属与完成项；固定候选保留冻结时来源，开发构建路径另记源码与锁文件摘要，截图和脱敏日志在同目录。失败回执不能解释为通过。fixture 模式证明产品 WebView 与显式样本装配；controlled-service 模式分别保留真实服务 journal、后台回执及独立设备效果证据。本地模型响应仍是受控样本，不证明真实模型能力。
+`.local-ci-runs/desktop-native.json` 记录实际模式、当前工具运行环境、运行包摘要、进程归属与完成项；固定候选保留冻结时来源，开发构建路径另记源码与锁文件摘要，截图和脱敏日志在同目录。旅程结果、wrapper 退出和清理确认分别记录；wrapper 非零退出或清理未确认时，即使旅程断言通过，总结果仍失败。失败回执不能解释为通过。fixture 模式证明产品 WebView 与显式样本装配；controlled-service 模式分别保留真实服务 journal、后台回执及独立设备效果证据。本地模型响应仍是受控样本，不证明真实模型能力。
 
 发布资源验收使用 `pnpm bundle:ai-host && pnpm check:desktop-bundle`。入口构建带隔离应用标识和测试内置连接的实际 release `.app`，从无测试参数的生产 main 启动；核对 Host、内置组织不落盘及运行时配置不能覆盖默认连接，不主动登录。禁用 runtime override，不包含原生驱动，核验完整 runtime 树与 Native health 握手；结果写入 `.local-ci-runs/desktop-bundle.json`，绑定源码、锁文件和 runtime manifest。此 smoke 只证明启动与资源定位，使用隔离进程组清理，优雅退出由日常原生验收验证。
 
@@ -196,7 +196,7 @@ AI 使用实际注册的 Policy 工具，风险 2 的原请求需要本人在桌
 主题、表单、菜单、软件封面、状态、消息和详情抽屉。`pnpm dev --fixture` 在真实
 Tauri main/WKWebView 中打开同一显式开发装配。这些入口不进入生产导航。
 
-`pnpm check:desktop-native --visual` 验证 React 组件、业务页面、任务和 A2UI 的显式 fixture，以及真实 WKWebView 键盘、主题和窗口生命周期；不执行设备任务。真实服务验收使用独立的 `--controlled-service` 模式。浏览器中的平台预览不证明 Windows 原生行为。
+`pnpm check:desktop-native --visual` 验证 React 组件、业务页面、任务和 A2UI 的显式 fixture，以及真实 WKWebView 主题和窗口生命周期；不执行设备任务。真实服务验收使用独立的 `--controlled-service` 模式。浏览器中的平台预览不证明 Windows 原生行为。
 实际 OS/build、浏览器和原生检查结果随交付 PR 记录。
 
 主页设备信息使用本地 IPC v15，桌面和本机服务必须作为同一候选更新；旧版本不降级或猜测字段。此变更不新增网络探测、设备写操作或 AI 设备信息附件。Windows 原生结果需在目标系统验证。

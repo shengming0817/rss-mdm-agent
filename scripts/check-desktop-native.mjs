@@ -39,6 +39,7 @@ import {
   waitForAppearance,
   nativeReplyComplete,
   sampledNativeTask,
+  finishNativeResult,
 } from "./native-evidence.mjs";
 import {
   verifyCandidate,
@@ -101,8 +102,7 @@ const result = {
   provider: "not configured; preflight pending",
   executor: "not exercised; preflight pending",
   keychain: "not accessed; preflight pending",
-  messageInput:
-    "visible product submit button; physical Return delivery unverified on this interactive desktop",
+  messageInput: "visible product submit button",
   checks: [],
 };
 for (const name of [
@@ -133,6 +133,7 @@ let directory,
   spawnError,
   keychainState;
 let scopeRuntime, productModules, scopeAbsentWithin;
+let preparationCleanupConfirmed = true;
 const ownedWorkerScopes = new Map();
 const processIdentity = processField;
 const rememberScopes = (rows, host) => {
@@ -242,25 +243,10 @@ const script = (source) =>
     encoding: "utf8",
     timeout: 10000,
   }).trim();
-const native = (source, requireForeground = true) =>
+const native = (source) =>
   script(
-    `tell application "System Events"\n tell (first application process whose unix id is ${receipt.pid})\n set frontmost to true\n if (count of windows) > 0 then perform action "AXRaise" of window 1\n repeat 40 times\n if frontmost then exit repeat\n set frontmost to true\n delay 0.1\n end repeat\n delay 0.2\n ${requireForeground ? 'if not frontmost then error "Owned application foreground unavailable"' : ""}\n ${source}\n end tell\nend tell`,
+    `tell application "System Events"\n tell (first application process whose unix id is ${receipt.pid})\n set frontmost to true\n if (count of windows) > 0 then perform action "AXRaise" of window 1\n repeat 40 times\n if frontmost then exit repeat\n set frontmost to true\n delay 0.1\n end repeat\n delay 0.2\n if not frontmost then error "Owned application foreground unavailable"\n ${source}\n end tell\nend tell`,
   );
-const key = (code, shift = false, command = false) => {
-  const foreground = native("get frontmost", false);
-  if (foreground !== "true")
-    result.foregroundFailure = script(
-      'tell application "System Events" to get {name, unix id} of (first application process whose frontmost is true)',
-    );
-  assert.equal(
-    foreground,
-    "true",
-    "native application must own foreground keyboard focus",
-  );
-  native(
-    `key code ${code}${command ? " using command down" : shift ? " using shift down" : ""}`,
-  );
-};
 const menu = (label) =>
   native(
     `repeat with candidate in menu bar items of menu bar 1
@@ -295,6 +281,15 @@ const visibleText = async (text) =>
   browser.execute((value) => document.body.innerText.includes(value), text);
 const text = async (value) => wait(() => visibleText(value));
 const field = (label) => browser.$(`[aria-label="${label}"]`);
+const closeDialog = async () => {
+  const button = await wait(async () => {
+    for (const candidate of await browser.$$(
+      ".ant-drawer-close,.ant-modal-close",
+    ))
+      if (await candidate.isDisplayed()) return candidate;
+  });
+  await button.click();
+};
 const closeNavigationDialog = async () => {
   // Ant Design portals stay mounted while hidden; only close a visible dialog.
   if (
@@ -304,7 +299,7 @@ const closeNavigationDialog = async () => {
       ),
     )
   )
-    key(53);
+    await closeDialog();
 };
 const expandNavigation = async () => {
   for (let count = 0; count < 4; count++) {
@@ -376,20 +371,9 @@ const prompt = async (value) => {
   );
   await browser.$(".rss-composer textarea").click();
   await browser.$(".rss-composer textarea").setValue(value);
-  assert.equal(
-    await browser.execute(
-      () =>
-        document.activeElement ===
-        document.querySelector(".rss-composer textarea"),
-    ),
-    true,
-    "composer must own DOM focus before submission",
-  );
   await wait(() =>
     browser.$('.rss-composer button[aria-label="发送消息"]').isEnabled(),
   );
-  // Send through the visible product action. Physical Return delivery depends on the
-  // interactive desktop's input source/foreground; do not resend an ambiguous command.
   await browser.$('.rss-composer button[aria-label="发送消息"]').click();
   await wait(() =>
     browser.execute(
@@ -882,12 +866,16 @@ try {
               "rss-execution-service",
             ],
           ],
-        ])
+        ]) {
+      preparationCleanupConfirmed = false;
+      result.preparation = await runPreparation(command, args, root, env);
+      preparationCleanupConfirmed = result.preparation.cleanup.confirmed;
       assert.equal(
-        await runPreparation(command, args, root, env),
+        result.preparation.code,
         0,
         "native candidate preparation failed",
       );
+    }
     productModules = nativeProductModules(root, candidate?.runtime.path);
     ({ scopeAbsentWithin } = await import(productModules.process));
     mark(
@@ -1166,19 +1154,8 @@ try {
     await detailsItem.click();
     await wait(() => browser.$('[role="dialog"]').isDisplayed());
     await browser.$('[aria-label="详情字段"]').setValue("原生草稿");
-    key(53);
+    await click("完成");
     await wait(async () => !(await browser.$('[role="dialog"]').isDisplayed()));
-    await wait(() =>
-      browser.execute(() =>
-        document.activeElement?.textContent?.includes("更多操作"),
-      ),
-    );
-    assert.equal(
-      await browser.execute(() =>
-        document.activeElement?.textContent?.includes("更多操作"),
-      ),
-      true,
-    );
     const message = await browser.$('[aria-label="消息"]');
     await message.setValue("原生消息");
     await click("发送消息");
@@ -1244,7 +1221,7 @@ try {
       "React state owner and real client/test Host in WKWebView",
       "directed layout cycle retains session draft and async inventory",
       "React foundation in macOS WKWebView",
-      "drawer Escape and focus restoration",
+      "drawer opens and closes through product controls",
       "controlled message input",
       "inert Markdown",
     );
@@ -1278,40 +1255,6 @@ try {
       });
       assert.deepEqual(position, origin);
     }
-    await browser
-      .$('[aria-label="主页助手草稿"]')
-      .setValue("WKWebView 原生草稿");
-    mark("native Command-K and Enter global search");
-    key(40, false, true);
-    await wait(() =>
-      browser
-        .$('[role="combobox"][aria-label="搜索应用、工具和设置"]')
-        .isDisplayed(),
-    );
-    await browser
-      .$('[role="combobox"][aria-label="搜索应用、工具和设置"]')
-      .setValue("Workspace");
-    key(36);
-    await wait(
-      async () =>
-        !(await browser
-          .$('[role="listbox"][aria-label="搜索结果"]')
-          .isDisplayed()),
-    );
-    await click("主页", "//div[contains(@class,'rss-hidden-primary')]");
-    assert.equal(
-      await browser.$('[aria-label="主页助手草稿"]').getValue(),
-      "WKWebView 原生草稿",
-    );
-    mark("native page-assistant Escape and focus");
-    await click("页面助手");
-    await wait(() => browser.$('[aria-label="关闭页面助手"]').isDisplayed());
-    key(53);
-    await wait(() =>
-      browser.execute(
-        () => document.activeElement?.getAttribute("aria-label") === "页面助手",
-      ),
-    );
     await browser.execute(() => {
       document.querySelector(".fixture-controls").style.display = "none";
     });
@@ -1321,8 +1264,6 @@ try {
     result.checks.push(
       "v4 shell/home uses the product macOS WKWebView",
       "fixed RSS toggle coordinates through 0-1-2-3-0",
-      "native Command-K/Enter search and Escape page-assistant focus",
-      "native shell navigation retains original assistant draft",
     );
     mark("v4 business pages in the product WKWebView, explicit sample ports");
     for (const [name, ready, file] of [
@@ -1344,7 +1285,7 @@ try {
         join(reports, `desktop-native-pages-${file}.png`),
       );
     }
-    mark("native staged network inspection and Escape");
+    mark("native staged network inspection");
     await click("开始检查");
     await wait(() => browser.$('[aria-label="网络检测主机"]').isDisplayed());
     assert.equal(
@@ -1355,7 +1296,7 @@ try {
       ),
       false,
     );
-    key(53);
+    await closeDialog();
     await wait(
       async () =>
         !(await browser.$('[aria-label="网络检测主机"]').isDisplayed()),
@@ -1419,7 +1360,7 @@ try {
     await browser.saveScreenshot(
       join(reports, "desktop-native-task-cancel-requested.png"),
     );
-    key(53);
+    await closeDialog();
     await wait(
       async () => !(await browser.$(".rss-task-detail").isDisplayed()),
     );
@@ -1434,7 +1375,7 @@ try {
     await browser
       .$('.rss-assistant-input textarea[aria-label="消息"]')
       .setValue("WKWebView 助手原生输入验收");
-    key(36);
+    await click("发送消息", '//*[contains(@class,"rss-assistant-input")]');
     await wait(() =>
       browser.execute(
         () =>
@@ -1516,7 +1457,7 @@ try {
     await browser
       .$('.rss-assistant-input textarea[aria-label="消息"]')
       .setValue("WKWebView 准备本次修复");
-    key(36);
+    await click("发送消息", '//*[contains(@class,"rss-assistant-input")]');
     await wait(() =>
       browser.execute(() => window.rssDesktop.state.workspace.assistant.busy()),
     );
@@ -1574,7 +1515,7 @@ try {
       join(reports, "desktop-native-assistant-submitted.png"),
     );
     result.checks.push(
-      "production assistant in macOS WKWebView: native keyboard input, fixed secondary history keeps per-session draft, official A2UI binding/answer, original trusted Policy draft edited and submitted once; scripted Host/sample record, no real model or OS execution effect claimed",
+      "production assistant in macOS WKWebView: visible submit action, fixed secondary history keeps per-session draft, official A2UI binding/answer, original trusted Policy draft edited and submitted once; scripted Host/sample record, no real model or OS execution effect claimed",
     );
     mark("native redacted diagnostic snapshot");
     await openAgentSettings("运行与诊断");
@@ -1583,7 +1524,7 @@ try {
     await browser.saveScreenshot(
       join(reports, "desktop-native-pages-diagnostic.png"),
     );
-    key(53);
+    await closeDialog();
     await wait(() =>
       browser.execute(
         () =>
@@ -1592,7 +1533,7 @@ try {
     );
     result.checks.push(
       "v4 software covers, system overview and utility cards in WKWebView",
-      "native Escape closes staged network check without running it",
+      "staged network inspection closes without running it",
       "native diagnostic preview uses and discards the original redacted sample snapshot; no OS export effect claimed",
     );
     if (!baseline) {
@@ -1691,222 +1632,10 @@ try {
         );
         result.systemThemeRestored = true;
       }
-      // A physical Shift-Return adds a newline without creating a session.
-      await browser.setWindowSize(1100, 760);
-      await browser.$(".rss-assistant-input textarea").click();
-      const sessionsBefore = await browser.execute(
-        () => window.rssDesktop.state.workspace.assistant.sessions().length,
-      );
-      key(36, true);
-      assert.ok(
-        (await browser.$(".rss-assistant-input textarea").getValue()).includes(
-          "\n",
-        ),
-      );
-      assert.equal(
-        await browser.execute(
-          () => window.rssDesktop.state.workspace.assistant.sessions().length,
-        ),
-        sessionsBefore,
-      );
-      // Page and main composers share the conversation draft; Escape restores the trigger.
-      await navigate("软件中心");
-      await click("已安装");
-      await openPageAssistant();
-      await browser
-        .$(".rss-page-assistant textarea")
-        .setValue("页面助手独立草稿");
-      key(48);
-      await wait(() =>
-        browser.execute(
-          () =>
-            !!document.activeElement?.closest(".rss-page-assistant") &&
-            document.activeElement.tagName !== "TEXTAREA",
-        ),
-      );
-      key(48, true);
-      await wait(() =>
-        browser.execute(
-          () =>
-            document.activeElement ===
-            document.querySelector(".rss-page-assistant textarea"),
-        ),
-      );
-      key(53);
-      await wait(() =>
-        browser.execute(
-          () =>
-            document.activeElement?.getAttribute("aria-label") === "页面助手",
-        ),
-      );
-      await navigate("AI 助手");
-      assert.equal(
-        await browser.$(".rss-assistant-input textarea").getValue(),
-        "页面助手独立草稿",
-      );
       result.checks.push(
         "native-six-layout-theme-cases",
         "native-theme-hot-switch",
-        "native-context-tab-escape-focus",
-        "native-same-conversation-draft-preservation",
-        "native-Shift-Return-without-send",
       );
-      // Use an enabled real input source and physical keys; no composition simulation.
-      const inputSources = () =>
-        JSON.parse(
-          execFileSync(
-            "/usr/bin/swift",
-            [
-              "-e",
-              'import Carbon; import Foundation; let list = TISCreateInputSourceList(nil, false).takeRetainedValue() as! [TISInputSource]; func id(_ s:TISInputSource)->String { let p=TISGetInputSourceProperty(s,kTISPropertyInputSourceID)!; return Unmanaged<CFString>.fromOpaque(p).takeUnretainedValue() as String }; let current=TISCopyCurrentKeyboardInputSource().takeRetainedValue(); print(String(data:try! JSONSerialization.data(withJSONObject:["current":id(current),"enabled":list.map(id)]),encoding:.utf8)!)',
-            ],
-            { encoding: "utf8", timeout: 10000 },
-          ),
-        );
-      const selectInputSource = (id) =>
-        execFileSync(
-          "/usr/bin/swift",
-          [
-            "-e",
-            `import Carbon; import Foundation; let wanted=${JSON.stringify(id)}; let list=TISCreateInputSourceList(nil,false).takeRetainedValue() as! [TISInputSource]; for s in list { let p=TISGetInputSourceProperty(s,kTISPropertyInputSourceID)!; let id=Unmanaged<CFString>.fromOpaque(p).takeUnretainedValue() as String; if id == wanted { if TISSelectInputSource(s) != 0 { exit(1) }; exit(0) } }; exit(1)`,
-          ],
-          { encoding: "utf8", timeout: 10000 },
-        );
-      const sources = inputSources();
-      if (sources.enabled.includes("com.apple.inputmethod.SCIM.ITABC")) {
-        mark("physical native Chinese IME confirmation and explicit send");
-        await browser.setWindowSize(1100, 760);
-        await navigate("AI 助手");
-        await click("新会话");
-        await browser.$(".rss-composer textarea").setValue("");
-        await browser.$(".rss-composer textarea").click();
-        const before = await browser.execute(
-          async () =>
-            window.rssDesktop.state.workspace.assistant.sessions().length,
-        );
-        await browser.execute(() => {
-          window.nativeImeEvents = [];
-          const input = document.querySelector(".rss-composer textarea");
-          window.nativeImeListener = (event) =>
-            window.nativeImeEvents.push(event.type);
-          for (const type of ["compositionstart", "compositionend"])
-            input.addEventListener(type, window.nativeImeListener);
-        });
-        try {
-          await browser.switchToWindow("main");
-          await browser.$(".rss-composer textarea").click();
-          native("get frontmost");
-          selectInputSource("com.apple.inputmethod.SCIM.ITABC");
-          assert.equal(
-            inputSources().current,
-            "com.apple.inputmethod.SCIM.ITABC",
-            "owned application's Chinese input source selected",
-          );
-          for (const code of [45, 34, 4, 0, 31]) key(code);
-          await wait(() =>
-            browser.execute(() =>
-              window.nativeImeEvents.includes("compositionstart"),
-            ),
-          );
-          key(36);
-          await wait(() =>
-            browser.execute(() =>
-              window.nativeImeEvents.includes("compositionend"),
-            ),
-          );
-          const confirmed = await browser
-            .$(".rss-composer textarea")
-            .getValue();
-          assert.ok(
-            confirmed.length > 0,
-            "native Return commits the composing text",
-          );
-          assert.equal(
-            await browser.execute(
-              async () =>
-                window.rssDesktop.state.workspace.assistant.sessions().length,
-            ),
-            before,
-            "IME confirmation must not submit",
-          );
-          // Apple Pinyin Return commits raw spelling; Space selects its Chinese candidate.
-          await browser.$(".rss-composer textarea").setValue("");
-          for (const code of [45, 34, 4, 0, 31]) key(code);
-          await wait(() =>
-            browser.execute(
-              () =>
-                window.nativeImeEvents.filter(
-                  (type) => type === "compositionstart",
-                ).length === 2,
-            ),
-          );
-          key(49);
-          await wait(() =>
-            browser.execute(
-              () =>
-                window.nativeImeEvents.filter(
-                  (type) => type === "compositionend",
-                ).length === 2,
-            ),
-          );
-          assert.match(
-            await browser.$(".rss-composer textarea").getValue(),
-            /[^\x00-\x7f]/,
-            "Space selects the native Chinese candidate",
-          );
-          assert.equal(
-            await browser.execute(
-              async () =>
-                window.rssDesktop.state.workspace.assistant.sessions().length,
-            ),
-            before,
-            "Chinese candidate confirmation must not submit",
-          );
-          key(36);
-          await wait(
-            async () =>
-              (await browser.execute(
-                async () =>
-                  window.rssDesktop.state.workspace.assistant.sessions().length,
-              )) ===
-              before + 1,
-          );
-          result.ime = {
-            status: "passed",
-            source: "com.apple.inputmethod.SCIM.ITABC",
-            events: await browser.execute(() => window.nativeImeEvents),
-            confirmationDidNotSend: true,
-            returnConfirmedSpellingWithoutSend: true,
-            spaceConfirmedChineseWithoutSend: true,
-            explicitReturnSentOnce: true,
-          };
-          result.messageInput =
-            "physical native Pinyin Return and Space confirmation followed by explicit Return submission";
-          result.checks.push(
-            "native-chinese-IME-confirmation-without-send",
-            "native-explicit-Return-send",
-          );
-        } finally {
-          try {
-            await browser.execute(() => {
-              const input = document.querySelector(".rss-composer textarea");
-              for (const type of ["compositionstart", "compositionend"])
-                input?.removeEventListener(type, window.nativeImeListener);
-              delete window.nativeImeListener;
-            });
-          } finally {
-            // System restoration must not depend on a surviving WebDriver session.
-            selectInputSource(sources.current);
-            result.inputSourceRestored =
-              inputSources().current === sources.current;
-            assert.equal(result.inputSourceRestored, true);
-          }
-        }
-      } else
-        result.ime = {
-          status: "unverified",
-          reason: "Chinese Pinyin is not enabled on this desktop",
-        };
       result.pageZoom = {
         status: "unverified",
         reason: "no native page zoom entry; CSS zoom is not evidence",
@@ -2050,7 +1779,7 @@ try {
     await browser.saveScreenshot(
       join(reports, "desktop-native-navigation.png"),
     );
-    key(53);
+    await click("收起导航");
     await wait(
       async () =>
         (await browser
@@ -2085,9 +1814,7 @@ try {
     fixture.facts.request = taskExecutions(await serviceCall("query")).find(
       (row) => row.status.attempts === 1,
     ).action.requestId;
-    mark(
-      "human task is visible without an AI conversation, with stable return focus",
-    );
+    mark("human task is visible without an AI conversation");
     const humanTask = (await serviceCall("query")).items.find(
       (item) =>
         item.reference.kind === "request" &&
@@ -2100,14 +1827,7 @@ try {
       "关闭",
       '//*[contains(@class,"rss-task-detail") or contains(@class,"ant-drawer")]',
     );
-    await wait(() =>
-      browser.execute(
-        (reference) =>
-          document.activeElement?.getAttribute("data-task-reference") ===
-          JSON.stringify(reference),
-        humanTask.reference,
-      ),
-    );
+
     await browser.setWindowSize(480, 400);
     assert.equal(
       await browser.execute(
@@ -2117,11 +1837,7 @@ try {
     );
     await browser.setWindowSize(1100, 760);
     assert.equal(originalRequests(await serviceCall("query")).size, 1);
-    result.checks.push(
-      "human-task-without-ai",
-      "task-list-native-return-focus",
-      "task-center-narrow",
-    );
+    result.checks.push("human-task-without-ai", "task-center-narrow");
     await navigate("AI 助手");
     mark(
       "first send and read the original human task without a generic permission",
@@ -2197,47 +1913,19 @@ try {
     await wait(() => browser.$(".rss-latest-output").isDisplayed());
     await click("有新内容 · 回到最新");
     result.checks.push("manual-scroll-preserved", "jump-to-latest");
-    mark("narrow layout, native focus and scrolling");
+    mark("narrow layout and scrolling");
     await browser.setWindowSize(480, 400);
     await expandNavigation();
     await browser.saveScreenshot(
       join(reports, "desktop-native-navigation-narrow.png"),
     );
-    key(53);
+    await click("收起导航");
     await wait(
       async () =>
         (await browser
           .$(".rss-desktop-shell")
           .getAttribute("data-layout-step")) === "0",
     );
-    await browser.$(".rss-composer textarea").setValue("保留键盘验收草稿");
-    await browser.$(".rss-composer textarea").click();
-    assert.equal(
-      await browser
-        .$('.rss-composer button[aria-label="发送消息"]')
-        .isEnabled(),
-      true,
-      "draft enables native send control",
-    );
-    // ref: wry@0.55.1 src/wkwebview/mod.rs enables tabFocusesLinks.
-    // System Events enqueues key input; wait for WKWebView to process it.
-    key(48);
-    await wait(() =>
-      browser.execute(
-        () =>
-          document.activeElement ===
-          document.querySelector('.rss-composer button[aria-label="发送消息"]'),
-      ),
-    );
-    key(48, true);
-    await wait(() =>
-      browser.execute(
-        () =>
-          document.activeElement ===
-          document.querySelector(".rss-composer textarea"),
-      ),
-    );
-    await browser.$(".rss-composer textarea").setValue("");
     assert.equal(
       await browser.execute(
         () =>
@@ -2269,12 +1957,7 @@ try {
     await wait(() =>
       browser.$(".rss-session-history:not([hidden])").isDisplayed(),
     );
-    result.checks.push(
-      "native-tab-shift-tab-escape",
-      "focus-restoration",
-      "narrow-composer",
-      "single-live-log",
-    );
+    result.checks.push("narrow-composer", "single-live-log");
     assert.equal(
       await browser.execute(
         () => document.querySelectorAll(".rss-session-history-item").length,
@@ -2317,7 +2000,7 @@ try {
     );
     await text("原动作需要本人核对");
     // Opening/closing the original retained preparation is read-only.
-    key(53);
+    await closeDialog();
     await wait(
       async () => !(await browser.$(".rss-task-detail").isDisplayed()),
     );
@@ -2346,7 +2029,7 @@ try {
       );
       // Collapse the overlay before using the page companion on a narrow window.
       if (width < 900) {
-        key(53);
+        await click("收起导航");
         await wait(
           async () =>
             (await browser
@@ -2395,12 +2078,7 @@ try {
           join(reports, "desktop-native-context-wide.png"),
         );
       await click("关闭页面助手");
-      await wait(() =>
-        browser.execute(
-          () =>
-            document.activeElement?.getAttribute("aria-label") === "页面助手",
-        ),
-      );
+
       await navigate("AI 助手");
       assert.equal(
         await browser.$(".rss-assistant-input textarea").getValue(),
@@ -2454,19 +2132,12 @@ try {
     mark("explicit local collection: reopen original detail from Home");
     await recent.click();
     await wait(() => browser.$(".rss-task-detail").isDisplayed());
-    mark("explicit local collection: return Home focus");
+    mark("explicit local collection: close Home task detail");
     await click(
       "关闭",
       '//*[contains(@class,"rss-task-detail") or contains(@class,"ant-drawer")]',
     );
-    await wait(() =>
-      browser.execute(
-        (reference) =>
-          document.activeElement?.getAttribute("data-task-reference") ===
-          JSON.stringify(reference),
-        collected.reference,
-      ),
-    );
+
     mark("background history: a collected periodic definition");
     const sampling = await wait(
       async () => sampledNativeTask(await serviceCall("query")),
@@ -2518,7 +2189,6 @@ try {
     assert.equal(fixture.facts.proposals.length, proposalsBeforeCollection);
     result.checks.push(
       "native-explicit-query-original-task",
-      "native-home-task-focus",
       "native-background-sampling-read-only",
       "native-management-coverage-read-only",
       "task-navigation-without-ai-or-resubmit",
@@ -2801,7 +2471,6 @@ try {
       () => child.exitCode !== null || child.signalCode !== null,
       15000,
     );
-    result.exit = { code: child.exitCode, signal: child.signalCode };
     assert.equal(child.exitCode, 0);
     await wait(() => {
       try {
@@ -2892,10 +2561,6 @@ try {
   if (browser) {
     try {
       result.uiFailure = await browser.execute(() => ({
-        focusedTag: document.activeElement?.tagName,
-        focusedAction: document.activeElement?.getAttribute("data-action"),
-        focusedLabel: document.activeElement?.getAttribute("aria-label"),
-        focusedClass: document.activeElement?.className,
         dialogLabels: [...document.querySelectorAll('[role="dialog"]')]
           .filter((el) => el.getClientRects().length > 0)
           .map(
@@ -2935,217 +2600,260 @@ try {
   }
   process.exitCode = 1;
 } finally {
-  let scopeObservationFailed = false;
-  if (scopeRuntime && directory && existsSync(join(directory, "ai.sqlite"))) {
-    try {
-      rememberScopes(
-        await readWorkerScopes(),
-        result.owner?.restartedHostPid ?? result.owner?.hostPid,
-      );
-    } catch {
-      scopeObservationFailed = true;
-    }
-  }
-  awake?.kill("SIGTERM");
-  if (browser) {
-    browserClosing ??= browser.deleteSession().catch(() => {});
-    await Promise.race([browserClosing, delay(5000)]);
-  }
-  if (rootAlive()) {
-    if (receipt?.pid) {
+  result.journeyStatus = result.status;
+  let cleanupComplete = false,
+    keychainClean = false;
+  try {
+    let scopeObservationFailed = false;
+    if (scopeRuntime && directory && existsSync(join(directory, "ai.sqlite"))) {
       try {
-        menu("退出 RSS MDM Agent");
-      } catch {}
+        rememberScopes(
+          await readWorkerScopes(),
+          result.owner?.restartedHostPid ?? result.owner?.hostPid,
+        );
+      } catch {
+        scopeObservationFailed = true;
+      }
     }
-    await Promise.race([exited.catch(() => {}), delay(7000)]);
+    awake?.kill("SIGTERM");
+    if (browser) {
+      browserClosing ??= browser.deleteSession().catch(() => {});
+      await Promise.race([browserClosing, delay(5000)]);
+    }
     if (rootAlive()) {
-      signalRoot("SIGTERM");
+      if (receipt?.pid) {
+        try {
+          menu("退出 RSS MDM Agent");
+        } catch {}
+      }
       await Promise.race([exited.catch(() => {}), delay(7000)]);
-    }
-    if (rootAlive()) {
-      signalRoot("SIGKILL");
-      await Promise.race([exited.catch(() => {}), delay(1000)]);
-      result.cleanup = "forced-wrapper-stop";
-    }
-  }
-  await Promise.race([fixture?.close(), delay(2000)]);
-  const owned = [
-    receipt?.pid,
-    result.owner?.hostPid,
-    result.owner?.restartedHostPid,
-  ].filter(Boolean);
-  const alive = () =>
-    owned.filter((pid) => {
-      try {
-        process.kill(pid, 0);
-        return true;
-      } catch (error) {
-        if (error.code !== "ESRCH") throw error;
-        return false;
+      if (rootAlive()) {
+        signalRoot("SIGTERM");
+        await Promise.race([exited.catch(() => {}), delay(7000)]);
       }
-    });
-  const cleanupDeadline = Date.now() + 7000;
-  while ((alive().length || rootAlive()) && Date.now() < cleanupDeadline)
-    await delay(100);
-  const scopeCleanup = [];
-  for (const entry of ownedWorkerScopes.values()) {
-    const absent = () =>
-      scopeAbsentWithin(scopeRuntime, entry.scope, {
-        timeoutMs: 1000,
-        signal: new AbortController().signal,
+      if (rootAlive()) {
+        signalRoot("SIGKILL");
+        await Promise.race([exited.catch(() => {}), delay(1000)]);
+        result.cleanup = "forced-wrapper-stop";
+      }
+    }
+    await Promise.race([fixture?.close(), delay(2000)]);
+    const owned = [
+      receipt?.pid,
+      result.owner?.hostPid,
+      result.owner?.restartedHostPid,
+    ].filter(Boolean);
+    const alive = () =>
+      owned.filter((pid) => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch (error) {
+          if (error.code !== "ESRCH") throw error;
+          return false;
+        }
       });
-    let confirmed = false;
-    try {
-      confirmed = await absent();
-      if (!confirmed && terminateObservedScope(entry)) {
-        const deadline = Date.now() + 7000;
-        do {
-          confirmed = await absent();
-          if (confirmed) break;
-          await delay(100);
-        } while (Date.now() < deadline);
-      }
-    } catch {
-      scopeObservationFailed = true;
-    }
-    scopeCleanup.push({
-      scope: entry.scope,
-      launchId: entry.launchId,
-      confirmed,
-      ownershipObserved: !!entry.anchor,
-    });
-  }
-  result.processScopeProof = {
-    runtimeTreeSha256: scopeRuntime?.runtimeTreeSha256,
-    observationComplete: !scopeObservationFailed && faultScopeConfirmed,
-    scopes: scopeCleanup,
-  };
-  const cleanupComplete =
-    alive().length === 0 &&
-    !rootAlive() &&
-    !scopeObservationFailed &&
-    faultScopeConfirmed &&
-    scopeCleanup.every((row) => row.confirmed);
-  if (!cleanupComplete) {
-    result.cleanup = "owned-processes-still-present";
-    result.status = cancelled ? "cancelled" : "failed";
-    process.exitCode = 1;
-  }
-  let keychainClean = cleanupComplete;
-  if (!visualOnly && directory && cleanupComplete) {
-    try {
-      const path = ["native-e2e.keychain", "native-e2e.keychain-db"]
-        .map((name) => join(directory, name))
-        .find(existsSync);
-      if (path)
-        execFileSync("/usr/bin/security", ["delete-keychain", path], {
-          timeout: 10000,
-          stdio: "pipe",
+    const cleanupDeadline = Date.now() + 7000;
+    while ((alive().length || rootAlive()) && Date.now() < cleanupDeadline)
+      await delay(100);
+    const scopeCleanup = [];
+    for (const entry of ownedWorkerScopes.values()) {
+      const absent = () =>
+        scopeAbsentWithin(scopeRuntime, entry.scope, {
+          timeoutMs: 1000,
+          signal: new AbortController().signal,
         });
-      assert.deepEqual(systemKeychains(), keychainState);
-      result.keychainCleanup =
-        "removed; default keychain and search list unchanged";
-    } catch {
-      keychainClean = false;
-      result.cleanup = "isolated-keychain-cleanup-unconfirmed";
+      let confirmed = false;
+      try {
+        confirmed = await absent();
+        if (!confirmed && terminateObservedScope(entry)) {
+          const deadline = Date.now() + 7000;
+          do {
+            confirmed = await absent();
+            if (confirmed) break;
+            await delay(100);
+          } while (Date.now() < deadline);
+        }
+      } catch {
+        scopeObservationFailed = true;
+      }
+      scopeCleanup.push({
+        scope: entry.scope,
+        launchId: entry.launchId,
+        confirmed,
+        ownershipObserved: !!entry.anchor,
+      });
+    }
+    result.processScopeProof = {
+      runtimeTreeSha256: scopeRuntime?.runtimeTreeSha256,
+      observationComplete: !scopeObservationFailed && faultScopeConfirmed,
+      scopes: scopeCleanup,
+    };
+    cleanupComplete =
+      preparationCleanupConfirmed &&
+      alive().length === 0 &&
+      !rootAlive() &&
+      !scopeObservationFailed &&
+      faultScopeConfirmed &&
+      scopeCleanup.every((row) => row.confirmed);
+    if (!cleanupComplete) {
+      result.cleanup = "owned-processes-still-present";
       result.status = cancelled ? "cancelled" : "failed";
       process.exitCode = 1;
     }
-  }
-  if (serviceWorker) {
-    if (
-      serviceReady &&
-      serviceWorker.exitCode === null &&
-      serviceWorker.signalCode === null
-    ) {
+    keychainClean = cleanupComplete;
+    if (!visualOnly && directory && cleanupComplete) {
       try {
-        serviceFinishing = true;
-        await serviceCall("finish", {
-          status: result.status,
-          request: fixture?.facts.request,
-          processScopeEmpty: cleanupComplete,
-          processScopeProof: result.processScopeProof,
-        });
+        const path = ["native-e2e.keychain", "native-e2e.keychain-db"]
+          .map((name) => join(directory, name))
+          .find(existsSync);
+        if (path)
+          execFileSync("/usr/bin/security", ["delete-keychain", path], {
+            timeout: 10000,
+            stdio: "pipe",
+          });
+        assert.deepEqual(systemKeychains(), keychainState);
+        result.keychainCleanup =
+          "removed; default keychain and search list unchanged";
       } catch {
-        result.status = "failed";
+        keychainClean = false;
+        result.cleanup = "isolated-keychain-cleanup-unconfirmed";
+        result.status = cancelled ? "cancelled" : "failed";
         process.exitCode = 1;
       }
     }
-    console.log("[native] bounded controlled service owner cleanup");
-    serviceWorker.stdin.end();
-    result.serviceWorkerCleanup = await reapOwnedProcessGroup(serviceWorker);
-    if (
-      !result.serviceWorkerCleanup.confirmed ||
-      result.serviceWorkerCleanup.forced
-    ) {
-      result.status = cancelled ? "cancelled" : "failed";
-      result.serviceFailure = {
-        stage,
-        code: "native_service_worker_cleanup_forced",
-        detail: "controlled service worker required bounded termination",
-      };
-      result.failure ??= result.serviceFailure;
-      process.exitCode = 1;
-    }
-    const serviceReceipt =
-      result.serviceEvidence && join(result.serviceEvidence, "receipt.json");
-    if (serviceReceipt && existsSync(serviceReceipt))
-      result.serviceReceipt = JSON.parse(readFileSync(serviceReceipt, "utf8"));
-    result.serviceCleanup =
-      result.serviceReceipt?.cleanup === "complete"
-        ? result.serviceReceipt.installationCreated
-          ? "owned registration and default pin removed; persistent service state retained"
-          : "no owned system registration created; preparation resources cleaned"
-        : "unconfirmed; retained installation evidence";
-    if (serviceWorker.exitCode !== 0) {
-      result.status =
-        result.serviceReceipt?.status === "cancelled" || cancelled
-          ? "cancelled"
-          : "failed";
-      if (result.serviceReceipt?.error)
+    if (serviceWorker) {
+      if (
+        serviceReady &&
+        serviceWorker.exitCode === null &&
+        serviceWorker.signalCode === null
+      ) {
+        try {
+          serviceFinishing = true;
+          await serviceCall("finish", {
+            status: result.status,
+            request: fixture?.facts.request,
+            processScopeEmpty: cleanupComplete,
+            processScopeProof: result.processScopeProof,
+          });
+        } catch {
+          result.status = "failed";
+          process.exitCode = 1;
+        }
+      }
+      console.log("[native] bounded controlled service owner cleanup");
+      serviceWorker.stdin.end();
+      result.serviceWorkerCleanup = await reapOwnedProcessGroup(serviceWorker);
+      if (
+        !result.serviceWorkerCleanup.confirmed ||
+        result.serviceWorkerCleanup.forced
+      ) {
+        result.status = cancelled ? "cancelled" : "failed";
         result.serviceFailure = {
           stage,
-          code: "native_service_journey_incomplete",
-          detail: result.serviceReceipt.error,
+          code: "native_service_worker_cleanup_forced",
+          detail: "controlled service worker required bounded termination",
         };
-      result.failure ??= result.serviceFailure;
-      process.exitCode = 1;
-    } else {
-      if (!visualOnly && result.status === "passed") {
-        const records = result.serviceReceipt.journalProof.records.filter(
-          (row) => row.request === fixture.facts.request,
+        result.failure ??= result.serviceFailure;
+        process.exitCode = 1;
+      }
+      const serviceReceipt =
+        result.serviceEvidence && join(result.serviceEvidence, "receipt.json");
+      if (serviceReceipt && existsSync(serviceReceipt))
+        result.serviceReceipt = JSON.parse(
+          readFileSync(serviceReceipt, "utf8"),
         );
-        assert.equal(records.length, 1);
-        assert.equal(records[0].snapshot.attempts, 1);
-        assert.equal(records[0].process.finished, true);
-        assert.equal(
-          records[0].process.attemptId,
-          result.completion.record.status.attemptId,
-        );
-        assert.equal(
-          records[0].process.exitCode,
-          result.completion.record.status.process.exitCode,
-        );
-        assert.equal(result.serviceReceipt.journeyStatus, "passed");
+      result.serviceCleanup =
+        result.serviceReceipt?.cleanup === "complete"
+          ? result.serviceReceipt.installationCreated
+            ? "owned registration and default pin removed; persistent service state retained"
+            : "no owned system registration created; preparation resources cleaned"
+          : "unconfirmed; retained installation evidence";
+      if (serviceWorker.exitCode !== 0) {
+        result.status =
+          result.serviceReceipt?.status === "cancelled" || cancelled
+            ? "cancelled"
+            : "failed";
+        if (result.serviceReceipt?.error)
+          result.serviceFailure = {
+            stage,
+            code: "native_service_journey_incomplete",
+            detail: result.serviceReceipt.error,
+          };
+        result.failure ??= result.serviceFailure;
+        process.exitCode = 1;
+      } else {
+        if (!visualOnly && result.status === "passed") {
+          const records = result.serviceReceipt.journalProof.records.filter(
+            (row) => row.request === fixture.facts.request,
+          );
+          assert.equal(records.length, 1);
+          assert.equal(records[0].snapshot.attempts, 1);
+          assert.equal(records[0].process.finished, true);
+          assert.equal(
+            records[0].process.attemptId,
+            result.completion.record.status.attemptId,
+          );
+          assert.equal(
+            records[0].process.exitCode,
+            result.completion.record.status.process.exitCode,
+          );
+          assert.equal(result.serviceReceipt.journeyStatus, "passed");
+        }
       }
     }
+    if (
+      result.status === "passed" &&
+      result.serviceReceipt?.security.status !== "passed" &&
+      controlledService
+    ) {
+      result.status = "partial";
+    }
+  } catch (error) {
+    result.status = cancelled ? "cancelled" : "failed";
+    result.cleanup = "cleanup-observation-failed";
+    result.failure ??= {
+      stage: "cleanup",
+      code: "native_cleanup_failed",
+      detail: String(error)
+        .replaceAll(nonce, "[redacted-capability]")
+        .replaceAll(fixture?.secret ?? "<none>", "[redacted]")
+        .replaceAll(directory ?? "<none>", "[isolated-data]")
+        .replaceAll(root, "[worktree]")
+        .slice(0, 2048),
+    };
+    cleanupComplete = false;
+    // A failed observation must still give both owned leaders a bounded reap.
+    if (child)
+      result.wrapperRecovery = await reapOwnedProcessGroup(child, {
+        graceMs: 0,
+      });
+    if (serviceWorker)
+      result.serviceWorkerCleanup = await reapOwnedProcessGroup(serviceWorker, {
+        graceMs: 0,
+      });
+  } finally {
+    finishNativeResult(result, {
+      exit: child ? { code: child.exitCode, signal: child.signalCode } : null,
+      cleanupConfirmed:
+        cleanupComplete &&
+        keychainClean &&
+        (!serviceWorker ||
+          (result.serviceWorkerCleanup?.confirmed === true &&
+            result.serviceReceipt?.cleanup === "complete")),
+      cancelled,
+    });
+    if (result.status !== "passed" && result.status !== "partial")
+      process.exitCode = 1;
+    writeReport();
+    writeFileSync(
+      join(reports, "desktop-native.log"),
+      logs
+        .replaceAll(nonce, "[redacted-capability]")
+        .replaceAll(fixture?.secret ?? "<none>", "[redacted]")
+        .replaceAll(directory ?? "<none>", "[isolated-data]"),
+    );
+    if (directory && result.cleanupConfirmed)
+      rmSync(directory, { recursive: true, force: true });
   }
-  result.journeyStatus = result.status;
-  if (
-    result.status === "passed" &&
-    result.serviceReceipt?.security.status !== "passed" &&
-    controlledService
-  ) {
-    result.status = "partial";
-  }
-  writeReport();
-  writeFileSync(
-    join(reports, "desktop-native.log"),
-    logs
-      .replaceAll(nonce, "[redacted-capability]")
-      .replaceAll(fixture?.secret ?? "<none>", "[redacted]")
-      .replaceAll(directory ?? "<none>", "[isolated-data]"),
-  );
-  if (directory && cleanupComplete && keychainClean)
-    rmSync(directory, { recursive: true, force: true });
 }

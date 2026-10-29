@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { once } from "node:events";
+import { once, EventEmitter } from "node:events";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
@@ -17,12 +17,13 @@ import { tmpdir } from "node:os";
 import { test } from "node:test";
 import { verifyNativeRuntime } from "./native-candidate.mjs";
 import { runtimeTreeSha256 } from "./ai-host-artifacts.mjs";
-import { waitForAppearance } from "./native-evidence.mjs";
+import { waitForAppearance, finishNativeResult } from "./native-evidence.mjs";
 import {
   reapOwnedProcessGroup,
   processField,
   processChildren,
   runOwnedScopeProbe,
+  runPreparation,
 } from "./desktop-dev-process.mjs";
 import {
   developmentFingerprint,
@@ -358,6 +359,203 @@ test("release stage rejects development, absent and unknown manifest kinds", (t)
   }
 });
 
+test("native verdict preserves the journey while rejecting wrapper or cleanup failures", () => {
+  for (const [code, confirmed, cancelled, expected] of [
+    [0, true, false, "passed"],
+    [1, true, false, "failed"],
+    [0, false, false, "failed"],
+    [null, false, true, "cancelled"],
+    [0, true, true, "cancelled"],
+  ]) {
+    const result = { status: "passed", journeyStatus: "passed" };
+    finishNativeResult(result, {
+      exit: { code, signal: null },
+      cleanupConfirmed: confirmed,
+      cancelled,
+    });
+    assert.equal(result.journeyStatus, "passed");
+    assert.equal(result.status, expected);
+    assert.equal(result.exit.code, code);
+    assert.equal(result.cleanupConfirmed, confirmed);
+    assert.equal(!!result.failure, expected !== "passed");
+  }
+  const result = {
+    status: "failed",
+    journeyStatus: "failed",
+    failure: { code: "journey" },
+  };
+  finishNativeResult(result, {
+    exit: { code: 0, signal: null },
+    cleanupConfirmed: true,
+    cancelled: false,
+  });
+  assert.equal(result.status, "failed");
+  assert.equal(result.failure.code, "journey");
+});
+
+// Inject OS operations, not real permission failures that could strand a live group.
+for (const observation of ["signal", "probe", "unexpected-probe"])
+  for (const recovers of [false, true])
+    test(`preparation controls ${observation} denial after ordinary exit (recovers=${recovers})`, async () => {
+      const child = Object.assign(new EventEmitter(), {
+        pid: 42001,
+        exitCode: null,
+        signalCode: null,
+        unref() {
+          this.unreferenced = true;
+        },
+      });
+      const signals = new EventEmitter();
+      let elapsed = 0;
+      const sent = [];
+      const denied = Object.assign(Error("injected OS failure"), {
+        code: observation === "unexpected-probe" ? "EIO" : "EPERM",
+      });
+      const result = await runPreparation(
+        "test",
+        [],
+        ".",
+        {},
+        {
+          signals,
+          spawnChild() {
+            queueMicrotask(() => {
+              child.exitCode = 0;
+              child.emit("exit", 0, null);
+            });
+            return child;
+          },
+          reap(child, options) {
+            return reapOwnedProcessGroup(
+              child,
+              { ...options, terminateMs: 50, killMs: 10 },
+              {
+                now: () => elapsed,
+                async delay(ms) {
+                  elapsed += ms;
+                },
+                kill(pid, signal) {
+                  assert.equal(pid, -42001);
+                  if (recovers && elapsed >= 25)
+                    throw Object.assign(Error("gone"), { code: "ESRCH" });
+                  if (signal === 0) {
+                    if (observation !== "signal") throw denied;
+                  } else {
+                    sent.push(signal);
+                    if (observation === "signal") throw denied;
+                  }
+                },
+              },
+            );
+          },
+        },
+      );
+      assert.equal(result.cleanup.confirmed, recovers);
+      assert.equal(result.code, recovers ? 0 : 1);
+      assert.equal(result.cleanup.error, denied.code);
+      assert.equal(result.exit.code, 0);
+      assert.ok(elapsed <= 60);
+      if (!recovers) assert.deepEqual(sent, ["SIGTERM", "SIGKILL"]);
+      assert.equal(child.unreferenced, recovers ? undefined : true);
+      assert.equal(signals.eventNames().length, 0);
+    });
+
+test("cancelled preparation keeps one reaper and its first signal despite a denied send", async () => {
+  const child = Object.assign(new EventEmitter(), {
+    pid: 42002,
+    exitCode: null,
+    signalCode: null,
+    unref() {},
+  });
+  const signals = new EventEmitter();
+  let elapsed = 0,
+    reaps = 0,
+    exists = true;
+  const sent = [];
+  const result = await runPreparation(
+    "test",
+    [],
+    ".",
+    {},
+    {
+      signals,
+      spawnChild() {
+        queueMicrotask(() => signals.emit("SIGINT"));
+        return child;
+      },
+      reap(child, options) {
+        reaps++;
+        return reapOwnedProcessGroup(
+          child,
+          { ...options, terminateMs: 50, killMs: 10 },
+          {
+            now: () => elapsed,
+            async delay(ms) {
+              elapsed += ms;
+              signals.emit("SIGHUP");
+            },
+            kill(pid, signal) {
+              assert.equal(pid, -42002);
+              if (!exists)
+                throw Object.assign(Error("gone"), { code: "ESRCH" });
+              if (signal === 0) return;
+              sent.push(signal);
+              if (signal === "SIGINT")
+                throw Object.assign(Error("denied"), { code: "EPERM" });
+              exists = false;
+              child.exitCode = 0;
+              child.emit("exit", 0, null);
+            },
+          },
+        );
+      },
+    },
+  );
+  assert.equal(reaps, 1);
+  assert.deepEqual(sent, ["SIGINT", "SIGHUP"]);
+  assert.equal(result.cancellation, "SIGINT");
+  assert.equal(result.code, 130);
+  assert.equal(result.cleanup.confirmed, true);
+  assert.equal(signals.eventNames().length, 0);
+});
+
+test("failure to spawn has no owned group to retain", async () => {
+  const result = await runPreparation(
+    join(tmpdir(), "rss-no-such-executable"),
+    [],
+    tmpdir(),
+  );
+  assert.equal(result.code, 1);
+  assert.equal(result.error, "ENOENT");
+  assert.equal(result.cleanup.confirmed, true);
+});
+
+test("unconfirmed preparation retains its lock and blocks Tauri", (t) => {
+  const { root, write } = fixture(t);
+  write(
+    "scripts/desktop-dev.mjs",
+    readFileSync(new URL("desktop-dev.mjs", import.meta.url)),
+  );
+  write(
+    "scripts/desktop-dev-process.mjs",
+    `
+    export async function runPreparation() {
+      return {code:1, exit:{code:0,signal:null}, cancellation:null, cleanup:{confirmed:false,error:'EPERM'}};
+    }
+    export function runDesktop() { throw Error('must not launch'); }
+  `,
+  );
+  const result = spawnSync(
+    process.execPath,
+    [join(root, "scripts/desktop-dev.mjs"), "--fixture"],
+    { encoding: "utf8" },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /lock retained/);
+  assert.doesNotMatch(result.stderr, /must not launch/);
+  assert.equal(existsSync(join(root, ".cache/desktop-dev.lock")), true);
+});
+
 // ref: Node.js lib/child_process.js@v24.14.1 (IPC ready and close/reaping).
 function processFixture(t, mode = "ready") {
   const root = mkdtempSync(join(tmpdir(), "rss-dev-process-"));
@@ -413,7 +611,7 @@ function processFixture(t, mode = "ready") {
     [
       "--input-type=module",
       "-e",
-      `import {runDesktop} from ${JSON.stringify(module)}; process.exitCode=await runDesktop(${JSON.stringify(root)},'/runtime');`,
+      `import {runDesktop} from ${JSON.stringify(module)}; process.exitCode=(await runDesktop(${JSON.stringify(root)},'/runtime')).code;`,
     ],
     {
       env: { ...process.env, PATH: `${join(root, "bin")}:${process.env.PATH}` },
@@ -675,23 +873,24 @@ test("preparation admits only verified passed development provenance", (t) => {
     );
 });
 
-test(
-  "cancelling the preparation process group releases its lock without launching Tauri",
-  { skip: process.platform === "win32", timeout: 10000 },
-  async (t) => {
-    const { root, write } = fixture(t);
-    write(
-      "scripts/desktop-dev.mjs",
-      readFileSync(new URL("desktop-dev.mjs", import.meta.url), "utf8"),
-    );
-    write(
-      "scripts/desktop-dev-runtime.mjs",
-      `
+for (const denyFirstSignal of [false, true])
+  test(
+    `cancelling preparation confirms descendants and releases its lock without Tauri (EPERM=${denyFirstSignal})`,
+    { skip: process.platform === "win32", timeout: 15000 },
+    async (t) => {
+      const { root, write } = fixture(t);
+      write(
+        "scripts/desktop-dev.mjs",
+        readFileSync(new URL("desktop-dev.mjs", import.meta.url), "utf8"),
+      );
+      write(
+        "scripts/desktop-dev-runtime.mjs",
+        `
     import { spawnSync } from 'node:child_process';
     export function ensureDevelopmentRuntime(root) {
       // Signal only after the preparation descendant belongs to the process group.
       const result = spawnSync(process.execPath, ['-e',
-        'require("node:fs").writeFileSync(process.argv[1], "ready");setInterval(()=>{},1000)',
+        'require("node:fs").writeFileSync(process.argv[1], JSON.stringify({pid:process.pid,parent:process.ppid}));setInterval(()=>{},1000)',
         root + '/preparing']);
       if (result.status !== 0) throw Error('preparation stopped');
       return '/runtime';
@@ -699,41 +898,87 @@ test(
     export const verifyDevelopmentRuntime = ensureDevelopmentRuntime;
     if (process.argv[2] === "--prepare") ensureDevelopmentRuntime(process.argv[3]);
   `,
-    );
-    write(
-      "scripts/desktop-dev-process.mjs",
-      `
+      );
+      write(
+        "scripts/desktop-dev-process.mjs",
+        `
     import { writeFileSync } from 'node:fs';
     export { runPreparation } from ${JSON.stringify(fileURLToPath(new URL("desktop-dev-process.mjs", import.meta.url)))};
-    export async function runDesktop(root) { writeFileSync(root + '/launched', 'unexpected'); return 0; }
+    export async function runDesktop(root) { writeFileSync(root + '/launched', 'unexpected'); return {code:0, cleanup:{confirmed:true}}; }
   `,
-    );
-    const child = spawn(
-      process.execPath,
-      [join(root, "scripts/desktop-dev.mjs")],
-      { detached: true, stdio: "ignore" },
-    );
-    const exited = once(child, "exit");
-    t.after(() => {
-      try {
-        process.kill(-child.pid, "SIGKILL");
-      } catch (error) {
-        if (error.code !== "ESRCH") throw error;
+      );
+      write(
+        "deny-first-signal.mjs",
+        `
+      import {writeFileSync} from 'node:fs';
+      const kill = process.kill.bind(process);
+      let denied = false;
+      process.kill = (pid, signal) => {
+        if (pid < 0 && signal === 'SIGTERM' && !denied) {
+          denied = true;
+          writeFileSync(${JSON.stringify(join(root, "denied"))}, 'EPERM');
+          throw Object.assign(Error('injected signal denial'), {code:'EPERM'});
+        }
+        return kill(pid, signal);
+      };
+    `,
+      );
+      const child = spawn(
+        process.execPath,
+        [
+          ...(denyFirstSignal
+            ? ["--import", join(root, "deny-first-signal.mjs")]
+            : []),
+          join(root, "scripts/desktop-dev.mjs"),
+        ],
+        { detached: true, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      let output = "";
+      for (const stream of [child.stdout, child.stderr])
+        stream.on("data", (bytes) => {
+          output += bytes;
+        });
+      const exited = once(child, "close");
+      t.after(() => {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+        } catch (error) {
+          if (error.code !== "ESRCH") throw error;
+        }
+      });
+      const deadline = Date.now() + 5000;
+      while (!existsSync(join(root, "preparing"))) {
+        assert.equal(child.exitCode, null);
+        assert.ok(Date.now() < deadline);
+        await new Promise((resolve) => setTimeout(resolve, 10));
       }
-    });
-    const deadline = Date.now() + 5000;
-    while (!existsSync(join(root, "preparing"))) {
-      assert.equal(child.exitCode, null);
-      assert.ok(Date.now() < deadline);
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-    process.kill(-child.pid, "SIGTERM");
-    const [code] = await exited;
-    assert.notEqual(code, 0);
-    assert.equal(existsSync(join(root, ".cache/desktop-dev.lock")), false);
-    assert.equal(existsSync(join(root, "launched")), false);
-  },
-);
+      const preparation = JSON.parse(
+        readFileSync(join(root, "preparing"), "utf8"),
+      );
+      process.kill(-child.pid, "SIGTERM");
+      const [code, signal] = await exited;
+      const facts = JSON.stringify({ code, signal, preparation, output });
+      assert.equal(code, 143, facts);
+      assert.equal(signal, null, facts);
+      assert.doesNotMatch(
+        output,
+        /uncaught|cleanup unconfirmed|lock retained/,
+        facts,
+      );
+      for (const pid of [
+        preparation.pid,
+        preparation.parent,
+        -preparation.parent,
+      ])
+        assert.throws(() => process.kill(pid, 0), { code: "ESRCH" }, facts);
+      assert.equal(
+        existsSync(join(root, ".cache/desktop-dev.lock")),
+        false,
+        facts,
+      );
+      assert.equal(existsSync(join(root, "launched")), false);
+    },
+  );
 
 test("controlled worker reap lets the owner clean up before group escalation", async () => {
   const root = mkdtempSync(join(tmpdir(), "rss-worker-reap-"));
@@ -752,7 +997,11 @@ test("controlled worker reap lets the owner clean up before group escalation", a
   );
   try {
     await once(child.stdout, "data");
-    const result = await reapOwnedProcessGroup(child, 10, 500, 500);
+    const result = await reapOwnedProcessGroup(child, {
+      graceMs: 10,
+      terminateMs: 500,
+      killMs: 500,
+    });
     assert.equal(result.confirmed, true);
     assert.equal(result.forced, true);
     assert.equal(readFileSync(marker, "utf8"), "owned cleanup");
@@ -784,7 +1033,11 @@ test("stalled controlled worker is killed and reaped without signalling another 
       once(survivor.stdout, "data"),
     ]);
     const started = Date.now();
-    const result = await reapOwnedProcessGroup(child, 10, 50, 500);
+    const result = await reapOwnedProcessGroup(child, {
+      graceMs: 10,
+      terminateMs: 50,
+      killMs: 500,
+    });
     assert.equal(result.confirmed, true);
     assert.equal(child.signalCode, "SIGKILL");
     assert.ok(Date.now() - started < 2000);
@@ -792,7 +1045,11 @@ test("stalled controlled worker is killed and reaped without signalling another 
     assert.equal(survivor.exitCode, null);
   } finally {
     survivor.kill("SIGTERM");
-    await reapOwnedProcessGroup(survivor, 500, 100, 500);
+    await reapOwnedProcessGroup(survivor, {
+      graceMs: 500,
+      terminateMs: 100,
+      killMs: 500,
+    });
     if (child.exitCode === null && child.signalCode === null)
       child.kill("SIGKILL");
   }
@@ -900,7 +1157,11 @@ test("outer scope owner reaps detached descendants after timeout or inner close 
     }
   } finally {
     survivor.kill("SIGTERM");
-    await reapOwnedProcessGroup(survivor, 500, 100, 500);
+    await reapOwnedProcessGroup(survivor, {
+      graceMs: 500,
+      terminateMs: 100,
+      killMs: 500,
+    });
   }
 });
 
@@ -1052,10 +1313,10 @@ test("fixture CLI opens the product App by default and preserves later explicit 
     "scripts/desktop-dev-process.mjs",
     `
     import {writeFileSync} from 'node:fs';
-    export async function runPreparation() {return 0;}
+    export async function runPreparation() {return {code:0, cleanup:{confirmed:true}};}
     export async function runDesktop(root, directory, args, env) {
       writeFileSync(root+'/launch.json', JSON.stringify({args, assembly:env.RSS_DESKTOP_ASSEMBLY, runtime:directory}));
-      return 0;
+      return {code:0, cleanup:{confirmed:true}};
     }
   `,
   );
