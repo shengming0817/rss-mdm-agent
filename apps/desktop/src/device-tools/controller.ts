@@ -43,10 +43,16 @@ export function createNetworkCheck(
       if (active && call === epoch) state.busy = false;
     }
   }
-  async function execute(target?: NetworkTarget) {
+  async function execute(target?: NetworkTarget, resend = false) {
     if (!active || !port || state.busy) return;
-    const run = !!target;
-    if (run && state.request && !ended()) return;
+    const run = !!target || resend;
+    if (target && state.request && !ended()) return;
+    if (
+      resend &&
+      state.status &&
+      state.status.status.phase !== "outcomeUnknown"
+    )
+      return;
     if (target) {
       state.request = identity();
       state.target = deepClone(target);
@@ -68,10 +74,23 @@ export function createNetworkCheck(
       if (response.value.status.operationRequestId !== request)
         throw Error("request mismatch");
       state.status = deepClone(response.value);
-    } catch {
-      if (active && call === epoch)
+    } catch (error) {
+      if (active && call === epoch) {
+        const code =
+          error && typeof error === "object" && "code" in error
+            ? error.code
+            : "";
+        if (target && code === "network_invalid_input") {
+          state.request = null;
+          state.target = null;
+          state.status = null;
+          state.error =
+            "目标未通过服务验证，尚未创建检测。请修改主机名或端口。";
+          return;
+        }
         state.error =
-          "检测结果未确认，请查询原请求。DNS/TCP 检测不代表应用服务健康。";
+          "检测结果未确认。请查询原请求，或以相同请求与固定目标显式重送。";
+      }
     } finally {
       if (active && call === epoch) state.busy = false;
     }
@@ -82,6 +101,7 @@ export function createNetworkCheck(
     load,
     run: (target: NetworkTarget) => execute(target),
     recover: () => execute(),
+    resend: () => execute(undefined, true),
     ended,
     dispose() {
       active = false;

@@ -7,6 +7,26 @@ import {
   policyFixturePort,
   offer,
 } from "../../../../tests/self-service/support";
+it("reads exact Policy history through the original cache without replacing the task center's own filter", async () => {
+  const port = taskPort(),
+    item = taskDetail();
+  item.policy = { id: "published-policy", revision: "published-version" };
+  port.list = vi.fn(async () => taskPage([item]));
+  const owner = createTaskCenter(port, null),
+    query = { ...owner.state.query };
+  const page = await owner.policyTasks("published-policy");
+  expect(port.list).toHaveBeenCalledWith(
+    expect.objectContaining({
+      policy: "published-policy",
+      view: "history",
+      cursor: null,
+    }),
+  );
+  expect(page?.items).toHaveLength(1);
+  expect(owner.lookup(item.reference)).toEqual(item);
+  expect(owner.state.query).toEqual(query);
+  owner.dispose();
+});
 it("coalesces list and exact detail reads and refreshes browsed pages with fresh cursors", async () => {
   const port = taskPort();
   let finish!: (v: ReturnType<typeof taskPage>) => void;

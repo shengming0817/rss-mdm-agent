@@ -558,6 +558,24 @@ export function createTaskCenter(
     await listFlight;
     await load();
   }
+  /** Exact Policy history for another page, sharing this owner's scope and cache. */
+  async function policyTasks(policy: string, cursor: string | null = null) {
+    if (!tasks || !alive) throw Error("task service unavailable");
+    const call = epoch;
+    const page = deepClone(
+      await tasks.list({ ...initialQuery(), policy, cursor }),
+    );
+    if (!alive || call !== epoch) return;
+    acceptScope(page.scope);
+    if (page.next && page.next === cursor)
+      throw Error("task cursor did not advance");
+    for (const item of page.items) {
+      if (item.scope !== page.scope || item.policy?.id !== policy)
+        throw Error("Policy task scope mismatch");
+      cache(item);
+    }
+    return page;
+  }
   function schedule() {
     clearTimeout(timer);
     if (!alive || !visible || document.hidden) return;
@@ -615,6 +633,7 @@ export function createTaskCenter(
     confirmPreparation,
     reconcileControl,
     setQuery,
+    policyTasks,
     setVisible,
     dispose,
   };

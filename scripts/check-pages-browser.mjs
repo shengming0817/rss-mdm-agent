@@ -86,6 +86,21 @@ export async function checkPagesBrowser(page, fixture) {
     await page.getByRole("tab", { name: tab, exact: true }).click();
     await capture(`detail-${tab}`);
   }
+  await page.getByRole("button", { name: "查看并准备", exact: true }).click();
+  const publishedPreparation = page.getByRole("dialog");
+  await publishedPreparation
+    .getByRole("button", { name: "确认并提交", exact: true })
+    .click();
+  await publishedPreparation
+    .getByRole("button", { name: "查询原请求", exact: true })
+    .waitFor();
+  await page.keyboard.press("Escape");
+  await publishedPreparation.waitFor({ state: "hidden" });
+  await page.getByRole("button", { name: "重读发布任务", exact: true }).click();
+  await page
+    .locator(".rss-related-task")
+    .filter({ hasText: "创作画板" })
+    .waitFor();
   await section("已安装");
   await page.getByRole("button", { name: "Workspace", exact: true }).waitFor();
   const first = page.locator(".rss-installed-card").first();
@@ -169,6 +184,14 @@ export async function checkPagesBrowser(page, fixture) {
   await page
     .getByRole("textbox", { name: "HTTP 代理服务器", exact: true })
     .fill("proxy.fixture.invalid");
+  await section("显示器");
+  await section("网络");
+  assert.equal(
+    await page
+      .getByRole("textbox", { name: "HTTP 代理服务器", exact: true })
+      .inputValue(),
+    "proxy.fixture.invalid",
+  );
   await page.getByRole("button", { name: "保存更改", exact: true }).click();
   await page.waitForFunction(() =>
     window.rssPageFixture.events.some(
@@ -213,12 +236,13 @@ export async function checkPagesBrowser(page, fixture) {
     .getByRole("textbox", { name: "interface", exact: true })
     .fill("en0");
   assert.equal(
-    await page.evaluate(() =>
-      window.rssPageFixture.events.some(
-        (event) => event.operation === "policy_invoke",
-      ),
+    await page.evaluate(
+      () =>
+        window.rssPageFixture.events.filter(
+          (event) => event.operation === "policy_invoke",
+        ).length,
     ),
-    false,
+    1,
   );
   await policy.getByRole("button", { name: "确认并提交", exact: true }).click();
   await policy
@@ -247,6 +271,25 @@ export async function checkPagesBrowser(page, fixture) {
   await connection
     .getByRole("textbox", { name: "AI 模型", exact: true })
     .fill("fixed-model");
+  await connection
+    .locator('input[aria-label="AI 新密钥"]')
+    .fill("ui-secret-proof");
+  await page.evaluate(() =>
+    window.rssDesktop.state.workspace.navigation.select("home"),
+  );
+  await connection.waitFor({ state: "hidden" });
+  await settings("AI 与连接");
+  await connection.waitFor();
+  assert.equal(
+    await connection
+      .getByRole("textbox", { name: "连接名称", exact: true })
+      .inputValue(),
+    "工作 API",
+  );
+  assert.equal(
+    await connection.locator('input[aria-label="AI 新密钥"]').inputValue(),
+    "",
+  );
   await connection
     .locator('input[aria-label="AI 新密钥"]')
     .fill("ui-secret-proof");
@@ -339,11 +382,197 @@ export async function checkPagesBrowser(page, fixture) {
           (source) => source.busy,
         ),
     );
+    const softwarePage = page.locator(
+      '.rss-page-viewport[aria-label="软件中心"]',
+    );
+    if (scene === "empty") {
+      await softwarePage
+        .getByText("当前范围没有已读取的软件", { exact: true })
+        .waitFor();
+      assert.equal(
+        await softwarePage.locator(".rss-installed-card").count(),
+        0,
+      );
+    }
+    if (scene === "partial")
+      assert.match(
+        await softwarePage.locator(".rss-software-source").textContent(),
+        /部分或尚未读取/,
+      );
+    if (["error", "offline"].includes(scene)) {
+      await softwarePage
+        .locator('[role="alert"]')
+        .filter({ hasText: "清单读取未完成" })
+        .waitFor();
+      assert.equal(
+        await softwarePage
+          .getByRole("button", { name: "Workspace", exact: true })
+          .count(),
+        0,
+      );
+    }
+    if (scene === "readonly") {
+      const buttons = softwarePage.getByRole("button", {
+        name: "打开",
+        exact: true,
+      });
+      assert.equal(await buttons.count(), 4);
+      for (const button of await buttons.all())
+        assert.equal(await button.isDisabled(), true);
+    }
     await capture(`software-${scene}`);
     await primary("系统设置");
     await section("网络");
+    await page.waitForFunction(() => {
+      const owner = window.rssDesktop.state.workspace.system;
+      return (
+        !owner.state.busy.has("network") && !owner.state.reads.has("network")
+      );
+    });
+    const systemPage = page.locator(
+      '.rss-page-viewport[aria-label="系统设置"]',
+    );
+    if (["error", "offline"].includes(scene))
+      await systemPage
+        .locator('[role="alert"]')
+        .filter({ hasText: "原任务" })
+        .waitFor();
+    if (scene === "readonly") {
+      assert.equal(
+        await systemPage
+          .getByRole("button", { name: "保存更改", exact: true })
+          .count(),
+        0,
+      );
+      await systemPage.getByText("此用户仅可读取", { exact: true }).waitFor();
+    }
+    if (scene === "empty")
+      assert.equal(await systemPage.locator(".rss-system-editor").count(), 0);
     await capture(`system-${scene}`);
+    await primary("工具中心");
+    await section("全部工具");
+    if (scene === "empty")
+      await page
+        .getByText("当前读取范围没有可见组织工具", { exact: true })
+        .waitFor();
+    if (["error", "offline"].includes(scene))
+      await page
+        .locator('.rss-published-tools [role="alert"]')
+        .filter({ hasText: "目录读取未完成" })
+        .waitFor();
+    await section("连接与网络");
+    await page.getByRole("button", { name: /开始检查/ }).click();
+    const check = page.getByRole("dialog");
+    if (scene === "readonly") {
+      await check
+        .getByText("当前装配未提供原生网络检测能力。", { exact: true })
+        .waitFor();
+      assert.equal(
+        await check
+          .getByRole("button", { name: "开始检测", exact: true })
+          .isDisabled(),
+        true,
+      );
+    }
+    if (["error", "offline"].includes(scene))
+      await check
+        .getByText("无法读取默认检测目标，可手动填写主机与端口。", {
+          exact: true,
+        })
+        .waitFor();
+    await page.keyboard.press("Escape");
+    await check.waitFor({ state: "hidden" });
+    await settings("AI 与连接");
+    if (["error", "offline"].includes(scene)) {
+      await page.getByText("AI 控制连接未就绪", { exact: true }).waitFor();
+      assert.equal(
+        await page
+          .getByRole("button", { name: "重读连接", exact: true })
+          .isDisabled(),
+        true,
+      );
+    }
+    if (scene === "readonly")
+      assert.equal(
+        await page
+          .getByRole("button", { name: "添加连接", exact: true })
+          .isDisabled(),
+        true,
+      );
+    await settings("个人 Passkey");
+    if (["error", "offline"].includes(scene)) {
+      await page
+        .getByText("个人 Passkey 操作未确认或已取消，请重读状态后核对。", {
+          exact: true,
+        })
+        .waitFor();
+      assert.equal(
+        await page
+          .getByRole("button", { name: "通过系统验证解锁", exact: true })
+          .count(),
+        0,
+      );
+    }
+    if (scene === "readonly")
+      await page
+        .getByText("当前装配未提供个人 Passkey 能力", { exact: true })
+        .waitFor();
+    if (scene === "empty") {
+      await page
+        .getByRole("button", { name: "通过系统验证解锁", exact: true })
+        .click();
+      await page.getByText("还没有网站 Passkey", { exact: true }).waitFor();
+    }
+    await settings("运行与诊断");
+    if (["error", "offline"].includes(scene)) {
+      await page
+        .getByText("无法读取 AI Host 状态，请重试。", { exact: true })
+        .waitFor();
+      await page
+        .getByRole("button", { name: "预览脱敏诊断", exact: true })
+        .click();
+      const diagnostic = page.getByRole("dialog");
+      await diagnostic
+        .getByText("无法生成诊断预览，请重试。", { exact: true })
+        .waitFor();
+      assert.equal(
+        await diagnostic
+          .getByRole("button", { name: "保存此脱敏快照", exact: true })
+          .count(),
+        0,
+      );
+      await page.keyboard.press("Escape");
+      await diagnostic.waitFor({ state: "hidden" });
+    }
+    await settings("账号与组织");
+    await page
+      .getByRole("heading", { name: "账号与组织", exact: true })
+      .waitFor();
+    await settings("外观与体验");
+    await page
+      .getByRole("combobox", { name: "界面主题", exact: true })
+      .waitFor();
+    const submitted = await page.evaluate(() =>
+      window.rssPageFixture.events.filter((event) =>
+        [
+          "software_submit",
+          "policy_invoke",
+          "network_run",
+          "settings_change",
+          "query_submit",
+          "diagnostics_export",
+        ].includes(event.operation),
+      ),
+    );
+    assert.deepEqual(
+      submitted,
+      [],
+      `${scene}: inspection must not submit a device operation or export`,
+    );
   }
+  evidence.checks.push(
+    "independent error/offline/empty/partial/read-only behaviors across software, system, tools, connections, Vault, diagnostics, account and local appearance; no unintended submissions",
+  );
   writeFileSync(
     new URL("react-pages-evidence.json", directory),
     JSON.stringify(evidence, null, 2),

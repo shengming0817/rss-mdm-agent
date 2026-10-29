@@ -319,6 +319,7 @@ export function checkSource(file, source) {
       "localActionLabels",
       "taskPhase",
     ],
+    "apps/desktop/src/software/PolicyTasks.tsx": ["taskPhase"],
     "apps/desktop/src/software/presentation.ts": [
       "categoryTones",
       "blockReason",

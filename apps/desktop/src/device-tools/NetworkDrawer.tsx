@@ -118,6 +118,12 @@ export function NetworkDrawer({
             <Button disabled={state.busy} onClick={() => void owner.recover()}>
               查询原检测
             </Button>
+            {(!state.status ||
+              state.status.status.phase === "outcomeUnknown") && (
+              <Button disabled={state.busy} onClick={() => void owner.resend()}>
+                重送原检测请求
+              </Button>
+            )}
             <Button
               onClick={() => {
                 const request = owner.state.request;

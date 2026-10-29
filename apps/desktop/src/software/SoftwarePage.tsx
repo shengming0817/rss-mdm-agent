@@ -1,14 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  Alert,
-  Button,
-  Input,
-  Segmented,
-  Select,
-  Table,
-  Tabs,
-  Tag,
-} from "antd";
+import { Alert, Button, Input, Segmented, Select, Table, Tag } from "antd";
 import {
   AppstoreOutlined,
   ArrowRightOutlined,
@@ -285,16 +276,6 @@ export function SoftwarePage({
                 )}
               </>
             }
-          />
-          <Tabs
-            className="rss-software-view-tabs"
-            activeKey={section.startsWith("category:") ? "discover" : section}
-            onChange={(value) => workspace.navigation.select("software", value)}
-            items={[
-              { key: "discover", label: "发现" },
-              { key: "installed", label: "已安装" },
-              { key: "updates", label: "更新" },
-            ]}
           />
           {section === "discover" && !query && (
             <div className="rss-store-editorial">

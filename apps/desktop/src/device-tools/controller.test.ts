@@ -56,3 +56,38 @@ it("does not accept another request's receipt or publish after the workspace ret
   expect(owner.state.status).toBeNull();
   expect(owner.state.request).toBeNull();
 });
+it("allows correction after explicit invalid input, while unknown delivery resends the same request and target", async () => {
+  const port = vi
+      .fn<NetworkCheckPort>()
+      .mockRejectedValueOnce({ code: "network_invalid_input" }),
+    identity = vi
+      .fn()
+      .mockReturnValueOnce("rejected")
+      .mockReturnValue("original");
+  const owner = createNetworkCheck(port, identity);
+  await owner.run({ host: "-bad.example", port: 443 });
+  expect(owner.state.request).toBeNull();
+  port.mockRejectedValueOnce(Error("offline"));
+  await owner.run({ host: "service.example", port: 443 });
+  port.mockRejectedValueOnce({ code: "network_not_found" });
+  await owner.recover();
+  port.mockResolvedValueOnce({
+    kind: "status",
+    value: {
+      status: {
+        ...executionTask().status,
+        operationRequestId: "original",
+        phase: "executionEnded",
+      },
+      result: null,
+    },
+  });
+  await owner.resend();
+  expect(port).toHaveBeenLastCalledWith({
+    kind: "run",
+    request: "original",
+    target: { host: "service.example", port: 443 },
+  });
+  expect(identity).toHaveBeenCalledTimes(2);
+  owner.dispose();
+});

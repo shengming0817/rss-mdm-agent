@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Alert, Button, Progress, Tag } from "antd";
 import {
   BulbOutlined,
@@ -52,6 +52,35 @@ export function SystemPage({
   section: string;
   active: boolean;
 }) {
+  const [visited, setVisited] = useState<string[]>([section]);
+  useEffect(() => {
+    setVisited((values) =>
+      values.includes(section) ? values : [...values, section],
+    );
+  }, [section]);
+  return (
+    <>
+      {[...new Set([...visited, section])].map((id) => (
+        <div key={id} hidden={id !== section}>
+          <SystemSection
+            workspace={workspace}
+            section={id}
+            active={active && id === section}
+          />
+        </div>
+      ))}
+    </>
+  );
+}
+function SystemSection({
+  workspace,
+  section,
+  active,
+}: {
+  workspace: Workspace;
+  section: string;
+  active: boolean;
+}) {
   const state = useSnapshot(workspace.system.state),
     nav = useSnapshot(workspace.navigation.state),
     device = useSnapshot(workspace.device.state),
@@ -63,15 +92,24 @@ export function SystemPage({
     response = state.observations.get(scope),
     snapshot = response?.snapshot,
     pending = state.pending.get(scope),
-    busy = state.busy.has(scope) || state.reads.has(scope),
+    overviewSections = ["network", "storage", "power", "about"] as const,
+    busy =
+      section === "overview"
+        ? overviewSections.some(
+            (id) => state.busy.has(id) || state.reads.has(id),
+          ) || device.loading
+        : state.busy.has(scope) || state.reads.has(scope),
     relevant = workspace.system.relevant(scope, state),
     attributes = device.value?.attributes;
+  const read = () => {
+    if (section === "overview") {
+      void workspace.device.refresh();
+      for (const id of overviewSections) void workspace.system.load(id);
+    } else void workspace.system.load(scope);
+  };
   useEffect(() => {
     if (!active) return;
-    if (section === "overview")
-      for (const id of ["network", "storage", "power", "about"] as const)
-        void workspace.system.load(id);
-    else void workspace.system.load(scope);
+    read();
   }, [workspace, section, active]);
   const summaries: Record<string, string> = {
     network: `${facts.network} · ${facts.networkDetail}`,
@@ -93,16 +131,39 @@ export function SystemPage({
         title="系统设置"
         description="查看设备状态，按权限调整当前设备的设置。"
         actions={
-          <Button
-            disabled={busy}
-            onClick={() => void workspace.system.load(scope)}
-          >
+          <Button disabled={busy} onClick={read}>
             重读状态
           </Button>
         }
       />
       {section === "overview" ? (
         <>
+          {busy && <StatePanel kind="loading" title="正在读取设备与系统观察" />}
+          {device.error && <Alert type="warning" title={device.error} />}
+          {overviewSections
+            .filter((id) => state.errors.has(id))
+            .map((id) => (
+              <Alert
+                key={id}
+                type="warning"
+                title={`${entries.find((entry) => entry.id === id)?.title ?? id}：${state.errors.get(id)}`}
+              />
+            ))}
+          {!workspace.system.available && (
+            <StatePanel kind="readonly" title="当前装配未提供本机设置能力" />
+          )}
+          {!busy &&
+            !device.value &&
+            !state.facts.size &&
+            !overviewSections.some(
+              (id) => state.observations.get(id)?.snapshot?.targets.length,
+            ) && (
+              <StatePanel
+                kind="empty"
+                title="尚无可读设备观察"
+                description="可重新读取各来源；未读取字段不会显示为零或关闭。"
+              />
+            )}
           <div className="rss-system-banner">
             <DesktopOutlined />
             <div>

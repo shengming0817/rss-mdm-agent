@@ -131,6 +131,8 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
     const detail = taskDetail(choice.request);
     detail.facts = { kind: "preparation", value: record };
     detail.taskKind = "policy";
+    detail.policy = { id: choice.policyId, revision: item.policyVersion };
+    detail.policyRevision = item.policyRevision;
     details.set(choice.request, detail);
     return deepClone(record);
   };
@@ -271,21 +273,32 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
       return deepClone(value);
     };
   }
+  let taskScope: string | undefined;
   const baseTask = local.tasks;
   if (baseTask)
     local.tasks = {
       ...baseTask,
-      detail: async (reference) =>
-        reference.kind === "request" && details.has(reference.request)
-          ? deepClone(details.get(reference.request)!)
-          : baseTask.detail(reference),
+      detail: async (reference) => {
+        const value =
+          reference.kind === "request"
+            ? details.get(reference.request)
+            : undefined;
+        if (!value) return baseTask.detail(reference);
+        if (taskScope) value.scope = taskScope;
+        return deepClone(value);
+      },
       list: async (query) => {
         const page = await baseTask.list(query);
+        taskScope = page.scope;
+        for (const detail of details.values()) detail.scope = taskScope;
         return {
           ...page,
           items: [...details.values()]
             .map((value) => deepClone(value))
-            .concat(page.items),
+            .concat(page.items)
+            .filter(
+              (value) => !query.policy || value.policy?.id === query.policy,
+            ),
         };
       },
     };
@@ -506,6 +519,22 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
       };
     return deepClone(vault);
   };
+  if (empty) vault.entries = [];
+  if (offline || scene === "error") {
+    input.assistantServices!.connect = async () => {
+      throw Error("fixture AI unavailable");
+    };
+    environment.host.read = async () => {
+      throw Error("fixture host unavailable");
+    };
+    environment.service.read = async () => {
+      throw Error("fixture service unavailable");
+    };
+  }
+  if (readOnly) {
+    environment.personalVault = undefined;
+    environment.connectionSave = undefined;
+  }
   const previews = new Set<string>();
   environment.diagnostics = {
     prepare: async (scopes) => {

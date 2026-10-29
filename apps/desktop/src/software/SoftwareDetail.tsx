@@ -17,6 +17,7 @@ import {
   scopeLabel,
 } from "./presentation";
 import { taskPhase } from "../task-center/controller";
+import { PolicyTasks } from "./PolicyTasks";
 
 export function SoftwareDetail({
   workspace,
@@ -224,42 +225,48 @@ export function SoftwareDetail({
           ) : (
             <div className="rss-stack">
               <h2>与 {name} 相关的原任务</h2>
-              {software.historyError && (
-                <Alert type="warning" title={software.historyError} />
-              )}
-              {related.map((value) => (
-                <Button
-                  className="rss-related-task"
-                  key={value.prepared.request}
-                  onClick={() => {
-                    workspace.navigation.select("tasks", "history");
-                    void workspace.tasks.openTask({
-                      kind: "request",
-                      request: value.prepared.request,
-                    });
-                  }}
-                >
-                  {value.prepared.choice.action} ·{" "}
-                  {taskPhase[value.execution.phase]}
-                  <small>{value.prepared.request}</small>
-                </Button>
-              ))}
-              {!related.length && (
-                <StatePanel
-                  kind="empty"
-                  title="当前读取范围内没有精确关联的任务"
-                  description="只按原安装引用关联，不按软件名称匹配。"
-                />
-              )}
-              {!software.historyComplete && (
-                <Button
-                  disabled={software.historyBusy}
-                  onClick={() =>
-                    void workspace.software.history(!!software.historyNext)
-                  }
-                >
-                  读取原操作记录
-                </Button>
+              {policy ? (
+                <PolicyTasks workspace={workspace} policy={policy.policyId} />
+              ) : (
+                <>
+                  {software.historyError && (
+                    <Alert type="warning" title={software.historyError} />
+                  )}
+                  {related.map((value) => (
+                    <Button
+                      className="rss-related-task"
+                      key={value.prepared.request}
+                      onClick={() => {
+                        workspace.navigation.select("tasks", "history");
+                        void workspace.tasks.openTask({
+                          kind: "request",
+                          request: value.prepared.request,
+                        });
+                      }}
+                    >
+                      {value.prepared.choice.action} ·{" "}
+                      {taskPhase[value.execution.phase]}
+                      <small>{value.prepared.request}</small>
+                    </Button>
+                  ))}
+                  {!related.length && (
+                    <StatePanel
+                      kind="empty"
+                      title="当前读取范围内没有精确关联的任务"
+                      description="只按原安装引用关联，不按软件名称匹配。"
+                    />
+                  )}
+                  {!software.historyComplete && (
+                    <Button
+                      disabled={software.historyBusy}
+                      onClick={() =>
+                        void workspace.software.history(!!software.historyNext)
+                      }
+                    >
+                      读取原操作记录
+                    </Button>
+                  )}
+                </>
               )}
             </div>
           )}

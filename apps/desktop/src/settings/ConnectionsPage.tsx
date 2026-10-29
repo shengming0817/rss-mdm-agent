@@ -41,7 +41,6 @@ export function ConnectionsPage({
   useEffect(() => {
     if (!active) {
       setSecret("");
-      setEditing(null);
     }
   }, [active]);
   useEffect(

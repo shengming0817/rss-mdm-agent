@@ -113,3 +113,51 @@ it("reports unavailable observations and missing capabilities honestly in offlin
   ).toBeGreaterThan(0);
   readOnly.app.unmount();
 });
+it("retains system drafts across secondary navigation and rereads every overview scope after a failed observation", async () => {
+  const f = await mount();
+  act(() => {
+    f.workspace.navigation.select("system", "network");
+  });
+  const input = await f
+    .page("系统设置")
+    .findByRole("textbox", { name: "HTTP 代理服务器" });
+  fireEvent.change(input, { target: { value: "retained.example" } });
+  act(() => {
+    f.workspace.navigation.select("system", "display");
+  });
+  await f.page("系统设置").findByRole("heading", { name: "显示器" });
+  act(() => {
+    f.workspace.navigation.select("system", "network");
+  });
+  expect(
+    (
+      (await f
+        .page("系统设置")
+        .findByRole("textbox", { name: "HTTP 代理服务器" })) as HTMLInputElement
+    ).value,
+  ).toBe("retained.example");
+  const read = vi.spyOn(f.workspace.system, "load");
+  act(() => {
+    f.workspace.system.state.errors.set("network", "读取失败");
+    f.workspace.navigation.select("system", "overview");
+  });
+  await f.page("系统设置").findByRole("heading", { name: "Current Device" });
+  await waitFor(() =>
+    expect(
+      (
+        f
+          .page("系统设置")
+          .getByRole("button", { name: "重读状态" }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false),
+  );
+  read.mockClear();
+  fireEvent.click(f.page("系统设置").getByRole("button", { name: "重读状态" }));
+  expect(read.mock.calls.map((call) => call[0])).toEqual([
+    "network",
+    "storage",
+    "power",
+    "about",
+  ]);
+  f.app.unmount();
+});

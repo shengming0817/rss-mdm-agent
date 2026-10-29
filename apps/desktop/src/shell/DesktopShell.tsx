@@ -24,7 +24,7 @@ import { layouts, type PageId } from "../state/navigation";
 import { useDesktop, usePlatform } from "../state/react";
 import { WindowControls } from "./WindowControls";
 import { nativeWindow } from "../workspace/window";
-import { pageTitle } from "./navigation-model";
+import { pageTitle, secondaryEntries } from "./navigation-model";
 import { HiddenSecondary, PrimaryNavigation } from "./NavigationMenu";
 import "./shell.css";
 function EntryFeedback({
@@ -223,9 +223,10 @@ export function DesktopShell({
     enterprise = workspace.identity.identity.mode === "user_device";
   const menu = {
     items: [
-      { key: "account", label: "账号与组织" },
-      { key: "registration", label: "设备注册与 MDM" },
-      { key: "appearance", label: "外观与体验" },
+      ...secondaryEntries("settings", platform).map((entry) => ({
+        key: entry.id,
+        label: entry.title,
+      })),
       { type: "divider" as const },
       { key: "login", label: enterprise ? "切换账号" : "登录企业账号" },
       { key: "logout", label: enterprise ? "退出企业账号" : "刷新本机会话" },
