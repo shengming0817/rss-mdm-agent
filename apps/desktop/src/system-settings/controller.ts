@@ -110,6 +110,7 @@ export function createSystemSettings(
   };
   function accept(section: SettingsSection, response: SettingsResponse) {
     if (!active) return;
+    state.now = Date.now();
     response = deepClone(response);
     const pending = state.pending.get(section);
     if (!response.request && pending) return;
@@ -117,7 +118,15 @@ export function createSystemSettings(
     if (response.finished && response.request === pending?.request)
       state.pending.delete(section);
   }
+  let directoryFlight: Promise<void> | undefined;
   async function directory() {
+    if (directoryFlight) return directoryFlight;
+    directoryFlight = readDirectory().finally(() => {
+      directoryFlight = undefined;
+    });
+    return directoryFlight;
+  }
+  async function readDirectory() {
     if (!data || !active || state.sources.length) return;
     let after: string | null = null;
     const sources: QueryDescriptor[] = [],
@@ -184,6 +193,7 @@ export function createSystemSettings(
           }),
         );
         if (active && call === epoch) {
+          state.now = Date.now();
           ageFact(value);
           state.facts.set(source.reference.id, { source, value });
         }

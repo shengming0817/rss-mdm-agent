@@ -1,0 +1,676 @@
+.rss-home-page {
+  min-height: 100%;
+}
+.rss-home-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 28px;
+}
+.rss-eyebrow {
+  display: block;
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 1.7px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.rss-home-page .rss-home-heading h1 {
+  margin: 8px 0 5px;
+}
+.rss-home-heading .ant-tag {
+  margin: 0;
+  font-size: 10px;
+}
+.rss-home-notice {
+  margin-bottom: 18px;
+}
+.rss-home-hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(275px, 1fr);
+  gap: 18px;
+  margin-bottom: 22px;
+}
+.rss-device-hero {
+  position: relative;
+  min-height: 258px;
+  overflow: hidden;
+  padding: 27px;
+  background: #f0f1ef;
+  border: 1px solid #e4e7e3;
+  border-radius: 14px;
+}
+.rss-home-page .rss-device-hero h2 {
+  font-size: 26px;
+  line-height: 1.5;
+  letter-spacing: -0.8px;
+  font-weight: 620;
+  position: relative;
+  z-index: 1;
+  margin-top: 10px;
+  max-width: 65%;
+}
+.rss-device-description {
+  position: relative;
+  z-index: 1;
+  color: #6e7973;
+  font-size: 12px;
+  margin: 12px 0 22px;
+  max-width: 62%;
+}
+.rss-device-description p + p {
+  margin-top: 5px;
+}
+.rss-device-hero > .ant-btn {
+  position: relative;
+  z-index: 1;
+  font-size: 12px;
+  border-color: #d5dad6;
+  background: #f8faf8;
+}
+.rss-home-laptop {
+  position: absolute;
+  right: 16px;
+  bottom: 29px;
+  width: 215px;
+  transform: rotate(-7deg);
+  filter: drop-shadow(0 14px 12px #20392420);
+}
+.rss-home-screen {
+  height: 137px;
+  background: #252c2c;
+  border: 5px solid #414a49;
+  border-radius: 9px 9px 3px 3px;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 0 0 1px #a7b1ae;
+}
+.rss-home-wallpaper {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  position: relative;
+  background:
+    radial-gradient(ellipse at 20% 120%, #a3b9ad 0, transparent 65%),
+    radial-gradient(ellipse at 90% 0, #9dacca 0, transparent 65%), #d4d8d5;
+  color: #52645a;
+}
+.rss-home-wallpaper small {
+  font-size: 7px;
+  letter-spacing: 1.6px;
+  margin-bottom: 4px;
+}
+.rss-home-wallpaper strong {
+  font-size: 37px;
+  font-weight: 350;
+  letter-spacing: -2px;
+}
+.rss-home-dock {
+  display: flex;
+  gap: 4px;
+  background: #ffffff70;
+  border-radius: 7px;
+  padding: 4px;
+  margin-top: 5px;
+}
+.rss-home-dock i {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  font-size: 9px;
+  font-style: normal;
+  border-radius: 4px;
+  background: #f8f8ffb0;
+  color: #8a83c8;
+}
+.rss-home-laptop-base {
+  height: 6px;
+  border-radius: 1px 1px 9px 9px;
+  background: linear-gradient(#acb6b0, #d6ded9);
+  margin: 0 -10px;
+}
+.rss-assistant-hero {
+  display: flex;
+  flex-direction: column;
+  padding: 23px 24px;
+  border: 1px solid #e5e0f2;
+  background: #efedf8;
+  border-radius: 14px;
+  min-width: 0;
+}
+.rss-home-ai-symbol {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  background: #faf9ff;
+  border-radius: 10px;
+  color: #7768bd;
+  font-size: 29px;
+  line-height: 1;
+  margin-bottom: 10px;
+}
+.rss-home-page .rss-assistant-hero h2 {
+  font-size: 21px;
+  line-height: 1.55;
+  letter-spacing: -0.5px;
+  color: #3e3756;
+}
+.rss-home-page .rss-assistant-hero > p {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #8b849f;
+  margin: 6px 0 18px;
+}
+.rss-home-prompt {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  padding: 5px;
+  border: 1px solid #ddd7f2;
+  border-radius: 10px;
+  background: #fbfaff;
+  min-width: 0;
+}
+.rss-home-prompt .ant-input {
+  font-size: 11px;
+  background: transparent;
+  border: 0;
+  box-shadow: none !important;
+  min-width: 0;
+}
+.rss-home-prompt .ant-btn {
+  width: 29px;
+  min-width: 29px;
+  height: 29px;
+  border-radius: 7px;
+  background: #8171b8;
+  border-color: #8171b8;
+}
+.rss-home-suggestions {
+  display: flex;
+  gap: 14px;
+  margin-top: 10px;
+}
+.rss-home-suggestions button {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #8d85a2;
+  font-size: 10px;
+  cursor: pointer;
+}
+.rss-home-suggestions button:hover {
+  color: var(--accent);
+}
+.rss-home-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 28px;
+}
+.rss-home-stat {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  text-align: left;
+  padding: 17px 19px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  min-height: 132px;
+}
+.rss-home-stat:hover {
+  border-color: var(--accent);
+}
+.rss-stat-label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 11px;
+  color: var(--muted);
+}
+.rss-home-stat > strong {
+  font-size: 23px;
+  line-height: 1.35;
+  letter-spacing: -0.5px;
+  font-weight: 650;
+  margin: 13px 0 7px;
+  overflow-wrap: anywhere;
+}
+.rss-home-stat > strong em {
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--muted);
+  margin-left: 4px;
+}
+.rss-home-stat > small {
+  font-size: 10px;
+  line-height: 1.6;
+  color: var(--muted);
+  margin-bottom: 13px;
+  overflow-wrap: anywhere;
+}
+.rss-home-meter {
+  display: block;
+  position: relative;
+  width: 100%;
+  height: 4px;
+  border-radius: 3px;
+  background: var(--hover);
+  margin-top: auto;
+  overflow: hidden;
+}
+.rss-home-meter i {
+  display: block;
+  height: 100%;
+  background: #7eb8a1;
+  border-radius: 3px;
+}
+.rss-home-meter.purple i {
+  background: #a29ad1;
+}
+.rss-home-meter.neutral i {
+  background: var(--line);
+}
+.rss-home-lower {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 28px;
+  margin-bottom: 28px;
+}
+.rss-home-section-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 17px;
+}
+.rss-home-page .rss-home-section-heading h3 {
+  font-size: 14px;
+}
+.rss-home-section-heading > button,
+.rss-home-device-note > button:not(.ant-btn) {
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+  white-space: nowrap;
+}
+.rss-home-apps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  min-height: 112px;
+  padding: 20px 14px;
+}
+.rss-home-app {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 4px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font-size: 10px;
+  color: var(--text);
+  border-radius: 9px;
+}
+.rss-home-app > span:last-child {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rss-home-app:hover {
+  background: var(--hover);
+}
+.rss-home-app-icon {
+  display: grid;
+  place-items: center;
+  width: 39px;
+  height: 39px;
+  border-radius: 12px;
+  border: 1px solid #dfeaf4;
+  background: #eef6ff;
+  color: #5b9bbf;
+  font-size: 20px;
+  font-weight: 550;
+}
+.rss-home-app:nth-child(2) .rss-home-app-icon {
+  background: #edf4e8;
+  color: #659560;
+  border-color: #e1ebda;
+}
+.rss-home-app:nth-child(3) .rss-home-app-icon {
+  background: #f7ebf5;
+  color: #ab6a9b;
+  border-color: #efdeec;
+}
+.rss-home-app:nth-child(4) .rss-home-app-icon {
+  background: #fbefe6;
+  color: #c38059;
+  border-color: #f2e4d9;
+}
+.rss-home-apps > .rss-state-panel,
+.rss-home-apps > [role="status"],
+.rss-home-apps > .ant-empty {
+  grid-column: 1/-1;
+}
+.rss-home-source {
+  font-size: 9px;
+  color: var(--muted);
+  margin-top: 9px !important;
+  line-height: 1.6;
+}
+.rss-home-activity {
+  display: grid;
+}
+.rss-home-activity-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 12px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+  color: var(--text);
+  padding: 14px 0;
+  cursor: pointer;
+  font: inherit;
+}
+.rss-home-activity-row:first-child {
+  padding-top: 8px;
+}
+.rss-home-activity-row:last-child {
+  border-bottom: 0;
+}
+.rss-home-activity-row:hover {
+  color: var(--accent);
+}
+.rss-home-activity-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  background: var(--tint);
+  color: var(--accent);
+  border-radius: 9px;
+  font-size: 12px;
+}
+.rss-home-activity-row strong {
+  font-size: 11px;
+  font-weight: 550;
+  display: block;
+  overflow-wrap: anywhere;
+}
+.rss-home-activity-row small {
+  display: block;
+  margin-top: 5px;
+  font-size: 9px;
+  color: var(--muted);
+}
+.rss-home-activity-row time {
+  font-size: 9px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.rss-home-device-note {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+  font-size: 10px;
+  color: var(--muted);
+}
+.rss-home-device-note > span:not(.anticon) {
+  flex: 1;
+  min-width: 120px;
+  overflow-wrap: anywhere;
+}
+.rss-ui[data-theme="dark"] .rss-device-hero {
+  background: #2c3532;
+  border-color: #3c4640;
+}
+.rss-ui[data-theme="dark"] .rss-device-description {
+  color: #a4b0a8;
+}
+.rss-ui[data-theme="dark"] .rss-device-hero > .ant-btn {
+  background: #35413a;
+  border-color: #4b5a50;
+  color: #c9d9ce;
+}
+.rss-ui[data-theme="dark"] .rss-assistant-hero {
+  background: #302b45;
+  border-color: #423a5e;
+}
+.rss-ui[data-theme="dark"] .rss-home-page .rss-assistant-hero h2 {
+  color: #e0d9f5;
+}
+.rss-ui[data-theme="dark"] .rss-home-page .rss-assistant-hero > p {
+  color: #a99fc2;
+}
+.rss-ui[data-theme="dark"] .rss-home-ai-symbol {
+  background: #403756;
+  color: #baa8f0;
+}
+.rss-ui[data-theme="dark"] .rss-home-prompt {
+  background: #262235;
+  border-color: #4d4368;
+}
+.rss-ui[data-theme="dark"] .rss-home-app-icon {
+  background: #263545;
+  border-color: #34495c;
+  color: #83b8e4;
+}
+.rss-ui[data-theme="dark"] .rss-home-app:nth-child(2) .rss-home-app-icon {
+  background: #2c3d2b;
+  border-color: #394e35;
+  color: #a2c59b;
+}
+.rss-ui[data-theme="dark"] .rss-home-app:nth-child(3) .rss-home-app-icon {
+  background: #442d40;
+  border-color: #563a52;
+  color: #d29ac6;
+}
+.rss-ui[data-theme="dark"] .rss-home-app:nth-child(4) .rss-home-app-icon {
+  background: #48372b;
+  border-color: #594435;
+  color: #d4aa8a;
+}
+@media (min-width: 1450px) {
+  .rss-home-page {
+    padding-top: 38px;
+  }
+  .rss-home-hero-grid {
+    grid-template-columns: 1.6fr 1fr;
+  }
+  .rss-device-hero {
+    min-height: 280px;
+  }
+  .rss-home-page .rss-device-hero h2 {
+    font-size: 30px;
+  }
+  .rss-home-laptop {
+    width: 245px;
+    right: 24px;
+    bottom: 35px;
+  }
+  .rss-home-screen {
+    height: 155px;
+  }
+}
+@media (max-width: 1180px) {
+  .rss-home-page {
+    padding: 25px;
+  }
+  .rss-home-laptop {
+    width: 165px;
+    right: 13px;
+    bottom: 34px;
+  }
+  .rss-home-screen {
+    height: 110px;
+  }
+  .rss-home-wallpaper strong {
+    font-size: 29px;
+  }
+  .rss-home-page .rss-device-hero h2 {
+    font-size: 23px;
+  }
+  .rss-home-hero-grid {
+    grid-template-columns: 1.25fr 1fr;
+  }
+  .rss-home-stat {
+    padding: 16px 14px;
+  }
+  .rss-home-stat > strong {
+    font-size: 21px;
+  }
+  .rss-home-stat > small {
+    font-size: 9px;
+  }
+}
+@media (max-width: 960px) {
+  .rss-home-hero-grid {
+    grid-template-columns: 1.2fr 1fr;
+  }
+  .rss-device-description {
+    max-width: 70%;
+  }
+  .rss-home-laptop {
+    opacity: 0.7;
+    right: -8px;
+    width: 145px;
+  }
+  .rss-home-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .rss-home-lower {
+    gap: 20px;
+  }
+  .rss-home-activity-row {
+    gap: 8px;
+  }
+}
+@media (max-width: 720px) {
+  .rss-home-page {
+    padding: 22px 18px;
+  }
+  .rss-home-heading {
+    align-items: flex-start;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 22px;
+  }
+  .rss-home-hero-grid,
+  .rss-home-lower {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .rss-device-hero {
+    min-height: 235px;
+    padding: 24px;
+  }
+  .rss-home-page .rss-device-hero h2 {
+    font-size: 24px;
+  }
+  .rss-home-laptop {
+    width: 170px;
+    right: 5px;
+    bottom: 25px;
+    opacity: 1;
+  }
+  .rss-home-screen {
+    height: 112px;
+  }
+  .rss-assistant-hero {
+    min-height: 220px;
+    padding: 22px;
+  }
+  .rss-home-page .rss-assistant-hero h2 {
+    font-size: 20px;
+  }
+  .rss-home-lower {
+    gap: 24px;
+  }
+  .rss-home-stats {
+    gap: 10px;
+    margin-bottom: 24px;
+  }
+  .rss-home-stat {
+    padding: 15px 13px;
+  }
+  .rss-home-stat > strong {
+    font-size: 21px;
+  }
+  .rss-device-description {
+    max-width: 60%;
+    font-size: 11px;
+  }
+  .rss-home-device-note {
+    gap: 7px;
+  }
+  .rss-home-activity-row time {
+    max-width: 72px;
+    white-space: normal;
+  }
+  .rss-home-apps {
+    padding: 17px 10px;
+  }
+  .rss-home-app-icon {
+    width: 35px;
+    height: 35px;
+  }
+  .rss-home-page .rss-home-heading h1 {
+    font-size: 25px;
+  }
+}
+@media (max-width: 440px) {
+  .rss-home-page .rss-device-hero h2 {
+    max-width: 100%;
+  }
+  .rss-home-laptop {
+    width: 130px;
+    opacity: 0.45;
+  }
+  .rss-home-screen {
+    height: 90px;
+  }
+  .rss-home-wallpaper strong {
+    font-size: 24px;
+  }
+  .rss-device-description {
+    max-width: 80%;
+  }
+  .rss-home-heading .ant-tag {
+    max-width: 100%;
+    white-space: normal;
+  }
+  .rss-home-section-heading > button {
+    font-size: 10px;
+  }
+}

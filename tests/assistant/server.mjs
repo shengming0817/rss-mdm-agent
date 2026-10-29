@@ -20,7 +20,6 @@ const { channelStream } = await import(
 );
 const {
   FakeHost,
-  fixtureCaller,
   fixtures,
   surfaceCommit,
   readSnapshot,
@@ -39,6 +38,15 @@ const options = {
   profile: "conversation",
 };
 export async function createFixture() {
+  const guest = fixtures.valid.find(
+    (value) => value.kind === "userContext",
+  ).identity;
+  const guestCaller = {
+    authorityId: guest.authorityId,
+    tenantId: guest.tenantId,
+    principalId: guest.principalId,
+  };
+  let fixtureCaller = { ...guestCaller };
   const host = new FakeHost(
     undefined,
     { now: Date.now },
@@ -48,33 +56,38 @@ export async function createFixture() {
       continuation: "same_process",
     },
   );
-  unwrap(
-    await host.store.saveConnection(
-      fixtureCaller,
-      {
-        schemaVersion: 1,
-        kind: "connection",
-        connectionId: "cfg",
-        presentation: { name: "默认连接" },
-        provider: "codex",
-        configRevision: 1,
+  async function configureCaller() {
+    const catalog = unwrap(await host.store.connections(fixtureCaller));
+    if (catalog.some((row) => row.connectionId === "cfg")) return;
+    unwrap(
+      await host.store.saveConnection(
+        fixtureCaller,
+        {
+          schemaVersion: 1,
+          kind: "connection",
+          connectionId: "cfg",
+          presentation: { name: "默认连接" },
+          provider: "codex",
+          configRevision: 1,
 
-        status: "ready",
-        profile: "conversation",
-        source: {
-          type: "custom_api",
-          apiUrl: "https://example.invalid",
-          model: "fixture",
+          status: "ready",
+          profile: "conversation",
+          source: {
+            type: "custom_api",
+            apiUrl: "https://example.invalid",
+            model: "fixture",
+          },
         },
-      },
-      null,
-    ),
-  );
-  unwrap(
-    await host.store.savePreferences(fixtureCaller, {
-      defaultConnectionId: { set: "cfg" },
-    }),
-  );
+        null,
+      ),
+    );
+    unwrap(
+      await host.store.savePreferences(fixtureCaller, {
+        defaultConnectionId: { set: "cfg" },
+      }),
+    );
+  }
+  await configureCaller();
   const service = createAccessService({
     host,
     now: Date.now,
@@ -93,6 +106,7 @@ export async function createFixture() {
   );
   identity.user.displayName = "本地工作区";
   identity.generation = "isolated-fixture-identity";
+  const guestIdentity = structuredClone(identity);
   let hostStatus = {
     schemaVersion: 1,
     kind: "hostStatus",
@@ -228,7 +242,7 @@ export async function createFixture() {
       items,
       next: null,
       scope: "fixture-native-scope",
-      asOf: 1000,
+      asOf: Date.now(),
       lastSync: null,
       remoteAvailable: false,
       coverage: [],
@@ -327,6 +341,7 @@ export async function createFixture() {
       } else if (
         [
           "/__fixture/identity",
+          "/__fixture/account",
           "/__fixture/host",
           "/__fixture/host-restart",
           "/__fixture/registration",
@@ -355,6 +370,51 @@ export async function createFixture() {
         }
         let value;
         switch (url.pathname) {
+          case "/__fixture/account": {
+            if (req.method !== "POST") throw Error("fixture account method");
+            for (const peer of peers.values()) {
+              peer.connection?.close();
+              peer.closed = true;
+              peer.disconnect?.();
+            }
+            if (input.guest) {
+              Object.assign(identity, structuredClone(guestIdentity));
+              fixtureCaller = { ...guestCaller };
+            } else {
+              const organization =
+                input.organization === "beichen" ? "beichen" : "qinghe";
+              const principal = String(input.login || "fixture-user").slice(
+                0,
+                64,
+              );
+              fixtureCaller = {
+                authorityId: "fixture-account",
+                tenantId:
+                  organization === "beichen"
+                    ? "22222222-2222-4333-8444-555555555555"
+                    : "11111111-2222-4333-8444-555555555555",
+                principalId: principal,
+              };
+              identity.user = {
+                schemaVersion: 1,
+                kind: "testUser",
+                userId: principal,
+                displayName: principal,
+                nameKey: principal.toLowerCase(),
+              };
+              identity.identity = {
+                mode: "user_device",
+                ...fixtureCaller,
+                organizationId: organization,
+                expiresAtMs: Date.now() + 3600000,
+              };
+            }
+            identity.generation = randomUUID();
+            identity.executionBinding = "fixture-" + randomUUID();
+            await configureCaller();
+            value = structuredClone(identity);
+            break;
+          }
           case "/__fixture/identity":
             value = structuredClone(identity);
             break;
@@ -467,6 +527,11 @@ export async function createFixture() {
           return;
         }
         res.end(JSON.stringify(details(url.searchParams.get("request"))));
+      } else if (url.pathname === "/__fixture/disconnect") {
+        peer?.connection?.close();
+        if (peer) peer.closed = true;
+        peers.delete(url.searchParams.get("peer"));
+        res.end("{}");
       } else if (!peer || peer.closed) {
         res.statusCode = 410;
         res.end("{}");
@@ -516,7 +581,9 @@ export async function createFixture() {
     selectScenario,
     host,
     service,
-    caller: fixtureCaller,
+    get caller() {
+      return fixtureCaller;
+    },
     execution,
     async seed(count = 23) {
       for (let i = 0; i < count; i++)
@@ -728,6 +795,9 @@ export async function startFixture() {
   await server.listen();
   return {
     ...fixture,
+    get caller() {
+      return fixture.caller;
+    },
     url: `http://127.0.0.1:${server.httpServer.address().port}/tests/assistant/`,
     async close() {
       await fixture.close();

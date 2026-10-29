@@ -29,6 +29,14 @@ import {
 export function createDesktop(input: WorkspaceInput = {}) {
   if (input.environment && !import.meta.env.DEV)
     throw Error("fixture is development-only");
+  const account = input.environment
+    ? proxy({
+        user: undefined as UserContext | undefined,
+        notice: "",
+        binding: "unbound" as typeof accountState.binding,
+        busy: false,
+      })
+    : accountState;
   const state = proxy({
     phase: "starting" as
       | "starting"
@@ -65,11 +73,7 @@ export function createDesktop(input: WorkspaceInput = {}) {
     previous?.dispose();
   }
   function replaceWorkspace(user?: UserContext) {
-    if (
-      !alive ||
-      (!input.environment && accountState.busy) ||
-      state.registrationPending
-    ) {
+    if (!alive || account.busy || state.registrationPending) {
       dropWorkspace();
       return;
     }
@@ -84,23 +88,21 @@ export function createDesktop(input: WorkspaceInput = {}) {
     state.phase = "ready";
     workspace.start();
   }
-  const stopAccount = input.environment
-    ? () => {}
-    : subscribe(
-        accountState,
-        () => {
-          if (bootstrapped) replaceWorkspace(accountState.user);
-        },
-        true,
-      );
+  const stopAccount = subscribe(
+    account,
+    () => {
+      if (bootstrapped) replaceWorkspace(account.user);
+    },
+    true,
+  );
   async function pollAccount() {
     if (
       !alive ||
       input.environment ||
       state.phase === "starting" ||
-      accountState.busy ||
+      account.busy ||
       state.registrationPending ||
-      !accountState.user ||
+      !account.user ||
       document.hidden ||
       reading
     )
@@ -141,6 +143,9 @@ export function createDesktop(input: WorkspaceInput = {}) {
       if (input.environment) {
         const user = await input.environment.identity.read();
         if (alive && current === epoch) {
+          account.user = user;
+          account.binding =
+            user.identity.mode === "user_device" ? "bound" : "unbound";
           bootstrapped = true;
           replaceWorkspace(user);
         }
@@ -152,13 +157,13 @@ export function createDesktop(input: WorkspaceInput = {}) {
         if (!alive || current !== epoch) return;
         if (!verified) throw Error("account_unverified");
         if (
-          !accountState.user &&
-          !["cleanup_pending", "conflict"].includes(accountState.binding)
+          !account.user &&
+          !["cleanup_pending", "conflict"].includes(account.binding)
         )
           await enterGuest();
         if (!alive || current !== epoch) return;
         bootstrapped = true;
-        replaceWorkspace(accountState.user);
+        replaceWorkspace(account.user);
       }
     } catch (error) {
       if (alive && current === epoch) {
@@ -175,40 +180,76 @@ export function createDesktop(input: WorkspaceInput = {}) {
       }
     }
   }
-  async function accountAction(action: () => Promise<unknown>) {
-    if (
-      !alive ||
-      input.environment ||
-      !bootstrapped ||
-      accountState.busy ||
-      state.registrationPending
-    )
-      return;
+  async function accountAction(
+    action: () => Promise<unknown>,
+    fixtureAction?: () => Promise<unknown>,
+  ): Promise<boolean> {
+    if (!alive || !bootstrapped || account.busy || state.registrationPending)
+      return false;
     state.error = "";
+    if (input.environment) {
+      if (!fixtureAction) return false;
+      const current = ++epoch;
+      account.busy = true;
+      account.user = undefined;
+      dropWorkspace();
+      try {
+        await fixtureAction();
+        const user = await input.environment.identity.read();
+        if (!alive || current !== epoch) return false;
+        account.user = user;
+        account.binding =
+          user.identity.mode === "user_device" ? "bound" : "unbound";
+        return true;
+      } catch (error) {
+        if (alive && current === epoch)
+          state.error = accountErrorMessage(error);
+        return false;
+      } finally {
+        if (alive && current === epoch) {
+          account.busy = false;
+          replaceWorkspace(account.user);
+        }
+      }
+    }
     try {
       await action();
+      if (!alive) return false;
+      replaceWorkspace(account.user);
+      return true;
     } catch (error) {
-      if (alive) state.error = accountErrorMessage(error);
+      if (alive) {
+        state.error = accountErrorMessage(error);
+        replaceWorkspace(account.user);
+      }
+      return false;
     }
-    if (alive) replaceWorkspace(accountState.user);
   }
   async function registrationAction<T>(run: () => Promise<T>) {
-    if (!alive || accountState.busy || state.registrationPending)
+    if (!alive || account.busy || state.registrationPending)
       throw Error("account_busy");
     registrationEpoch++;
     state.registrationPending = true;
+    state.error = "";
     invalidateAccountReads();
     dropWorkspace();
     try {
       return await run();
+    } catch (error) {
+      if (alive) state.error = accountErrorMessage(error);
+      throw error;
     } finally {
       if (alive) {
         if (!input.environment) await refreshAccount(() => alive);
         state.registrationPending = false;
         const user = input.environment
           ? await input.environment.identity.read()
-          : accountState.user;
-        if (alive) replaceWorkspace(user);
+          : account.user;
+        if (alive) {
+          if (input.environment) account.user = user;
+          replaceWorkspace(user);
+          state.workspace?.navigation.select("settings", "registration");
+        }
       }
     }
   }
@@ -221,17 +262,49 @@ export function createDesktop(input: WorkspaceInput = {}) {
   };
   return {
     state,
+    fixture: input.environment,
     appearance,
-    account: accountState,
+    account,
     service: servicePort,
     start,
     pollAccount,
-    login: (input: EnterpriseLogin) =>
-      accountAction(() => loginEnterprise(input)),
-    guest: () => accountAction(enterGuest),
+    login: (credentials: EnterpriseLogin) =>
+      accountAction(
+        () => loginEnterprise(credentials),
+        () => input.environment!.account!.password(credentials),
+      ),
+    guest: () =>
+      accountAction(enterGuest, () => input.environment!.identity.guest()),
     selectUser: (name: string) => accountAction(() => selectTestUser(name)),
-    logout: () => accountAction(logoutAccount),
-    recover: (clear = false) => accountAction(() => recoverAccount(clear)),
+    logout: () =>
+      accountAction(logoutAccount, () => input.environment!.identity.guest()),
+    recover: (clear = false) =>
+      accountAction(
+        () => recoverAccount(clear),
+        () => input.environment!.identity.guest(),
+      ),
+    confirmQr: input.environment?.account
+      ? () =>
+          accountAction(
+            async () => {},
+            async () => {
+              await input.environment!.account!.confirm();
+              if (!input.environment!.account!.state.current)
+                throw Error("login_cancelled");
+            },
+          )
+      : undefined,
+    loginClient: input.environment?.account
+      ? (id: string) =>
+          accountAction(
+            async () => {},
+            async () => {
+              await input.environment!.account!.loginClient(id);
+              if (!input.environment!.account!.state.current)
+                throw Error("login_cancelled");
+            },
+          )
+      : undefined,
     setTheme(theme: ThemePreference) {
       if (alive) state.theme = theme;
     },
@@ -246,6 +319,11 @@ export function createDesktop(input: WorkspaceInput = {}) {
       dropWorkspace();
       appearance.dispose();
       if (!input.environment) retireAccountOperations();
+      input.environment?.account?.cancel();
+      if (input.environment) {
+        account.user = undefined;
+        account.busy = false;
+      }
       state.users = [];
       state.error = "";
     },

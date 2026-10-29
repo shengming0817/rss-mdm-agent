@@ -176,6 +176,12 @@ export function checkSource(file, source) {
     "Symbol",
   ]);
   const ownerGlobals = {
+    "apps/desktop/src/account/AccountPage.tsx": ["crypto"],
+    "apps/desktop/src/shell/DesktopShell.tsx": [
+      "window",
+      "document",
+      "HTMLElement",
+    ],
     "apps/desktop/src/state/desktop.ts": [
       "document",
       "setInterval",
@@ -282,6 +288,22 @@ export function checkSource(file, source) {
     "dangerouslySetInnerHTML",
   ]);
   const dataIndex = {
+    "apps/desktop/src/App.tsx": ["nav.selected", "taskPhase"],
+    "apps/desktop/src/home/HomePage.tsx": ["taskPhase"],
+    "apps/desktop/src/shell/DesktopShell.tsx": ["layouts"],
+    "apps/desktop/src/assistant/messages.ts": [
+      "view.commands",
+      "view.messages",
+    ],
+    "apps/desktop/src/shell/GlobalSearch.tsx": ["matches"],
+    "apps/desktop/src/account/LoginDialog.tsx": ["labels"],
+    "apps/desktop/src/account/RegistrationPage.tsx": ["registrationLabels"],
+    "apps/desktop/src/shell/navigation-model.ts": [
+      "moduleIcons",
+      "sections",
+      "descriptions",
+    ],
+    "apps/desktop/src/shell/NavigationMenu.tsx": ["nav.selected"],
     "apps/desktop/src/state/navigation.ts": ["sections", "state.selected"],
     "packages/ui/src/theme.ts": ["palette"],
     "packages/ui/src/UiProvider.tsx": ["palette"],

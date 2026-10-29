@@ -100,7 +100,15 @@ impl DesktopRuntime {
             .ok_or_else(unavailable)?;
         let intent = self.registration_epoch.fetch_add(1, Ordering::AcqRel) + 1;
         drop(_switch);
-        let mut prepared = initial.status.registered;
+        // A resumed wait consumes the persisted operation, including an unknown configuration
+        // exchange. Preparing authorization again could conflict with that original operation.
+        let mut prepared = initial.status.registered
+            || !matches!(
+                initial.status.phase,
+                RegistrationPhase::Unregistered
+                    | RegistrationPhase::Rejected
+                    | RegistrationPhase::Paused
+            );
         let mut authorized = None;
         loop {
             self.registration_current(intent, &generation)?;

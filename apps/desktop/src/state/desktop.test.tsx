@@ -122,6 +122,8 @@ it("publishes only the verified startup identity and binds original IPC clients 
     current: user,
   });
   await starting;
+  expect(owner.confirmQr).toBeUndefined();
+  expect(owner.loginClient).toBeUndefined();
   const original = owner.state.workspace!;
   expect(original.key).toBe(workspaceIdentity(user));
   expect(
@@ -437,7 +439,8 @@ it("the production App exposes a working retry after a temporary startup failure
     fireEvent.click(screen.getByRole("button", { name: "重新读取" }));
     await vi.advanceTimersByTimeAsync(0);
   });
-  expect(screen.getByText("本机会话已读取，业务页面正在重建。")).toBeTruthy();
+  expect(screen.getByRole("heading", { name: /好/ })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "切换侧栏布局" })).toBeTruthy();
   app.unmount();
   await vi.advanceTimersByTimeAsync(0);
 });

@@ -1086,3 +1086,46 @@ function samplePageContext(title = "办公套件") {
     100,
   );
 }
+
+it("keeps an unchanged page revision after a repeat observation without renewing its frozen deadline", () => {
+  let now = 1000;
+  const c = createAssistant(
+    undefined,
+    () => "id",
+    () => now,
+    "tenant-a",
+  );
+  const make = (collectedAt: number, validUntil: number) =>
+    pageContext(
+      "home",
+      "主页",
+      [],
+      [
+        {
+          id: "task",
+          title: "Task",
+          description: "原任务阶段：running",
+          source: "service",
+          revision: "one",
+          collectedAt,
+          validUntil,
+        },
+      ],
+      "tenant-a",
+      now,
+    );
+  const original = make(1000, 2000);
+  c.stageContext(original);
+  c.draft.set("解释这个任务");
+  now = 1500;
+  const reread = make(1500, 3500);
+  c.validatePageContexts([reread]);
+  expect(c.context()?.stale).toBe(false);
+  expect(c.context()?.text).toBe(original.text);
+  expect(c.context()?.expiresAt).toBe(2000);
+  now = 2000;
+  c.validatePageContexts([reread]);
+  expect(c.context()?.stale).toBe(true);
+  expect(c.draft.get()).toBe("解释这个任务");
+  c.dispose();
+});

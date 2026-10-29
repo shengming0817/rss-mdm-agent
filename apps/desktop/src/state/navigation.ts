@@ -1,3 +1,4 @@
+import type { NavigationTarget } from "../workspace/page-navigation";
 import { proxy } from "valtio/vanilla";
 
 export const modules = [
@@ -51,10 +52,11 @@ export type LayoutStep = 0 | 1 | 2 | 3;
 export function createNavigation() {
   const state = proxy({
     page: "home" as PageId,
+    target: undefined as NavigationTarget | undefined,
     selected: Object.fromEntries(
       Object.entries(sections).map(([id, values]) => [id, values[0]]),
     ) as Record<PageId, string>,
-    layoutStep: 1 as LayoutStep,
+    layoutStep: 0 as LayoutStep,
     restoreStep: 1 as Exclude<LayoutStep, 0>,
     historyOpen: false,
     searchOpen: false,
@@ -75,6 +77,13 @@ export function createNavigation() {
     cycle() {
       state.layoutStep = ((state.layoutStep + 1) % 4) as LayoutStep;
       if (state.layoutStep !== 0) state.restoreStep = state.layoutStep;
+    },
+    locate(target: NavigationTarget) {
+      state.target = target;
+    },
+    collapse() {
+      state.layoutStep = 3;
+      state.restoreStep = 3;
     },
     hideOrRestore() {
       if (state.layoutStep === 0) state.layoutStep = state.restoreStep;

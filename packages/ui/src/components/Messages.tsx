@@ -10,6 +10,7 @@ export function MessageComposer({
   onSend,
   onCancel,
   disabled = false,
+  canSend = true,
   busy = false,
   context,
 }: {
@@ -18,13 +19,14 @@ export function MessageComposer({
   onSend(): void;
   onCancel?(): void;
   disabled?: boolean;
+  canSend?: boolean;
   busy?: boolean;
   context?: ReactNode;
 }) {
   const composing = useRef(false);
   const hintId = useId();
   const send = () => {
-    if (!disabled && !busy && value.trim()) onSend();
+    if (canSend && !disabled && !busy && value.trim()) onSend();
   };
   return (
     <div className="rss-composer-wrap">
@@ -69,7 +71,7 @@ export function MessageComposer({
               type="primary"
               aria-label="发送消息"
               icon={<ArrowUpOutlined />}
-              disabled={disabled || busy || !value.trim()}
+              disabled={!canSend || disabled || busy || !value.trim()}
               onClick={send}
             />
           )}

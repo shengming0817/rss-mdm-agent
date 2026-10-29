@@ -1,3 +1,4 @@
+import { proxy } from "valtio/vanilla";
 // Only the explicit fixture assembly imports this adapter. No real IM/ZT discovery or authentication.
 
 import type { UserContext } from "../../packages/ai-contract/src/wire";
@@ -6,18 +7,18 @@ import type {
   EnterpriseLogin,
 } from "../../apps/desktop/src/account/types";
 export function createLoginFixture(
-  identity: () => Promise<UserContext>,
+  identity: (organization?: string, login?: string) => Promise<UserContext>,
 ): FixtureLoginPort {
   let epoch = 0,
     timer: ReturnType<typeof setTimeout> | undefined,
     organization = "qinghe",
     profile = "normal";
-  const state: FixtureLoginPort["state"] = {
+  const state = proxy<FixtureLoginPort["state"]>({
     qr: "waiting",
     clients: [],
     discovering: false,
     error: "",
-  };
+  });
   const organizations = [
     {
       id: "qinghe",
@@ -32,19 +33,32 @@ export function createLoginFixture(
       tenantId: "22222222-2222-4333-8444-555555555555",
     },
   ];
-  const delay = () => new Promise<void>((resolve) => setTimeout(resolve, 250));
+  const waits = new Map<ReturnType<typeof setTimeout>, () => void>();
+  const delay = () =>
+    new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        waits.delete(timer);
+        resolve();
+      }, 250);
+      waits.set(timer, resolve);
+    });
   function cancel() {
     epoch++;
+    for (const [timer, resolve] of waits) {
+      clearTimeout(timer);
+      resolve();
+    }
+    waits.clear();
     if (timer) clearTimeout(timer);
     timer = undefined;
     state.current = undefined;
     state.discovering = false;
     state.error = "";
   }
-  async function complete(expected: number) {
+  async function complete(expected: number, login = "fixture-user") {
     await delay();
     if (expected !== epoch) throw new Error("fixture_login_cancelled");
-    const current = await identity();
+    const current = await identity(organization, login);
     if (expected !== epoch) throw new Error("fixture_login_cancelled");
     state.current = current;
     return current;
@@ -56,7 +70,7 @@ export function createLoginFixture(
       if (!input.login.trim() || !input.password.trim())
         throw new Error("invalid_credentials");
       const expected = epoch;
-      return await complete(expected);
+      return await complete(expected, input.login.trim());
     },
     refreshQr() {
       cancel();
@@ -85,7 +99,7 @@ export function createLoginFixture(
       try {
         await complete(expected);
       } catch {
-        state.error = "扫码确认已取消或过期。";
+        if (expected === epoch) state.error = "扫码确认已取消或过期。";
       }
     },
     async discover() {
