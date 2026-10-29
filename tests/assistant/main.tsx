@@ -1,5 +1,5 @@
 import { createRoot } from "react-dom/client";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button, Dropdown, Form, Input, Select, Switch, Table } from "antd";
 import {
   ActionStatus,
@@ -20,6 +20,12 @@ import "@rss-mdm-agent/ui/style.css";
 export function FixtureApp() {
   const [theme, setTheme] = useState<ThemePreference>("system");
   const [open, setOpen] = useState(false);
+  const menuTrigger = useRef<HTMLButtonElement>(null);
+  const opener = useRef<HTMLElement | null>(null);
+  const openDetails = () => {
+    opener.current = document.activeElement as HTMLElement;
+    setOpen(true);
+  };
   const [draft, setDraft] = useState("");
   const [sent, setSent] = useState<string[]>([]);
   const [reads, setReads] = useState(0);
@@ -52,13 +58,16 @@ export function FixtureApp() {
                   {
                     key: "details",
                     label: "查看详情",
-                    onClick: () => setOpen(true),
+                    onClick: () => {
+                      opener.current = menuTrigger.current;
+                      setOpen(true);
+                    },
                   },
                 ],
               }}
               trigger={["click"]}
             >
-              <Button>更多操作</Button>
+              <Button ref={menuTrigger}>更多操作</Button>
             </Dropdown>
           }
         >
@@ -99,8 +108,8 @@ export function FixtureApp() {
                   tone="workspace"
                 />
               }
-              onDetails={() => setOpen(true)}
-              action={<Button onClick={() => setOpen(true)}>查看</Button>}
+              onDetails={openDetails}
+              action={<Button onClick={openDetails}>查看</Button>}
             />
             <SoftwareCard
               title="设计工具"
@@ -112,7 +121,7 @@ export function FixtureApp() {
                   tone="design"
                 />
               }
-              onDetails={() => setOpen(true)}
+              onDetails={openDetails}
             />
           </div>
         </SectionCard>
@@ -177,6 +186,7 @@ export function FixtureApp() {
         </SectionCard>
         <DetailDrawer
           open={open}
+          returnFocus={() => opener.current?.focus()}
           onClose={() => setOpen(false)}
           title="详情"
           description="当前仅验证产品组件"

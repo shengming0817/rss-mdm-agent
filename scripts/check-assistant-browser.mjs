@@ -75,6 +75,22 @@ try {
         document.querySelector(".rss-ui")?.getAttribute("data-theme") === mode,
       colorScheme,
     );
+    const warningBackground =
+      colorScheme === "light" ? "rgb(255, 245, 223)" : "rgb(62, 52, 35)";
+    await page.waitForFunction((expected) => {
+      const alert = document.querySelector(".ant-alert-warning");
+      return (
+        alert?.isConnected &&
+        getComputedStyle(alert).backgroundColor === expected
+      );
+    }, warningBackground);
+    assert.equal(
+      await page
+        .locator(".ant-alert-warning")
+        .first()
+        .evaluate((node) => getComputedStyle(node).backgroundColor),
+      warningBackground,
+    );
     for (const width of [1280, 720, 420]) {
       await page.setViewportSize({ width, height: 900 });
       const overflow = await page.evaluate(
@@ -88,13 +104,20 @@ try {
       mkdirSync(new URL("../.local-ci-runs/", import.meta.url), {
         recursive: true,
       });
-      await page.screenshot({
-        path: new URL(
-          `../.local-ci-runs/react-foundation-${colorScheme}-${width}.png`,
-          import.meta.url,
-        ).pathname,
-        fullPage: true,
-      });
+      // Capture actual scrolled viewports; Chromium's full-page capture can repeat tiles.
+      const height = await page.evaluate(
+        () => document.documentElement.scrollHeight,
+      );
+      for (let offset = 0; offset < height; offset += 900) {
+        await page.evaluate((y) => window.scrollTo(0, y), offset);
+        await page.screenshot({
+          path: new URL(
+            `../.local-ci-runs/react-foundation-${colorScheme}-${width}${offset ? `-scroll${offset}` : ""}.png`,
+            import.meta.url,
+          ).pathname,
+          fullPage: false,
+        });
+      }
     }
   }
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -111,6 +134,9 @@ try {
   );
   await page.keyboard.press("Escape");
   await dialog.waitFor({ state: "hidden" });
+  await page.waitForFunction(
+    () => document.activeElement?.textContent === "更多操作",
+  );
   assert.equal(
     await trigger.evaluate((node) => node === document.activeElement),
     true,

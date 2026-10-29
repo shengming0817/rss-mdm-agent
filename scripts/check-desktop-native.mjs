@@ -1186,15 +1186,23 @@ try {
     result.mode = "pnpm-dev-main-react-foundation";
     result.modelFixture = false;
     result.executor = "not exercised; presentation foundation only";
+    mark("React foundation in the product WKWebView");
     await text("组件基础验收");
     await click("查询原请求");
     await text("查询次数：1");
     await click("更多操作");
-    await click("查看详情");
+    const detailsItem = await browser.$('[role="menuitem"]');
+    await wait(() => detailsItem.isDisplayed());
+    await detailsItem.click();
     await wait(() => browser.$('[role="dialog"]').isDisplayed());
     await browser.$('[aria-label="详情字段"]').setValue("原生草稿");
     key(53);
     await wait(async () => !(await browser.$('[role="dialog"]').isDisplayed()));
+    await wait(() =>
+      browser.execute(() =>
+        document.activeElement?.textContent?.includes("更多操作"),
+      ),
+    );
     assert.equal(
       await browser.execute(() =>
         document.activeElement?.textContent?.includes("更多操作"),
