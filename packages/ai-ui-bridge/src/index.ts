@@ -30,3 +30,6 @@ export {
 } from "./operations/controller.js";
 export type { OperationController } from "./operations/controller.js";
 export type { NodeMount } from "./operations/surface.js";
+
+export { SurfaceDrafts, SurfaceMemory } from "./surface-drafts.js";
+export type { NodeGate } from "./surface-drafts.js";

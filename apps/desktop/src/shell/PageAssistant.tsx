@@ -66,10 +66,7 @@ export function PageAssistant({
       </header>
       <div className="rss-page-assistant-messages">
         {messages.length ? (
-          <MessageStream
-            messages={messages}
-            onCopy={(text) => void copyText(text)}
-          />
+          <MessageStream messages={messages} onCopy={copyText} />
         ) : (
           <div className="rss-companion-intro">
             <span className="rss-home-ai-symbol">✧</span>

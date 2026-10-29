@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Alert, Button, Modal, Tag } from "antd";
 import { useSnapshot } from "valtio";
-import { PageHeader, SectionCard, StatePanel } from "@rss-mdm-agent/ui";
+import { StatePanel } from "@rss-mdm-agent/ui";
 import { useDesktop, useWorkspace, usePlatform } from "./state/react";
 import type { Workspace } from "./state/workspace";
 import { modules, type PageId } from "./state/navigation";
@@ -12,6 +12,7 @@ import { pageTitle, secondaryEntries } from "./shell/navigation-model";
 import { nativeWindow } from "./workspace/window";
 import { WindowControls } from "./shell/WindowControls";
 import { HomePage } from "./home/HomePage";
+import { AssistantPage } from "./assistant/AssistantPage";
 import {
   AccountPage,
   BindingNotice,
@@ -237,6 +238,8 @@ function WorkspaceView({
           <PageContainer key={page} page={page} current={nav.page}>
             {page === "home" ? (
               <HomePage workspace={workspace} registration={registration} />
+            ) : page === "assistant" ? (
+              <AssistantPage key={workspace.key} workspace={workspace} />
             ) : page === "settings" ? (
               <SettingsContent
                 workspace={workspace}
@@ -269,9 +272,7 @@ function WorkspaceView({
                 section={nav.selected.tasks}
                 active={nav.page === "tasks"}
               />
-            ) : (
-              <PendingModule page={page} section={nav.selected[page]} />
-            )}
+            ) : null}
           </PageContainer>
         ))}
       </div>
@@ -350,25 +351,5 @@ function SettingsContent({
         />
       </div>
     </>
-  );
-}
-function PendingModule({ page, section }: { page: PageId; section: string }) {
-  const platform = usePlatform();
-  return (
-    <div className="rss-page">
-      <PageHeader
-        title={
-          secondaryEntries(page, platform).find((entry) => entry.id === section)
-            ?.title ?? pageTitle(page)
-        }
-      />
-      <SectionCard>
-        <StatePanel
-          kind="readonly"
-          title="当前页面暂不可用"
-          description="可以返回主页查看设备状态，或使用页面助手描述问题。"
-        />
-      </SectionCard>
-    </div>
   );
 }

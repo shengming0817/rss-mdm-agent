@@ -1454,6 +1454,156 @@ try {
     result.checks.push(
       "v4 task list, real owner timeline and original control in WKWebView; acknowledged cancellation remains running until separate termination/effect evidence",
     );
+    mark(
+      "React assistant history, official input and trusted one-action card in WKWebView",
+    );
+    await click("AI 助手", "//div[contains(@class,'rss-hidden-primary')]");
+    await click("新会话", "//div[contains(@class,'rss-hidden-secondary')]");
+    await browser
+      .$('.rss-assistant-input textarea[aria-label="消息"]')
+      .setValue("WKWebView 助手原生输入验收");
+    key(36);
+    await wait(() =>
+      browser.execute(
+        () =>
+          !!window.rssDesktop.state.workspace.assistant.state.selected &&
+          window.rssDesktop.state.workspace.assistant.busy(),
+      ),
+    );
+    const assistantSession = await browser.execute(
+      () => window.rssDesktop.state.workspace.assistant.state.selected,
+    );
+    const driveAssistant = async (input) => {
+      const value = await browser.execute(
+        async (input) => {
+          const response = await fetch("/__fixture/assistant", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(input),
+          });
+          return { ok: response.ok, body: await response.text() };
+        },
+        { sessionId: assistantSession, ...input },
+      );
+      assert.equal(
+        value.ok,
+        true,
+        `assistant scripted Host stimulus ${input.action}`,
+      );
+      return JSON.parse(value.body);
+    };
+    await driveAssistant({ action: "surface" });
+    await wait(() =>
+      browser.$('.rss-ai-surface input[aria-label="Answer"]').isDisplayed(),
+    );
+    await browser
+      .$('.rss-ai-surface input[aria-label="Answer"]')
+      .setValue("WKWebView 官方输入绑定");
+    await browser
+      .$('.rss-assistant-input textarea[aria-label="消息"]')
+      .setValue("本会话未提交草稿");
+    await click("历史会话", "//div[contains(@class,'rss-hidden-secondary')]");
+    await wait(() =>
+      browser.$(".rss-session-history:not([hidden])").isDisplayed(),
+    );
+    await browser.$('.rss-session-history-item[aria-current="page"]').click();
+    assert.equal(
+      await browser.$(".rss-session-history:not([hidden])").isDisplayed(),
+      true,
+    );
+    assert.equal(
+      await browser
+        .$('.rss-assistant-input textarea[aria-label="消息"]')
+        .getValue(),
+      "本会话未提交草稿",
+    );
+    await click("关闭历史会话");
+    await click("主页", "//div[contains(@class,'rss-hidden-primary')]");
+    await click("AI 助手", "//div[contains(@class,'rss-hidden-primary')]");
+    assert.equal(
+      await browser.$('.rss-ai-surface input[aria-label="Answer"]').getValue(),
+      "WKWebView 官方输入绑定",
+    );
+    await click("Send answer");
+    await wait(() =>
+      browser.execute(() =>
+        document
+          .querySelector(".rss-ai-surface")
+          ?.textContent.includes("此问题已经回答。"),
+      ),
+    );
+    await driveAssistant({
+      action: "advance",
+      events: [{ type: "terminal", outcome: "completed" }],
+    });
+    await wait(() =>
+      browser.execute(
+        () => !window.rssDesktop.state.workspace.assistant.busy(),
+      ),
+    );
+    await browser
+      .$('.rss-assistant-input textarea[aria-label="消息"]')
+      .setValue("WKWebView 准备本次修复");
+    key(36);
+    await wait(() =>
+      browser.execute(() => window.rssDesktop.state.workspace.assistant.busy()),
+    );
+    const operationId = await browser.execute((sessionId) => {
+      const id = crypto.randomUUID();
+      window.rssPageFixture.stageAssistantOperation(sessionId, id);
+      return id;
+    }, assistantSession);
+    await driveAssistant({
+      action: "delivery",
+      operationId,
+      proposal: { name: "execution_operation_prepare", arguments: {} },
+    });
+    await wait(() =>
+      browser
+        .$('.rss-operation-card input[aria-label="修复名称"]')
+        .isDisplayed(),
+    );
+    await browser
+      .$('.rss-operation-card input[aria-label="修复名称"]')
+      .setValue("原生确认的最终参数");
+    await browser.saveScreenshot(
+      join(reports, "desktop-native-assistant-operation.png"),
+    );
+    await click("确认本次具体动作");
+    await wait(() =>
+      browser.execute(
+        () =>
+          window.rssPageFixture.events.filter(
+            (e) => e.operation === "ai_operation_submit",
+          ).length === 1,
+      ),
+    );
+    assert.equal(
+      await browser.execute(
+        (id) =>
+          window.rssPageFixture.records.get(id).action.choice.parameters.name,
+        operationId,
+      ),
+      "原生确认的最终参数",
+    );
+    assert.equal(
+      await browser.execute(
+        (id) => window.rssPageFixture.records.get(id).state,
+        operationId,
+      ),
+      "submitting",
+    );
+    assert.equal(await browser.$('[role="dialog"]').isExisting(), false);
+    await driveAssistant({
+      action: "advance",
+      events: [{ type: "terminal", outcome: "completed" }],
+    });
+    await browser.saveScreenshot(
+      join(reports, "desktop-native-assistant-submitted.png"),
+    );
+    result.checks.push(
+      "production assistant in macOS WKWebView: native keyboard input, fixed secondary history keeps per-session draft, official A2UI binding/answer, original trusted Policy draft edited and submitted once; scripted Host/sample record, no real model or OS execution effect claimed",
+    );
     mark("native redacted diagnostic snapshot");
     await click("用户菜单");
     const diagnosticMenu =

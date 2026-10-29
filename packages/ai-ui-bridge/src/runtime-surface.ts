@@ -10,6 +10,7 @@ import type { RuntimeClient, SessionView } from "@rss-mdm-agent/ai-client";
 import type { Receipt } from "@rss-mdm-agent/ai-contract/wire";
 import type { NodeMount } from "./operations/surface.js";
 import type { SurfaceRendererHandle } from "./renderer.js";
+import type { SurfaceDrafts } from "./surface-drafts.js";
 import { RendererError } from "./errors.js";
 import { createSurfaceRenderer, type RendererFactory } from "./index.js";
 
@@ -38,6 +39,7 @@ export interface RuntimeSurfaceProps {
   sessionId: string;
   instanceId: string;
   mount: NodeMount;
+  drafts: SurfaceDrafts;
   now?: () => number;
   rendererFactory?: RendererFactory;
   onError?(error: RendererError): void;
@@ -64,6 +66,7 @@ function RuntimeSurfaceOwner({
   sessionId,
   instanceId,
   mount,
+  drafts,
   now = Date.now,
   rendererFactory = createSurfaceRenderer,
   onError,
@@ -81,6 +84,7 @@ function RuntimeSurfaceOwner({
     instanceId,
     note: "",
     error: "",
+    retry: false,
     kind: "renderer" as "renderer" | "action",
   });
   useLayoutEffect(() => {
@@ -100,7 +104,7 @@ function RuntimeSurfaceOwner({
           ...values,
         }));
     };
-    patch({ note: "", error: "" });
+    patch({ note: "", error: "", retry: false });
     const report = (
       error: RendererError,
       kind: "renderer" | "action" = "renderer",
@@ -117,11 +121,12 @@ function RuntimeSurfaceOwner({
       if (!surface || !view) {
         renderer.clear();
         displayed = "";
-        patch({ note: "", error: "" });
+        patch({ note: "", error: "", retry: false });
         return;
       }
       const interaction = view.interactions[surface.interactionId];
       const connected =
+        view.sessionStatus === "active" &&
         view.connection === "attached" &&
         view.generation === surface.generation;
       const expired = !!interaction && now() > interaction.expiresAtMs;
@@ -159,6 +164,7 @@ function RuntimeSurfaceOwner({
       try {
         renderer.replace(surface, interaction, connected);
         displayed = key;
+        patch({ retry: renderer.canRetry });
         if (errorKind !== "action" || !renderer.canRetry) patch({ error: "" });
       } catch {
         renderer.dispose();
@@ -170,6 +176,7 @@ function RuntimeSurfaceOwner({
     void rendererFactory(container.current!, {
       now,
       mount,
+      drafts,
       onAction: async (request) => {
         if (!active) return;
         const receipt = await runtime.action(request);
@@ -178,7 +185,14 @@ function RuntimeSurfaceOwner({
           callbacks.current.onReceipt?.(receipt);
         }
       },
-      onError: (error) => report(error, "action"),
+      onChange: () => patch({ retry: !!renderer?.canRetry }),
+      onError: (error) =>
+        report(
+          error,
+          error.code === "renderer_load" || error.code === "renderer_invalid"
+            ? "renderer"
+            : "action",
+        ),
     })
       .then((created) => {
         if (!active) {
@@ -200,7 +214,18 @@ function RuntimeSurfaceOwner({
       renderer?.dispose();
       current.current = undefined;
     };
-  }, [runtime, sessionId, instanceId, mount, now, rendererFactory, attempt]);
+  }, [
+    runtime,
+    sessionId,
+    instanceId,
+    mount,
+    drafts,
+    now,
+    rendererFactory,
+    attempt,
+  ]);
+  const patchReadFailure = () =>
+    setStatus((old) => ({ ...old, error: "原问题状态尚未确认，请稍后重读。" }));
   const visible =
     status.owner === runtime &&
     status.sessionId === sessionId &&
@@ -212,19 +237,29 @@ function RuntimeSurfaceOwner({
     visible && status.note ? h("p", { role: "status" }, status.note) : null,
     visible && status.error ? h("p", { role: "status" }, status.error) : null,
     visible && status.error && status.kind === "renderer" ? fallback : null,
-    visible &&
-      status.error &&
-      (status.kind === "renderer" || current.current?.canRetry)
+    visible && (status.retry || (status.error && status.kind === "action"))
       ? h(
           "button",
           {
             type: "button",
             onClick: () => {
-              if (status.kind === "action") void current.current?.retry();
+              void runtime.restore(sessionId).catch(() => patchReadFailure());
+            },
+          },
+          "读取原问题状态",
+        )
+      : null,
+    visible && (status.retry || (status.error && status.kind === "renderer"))
+      ? h(
+          "button",
+          {
+            type: "button",
+            onClick: () => {
+              if (status.retry) void current.current?.retry();
               else setAttempt((value) => value + 1);
             },
           },
-          status.kind === "action" ? "重试原回答" : "重新加载卡片",
+          status.retry ? "重试原回答" : "重新加载卡片",
         )
       : null,
   );

@@ -501,3 +501,12 @@ body {
   color: #7d9184;
   transform: rotate(4deg);
 }
+
+.rss-message-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 7px;
+}
