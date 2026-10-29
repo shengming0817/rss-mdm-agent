@@ -28,8 +28,6 @@ export function GlobalSearch({
     tasks = useSnapshot(workspace.tasks.state),
     directory = useSnapshot(workspace.directory.state),
     platform = usePlatform(),
-    anchor = useRef<HTMLDivElement>(null),
-    popup = useRef<HTMLDivElement>(null),
     list = useRef<HTMLDivElement>(null),
     listId = useId(),
     [query, setQuery] = useState(""),
@@ -137,26 +135,8 @@ export function GlobalSearch({
         close();
       }
     };
-  useEffect(() => {
-    if (!nav.searchOpen) return;
-    const outside = (event: Event) => {
-      const target = event.target;
-      if (
-        target instanceof Node &&
-        !anchor.current?.contains(target) &&
-        !popup.current?.contains(target)
-      )
-        workspace.navigation.setSearch(false);
-    };
-    document.addEventListener("pointerdown", outside, true);
-    document.addEventListener("focusin", outside);
-    return () => {
-      document.removeEventListener("pointerdown", outside, true);
-      document.removeEventListener("focusin", outside);
-    };
-  }, [workspace, nav.searchOpen]);
   return (
-    <div ref={anchor} className="rss-top-search">
+    <div className="rss-top-search">
       <Popover
         open={nav.searchOpen}
         trigger={[]}
@@ -164,7 +144,7 @@ export function GlobalSearch({
         arrow={false}
         getPopupContainer={(node) => node.parentElement!}
         content={
-          <div ref={popup} className="rss-search-popup">
+          <div className="rss-search-popup">
             <div
               ref={list}
               className="rss-search-results"

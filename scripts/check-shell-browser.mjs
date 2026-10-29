@@ -50,7 +50,10 @@ export async function checkShellBrowser(page, fixture) {
       };
     });
     assert.ok(geometry.slot >= 76);
-    assert.ok(geometry.brand >= 93);
+    assert.ok(
+      geometry.brand >= 89,
+      "brand clears the observed 77px native controls by at least 12px",
+    );
     assert.ok(geometry.toggle < geometry.end);
   }
   await shell.evaluate((node) =>

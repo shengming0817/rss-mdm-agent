@@ -324,7 +324,7 @@ const openAgentSettings = async (section) => {
     `//nav[@aria-label="RSS MDM Agent 设置二级菜单"]//button[@aria-label=${JSON.stringify(section)}]`,
   );
   await wait(() => item.isDisplayed());
-  await item.click();
+  if ((await item.getAttribute("aria-current")) !== "page") await item.click();
 };
 const openHistory = async () => {
   if (!(await browser.$(".rss-session-history:not([hidden])").isExisting()))

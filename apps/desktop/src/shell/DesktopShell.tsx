@@ -217,10 +217,26 @@ export function DesktopShell({
         toggle.current?.focus();
       }
     };
+    const outsideSearch = (event: Event) => {
+      if (
+        !event
+          .composedPath()
+          .some(
+            (node) =>
+              node instanceof HTMLElement &&
+              node.classList.contains("rss-top-search"),
+          )
+      )
+        workspace.navigation.setSearch(false);
+    };
+    document.addEventListener("pointerdown", outsideSearch, true);
+    document.addEventListener("focusin", outsideSearch);
     document.addEventListener("keydown", keyboard);
     return () => {
       narrow.removeEventListener("change", resize);
       document.removeEventListener("keydown", keyboard);
+      document.removeEventListener("pointerdown", outsideSearch, true);
+      document.removeEventListener("focusin", outsideSearch);
     };
   }, [workspace]);
   const user = workspace.identity.user,
