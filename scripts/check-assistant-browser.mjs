@@ -10,6 +10,7 @@ await using run = await prepareRun([
 ]);
 const { startFixture } = await import("../tests/assistant/server.mjs");
 const fixture = await startFixture();
+await fixture.seed();
 let browser;
 try {
   browser = await chromium.launch({
@@ -77,20 +78,14 @@ try {
     );
     const warningBackground =
       colorScheme === "light" ? "rgb(255, 245, 223)" : "rgb(62, 52, 35)";
-    await page.waitForFunction((expected) => {
+    const background = await page.waitForFunction((expected) => {
       const alert = document.querySelector(".ant-alert-warning");
       return (
         alert?.isConnected &&
         getComputedStyle(alert).backgroundColor === expected
       );
     }, warningBackground);
-    assert.equal(
-      await page
-        .locator(".ant-alert-warning")
-        .first()
-        .evaluate((node) => getComputedStyle(node).backgroundColor),
-      warningBackground,
-    );
+    assert.equal(await background.jsonValue(), true);
     for (const width of [1280, 720, 420]) {
       await page.setViewportSize({ width, height: 900 });
       const overflow = await page.evaluate(

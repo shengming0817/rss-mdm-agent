@@ -1185,7 +1185,8 @@ try {
   if (foundationOnly) {
     result.mode = "pnpm-dev-main-react-foundation";
     result.modelFixture = false;
-    result.executor = "not exercised; presentation foundation only";
+    result.executor =
+      "not exercised; React foundation and state with fixture Host";
     mark("React foundation in the product WKWebView");
     await text("组件基础验收");
     await click("查询原请求");
@@ -1225,7 +1226,42 @@ try {
     await browser.saveScreenshot(
       join(reports, "desktop-native-foundations.png"),
     );
+    await browser.execute(() => {
+      location.search = "?state";
+    });
+    await text("业务状态验收");
+    await wait(
+      async () =>
+        (await browser.$('[data-testid="state-connection"]').getText()) ===
+        "connected",
+    );
+    await browser.$('[aria-label="状态层草稿"]').setValue("原生状态草稿");
+    await click("选择软件更新");
+    for (const expected of ["2:full", "3:rail", "0:hidden", "1:rail"]) {
+      await click("切换布局");
+      await wait(
+        async () =>
+          (await browser.$('[data-testid="state-layout"]').getText()) ===
+          expected,
+      );
+    }
+    await click("读取软件");
+    await wait(
+      async () =>
+        (await browser.$('[data-testid="state-inventory"]').getText()) === "4",
+    );
+    await click("回到助手");
+    assert.equal(
+      await browser.$('[aria-label="状态层草稿"]').getValue(),
+      "原生状态草稿",
+    );
+    assert.ok(
+      Number(await browser.$('[data-testid="state-sessions"]').getText()) > 0,
+    );
+    await browser.saveScreenshot(join(reports, "desktop-native-state.png"));
     result.checks.push(
+      "React state owner and real client/test Host in WKWebView",
+      "directed layout cycle retains session draft and async inventory",
       "React foundation in macOS WKWebView",
       "drawer Escape and focus restoration",
       "controlled message input",
