@@ -1237,7 +1237,7 @@ try {
     );
     await browser.$('[aria-label="状态层草稿"]').setValue("原生状态草稿");
     await click("选择软件更新");
-    for (const expected of ["2:full", "3:rail", "0:hidden", "1:rail"]) {
+    for (const expected of ["2:full", "3:rail", "0:hidden"]) {
       await click("切换布局");
       await wait(
         async () =>
@@ -1245,6 +1245,18 @@ try {
           expected,
       );
     }
+    await click("隐藏或恢复侧栏");
+    await wait(
+      async () =>
+        (await browser.$('[data-testid="state-layout"]').getText()) ===
+        "3:rail",
+    );
+    await click("切换布局");
+    await wait(
+      async () =>
+        (await browser.$('[data-testid="state-layout"]').getText()) ===
+        "0:hidden",
+    );
     await click("读取软件");
     await wait(
       async () =>

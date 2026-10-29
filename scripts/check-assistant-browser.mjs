@@ -149,13 +149,20 @@ try {
     await page.getByTestId("state-page").textContent(),
     "software:updates",
   );
-  for (const expected of ["2:full", "3:rail", "0:hidden", "1:rail"]) {
+  for (const expected of ["2:full", "3:rail", "0:hidden"]) {
     await page.getByRole("button", { name: "切换布局" }).click();
     assert.equal(
       await page.getByTestId("state-layout").textContent(),
       expected,
     );
   }
+  await page.getByRole("button", { name: "隐藏或恢复侧栏" }).click();
+  assert.equal(await page.getByTestId("state-layout").textContent(), "3:rail");
+  await page.getByRole("button", { name: "切换布局" }).click();
+  assert.equal(
+    await page.getByTestId("state-layout").textContent(),
+    "0:hidden",
+  );
   await page.getByRole("button", { name: "读取软件" }).click();
   await page
     .getByTestId("state-inventory")

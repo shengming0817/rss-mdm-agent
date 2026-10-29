@@ -44,7 +44,7 @@ it("keeps the history panel open through module and session selection", () => {
   expect(nav.state.historyOpen).toBe(false);
 });
 
-it("restores the last visible direction after cycling to hidden, without resetting page or draft owners", () => {
+it("restores the last visible direction after cycling to hidden, without resetting the selected page", () => {
   const nav = createNavigation();
   nav.select("software", "updates");
   nav.cycle();

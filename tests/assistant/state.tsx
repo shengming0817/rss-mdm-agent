@@ -36,6 +36,9 @@ function WorkspaceProbe({ workspace }: { workspace: Workspace }) {
         onChange={(event) => workspace.assistant.draft.set(event.target.value)}
       />
       <Button onClick={() => workspace.navigation.cycle()}>切换布局</Button>
+      <Button onClick={() => workspace.navigation.hideOrRestore()}>
+        隐藏或恢复侧栏
+      </Button>
       <Button
         onClick={() => workspace.navigation.select("software", "updates")}
       >
