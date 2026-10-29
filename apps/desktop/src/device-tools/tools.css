@@ -60,12 +60,17 @@
 }
 @media (max-width: 720px) {
   .rss-tool-grid {
-    grid-template-columns: 1fr;
+    gap: 12px;
   }
   .rss-tool-card {
-    padding: 22px;
+    padding: 17px;
   }
   .rss-tools-page > .ant-input-search {
     max-width: none;
+  }
+}
+@media (max-width: 420px) {
+  .rss-tool-grid {
+    grid-template-columns: 1fr;
   }
 }

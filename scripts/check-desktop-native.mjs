@@ -1359,6 +1359,8 @@ try {
       ["工具中心", ".rss-tool-grid", "tools"],
     ]) {
       await click(name, "//div[contains(@class,'rss-hidden-primary')]");
+      if (name === "软件中心")
+        await click("发现", "//div[contains(@class,'rss-hidden-secondary')]");
       await wait(() => browser.$(ready).isDisplayed());
       await browser.execute(async () => {
         await document.fonts.ready;

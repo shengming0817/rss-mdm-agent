@@ -291,7 +291,17 @@ export function SoftwareDetail({
             <dt>下载大小</dt>
             <dd>未提供</dd>
           </dl>
-          <Button onClick={() => onPrepare()}>快速查看与准备</Button>
+          <Button
+            disabled={
+              !!installed && !localAction(installed, "launch").available
+            }
+            title={
+              installed ? localAction(installed, "launch").reason : undefined
+            }
+            onClick={() => onPrepare()}
+          >
+            快速查看与准备
+          </Button>
           <p className="rss-muted">
             独立本机事实与发布目录分别呈现；不会推断“已安装”或默认选择 latest。
           </p>

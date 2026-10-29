@@ -28,7 +28,10 @@ try {
   });
   const page = await context.newPage();
   const errors = [];
-  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("pageerror", (error) => {
+    errors.push(error.message);
+    console.error("Fixture page error:", error.message);
+  });
   const remote = [];
   page.on("request", (request) => {
     if (

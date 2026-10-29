@@ -10,6 +10,12 @@ export async function checkPagesBrowser(page, fixture) {
     checks: [],
   };
   const go = async (scene = "normal") => {
+    const reset = await fetch(new URL("/__fixture/scenario", fixture.url), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ scenario: "running" }),
+    });
+    assert.equal(reset.ok, true);
     await page.goto(`${fixture.url}?desktop&scene=${scene}`);
     await page
       .getByRole("button", { name: "切换侧栏布局", exact: true })
@@ -34,13 +40,49 @@ export async function checkPagesBrowser(page, fixture) {
   };
   const capture = async (name) => {
     await page.evaluate(async () => {
+      document
+        .querySelector(".rss-page-viewport:not([hidden])")
+        ?.scrollTo({ top: 0 });
       await document.fonts.ready;
       await new Promise((resolve) =>
         requestAnimationFrame(() => requestAnimationFrame(resolve)),
       );
     });
     const file = `react-pages-${name}.png`;
-    await page.screenshot({ path: new URL(file, directory).pathname });
+    await page.screenshot({
+      path: new URL(file, directory).pathname,
+      animations: "disabled",
+    });
+    const storyContrast = await page
+      .locator(".rss-page-viewport:not([hidden]) .rss-store-editorial h2")
+      .evaluateAll((nodes) =>
+        nodes.map((node) => {
+          const channels = (value) =>
+            (value.match(/[\d.]+/g) ?? [])
+              .slice(0, 3)
+              .map(Number)
+              .map((v) => {
+                const n = v / 255;
+                return n <= 0.04045 ? n / 12.92 : ((n + 0.055) / 1.055) ** 2.4;
+              });
+          const luminance = (value) => {
+            const rgb = channels(value);
+            return rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+          };
+          const foreground = luminance(getComputedStyle(node).color),
+            background = luminance(
+              getComputedStyle(node.closest("section")).backgroundColor,
+            );
+          return (
+            (Math.max(foreground, background) + 0.05) /
+            (Math.min(foreground, background) + 0.05)
+          );
+        }),
+      );
+    assert.ok(
+      storyContrast.every((ratio) => ratio >= 3),
+      `${name}: editorial heading contrast`,
+    );
     const dimensions = await page.evaluate(() => ({
       scroll: document.documentElement.scrollWidth,
       viewport: innerWidth,
@@ -51,6 +93,22 @@ export async function checkPagesBrowser(page, fixture) {
     assert.ok(
       dimensions.scroll <= dimensions.viewport,
       `${name}: horizontal overflow`,
+    );
+    const grids = await page
+      .locator(
+        ".rss-page-viewport:not([hidden]) .rss-system-cards, .rss-page-viewport:not([hidden]) .rss-tool-grid",
+      )
+      .evaluateAll((nodes) =>
+        nodes
+          .filter((node) => node.getClientRects().length)
+          .map(
+            (node) =>
+              getComputedStyle(node).gridTemplateColumns.split(/\s+/).length,
+          ),
+      );
+    assert.ok(
+      grids.every((columns) => columns === (dimensions.viewport > 420 ? 2 : 1)),
+      `${name}: approved system/tools column count`,
     );
     evidence.captures.push({ file, ...dimensions });
   };
@@ -264,7 +322,12 @@ export async function checkPagesBrowser(page, fixture) {
   await connection
     .getByRole("combobox", { name: "AI 配置来源", exact: true })
     .click();
-  await page.getByRole("option", { name: "自定义 API", exact: true }).click();
+  await connection
+    .getByRole("combobox", { name: "AI 配置来源", exact: true })
+    .press("ArrowDown");
+  await connection
+    .getByRole("combobox", { name: "AI 配置来源", exact: true })
+    .press("Enter");
   await connection
     .getByRole("textbox", { name: "AI API 地址", exact: true })
     .fill("https://api.fixture.invalid");
@@ -434,7 +497,7 @@ export async function checkPagesBrowser(page, fixture) {
     );
     if (["error", "offline"].includes(scene))
       await systemPage
-        .locator('[role="alert"]')
+        .getByRole("alert")
         .filter({ hasText: "原任务" })
         .waitFor();
     if (scene === "readonly") {

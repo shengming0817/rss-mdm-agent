@@ -121,6 +121,7 @@ it("retains system drafts across secondary navigation and rereads every overview
   const input = await f
     .page("系统设置")
     .findByRole("textbox", { name: "HTTP 代理服务器" });
+  await f.page("系统设置").findByText("192.0.2.24");
   fireEvent.change(input, { target: { value: "retained.example" } });
   act(() => {
     f.workspace.navigation.select("system", "display");

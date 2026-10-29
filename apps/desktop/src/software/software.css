@@ -403,6 +403,32 @@
 .rss-reference {
   overflow-wrap: anywhere;
 }
+.rss-ui[data-theme="dark"] .rss-software-story {
+  background: #2d2b3c;
+  border-color: #403b52;
+}
+.rss-ui[data-theme="dark"] .rss-creative-story {
+  background: #352f2c;
+  border-color: #4b4039;
+}
+.rss-ui[data-theme="dark"] .rss-software-page .rss-software-story h2 {
+  color: #ded7f0;
+}
+.rss-ui[data-theme="dark"] .rss-software-page .rss-creative-story h2 {
+  color: #e4d4c7;
+}
+.rss-ui[data-theme="dark"] .rss-software-page .rss-software-story p,
+.rss-ui[data-theme="dark"] .rss-software-story .rss-eyebrow {
+  color: #b5adc8;
+}
+.rss-ui[data-theme="dark"] .rss-software-page .rss-creative-story p,
+.rss-ui[data-theme="dark"] .rss-creative-story .rss-eyebrow,
+.rss-ui[data-theme="dark"] .rss-creative-story .ant-btn-link {
+  color: #c6b7aa;
+}
+.rss-ui[data-theme="dark"] .rss-software-help {
+  background: #2d2b3c;
+}
 @media (max-width: 1200px) {
   .rss-installed-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));

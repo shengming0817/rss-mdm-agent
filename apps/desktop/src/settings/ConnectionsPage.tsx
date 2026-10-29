@@ -108,6 +108,7 @@ export function ConnectionsPage({
               重读连接
             </Button>
             <Button
+              aria-label="添加连接"
               icon={<PlusOutlined />}
               disabled={!workspace.connections.canSave || state.busy}
               onClick={() => {

@@ -16,8 +16,14 @@ import { PageHeader, SectionCard, StatePanel } from "@rss-mdm-agent/ui";
 import type { Workspace } from "../state/workspace";
 import type { SettingsSection } from "../self-service/types";
 import { systemEntries } from "./catalog";
-import { homeFacts } from "./facts";
-import { display, labels } from "./presentation";
+import { homeFacts, collectedRows } from "./facts";
+import {
+  fieldLabel,
+  fieldValue,
+  labels,
+  qualityLabel,
+  sourceLabel,
+} from "./presentation";
 import { SettingsEditor } from "./SettingsEditor";
 import { usePlatform } from "../state/react";
 import "./system.css";
@@ -288,10 +294,14 @@ function SystemSection({
                     <span className="rss-setting-value">
                       {field.quality === "complete" ||
                       field.quality === "partial"
-                        ? display(field.value)
+                        ? field.key === "mode"
+                          ? (target.options.find(
+                              (option) => option.id === field.value,
+                            )?.label ?? fieldValue(field.key, field.value))
+                          : fieldValue(field.key, field.value)
                         : "未取得可靠观察"}
                       {field.quality !== "complete" && (
-                        <small>{field.quality}</small>
+                        <small>{qualityLabel(field.quality)}</small>
                       )}
                     </span>
                   </div>
@@ -335,39 +345,60 @@ function SystemSection({
             return (
               <SectionCard
                 key={JSON.stringify(source.reference)}
-                title={source.domains.join(" · ")}
+                title={sourceLabel(source.domains)}
                 extra={
                   <Tag>
                     {fact?.value.stale
                       ? "观察过期"
-                      : (fact?.value.quality ?? "未读取")}
+                      : fact
+                        ? qualityLabel(fact.value.quality)
+                        : "未读取"}
                   </Tag>
                 }
               >
                 <p className="rss-system-source">
                   本机采集来源 ·{" "}
+                  {source.scope.kind === "device" ? "设备范围" : "当前用户范围"}{" "}
+                  ·{" "}
                   {fact?.value.collectedAt == null
                     ? "尚无观察时间"
                     : new Date(fact.value.collectedAt * 1000).toLocaleString()}
                 </p>
                 {fact ? (
                   Object.entries(fact.value.fields)
+                    .filter(([key]) => !!fieldLabel(key))
                     .slice(0, 20)
                     .map(([key, value]) => (
                       <div className="rss-setting-row" key={key}>
-                        <span>{labels[key] ?? key.split(".").at(-1)}</span>
+                        <span>{fieldLabel(key)}</span>
                         <span className="rss-setting-value">
-                          {display(value)}
+                          {fieldValue(key, value)}
                         </span>
                       </div>
                     ))
                 ) : (
                   <StatePanel kind="unknown" title="尚未读取此来源" />
                 )}
+                {collectedRows(fact?.value)
+                  .slice(0, 12)
+                  .map((row, index) => (
+                    <div className="rss-collected-record" key={index}>
+                      {Object.entries(row)
+                        .filter(([key]) => !!fieldLabel(key))
+                        .map(([key, value]) => (
+                          <div className="rss-setting-row" key={key}>
+                            <span>{fieldLabel(key)}</span>
+                            <span className="rss-setting-value">
+                              {fieldValue(key, value)}
+                            </span>
+                          </div>
+                        ))}
+                    </div>
+                  ))}
                 {fact && fact.value.rows.length > 0 && (
                   <p className="rss-muted">
                     已读取 {fact.value.rows.length} 条记录；完整性：
-                    {fact.value.quality}。
+                    {qualityLabel(fact.value.quality)}。
                   </p>
                 )}
               </SectionCard>

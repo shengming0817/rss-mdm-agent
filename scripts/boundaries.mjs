@@ -331,6 +331,11 @@ export function checkSource(file, source) {
       "effects",
       "labels",
     ],
+    "apps/desktop/src/system-settings/presentation.ts": [
+      "labels",
+      "qualityLabels",
+      "sourceLabels",
+    ],
     "apps/desktop/src/App.tsx": ["nav.selected", "taskPhase"],
     "apps/desktop/src/home/HomePage.tsx": ["taskPhase"],
     "apps/desktop/src/shell/DesktopShell.tsx": ["layouts"],

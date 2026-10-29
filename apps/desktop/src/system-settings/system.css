@@ -187,7 +187,21 @@
 }
 @media (max-width: 720px) {
   .rss-system-cards {
-    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+  .rss-system-card {
+    padding: 14px;
+    gap: 10px;
+  }
+  .rss-system-glyph {
+    width: 30px;
+    height: 30px;
+  }
+  .rss-system-page .rss-system-card h3 {
+    font-size: 12px;
+  }
+  .rss-system-page .rss-system-card p {
+    font-size: 9px;
   }
   .rss-system-banner {
     gap: 15px;
@@ -210,5 +224,10 @@
   }
   .rss-setting-value {
     max-width: 60%;
+  }
+}
+@media (max-width: 420px) {
+  .rss-system-cards {
+    grid-template-columns: 1fr;
   }
 }
