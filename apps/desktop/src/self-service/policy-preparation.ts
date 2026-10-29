@@ -1,6 +1,7 @@
 import { proxy, type Snapshot } from "valtio/vanilla";
 import { deepClone } from "valtio/vanilla/utils";
 import type {
+  BackendRequest,
   PolicyChoice,
   PolicyStatus,
   SelfServiceDirectoryItem,
@@ -16,6 +17,7 @@ export function createPolicyPreparation(
     item: null as SelfServiceDirectoryItem | null,
     choice: null as PolicyChoice | null,
     status: null as PolicyStatus | null,
+    preparation: null as BackendRequest | null,
     busy: false,
     error: "",
   });
@@ -28,6 +30,7 @@ export function createPolicyPreparation(
     state.busy = true;
     state.item = null;
     state.status = null;
+    state.preparation = null;
     state.error = "";
     try {
       const current = await port.policy_resolve({
@@ -72,6 +75,7 @@ export function createPolicyPreparation(
       state.item = deepClone(current);
       state.choice = null;
       state.status = null;
+      state.preparation = null;
     } catch {
       if (active && call === epoch)
         state.error = "无法重新读取当前发布项目，原请求仍可查询。";
@@ -89,6 +93,8 @@ export function createPolicyPreparation(
       const status = await port.policy_status({ requestId: request });
       if (!active || call !== epoch) return;
       state.status = deepClone(status);
+      if (state.status.kind === "preparation")
+        state.preparation = state.status.value;
       if (status.kind === "absent")
         state.error =
           "尚未找到原请求。可用相同请求与参数重新提交，避免重复操作。";
@@ -117,36 +123,13 @@ export function createPolicyPreparation(
     const call = epoch;
     try {
       const value = await port.policy_invoke({ choice });
-      if (active && call === epoch)
+      if (active && call === epoch) {
         state.status = { kind: "preparation", value: deepClone(value) };
+        state.preparation = state.status.value;
+      }
     } catch {
       if (active && call === epoch)
         state.error = "提交回执未确认，请查询原请求，不要重复发起。";
-    } finally {
-      if (active && call === epoch) state.busy = false;
-    }
-  }
-  async function confirm() {
-    const request = state.choice?.request;
-    if (
-      !active ||
-      !port ||
-      !request ||
-      state.busy ||
-      state.status?.kind !== "preparation" ||
-      state.status.value.state !== "awaitingConfirmation"
-    )
-      return;
-    const call = epoch;
-    state.busy = true;
-    state.error = "";
-    try {
-      const value = await port.policy_confirm({ requestId: request });
-      if (active && call === epoch)
-        state.status = { kind: "preparation", value: deepClone(value) };
-    } catch {
-      if (active && call === epoch)
-        state.error = "确认回执未取得，请查询原请求。";
     } finally {
       if (active && call === epoch) state.busy = false;
     }
@@ -165,6 +148,7 @@ export function createPolicyPreparation(
     state.item = null;
     state.choice = null;
     state.status = null;
+    state.preparation = null;
     state.error = "";
     return true;
   }
@@ -176,7 +160,6 @@ export function createPolicyPreparation(
     recover,
     canRestart,
     restart,
-    confirm,
     clear,
     dispose() {
       active = false;
@@ -184,6 +167,7 @@ export function createPolicyPreparation(
       state.item = null;
       state.choice = null;
       state.status = null;
+      state.preparation = null;
       state.error = "";
       state.busy = false;
     },

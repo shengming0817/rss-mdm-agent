@@ -71,3 +71,23 @@ it("keeps local reads and explicit queries on the same authenticated data adapte
   vi.mocked(isTauri).mockReturnValue(false);
   expect(nativeDataPort()).toBeNull();
 });
+it("rejects late policy and local-software replies after the authenticated generation changes", async () => {
+  const { nativeSoftwarePort } = await import("./native");
+  for (const start of [
+    () => nativePort()!.policy_status({ requestId: "original" }),
+    () => nativeSoftwarePort()!.status({ request: "original" }),
+  ]) {
+    accountState.user!.generation = "original-generation";
+    let finish!: (value: unknown) => void;
+    vi.mocked(invoke).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const pending = start();
+    accountState.user!.generation = "next-generation";
+    finish({ privateOldSubject: true });
+    await expect(pending).rejects.toThrow("native scope changed");
+  }
+});

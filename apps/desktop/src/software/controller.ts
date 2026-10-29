@@ -33,6 +33,16 @@ type Source = {
   error: string;
   seen: Set<string>;
 };
+export const canSubmitSoftware = (
+  status: Snapshot<LocalSoftwareStatus> | undefined,
+  now: number,
+) =>
+  !!status &&
+  ["waiting", "confirmationRequired"].includes(status.execution.phase) &&
+  status.execution.attempts === 0 &&
+  !status.execution.cancelRequested &&
+  status.execution.admission == null &&
+  status.prepared.startBeforeUnixMs > now;
 export function createSoftware(
   data: DataAccessPort | null,
   port: SoftwarePort | null,
@@ -50,6 +60,7 @@ export function createSoftware(
     prepared: proxyMap<string, LocalSoftwarePrepared>(),
     requests: proxySet<string>(),
     busy: proxySet<string>(),
+    uncertain: proxySet<string>(),
     historyNext: null as string | null,
     historyComplete: false,
     historyBusy: false,
@@ -62,6 +73,15 @@ export function createSoftware(
   const timer = setInterval(() => {
     if (active) state.now = Date.now();
   }, 1000);
+  // Every asynchronous status/history read is fenced against a later write for its original request.
+  let serial = 0;
+  const latest = new Map<string, number>(),
+    writes = new Set<string>();
+  const begin = (request: string) => {
+    const ticket = ++serial;
+    latest.set(request, ticket);
+    return ticket;
+  };
   const seenDirectory = new Set<string>(),
     seenHistory = new Set<string>();
   function accept(value: LocalSoftwareStatus) {
@@ -75,6 +95,8 @@ export function createSoftware(
       state.operations.delete(old.prepared.request);
       state.prepared.delete(old.prepared.request);
       state.requests.delete(old.prepared.request);
+      state.uncertain.delete(old.prepared.request);
+      latest.delete(old.prepared.request);
       state.historyComplete = false;
     }
     state.operations.set(value.prepared.request, value);
@@ -292,7 +314,8 @@ export function createSoftware(
   async function history(append = false) {
     if (!active || !port || state.historyBusy || (append && !state.historyNext))
       return;
-    const call = epoch;
+    const call = epoch,
+      ticket = ++serial;
     const after = append ? state.historyNext : null;
     state.historyBusy = true;
     try {
@@ -306,7 +329,14 @@ export function createSoftware(
         throw Error("cursor");
       if (!append) seenHistory.clear();
       if (after) seenHistory.add(after);
-      for (const value of page.items) accept(value);
+      for (const value of page.items) {
+        const request = value.prepared.request;
+        if (writes.has(request) || (latest.get(request) ?? 0) > ticket)
+          continue;
+        latest.set(request, ticket);
+        accept(value);
+        state.uncertain.delete(request);
+      }
       state.historyNext = page.next;
       state.historyComplete = !page.next;
       state.historyError = "";
@@ -318,11 +348,23 @@ export function createSoftware(
     }
   }
   async function query(request: string) {
-    if (!active || !port) return;
-    const call = epoch;
+    if (!active || !port || writes.has(request)) return;
+    const call = epoch,
+      ticket = begin(request);
     const value = await port.status({ request });
-    if (active && call === epoch) accept(value);
-    return value;
+    if (
+      active &&
+      call === epoch &&
+      latest.get(request) === ticket &&
+      !writes.has(request)
+    ) {
+      if (value.prepared.request !== request)
+        throw Error("software request mismatch");
+      accept(value);
+      state.uncertain.delete(request);
+      state.error = "";
+      return value;
+    }
   }
   async function prepare(
     item: Snapshot<InstalledSoftware>,
@@ -346,6 +388,8 @@ export function createSoftware(
     state.busy.add(key);
     const request = crypto.randomUUID();
     state.requests.add(request);
+    begin(request);
+    writes.add(request);
     try {
       const value = await port.prepare({
         request,
@@ -354,41 +398,66 @@ export function createSoftware(
       });
       if (!active || call !== epoch) return;
       state.prepared.set(request, value);
+      writes.delete(request);
       await query(request);
       return value;
     } catch {
       // Even prepare's lost acknowledgement is resolved by this UUID or service history.
       if (active && call === epoch)
         state.error = `准备回执未确认，请查询原请求：${request}`;
+      writes.delete(request);
       await query(request).catch(() => {});
     } finally {
+      writes.delete(request);
       if (active && call === epoch) state.busy.delete(key);
     }
   }
   async function submit(prepared: LocalSoftwarePrepared) {
-    if (!active || !port || state.busy.has(prepared.request)) return;
-    const call = epoch;
+    if (
+      !active ||
+      !port ||
+      state.busy.has(prepared.request) ||
+      state.uncertain.has(prepared.request) ||
+      !canSubmitSoftware(state.operations.get(prepared.request), Date.now())
+    )
+      return;
+    const call = epoch,
+      ticket = begin(prepared.request);
+    writes.add(prepared.request);
     state.busy.add(prepared.request);
     try {
       const value = await port.submit({
         request: prepared.request,
         digest: prepared.digest,
       });
-      if (active && call === epoch) accept(value);
+      if (active && call === epoch && latest.get(prepared.request) === ticket)
+        accept(value);
     } catch {
-      if (active && call === epoch)
+      if (active && call === epoch) {
+        state.uncertain.add(prepared.request);
         state.error = "提交回执未确认；请查询原请求，避免重复操作。";
+      }
     } finally {
+      writes.delete(prepared.request);
       if (active && call === epoch) state.busy.delete(prepared.request);
     }
   }
   async function cancel(request: string) {
-    if (!port) return;
-    const call = epoch;
+    if (!active || !port || state.busy.has(request)) return;
+    const call = epoch,
+      ticket = begin(request);
     if (!tasks) throw Error("task port unavailable");
-    await tasks.cancel(request);
-    const value = await port.status({ request });
-    if (active && call === epoch) accept(value);
+    writes.add(request);
+    state.busy.add(request);
+    try {
+      await tasks.cancel(request);
+      const value = await port.status({ request });
+      if (active && call === epoch && latest.get(request) === ticket)
+        accept(value);
+    } finally {
+      writes.delete(request);
+      if (active && call === epoch) state.busy.delete(request);
+    }
   }
   async function refreshSource(source: Source) {
     if (!data || !source.descriptor.available || source.busy) return;
@@ -463,6 +532,9 @@ export function createSoftware(
     state.requests.clear();
     state.queries.clear();
     state.busy.clear();
+    state.uncertain.clear();
+    latest.clear();
+    writes.clear();
     state.error = "";
     state.historyError = "";
   }

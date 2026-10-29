@@ -258,13 +258,15 @@ it("shows a first task detail failure and retries the same original reference fr
     expect(f.desktop.state.workspace!.tasks.state.detailError).not.toBe(""),
   );
   const dialog = await screen.findByRole("dialog");
-  expect(within(dialog).getByRole("heading", { name: "原任务" })).toBeTruthy();
+  expect(
+    within(dialog).getByRole("heading", { name: "任务详情" }),
+  ).toBeTruthy();
   await within(dialog).findByText("原任务不可访问或状态未确认，请重试读取");
   const original = f.desktop.state.workspace!.tasks.state.requested;
   expect(original).not.toBeNull();
   expect(f.desktop.state.workspace!.tasks.state.selected).toBeNull();
   const retry = await within(dialog).findByRole("button", {
-    name: "重新读取原任务",
+    name: "查询原请求",
   });
   await waitFor(() =>
     expect((retry as HTMLButtonElement).disabled).toBe(false),

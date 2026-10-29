@@ -194,3 +194,43 @@ it.each([
     owner.dispose();
   },
 );
+it("retains the service-frozen preparation after status moves to a run, and clears it with its original selection", async () => {
+  const record = policyRecord("original"),
+    item = directoryItem(record.action);
+  const owner = createPolicyPreparation(
+    {
+      ...policyFixturePort,
+      execute: vi.fn(),
+      confirm: vi.fn(),
+      policy_resolve: async () => item,
+      policy_invoke: async () => record,
+      policy_status: async () => ({
+        kind: "run",
+        value: {
+          requestId: "original",
+          runId: "run",
+          attemptId: null,
+          availableAt: 1,
+          deadline: 100,
+          result: null,
+          state: {
+            delivery: { kind: "queued" },
+            execution: "succeeded",
+            cancellation: "none",
+            startedAt: 1,
+            deadline: 100,
+          },
+        },
+      }),
+    },
+    () => "original",
+  );
+  await owner.select(item);
+  await owner.submit({ interface: "en0" });
+  await owner.recover();
+  expect(owner.state.status?.kind).toBe("run");
+  expect(owner.state.preparation?.action).toEqual(record.action);
+  expect(owner.clear()).toBe(true);
+  expect(owner.state.preparation).toBeNull();
+  owner.dispose();
+});
