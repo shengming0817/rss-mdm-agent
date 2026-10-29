@@ -1,6 +1,7 @@
 import {
   createElement as h,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ReactNode,
@@ -44,7 +45,21 @@ export interface RuntimeSurfaceProps {
   fallback?: ReactNode;
 }
 /** Projection in, official bounded renderer, authenticated action out. No execution authority. */
-export function RuntimeSurface({
+const runtimeOwners = new WeakMap<RuntimeClient, number>();
+let nextOwner = 0;
+export function RuntimeSurface(props: RuntimeSurfaceProps) {
+  let owner = runtimeOwners.get(props.runtime);
+  if (owner === undefined) {
+    owner = ++nextOwner;
+    runtimeOwners.set(props.runtime, owner);
+  }
+  // A new authenticated scope receives a new host DOM node in the same commit.
+  return h(RuntimeSurfaceOwner, {
+    ...props,
+    key: JSON.stringify([owner, props.sessionId, props.instanceId]),
+  });
+}
+function RuntimeSurfaceOwner({
   runtime,
   sessionId,
   instanceId,
@@ -68,7 +83,7 @@ export function RuntimeSurface({
     error: "",
     kind: "renderer" as "renderer" | "action",
   });
-  useEffect(() => {
+  useLayoutEffect(() => {
     let active = true,
       renderer: SurfaceRendererHandle | undefined,
       stop = () => {},
@@ -156,6 +171,7 @@ export function RuntimeSurface({
       now,
       mount,
       onAction: async (request) => {
+        if (!active) return;
         const receipt = await runtime.action(request);
         if (active) {
           patch({ error: "" });

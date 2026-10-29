@@ -584,3 +584,25 @@ test("system appearance and production fixture imports remain narrow capabilitie
       name,
     );
 });
+
+test("React component resources and element factories cannot bypass presentation limits", () => {
+  for (const source of [
+    'import { Button } from "antd"; const node = <Button href="https://example.invalid">go</Button>;',
+    'import { Image } from "antd"; const node = <Image src="https://example.invalid/pixel" />;',
+    'import { createElement } from "react"; createElement("div", {dangerouslySetInnerHTML: {__html: "bad"}});',
+    'import { createElement as h } from "react"; h("a", {href:"https://example.invalid"});',
+    'import * as React from "react"; React.createElement("iframe", {});',
+    'import * as React from "react"; const h = React.createElement; h("a", {});',
+    'import { createElement } from "react"; const props = {}; createElement("div", props);',
+    'import { createElement } from "react"; createElement("div", {...{dangerouslySetInnerHTML: {__html: "bad"}}});',
+    'import { createElement as h } from "react"; const tag = "iframe"; h(tag, {});',
+  ])
+    assert.ok(checkSource("packages/ui/src/Attack.tsx", source).length, source);
+  assert.deepEqual(
+    checkSource(
+      "packages/ui/src/Safe.tsx",
+      'import { createElement } from "react"; createElement("div", {className:"safe"}, "text");',
+    ),
+    [],
+  );
+});

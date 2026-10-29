@@ -2,7 +2,14 @@ import { Button, Card } from "antd";
 import { AppstoreOutlined } from "@ant-design/icons";
 import type { ReactNode } from "react";
 
-export type CoverTone = "workspace" | "design" | "notes" | "browser" | "system";
+export type CoverTone =
+  | "workspace"
+  | "design"
+  | "notes"
+  | "browser"
+  | "pdf"
+  | "sync"
+  | "system";
 /** Locally drawn artwork: company content never injects HTML or external image URLs. */
 export function SoftwareCover({
   title,
@@ -14,21 +21,63 @@ export function SoftwareCover({
   tone: CoverTone;
 }) {
   return (
-    <div className={`rss-software-cover rss-cover-${tone}`}>
-      <div className="rss-cover-copy">
-        <h3>{title}</h3>
-        {subtitle && <p>{subtitle}</p>}
-      </div>
-      <div className="rss-cover-window" aria-hidden="true">
-        <div />
-        <i />
-        <i />
-        <i />
-        <i />
-      </div>
+    <div className={`rss-store-art rss-cover-${tone}`} aria-hidden="true">
+      {tone === "notes" || tone === "pdf" ? (
+        <>
+          <div className="rss-paper">
+            <span>{title}</span>
+            <i />
+            <i />
+            <i />
+            <i />
+          </div>
+          {subtitle && <small>{subtitle}</small>}
+        </>
+      ) : tone === "design" ? (
+        <>
+          <div className="rss-design-board">
+            <i />
+            <span>Aa</span>
+          </div>
+          <div className="rss-swatches">
+            <i />
+            <i />
+            <i />
+          </div>
+        </>
+      ) : tone === "browser" ? (
+        <div className="rss-browser-window">
+          <header>
+            ••• <i />
+          </header>
+          <div>
+            <span />
+            <i />
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="rss-workspace-window">
+            <div className="rss-art-side">
+              <i />
+              <i />
+              <i />
+              <i />
+            </div>
+            <div className="rss-art-main">
+              <i />
+              <i />
+              <i />
+              <i />
+            </div>
+          </div>
+          {subtitle && <small>{subtitle}</small>}
+        </>
+      )}
     </div>
   );
 }
+
 export function SoftwareCard({
   title,
   description,

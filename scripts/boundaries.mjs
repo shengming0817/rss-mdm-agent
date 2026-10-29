@@ -328,6 +328,35 @@ export function checkSource(file, source) {
       }
     }
   }
+  const factories = new Set();
+  for (const statement of ast.statements) {
+    if (
+      ts.isImportDeclaration(statement) &&
+      ["react", "react/jsx-runtime"].includes(statement.moduleSpecifier.text)
+    ) {
+      const bindings = statement.importClause?.namedBindings;
+      if (bindings && ts.isNamedImports(bindings))
+        for (const entry of bindings.elements) {
+          if (
+            ["createElement", "jsx", "jsxs"].includes(
+              entry.propertyName?.text ?? entry.name.text,
+            )
+          )
+            factories.add(entry.name.text);
+        }
+    }
+  }
+  const factoryMembers = new Set(["createElement", "jsx", "jsxs"]);
+  function elementFactory(expression) {
+    return (
+      (ts.isIdentifier(expression) && factories.has(expression.text)) ||
+      (ts.isPropertyAccessExpression(expression) &&
+        factoryMembers.has(expression.name.text)) ||
+      (ts.isElementAccessExpression(expression) &&
+        ts.isStringLiteralLike(expression.argumentExpression) &&
+        factoryMembers.has(expression.argumentExpression.text))
+    );
+  }
   function visit(node) {
     if (ts.isTypeNode(node)) return;
     if (
@@ -351,11 +380,15 @@ export function checkSource(file, source) {
     }
     if (
       ts.isJsxAttribute(node) &&
-      (node.name.getText(ast) === "dangerouslySetInnerHTML" ||
-        (forbiddenAttributes.has(node.name.getText(ast)) &&
-          /^[a-z]/.test(node.parent.parent.tagName.getText(ast))))
+      forbiddenAttributes.has(node.name.getText(ast))
     )
       errors.push(`${file}: outbound or executable JSX attribute`);
+    if (
+      elementFactory(node) &&
+      !ts.isImportSpecifier(node.parent) &&
+      !(ts.isCallExpression(node.parent) && node.parent.expression === node)
+    )
+      errors.push(`${file}: element factory cannot escape inspection`);
     if (ts.isJsxSpreadAttribute(node))
       errors.push(`${file}: unchecked JSX attributes`);
     if (ts.isIdentifier(node)) {
@@ -437,6 +470,32 @@ export function checkSource(file, source) {
         )
       )
         errors.push(`${file}: native capability owner`);
+    }
+    if (ts.isCallExpression(node) && elementFactory(node.expression)) {
+      const tag = node.arguments[0],
+        props = node.arguments[1];
+      if (
+        !tag ||
+        !ts.isStringLiteralLike(tag) ||
+        (ts.isStringLiteralLike(tag) &&
+          (forbiddenTags.has(tag.text) || tag.text === "form"))
+      )
+        errors.push(`${file}: non-presentation factory element`);
+      if (props && props.kind !== ts.SyntaxKind.NullKeyword) {
+        if (!ts.isObjectLiteralExpression(props))
+          errors.push(`${file}: unchecked factory props`);
+        else
+          for (const property of props.properties) {
+            const name =
+              property.name &&
+              (ts.isIdentifier(property.name) ||
+                ts.isStringLiteralLike(property.name))
+                ? property.name.text
+                : null;
+            if (name === null || forbiddenAttributes.has(name))
+              errors.push(`${file}: outbound or executable factory property`);
+          }
+      }
     }
     if (ts.isCallExpression(node)) {
       if (

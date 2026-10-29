@@ -12,7 +12,14 @@ const { startFixture } = await import("../tests/assistant/server.mjs");
 const fixture = await startFixture();
 let browser;
 try {
-  browser = await chromium.launch({ channel: "chrome", headless: true });
+  browser = await chromium.launch({
+    headless: true,
+    executablePath:
+      process.env.AI_BROWSER_PATH ??
+      (process.platform === "darwin"
+        ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        : undefined),
+  });
   const context = await browser.newContext({
     viewport: { width: 1280, height: 900 },
   });
@@ -51,10 +58,16 @@ try {
   await input.fill("第一行");
   await input.press("Shift+Enter");
   assert.equal(await input.inputValue(), "第一行\n");
-  await input.fill("发送测试");
+  await input.fill("第一行\n第二行");
   await input.press("Enter");
-  await page.locator(".rss-message-user").getByText("发送测试").waitFor();
+  await page.locator(".rss-message-user").getByText("第一行\n第二行").waitFor();
   assert.equal(await input.inputValue(), "");
+  assert.equal(
+    await page
+      .locator(".rss-message-user > p")
+      .evaluate((node) => getComputedStyle(node).whiteSpace),
+    "pre-wrap",
+  );
   for (const colorScheme of ["light", "dark"]) {
     await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
     await page.waitForFunction(

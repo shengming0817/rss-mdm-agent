@@ -1,6 +1,6 @@
-# Vue / A2UI 接缝
+# React / A2UI 接缝
 
-RuntimeSurface 消费唯一客户端投影，通过显式注入的 Vue 节点 renderer 挂载官方 A2UI core 投影并提交有界回答。接口见 [src](src/)，接入步骤见[开发指南](../../docs/guides/ai-access-development.md)。组件和协议版本由 manifest 与 schema 持有。
+RuntimeSurface 消费唯一客户端投影，通过显式注入的 节点 renderer 挂载官方 A2UI core 投影并提交有界回答。接口见 [src](src/)，接入步骤见[开发指南](../../docs/guides/ai-access-development.md)。组件和协议版本由 manifest 与 schema 持有。
 
 模型文本按纯文本转义。输入先校验，再创建可丢弃的 processor；处理失败、卸载和重挂不能把缓存变成权威。用户输入保留到提交，稳定更新从 Host 内容重建显示。
 

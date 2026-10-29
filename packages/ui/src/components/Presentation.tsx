@@ -81,21 +81,21 @@ export function StatePanel({
       </Empty>
     );
   return (
-    <Alert
-      showIcon
-      type={
-        kind === "error" ? "error" : kind === "readonly" ? "info" : "warning"
-      }
-      title={title}
-      description={description}
-      action={
-        onRead && (
-          <Button onClick={onRead}>
-            {kind === "unknown" ? "查询原请求" : "重新读取"}
-          </Button>
-        )
-      }
-    />
+    <div className="rss-state-panel">
+      <Alert
+        showIcon
+        type={
+          kind === "error" ? "error" : kind === "readonly" ? "info" : "warning"
+        }
+        title={title}
+        description={description}
+      />
+      {onRead && (
+        <Button onClick={onRead}>
+          {kind === "unknown" ? "查询原请求" : "重新读取"}
+        </Button>
+      )}
+    </div>
   );
 }
 export type ActionPhase =

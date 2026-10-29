@@ -42,7 +42,6 @@ const allowed = {
     "@rss-mdm-agent/ai-contract",
     "@rss-mdm-agent/ai-client",
     "@a2ui/web_core",
-    "react",
   ],
 };
 const errors = [];
@@ -120,7 +119,15 @@ for (const [name, dependencies] of Object.entries(allowed)) {
             : appExternalDependencies[dependency]),
       )) ||
     manifest.optionalDependencies ||
-    manifest.peerDependencies
+    (name === "packages/ai-ui-bridge"
+      ? JSON.stringify(
+          Object.entries(manifest.peerDependencies ?? {}).sort(),
+        ) !==
+        JSON.stringify([
+          ["react", "^19.3.1"],
+          ["react-dom", "^19.3.1"],
+        ])
+      : manifest.peerDependencies)
   )
     errors.push(`${name}: unexpected dependency closure`);
   for (const file of walk(join(dir, "src"))) {
@@ -155,7 +162,10 @@ for (const [name, dependencies] of Object.entries(allowed)) {
       const packageName = value.startsWith("@")
         ? value.split("/").slice(0, 2).join("/")
         : value.split("/")[0];
-      if (!dependencies.includes(packageName))
+      if (
+        !dependencies.includes(packageName) &&
+        !(name === "packages/ai-ui-bridge" && packageName === "react")
+      )
         errors.push(`${name}: forbidden import ${value}`);
     };
     function visit(node) {

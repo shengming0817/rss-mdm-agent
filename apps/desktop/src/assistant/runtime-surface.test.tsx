@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef } from "react";
 import { act, render, screen } from "@testing-library/react";
 import { it, expect, vi } from "vitest";
 import {
@@ -112,4 +113,46 @@ it("does not show the previous session projection during an owner switch", async
   view.rerender(<View client={second.client} />);
   expect(screen.queryByText("old")).toBeNull();
   expect(first.listeners.size).toBe(0);
+});
+
+it("removes the previous owner's private card before the next owner's layout and blocks stale actions", async () => {
+  const first = runtime(),
+    second = runtime();
+  const action = vi.fn();
+  first.client.action = action;
+  let stale: Parameters<RendererFactory>[1]["onAction"] | undefined;
+  let observed = "";
+  const factory: RendererFactory = async (container, options) => {
+    if (!stale) {
+      container.textContent = "OLD OWNER PRIVATE TEXT";
+      stale = options.onAction;
+    }
+    return handle();
+  };
+  function Parent({ client }: { client: RuntimeClient }) {
+    const root = useRef<HTMLElement>(null);
+    useLayoutEffect(() => {
+      observed = root.current?.textContent ?? "";
+    });
+    return (
+      <section ref={root}>
+        <RuntimeSurface
+          runtime={client}
+          sessionId="s"
+          instanceId="i"
+          mount={mount}
+          rendererFactory={factory}
+        />
+      </section>
+    );
+  }
+  const view = render(<Parent client={first.client} />);
+  await act(async () => {});
+  expect(observed).toContain("OLD OWNER PRIVATE TEXT");
+  view.rerender(<Parent client={second.client} />);
+  expect(observed).not.toContain("OLD OWNER PRIVATE TEXT");
+  await act(async () => {
+    await stale!({} as Parameters<NonNullable<typeof stale>>[0]);
+  });
+  expect(action).not.toHaveBeenCalled();
 });
