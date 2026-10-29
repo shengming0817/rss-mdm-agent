@@ -313,6 +313,7 @@ export function HomePage({
                 <button
                   type="button"
                   className="rss-home-activity-row"
+                  data-task-reference={taskKey(item.reference)}
                   key={taskKey(item.reference)}
                   onClick={() => {
                     workspace.navigation.select("tasks", "history");

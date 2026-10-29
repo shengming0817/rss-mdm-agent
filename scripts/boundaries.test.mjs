@@ -668,3 +668,12 @@ test("React A2UI DOM owner remains unable to acquire network and native authorit
     ).length,
   );
 });
+
+test("retired Vue SFC is rejected before its template can bypass the React parser", () => {
+  const source =
+    '<template><iframe src="https://untrusted.invalid" /></template><script setup>const value=1;</script>';
+  assert.match(
+    checkSource("apps/desktop/src/Legacy.vue", source).join("\n"),
+    /retired Vue SFC/,
+  );
+});

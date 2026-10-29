@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import type { Command } from "@rss-mdm-agent/ai-contract/wire";
 import type { ClientOptions } from "@rss-mdm-agent/ai-client";
 import { createWorkspace } from "../state/workspace";
 import { shellFixture } from "../../../../tests/desktop/ui-support";
@@ -225,4 +226,40 @@ it("retires surface input and keeps the main composer read-only when the origina
   expect(memory.retired).toBe(true);
   expect(memory.fields.size).toBe(0);
   expect(f.c.state.drafts.size).toBe(0);
+});
+
+it("renders original prompt identity and projection completion state for the real timeline oracle", async () => {
+  const f = await fixture();
+  await act(async () => {
+    f.c.draft.set("本次原消息");
+    await f.c.prompt();
+  });
+  const command = (f.submit.mock.calls as unknown as [Command][])[0][0];
+  await act(async () => {
+    const view = f.c.state.views.get(f.c.state.selected)!;
+    view.commands[command.commandId] = { command, state: "accepted" };
+    view.messages.reply = {
+      commandId: command.commandId,
+      text: "本次回复",
+      stable: false,
+    };
+    view.timeline = [
+      { kind: "prompt", key: command.commandId, sequence: 1 },
+      { kind: "message", key: "reply", sequence: 2 },
+    ];
+  });
+  const timeline = f.app.container.querySelector(".rss-assistant-timeline")!;
+  expect(timeline.getAttribute("data-busy")).toBe("true");
+  const user = timeline.querySelector('[data-message-kind="user"]')!;
+  expect(user.getAttribute("data-message-key")).toBe(command.commandId);
+  expect(user.getAttribute("data-stable")).toBe("true");
+  const reply = timeline.querySelector('[data-message-key="reply"]')!;
+  expect(reply.getAttribute("data-stable")).toBe("false");
+  await act(async () => {
+    const view = f.c.state.views.get(f.c.state.selected)!;
+    view.messages.reply.stable = true;
+    view.commands[command.commandId].state = "terminal";
+  });
+  expect(reply.getAttribute("data-stable")).toBe("true");
+  expect(timeline.getAttribute("data-busy")).toBe("false");
 });

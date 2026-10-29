@@ -36,8 +36,8 @@ PR #1036 修复参考：ref: Node.js lib/internal/abort_controller.js（本地 N
 | --- | --- | --- |
 | ACP SDK / protocol | SDK1.4.0；schema-v1.21.0；protocol1 | ref: typescript-sdk `src/acp.ts` / `src/stream.ts`，发布包 `dist/acp.js` / `dist/stream.js`；[SDK commit](https://github.com/agentclientprotocol/typescript-sdk/tree/e6463f444093ed7c5f1cc937c3f32afb5853e906)，[protocol commit](https://github.com/agentclientprotocol/agent-client-protocol/tree/272bf799f35a258c6a4107a0410ed361e83683d3) |
 | A2UI schema | v0.9.1，commit04e6f07fde12ff2638b3b489bd9e3033066cb957 | ref: a2ui `specification/v0_9_1/json`，原样 upstream schema/Apache-2.0 [NOTICE](../../packages/ai-contract/schema/upstream/a2ui/NOTICE.md) |
-| web_core / Vue renderer | web_core npm0.11.0；导入 v0_9 | ref: 发布包 `src/v0_9/processing/message-processor.js`、`state/surface-model.js`、`basic_catalog/components/Text.js` 及 `nodes/node-resolver.js`；桌面 Vue 注册表替换 Lit surface 挂载；npm 未提供 gitHead，不把它等同于 schema commit。实际运行验证与协议兼容，完整性由 pnpm-lock 持有 |
-| Vue / Vite | 3.5.38 / 6.4.3 | ref: [Vue Web Components](https://vuejs.org/guide/extras/web-components)，浏览器接入验证 property 接缝与 custom element |
+| web_core / React DOM owner | web_core npm0.11.0；导入 v0_9 | ref: 发布包 `src/v0_9/processing/message-processor.js`、`state/surface-model.js`、`basic_catalog/components/Text.js` 及 `nodes/node-resolver.js`；桌面 React DOM owner 注册表挂载官方节点，并在 dispose 时释放；npm 未提供 gitHead，不把它等同于 schema commit。实际运行验证与协议兼容，完整性由 pnpm-lock 持有 |
+| React / Vite | 以根及 UI manifest / lock 为准 | ref: React DOM `createRoot` 的 render / unmount；浏览器接入验证实际节点更新与释放。历史 Vue 来源见 [C05 记录](ui-extraction.md) |
 | 静态校验/摘要 | Ajv8.20.0 / @noble/hashes2.0.1 | ref: [Ajv standalone](https://ajv.js.org/standalone.html)，[noble sha2.ts](https://github.com/paulmillr/noble-hashes/blob/2.0.1/src/sha2.ts)，共享 golden 保持摘要一致 |
 
 renderer npm 版本、协议版本、导入路径、产品 catalog revision 是四个独立标识；不得互相推断。未知组件或官方处理器异常先失效再恢复，官方逐条内存更新不是事务提交。

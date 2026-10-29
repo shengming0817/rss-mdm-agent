@@ -1,12 +1,14 @@
 # C05 UI与桌面壳提取
 
+本页记录 C05 首次提取时的历史来源及文件映射。表中的 Vue 文件已随 React / Ant Design 重建退出当前生产闭包，不是现有文件清单；当前入口为 `apps/desktop/src/main.tsx`、`packages/ui/runtime.ts`，官方 A2UI 节点由 React DOM owner 挂载。历史授权与来源仍保留。
+
 任务：[#2398](https://dev.azure.com/shengming0923/rss/_workitems/edit/2398)。来源仓prmonitor固定commit `4dcc87264ad740da6559824e0a8b04a1c2914d4b`，不消费浮动分支或本地源码目录。
 
 ## 权利与许可证
 
 固定来源树没有LICENSE/NOTICE文件，不能从可读取或提交作者推定开源许可。2026-09-09用户明确确认“自己的项目，保持mit授权，可以直接提取”，本次据该授权以MIT交付目标源码。根LICENSE和UI包内LICENSE一致；原有第三方权利不被本次授权覆盖。不修改来源仓，也不宣称来源历史提交包含MIT文件。
 
-运行依赖Vue（3.5.38，MIT）外置于UI包，Tauri（2.11.2，MIT OR Apache-2.0）正常通过Cargo消费；未复制其实现。Tauri传递依赖各自许可随原包保留，Cargo.lock/pnpm-lock.yaml是实际依赖清单。开发工具按其发布包LICENSE消费，不复制为自有代码。
+当时运行依赖Vue（3.5.38，MIT）外置于UI包，Tauri（2.11.2，MIT OR Apache-2.0）正常通过Cargo消费；未复制其实现。Tauri传递依赖各自许可随原包保留，Cargo.lock/pnpm-lock.yaml是实际依赖清单。开发工具按其发布包LICENSE消费，不复制为自有代码。
 
 ## 逐文件映射
 

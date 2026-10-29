@@ -103,6 +103,8 @@ function files(dir) {
 export function checkSource(file, source) {
   file = file.replaceAll("\\", "/");
   const errors = [];
+  if (file.endsWith(".vue"))
+    return [`${file}: retired Vue SFC is not a production source`];
   const desktop = file.startsWith("apps/desktop/src/");
   const ui = file.startsWith("packages/ui/");
   const ast = ts.createSourceFile(
