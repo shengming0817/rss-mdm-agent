@@ -88,6 +88,9 @@ export function createTaskCenter(
     query: initialQuery(),
     items: [] as TaskDetail[],
     selected: null as TaskDetail | null,
+    requested: null as TaskRef | null,
+    detailLoading: false,
+    detailError: "",
     next: null as string | null,
     loading: false,
     loaded: false,
@@ -160,6 +163,9 @@ export function createTaskCenter(
     state.recentAsOf = 0;
     state.items = [];
     state.selected = null;
+    state.requested = null;
+    state.detailLoading = false;
+    state.detailError = "";
     state.next = null;
     state.pendingControl = null;
     state.node = "";
@@ -378,12 +384,18 @@ export function createTaskCenter(
   }
   function closeTask() {
     selectionEpoch++;
+    state.requested = null;
     state.selected = null;
+    state.detailLoading = false;
+    state.detailError = "";
     state.node = "";
   }
   async function openTask(reference: TaskRef, node = "") {
     const call = epoch,
       selection = ++selectionEpoch;
+    state.requested = deepClone(reference);
+    state.detailLoading = true;
+    state.detailError = "";
     if (
       state.selected &&
       taskKey(state.selected.reference) !== taskKey(reference)
@@ -398,7 +410,7 @@ export function createTaskCenter(
       if (node && !value.nodes.some((n) => n.id === node)) {
         state.selected = value;
         state.node = "";
-        state.error = "原步骤已不在当前详情中，已读取原任务最新事实";
+        state.detailError = "原步骤已不在当前详情中，已读取原任务最新事实";
         return "unavailable" as const;
       }
       if (
@@ -418,8 +430,11 @@ export function createTaskCenter(
     } catch {
       if (!alive || call !== epoch || selection !== selectionEpoch)
         return "stale" as const;
-      state.error = "原任务不可访问或状态未确认，请重试读取";
+      state.detailError = "原任务不可访问或状态未确认，请重试读取";
       return "unknown" as const;
+    } finally {
+      if (alive && call === epoch && selection === selectionEpoch)
+        state.detailLoading = false;
     }
   }
   async function reconcileControl() {

@@ -106,6 +106,12 @@ export function RegistrationPage({
                       ? "已撤销"
                       : "已退休"}
             </dd>
+            {registered.grantId && (
+              <>
+                <dt>原注册引用</dt>
+                <dd className="rss-reference">{registered.grantId}</dd>
+              </>
+            )}
             {registered.expiresAt != null && (
               <>
                 <dt>原授权期限</dt>
@@ -132,11 +138,11 @@ export function RegistrationPage({
               disabled={
                 !registered ||
                 registered.registered ||
-                !!unresolved ||
-                application.registrationPending
+                application.registrationPending ||
+                account.busy
               }
             >
-              注册这台设备
+              {unresolved ? "继续核验原注册" : "注册这台设备"}
             </Button>
           ) : (
             <Button type="primary" onClick={onLogin}>
@@ -151,7 +157,7 @@ export function RegistrationPage({
           </Button>
         </div>
         <p className="rss-muted">
-          注册授权、凭据激活和本机运行状态分别核实。停止等待不会撤销已受理的注册。
+          注册授权、凭据激活和本机运行状态分别核实。停止等待不会撤销已受理的注册；继续核验会沿用保留的原请求。
         </p>
       </SectionCard>
       <SectionCard title="MDM 管理">

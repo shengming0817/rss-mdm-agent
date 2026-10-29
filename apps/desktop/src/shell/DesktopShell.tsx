@@ -83,10 +83,7 @@ function NativeEntryObserver({ workspace }: { workspace: Workspace }) {
         }
         if (result.kind === "task") {
           workspace.navigation.select("tasks", "history");
-          await workspace.tasks.openTask(result.value);
-          return (
-            !!workspace.tasks.state.selected && !workspace.tasks.state.error
-          );
+          return (await workspace.tasks.openTask(result.value)) === "ready";
         }
         return false;
       },

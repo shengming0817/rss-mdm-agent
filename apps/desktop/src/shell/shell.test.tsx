@@ -16,8 +16,11 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
 }));
 afterEach(() => vi.useRealTimers());
-async function fixture() {
+async function fixture(
+  configure?: (f: ReturnType<typeof shellFixture>) => void,
+) {
   const f = shellFixture();
+  configure?.(f);
   let desktop!: Desktop;
   function Observe() {
     desktop = useDesktop();
@@ -206,5 +209,119 @@ it("changes appearance through the existing desktop owner without replacing the 
     f.app.container.querySelector(".rss-ui")?.getAttribute("data-theme"),
   ).toBe("dark");
   expect(f.desktop.state.workspace).toBe(workspace);
+  f.app.unmount();
+});
+
+it("finds user settings through global search without adding them to primary navigation or executing", async () => {
+  for (const [title, section] of [
+    ["账号与组织", "account"],
+    ["外观与体验", "appearance"],
+    ["设备注册与 MDM", "registration"],
+  ]) {
+    const f = await fixture();
+    fireEvent.keyDown(document, { key: "k", ctrlKey: true });
+    const search = await screen.findByRole("combobox", {
+      name: "搜索应用、工具和设置",
+    });
+    fireEvent.change(search, { target: { value: title } });
+    await screen.findByRole("option", { name: new RegExp(title) });
+    fireEvent.keyDown(search, { key: "Enter" });
+    expect(f.desktop.state.workspace!.navigation.state.page).toBe("settings");
+    expect(f.desktop.state.workspace!.navigation.state.selected.settings).toBe(
+      section,
+    );
+    await waitFor(() =>
+      expect(f.desktop.state.workspace!.navigation.state.searchOpen).toBe(
+        false,
+      ),
+    );
+    expect(f.execute).not.toHaveBeenCalled();
+    expect(f.submit).not.toHaveBeenCalled();
+    f.app.unmount();
+  }
+});
+it("shows a first task detail failure and retries the same original reference from the open drawer", async () => {
+  let detail!: ReturnType<typeof vi.fn>;
+  const f = await fixture((f) => {
+    const port = f.input.environment!.local.tasks!,
+      read = port.detail;
+    detail = vi.fn(read).mockRejectedValueOnce(Error("temporary unavailable"));
+    port.detail = detail;
+  });
+  fireEvent.click(await screen.findByRole("button", { name: /diagnose/ }));
+  await waitFor(() =>
+    expect(f.desktop.state.workspace!.tasks.state.detailError).not.toBe(""),
+  );
+  const dialog = await screen.findByRole("dialog");
+  expect(within(dialog).getByRole("heading", { name: "原任务" })).toBeTruthy();
+  await within(dialog).findByText("原任务不可访问或状态未确认，请重试读取");
+  const original = f.desktop.state.workspace!.tasks.state.requested;
+  expect(original).not.toBeNull();
+  expect(f.desktop.state.workspace!.tasks.state.selected).toBeNull();
+  const retry = await within(dialog).findByRole("button", {
+    name: "重新读取原任务",
+  });
+  await waitFor(() =>
+    expect((retry as HTMLButtonElement).disabled).toBe(false),
+  );
+  fireEvent.click(retry);
+  await waitFor(() =>
+    expect(f.desktop.state.workspace!.tasks.state.selected).not.toBeNull(),
+  );
+  expect(detail).toHaveBeenCalledTimes(2);
+  expect(detail.mock.calls.map(([reference]) => reference)).toEqual([
+    original,
+    original,
+  ]);
+  expect(f.execute).not.toHaveBeenCalled();
+  f.app.unmount();
+});
+it("stops only the registration wait and resumes the same retained grant", async () => {
+  let rejectWait!: (error: Error) => void;
+  let status = {
+    phase: "unregistered",
+    registered: false,
+    credential: "absent",
+    grantId: null,
+  } as import("../settings/service-contract").RegistrationStatus;
+  const request = vi.fn(async () => {
+    if (!status.grantId) {
+      status = {
+        ...status,
+        phase: "awaitingAuthorization",
+        grantId: "original-grant",
+      };
+      return new Promise<typeof status>((_, reject) => {
+        rejectWait = reject;
+      });
+    }
+    return status;
+  });
+  const f = await fixture((f) => {
+    const service = f.input.environment!.service;
+    service.registration = async () => structuredClone(status);
+    service.requestRegistration = request;
+    service.cancelRegistration = async () =>
+      rejectWait(Error("registration_cancelled"));
+  });
+  await act(async () => {
+    await f.desktop.login({
+      organizationId: "qinghe",
+      login: "person",
+      password: "fixture",
+    });
+  });
+  await act(async () => {
+    f.desktop.state.workspace!.navigation.select("settings", "registration");
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "注册这台设备" }));
+  fireEvent.click(await screen.findByRole("button", { name: "停止等待注册" }));
+  const resume = await screen.findByRole("button", { name: "继续核验原注册" });
+  expect(screen.getByText("original-grant")).toBeTruthy();
+  fireEvent.click(resume);
+  await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
+  await screen.findByRole("button", { name: "继续核验原注册" });
+  expect(screen.getByText("original-grant")).toBeTruthy();
+  expect(status.registered).toBe(false);
   f.app.unmount();
 });

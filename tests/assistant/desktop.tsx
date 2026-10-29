@@ -14,6 +14,35 @@ export function DesktopFixture() {
     platform = parameters.get("platform") === "windows" ? "windows" : "macos";
   const input = useMemo(() => {
     const ports = createFixturePorts();
+    if (scene === "registration-wait") {
+      const read = ports.environment.service.requestRegistration;
+      let first = true,
+        release: (() => void) | undefined;
+      ports.environment.service.requestRegistration = async (input) => {
+        const status = await read(input);
+        if (first) {
+          first = false;
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+        }
+        return status;
+      };
+      ports.environment.service.cancelRegistration = async () => {
+        release?.();
+      };
+    }
+    if (scene === "task-error" && ports.environment.local.tasks) {
+      const read = ports.environment.local.tasks.detail;
+      let first = true;
+      ports.environment.local.tasks.detail = async (reference) => {
+        if (first) {
+          first = false;
+          throw Error("fixture original detail unavailable");
+        }
+        return read(reference);
+      };
+    }
     if (scene === "error") {
       ports.environment.device.read = async () => {
         throw Error("fixture read denied");

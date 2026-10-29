@@ -148,6 +148,8 @@ it("fences a late detail response after a native scope change and drops old acti
   finish(taskDetail("late"));
   await pending;
   expect(c.state.selected).toBeNull();
+  expect(c.state.requested).toBeNull();
+  expect(c.state.detailLoading).toBe(false);
   expect(c.state.byRef.size).toBe(0);
   expect(c.state.pendingControl).toBeNull();
   c.dispose();

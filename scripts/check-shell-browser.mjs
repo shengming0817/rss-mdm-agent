@@ -143,6 +143,51 @@ export async function checkShellBrowser(page, fixture) {
   mkdirSync(new URL("../.local-ci-runs/", import.meta.url), {
     recursive: true,
   });
+  await go("&scene=task-error");
+  await page.locator(".rss-home-activity-row").first().click();
+  const taskDialog = page.getByRole("dialog", { name: /原任务/ });
+  await taskDialog
+    .getByText("原任务不可访问或状态未确认，请重试读取", { exact: true })
+    .waitFor();
+  const originalTask = await page.evaluate(() =>
+    JSON.stringify(window.rssDesktop.state.workspace.tasks.state.requested),
+  );
+  await capture("task-detail-error");
+  await taskDialog
+    .getByRole("button", { name: "重新读取原任务", exact: true })
+    .click();
+  await page.waitForFunction(
+    () => !!window.rssDesktop.state.workspace.tasks.state.selected,
+  );
+  assert.equal(
+    await page.evaluate(() =>
+      JSON.stringify(
+        window.rssDesktop.state.workspace.tasks.state.selected.reference,
+      ),
+    ),
+    originalTask,
+  );
+  await page.keyboard.press("Escape");
+  for (const [title, section] of [
+    ["账号与组织", "account"],
+    ["外观与体验", "appearance"],
+    ["设备注册与 MDM", "registration"],
+  ]) {
+    await page.keyboard.press("Control+k");
+    const searchSettings = page.getByRole("combobox", {
+      name: "搜索应用、工具和设置",
+    });
+    await searchSettings.fill(title);
+    await searchSettings.press("Enter");
+    await page.getByRole("dialog").waitFor({ state: "hidden" });
+    assert.equal(
+      await page.evaluate(
+        () =>
+          window.rssDesktop.state.workspace.navigation.state.selected.settings,
+      ),
+      section,
+    );
+  }
   const visualMetrics = [];
   for (const platform of ["macos", "windows"]) {
     await go("&platform=" + platform);
@@ -292,21 +337,35 @@ export async function checkShellBrowser(page, fixture) {
     method: "POST",
     body: JSON.stringify({ scenario: "unregistered" }),
   });
-  await go();
+  await go("&scene=registration-wait");
   await page.getByRole("button", { name: "用户菜单", exact: true }).click();
   await page
     .getByRole("menuitem", { name: "设备注册与 MDM", exact: true })
     .click();
   await page.getByRole("button", { name: "注册这台设备", exact: true }).click();
   await page
+    .getByRole("button", { name: "停止等待注册", exact: true })
+    .waitFor();
+  const registrationBefore = await (
+    await fetch(root + "/__fixture/registration")
+  ).json();
+  assert.equal(registrationBefore.phase, "awaitingAuthorization");
+  await page.getByRole("button", { name: "停止等待注册", exact: true }).click();
+  await page
+    .getByRole("button", { name: "继续核验原注册", exact: true })
+    .click();
+  await page
     .getByRole("heading", { name: "等待组织授权", exact: true })
     .waitFor();
+  const registrationAfter = await (
+    await fetch(root + "/__fixture/registration")
+  ).json();
+  assert.equal(registrationAfter.grantId, registrationBefore.grantId);
   assert.equal(
-    await page
-      .getByRole("button", { name: "注册这台设备", exact: true })
-      .isDisabled(),
-    true,
+    registrationAfter.publicKeyFingerprint,
+    registrationBefore.publicKeyFingerprint,
   );
+  assert.equal(registrationAfter.registered, false);
   assert.equal(
     await page
       .getByRole("heading", { name: "设备已注册", exact: true })

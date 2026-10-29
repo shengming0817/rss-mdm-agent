@@ -25,7 +25,11 @@ export function GlobalSearch({ workspace }: { workspace: Workspace }) {
     }
   }, [nav.searchOpen]);
   const entries = useMemo(() => {
-    const rows: Result[] = moduleEntries.flatMap((module) => [
+    const destinations = [
+      ...moduleEntries,
+      { id: "settings" as const, title: "账号设置" },
+    ];
+    const rows: Result[] = destinations.flatMap((module) => [
       {
         id: module.id,
         title: module.title,

@@ -250,13 +250,16 @@ function WorkspaceView({
       />
       <GlobalSearch workspace={workspace} />
       <DetailDrawer
-        open={nav.page === "tasks" && !!tasks.selected}
+        open={nav.page === "tasks" && !!tasks.requested}
         onClose={() => workspace.tasks.closeTask()}
         returnFocus={() => navButton.current?.focus()}
         title={tasks.selected ? taskTitle(tasks.selected) : "原任务"}
         description="当前主体可读取的原任务记录"
       >
         <div className="rss-stack">
+          {tasks.detailLoading && (
+            <StatePanel kind="loading" title="正在读取原任务" />
+          )}
           {tasks.selected && (
             <>
               <Tag
@@ -289,19 +292,20 @@ function WorkspaceView({
               <p className="rss-muted">
                 收到请求、执行结束、结果核实分别记录；这里不会重复提交原操作。
               </p>
-              <Button
-                onClick={() => {
-                  if (workspace.tasks.state.selected)
-                    void workspace.tasks.openTask(
-                      workspace.tasks.state.selected.reference,
-                    );
-                }}
-              >
-                重新读取原任务
-              </Button>
             </>
           )}
-          {tasks.error && <Alert type="warning" title={tasks.error} />}
+          {tasks.detailError && (
+            <Alert type="warning" title={tasks.detailError} />
+          )}
+          <Button
+            disabled={tasks.detailLoading}
+            onClick={() => {
+              const reference = workspace.tasks.state.requested;
+              if (reference) void workspace.tasks.openTask(reference);
+            }}
+          >
+            重新读取原任务
+          </Button>
         </div>
       </DetailDrawer>
     </DesktopShell>
