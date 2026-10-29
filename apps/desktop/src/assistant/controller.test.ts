@@ -1,8 +1,7 @@
+const flushPromises = () =>
+  new Promise<void>((resolve) => setTimeout(resolve, 0));
 import { taskFromFacts } from "../../../../tests/self-service/support";
-import { mount, flushPromises } from "@vue/test-utils";
-import SessionConnection from "./SessionConnection.vue";
-import Assistant from "./Assistant.vue";
-import ConnectionSettings from "../settings/ConnectionSettings.vue";
+
 import { activeStage } from "@rss-mdm-agent/ai-contract";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -115,46 +114,6 @@ function setup(now = () => 100) {
   };
 }
 describe("assistant application ownership", () => {
-  it("keeps a failed selection save actionable through restore and retries only that selection", async () => {
-    const t = setup();
-    const catalog = await t.client.connections();
-    vi.mocked(t.client.savePreferences)
-      .mockImplementation(async (patch) => {
-        if (patch.selectedSessionId && "set" in patch.selectedSessionId)
-          catalog.preferences.selectedSessionId = patch.selectedSessionId.set;
-        return catalog.preferences;
-      })
-      .mockRejectedValueOnce(new Error("offline"));
-    vi.mocked(t.client.connections).mockImplementation(async () =>
-      structuredClone(catalog),
-    );
-    await t.c.connect();
-    await t.c.select("session-1");
-    await flushPromises();
-    const wrapper = mount(Assistant, {
-      props: { controller: t.c, visible: true, presentation: "main" },
-    });
-    const notice = () => wrapper.get(".conversation-notice");
-    expect(notice().text()).toContain("重试保存当前选择");
-    await t.c.restore();
-    expect(notice().text()).toContain("重试保存当前选择");
-    const saves = vi.mocked(t.client.savePreferences).mock.calls.length;
-    const restores = vi.mocked(t.client.restore).mock.calls.length;
-    await notice().get("button").trigger("click");
-    await flushPromises();
-    expect(t.client.savePreferences).toHaveBeenCalledTimes(saves + 1);
-    expect(t.client.savePreferences).toHaveBeenLastCalledWith({
-      selectedSessionId: { set: "session-1" },
-    });
-    expect(t.client.restore).toHaveBeenCalledTimes(restores);
-    expect(t.submit).not.toHaveBeenCalled();
-    expect(wrapper.text()).not.toContain("重试保存当前选择");
-    wrapper.unmount();
-    t.c.dispose();
-    await t.c.connect();
-    expect(t.c.state.selected).toBe("session-1");
-    t.c.dispose();
-  });
   it("orders selection saves and ignores a stale failure after a new selection or connection", async () => {
     const t = setup();
     await t.c.connect();
@@ -221,15 +180,15 @@ describe("assistant application ownership", () => {
       },
     };
     t.emit();
-    t.c.draft.value = "editable while busy";
-    expect(t.c.busy.value).toBe(true);
-    expect(t.c.canSend.value).toBe(true);
-    expect(t.c.canSteer.value).toBe(false);
-    expect(t.c.canResume.value).toBe(false);
+    t.c.draft.set("editable while busy");
+    expect(t.c.busy()).toBe(true);
+    expect(t.c.canSend()).toBe(true);
+    expect(t.c.canSteer()).toBe(false);
+    expect(t.c.canResume()).toBe(false);
     await t.c.prompt();
     expect(t.submit.mock.calls[0][0].input.policy).toBe("queue_next");
     t.submit.mockClear();
-    t.c.draft.value = "editable while busy";
+    t.c.draft.set("editable while busy");
     t.view.capabilities.steer = "supported";
     t.emit();
     await t.c.prompt("steer");
@@ -247,15 +206,15 @@ describe("assistant application ownership", () => {
     t.view.commands.p.dispatch!.certainty = "unknown";
     t.view.capabilities.continuation = "across_processes";
     t.emit();
-    expect(t.c.canSteer.value).toBe(false);
-    expect(t.c.canCancel.value).toBe(false);
-    expect(t.c.canResume.value).toBe(true);
+    expect(t.c.canSteer()).toBe(false);
+    expect(t.c.canCancel()).toBe(false);
+    expect(t.c.canResume()).toBe(true);
     for (const settled of ["acknowledged", "cancelled"] as const) {
       t.view.commands.p.state = settled;
       t.emit();
-      expect(t.c.busy.value).toBe(false);
-      expect(t.c.canSteer.value).toBe(false);
-      expect(t.c.canCancel.value).toBe(false);
+      expect(t.c.busy()).toBe(false);
+      expect(t.c.canSteer()).toBe(false);
+      expect(t.c.canCancel()).toBe(false);
     }
     t.c.dispose();
   });
@@ -264,14 +223,14 @@ describe("assistant application ownership", () => {
     await t.c.connect();
     await t.c.select("session-1");
     t.submit.mockRejectedValueOnce(new ClientError("request_failed"));
-    t.c.draft.value = "original";
+    t.c.draft.set("original");
     await t.c.prompt();
     const original = JSON.stringify(t.submit.mock.calls[0][0]);
-    expect(t.c.view.value?.timeline).toEqual([]);
-    t.c.draft.value = "newer edit";
+    expect(t.c.view()?.timeline).toEqual([]);
+    t.c.draft.set("newer edit");
     await t.c.retry();
     expect(JSON.stringify(t.submit.mock.calls[1][0])).toBe(original);
-    expect(t.c.draft.value).toBe("newer edit");
+    expect(t.c.draft.get()).toBe("newer edit");
     expect(t.c.state.pending.size).toBe(0);
     t.c.dispose();
   });
@@ -338,7 +297,7 @@ describe("assistant application ownership", () => {
     const t = setup();
     await t.c.connect();
     await t.c.select("session-1");
-    t.c.draft.value = "private caller draft";
+    t.c.draft.set("private caller draft");
     const result = t.options().requestPermission!(
       {
         sessionId: "session-1",
@@ -349,7 +308,7 @@ describe("assistant application ownership", () => {
     );
     await t.c.connect();
     expect(t.c.state.views.size).toBe(1);
-    expect(t.c.draft.value).not.toBe("");
+    expect(t.c.draft.get()).not.toBe("");
     expect(await result).toEqual({ outcome: { outcome: "cancelled" } });
     t.c.dispose();
   });
@@ -396,7 +355,7 @@ describe("assistant application ownership", () => {
     );
     await t.c.list(false);
     t.c.create();
-    t.c.draft.value = "first";
+    t.c.draft.set("first");
     await t.c.prompt();
     expect(t.c.state.listError).toBe("unavailable");
     expect(t.c.state.createError).toBe("invalid_input");
@@ -423,7 +382,7 @@ describe("assistant application ownership", () => {
     const t = setup();
     await t.c.connect();
     await t.c.select("session-1");
-    t.c.draft.value = "private";
+    t.c.draft.set("private");
     const pending = t.options().requestPermission!(
       {
         sessionId: "session-1",
@@ -438,10 +397,10 @@ describe("assistant application ownership", () => {
     await t.c.connect();
     expect(await pending).toEqual({ outcome: { outcome: "cancelled" } });
     expect(t.c.state.views.size).toBe(1);
-    expect(t.c.draft.value).not.toBe("");
+    expect(t.c.draft.get()).not.toBe("");
     expect(t.c.state.cleanupError).toBe("cleanup_failed");
     expect(() => t.c.dispose()).not.toThrow();
-    expect(t.c.runtime.value).toBeUndefined();
+    expect(t.c.runtime.current).toBeUndefined();
     expect(t.c.state.connection).toBe("disconnected");
   });
   it("distinguishes detach, active runs, retired sessions and unavailable continuation", async () => {
@@ -450,19 +409,19 @@ describe("assistant application ownership", () => {
     await t.c.select("session-1");
     t.view.capabilities.continuation = "unknown";
     t.emit();
-    expect(t.c.resumeReason.value).toBe("unknown");
+    expect(t.c.resumeReason()).toBe("unknown");
     t.view.capabilities.continuation = "unsupported";
     t.emit();
-    expect(t.c.resumeReason.value).toBe("unsupported");
+    expect(t.c.resumeReason()).toBe("unsupported");
     t.view.capabilities.continuation = "across_processes";
     t.view.connection = "detached";
     t.emit();
-    expect(t.c.sessionConnection.value).toBe("detached");
-    expect(t.c.resumeReason.value).toBe("not-attached");
+    expect(t.c.sessionConnection()).toBe("detached");
+    expect(t.c.resumeReason()).toBe("not-attached");
     t.view.connection = "attached";
     t.view.sessionStatus = "retired";
     t.emit();
-    expect(t.c.resumeReason.value).toBe("retired");
+    expect(t.c.resumeReason()).toBe("retired");
     t.c.dispose();
   });
 });
@@ -549,15 +508,15 @@ it("updates both attention and background entries when time expires, without new
       request: {},
     };
     t.emit();
-    expect(t.c.background.value).toEqual(["session-1"]);
-    expect(t.c.attention.value).toBe(1);
+    expect(t.c.background()).toEqual(["session-1"]);
+    expect(t.c.attention()).toBe(1);
     await vi.advanceTimersByTimeAsync(1001);
-    expect(t.c.background.value).toEqual([]);
-    expect(t.c.attention.value).toBe(0);
+    expect(t.c.background()).toEqual([]);
+    expect(t.c.attention()).toBe(0);
     t.view.interactions.q.expiresAtMs = 5000;
     t.view.interactions.q.generation = "old";
     t.emit();
-    expect(t.c.attention.value).toBe(0);
+    expect(t.c.attention()).toBe(0);
   } finally {
     t.c.dispose();
     expect(vi.getTimerCount()).toBe(0);
@@ -621,112 +580,6 @@ it("aborts an in-flight connection on disposal and suppresses its late permissio
   expect(c.state.permissions.size).toBe(0);
 });
 
-it("connection panel sends exactly the confirmed preview once and never includes unconfirmed history", async () => {
-  const t = setup();
-  const preview = {
-    schemaVersion: 1 as const,
-    kind: "historyPreview" as const,
-    sessionId: "session-1",
-    connectionId: "config-1",
-    configRevision: 1,
-
-    throughSequence: 4,
-    commandIds: ["previous"],
-    messageIds: ["answer"],
-    text: "User:\nprevious\n\nAssistant:\nanswer",
-    contentHash: "a".repeat(64),
-  };
-  const previewHistory = vi.fn().mockResolvedValue(preview);
-  Object.assign(t.client, { previewHistory });
-  await t.c.connect();
-  await t.c.select("session-1");
-  t.view.selectedConnectionId = "config-1";
-  t.emit();
-  const wrapper = mount(SessionConnection, {
-    props: { controller: t.c, visible: true, presentation: "main" },
-  });
-  try {
-    await flushPromises();
-    const history = wrapper
-      .findAll("label")
-      .find((label) => label.text().startsWith("带入历史"))!
-      .get("select");
-    t.c.draft.value = "default input";
-    await t.c.prompt();
-    expect(t.submit.mock.calls.at(-1)![0].input.history).toBeUndefined();
-    await history.setValue("recent");
-    await flushPromises();
-    expect(previewHistory).toHaveBeenLastCalledWith("session-1", "config-1", 5);
-    expect(wrapper.get(".history-preview pre").text()).toBe(preview.text);
-    t.c.draft.value = "unconfirmed input";
-    await t.c.prompt();
-    expect(t.submit.mock.calls.at(-1)![0].input.history).toBeUndefined();
-    await wrapper.get(".history-preview button").trigger("click");
-    t.c.draft.value = "confirmed input";
-    await t.c.prompt();
-    expect(t.submit.mock.calls.at(-1)![0].input.history).toEqual(preview);
-    t.c.draft.value = "following input";
-    await t.c.prompt();
-    expect(t.submit.mock.calls.at(-1)![0].input.history).toBeUndefined();
-    await history.setValue("all");
-    await flushPromises();
-    expect(previewHistory).toHaveBeenLastCalledWith(
-      "session-1",
-      "config-1",
-      undefined,
-    );
-    await wrapper.get(".history-preview button").trigger("click");
-    await history.setValue("none");
-    t.c.draft.value = "cleared confirmation";
-    await t.c.prompt();
-    expect(t.submit.mock.calls.at(-1)![0].input.history).toBeUndefined();
-  } finally {
-    wrapper.unmount();
-    await t.c.dispose();
-  }
-});
-
-it("drops a history preview that completes after the selected session changed", async () => {
-  const t = setup();
-  let finish!: (value: unknown) => void;
-  const previewHistory = vi.fn(
-    () => new Promise((resolve) => (finish = resolve)),
-  );
-  Object.assign(t.client, { previewHistory });
-  await t.c.connect();
-  await t.c.select("session-1");
-  t.view.selectedConnectionId = "config-1";
-  t.emit();
-  const wrapper = mount(SessionConnection, {
-    props: { controller: t.c, visible: true, presentation: "main" },
-  });
-  await flushPromises();
-  const history = wrapper
-    .findAll("label")
-    .find((label) => label.text().startsWith("带入历史"))!
-    .get("select");
-  await history.setValue("all");
-  await flushPromises();
-  t.c.state.selected = "session-2";
-  await wrapper.vm.$nextTick();
-  finish({
-    schemaVersion: 1,
-    kind: "historyPreview",
-    sessionId: "session-1",
-    connectionId: "config-1",
-    configRevision: 1,
-    throughSequence: 1,
-    commandIds: [],
-    messageIds: [],
-    text: "stale preview",
-    contentHash: "a".repeat(64),
-  });
-  await flushPromises();
-  expect(wrapper.text()).not.toContain("stale preview");
-  wrapper.unmount();
-  t.c.dispose();
-});
-
 it("maps history capacity and user cancellation without a generic retry error", () => {
   expect(operationMessage("limit_exceeded")).toContain("64 KiB");
   expect(operationMessage("cancelled")).toBe("");
@@ -736,147 +589,16 @@ it("maps history capacity and user cancellation without a generic retry error", 
   expect(operationMessage("verification_refused")).toContain("已保存配置保留");
 });
 
-it("deleting the selected connection preserves history and immediately disables ordinary input", async () => {
-  const t = setup();
-  await t.c.connect();
-  await t.c.select("session-1");
-  t.c.draft.value = "keep draft";
-  const before = t.c.view.value;
-  const deleteConnection = vi.fn().mockResolvedValue({});
-  Object.assign(t.client, { deleteConnection });
-  const wrapper = mount(ConnectionSettings, {
-    props: { controller: t.c, visible: true, presentation: "main" },
-    attachTo: document.body,
-  });
-  try {
-    await flushPromises();
-    expect(t.c.canSend.value).toBe(true);
-    const deleteButton = wrapper.get('button[aria-label="删除连接 Fixture"]');
-    expect(wrapper.get('button[aria-label="编辑连接 Fixture"]')).toBeTruthy();
-    expect(
-      wrapper.get('button[aria-label="将连接 Fixture 设为默认"]'),
-    ).toBeTruthy();
-    vi.mocked(t.client.connections).mockResolvedValue({
-      schemaVersion: 1,
-      kind: "connectionPage",
-      preferences: { schemaVersion: 1, kind: "userPreferences" },
-      connections: [],
-    });
-    await deleteButton.trigger("click");
-    await flushPromises();
-    expect(deleteConnection).not.toHaveBeenCalled();
-    const dialog = wrapper.get('[role="alertdialog"]');
-    expect(dialog.attributes("aria-modal")).toBe("true");
-    expect(dialog.text()).toContain("Fixture");
-    expect(document.activeElement?.textContent).toContain("取消删除");
-    await wrapper
-      .findAll("button")
-      .find((b) => b.text() === "取消删除")!
-      .trigger("click");
-    await flushPromises();
-    expect(document.activeElement).toBe(deleteButton.element);
-    expect(deleteConnection).not.toHaveBeenCalled();
-    await wrapper
-      .findAll("button")
-      .find((b) => b.text() === "删除")!
-      .trigger("click");
-    await wrapper
-      .findAll("button")
-      .find((b) => b.text() === "确认删除")!
-      .trigger("click");
-    await flushPromises();
-    expect(deleteConnection.mock.calls[0][0]).toBe("config-1");
-    expect(t.c.view.value).toEqual(before);
-    expect(t.c.canSend.value).toBe(false);
-    expect(t.c.connectionReady.value).toBe(false);
-    await t.c.prompt();
-    expect(t.submit).not.toHaveBeenCalled();
-  } finally {
-    wrapper.unmount();
-    t.c.dispose();
-  }
-});
-
-it("connection revision conflicts invalidate stale edit and delete actions", async () => {
-  const t = setup();
-  await t.c.connect();
-  const saveConnection = vi
-    .fn()
-    .mockRejectedValue(new ClientError("revision_conflict"));
-  Object.assign(t.client, { saveConnection, deleteConnection: saveConnection });
-  const wrapper = mount(ConnectionSettings, {
-    props: { controller: t.c, visible: true, presentation: "main" },
-  });
-  try {
-    await flushPromises();
-    await wrapper.get('button[aria-label="编辑连接 Fixture"]').trigger("click");
-    await wrapper.get("form").trigger("submit");
-    await flushPromises();
-    expect(wrapper.get("form h3").text()).toBe("编辑连接");
-    expect(wrapper.text()).toContain("当前草稿保留");
-    await wrapper.get('button[aria-label="删除连接 Fixture"]').trigger("click");
-    await wrapper
-      .findAll("button")
-      .find((button) => button.text() === "确认删除")!
-      .trigger("click");
-    await flushPromises();
-    expect(wrapper.find('[role="alertdialog"]').exists()).toBe(false);
-    expect(saveConnection).toHaveBeenCalledTimes(2);
-  } finally {
-    wrapper.unmount();
-    t.c.dispose();
-  }
-});
-
-it("existing configuration cannot become a custom API key and Claude supports configuration reuse", async () => {
-  const t = setup();
-  await t.c.connect();
-  const wrapper = mount(ConnectionSettings, {
-    props: { controller: t.c, visible: true, presentation: "main" },
-  });
-  try {
-    await flushPromises();
-    await wrapper
-      .findAll("button")
-      .find((b) => b.text() === "编辑")!
-      .trigger("click");
-    const field = (name: string) =>
-      wrapper
-        .findAll("label")
-        .find((l) => l.text().startsWith(name))!
-        .get("select");
-    await field("认证来源").setValue("custom_api");
-    expect(wrapper.text()).not.toContain("已选择凭据");
-    expect(
-      wrapper
-        .findAll("button")
-        .find((b) => b.text() === "保存配置")!
-        .attributes("disabled"),
-    ).toBeDefined();
-    await field("认证来源").setValue("existing_config");
-    await field("服务").setValue("claude");
-    expect(field("认证来源").element.value).toBe("existing_config");
-    expect(
-      field("认证来源")
-        .findAll("option")
-        .some((o) => o.attributes("value") === "existing_config"),
-    ).toBe(true);
-  } finally {
-    wrapper.unmount();
-    t.c.dispose();
-  }
-});
-
 it("retains same-user history, draft and unknown command through a failed reconnect without sending", async () => {
   const t = setup();
   await t.c.connect();
   await t.c.select("session-1");
-  t.c.draft.value = "unsent private draft";
+  t.c.draft.set("unsent private draft");
   t.submit.mockRejectedValueOnce(new ClientError("request_failed"));
   await t.c.prompt();
   const pending = t.c.state.pending.get("session-1");
   expect(pending).toBeDefined();
-  t.c.draft.value = "new draft";
+  t.c.draft.set("new draft");
   vi.mocked(t.client.initialize).mockRejectedValueOnce(
     new ClientError("transport_closed"),
   );
@@ -884,9 +606,9 @@ it("retains same-user history, draft and unknown command through a failed reconn
   expect(t.c.state.connection).toBe("disconnected");
   expect(t.c.state.views.has("session-1")).toBe(true);
   expect(t.c.state.selected).toBe("session-1");
-  expect(t.c.draft.value).toBe("new draft");
+  expect(t.c.draft.get()).toBe("new draft");
   expect(t.c.state.pending.get("session-1")).toEqual(pending);
-  expect(t.c.canSend.value).toBe(false);
+  expect(t.c.canSend()).toBe(false);
   expect(t.submit).toHaveBeenCalledTimes(1);
   t.c.dispose();
   expect(t.c.state.views.size).toBe(0);
@@ -898,17 +620,17 @@ it("a single failed history restore leaves the healthy connection usable without
   const t = setup();
   await t.c.connect();
   await t.c.select("session-1");
-  t.c.draft.value = "keep";
+  t.c.draft.set("keep");
   vi.mocked(t.client.restore).mockRejectedValueOnce(
     new ClientError("context_unavailable"),
   );
   await t.c.connect();
   expect(t.c.state.connection).toBe("connected");
-  expect(t.c.runtime.value).toBeDefined();
+  expect(t.c.runtime.current).toBeDefined();
   expect(t.c.state.errors.get("session-1")).toBe("context_unavailable");
   expect(t.c.state.views.get("session-1")?.connection).toBe("detached");
-  expect(t.c.draft.value).toBe("keep");
-  expect(t.c.canSend.value).toBe(false);
+  expect(t.c.draft.get()).toBe("keep");
+  expect(t.c.canSend()).toBe(false);
   expect(t.submit).not.toHaveBeenCalled();
   await t.c.refreshConnections();
   expect(t.c.state.connections).toHaveLength(1);
@@ -932,7 +654,7 @@ it("a transport lost during the selected history restore is not promoted back to
   });
   await t.c.connect();
   expect(t.c.state.connection).toBe("disconnected");
-  expect(t.c.canSend.value).toBe(false);
+  expect(t.c.canSend()).toBe(false);
   expect(t.submit).not.toHaveBeenCalled();
   t.c.dispose();
 });
@@ -940,7 +662,7 @@ it("a transport lost during the selected history restore is not promoted back to
 it("first send is single-flight and unknown creation retries the same identity without losing a newer draft", async () => {
   const t = setup();
   await t.c.connect();
-  t.c.draft.value = "first message";
+  t.c.draft.set("first message");
   let finish!: (value: { sessionId: string }) => void;
   vi.mocked(t.client.createSession).mockImplementationOnce(
     () =>
@@ -961,14 +683,14 @@ it("first send is single-flight and unknown creation retries the same identity w
   await Promise.all([first, duplicate]);
   expect(t.submit).toHaveBeenCalledTimes(1);
   expect(t.submit.mock.calls[0][0].sessionId).toBe(intent.sessionId);
-  expect(t.c.draft.value).toBe("");
+  expect(t.c.draft.get()).toBe("");
   t.c.create();
-  t.c.draft.value = "retry me";
+  t.c.draft.set("retry me");
   vi.mocked(t.client.createSession).mockRejectedValueOnce(
     new ClientError("transport_closed"),
   );
   await t.c.prompt();
-  expect(t.c.draft.value).toBe("retry me");
+  expect(t.c.draft.get()).toBe("retry me");
   await t.c.prompt();
   expect(vi.mocked(t.client.createSession).mock.calls[1][0]).toEqual(
     vi.mocked(t.client.createSession).mock.calls[2][0],
@@ -980,7 +702,7 @@ it("first send is single-flight and unknown creation retries the same identity w
 it("first creation finishing after navigation never changes selection or sends in the background", async () => {
   const t = setup();
   await t.c.connect();
-  t.c.draft.value = "blank draft";
+  t.c.draft.set("blank draft");
   let finish!: (value: { sessionId: string }) => void;
   vi.mocked(t.client.createSession).mockImplementationOnce(
     () =>
@@ -1010,7 +732,7 @@ it.each(["pending", "finished"])(
   async (completion) => {
     const t = setup();
     await t.c.connect();
-    t.c.draft.value = "old draft";
+    t.c.draft.set("old draft");
     let finish!: (value: { sessionId: string }) => void;
     vi.mocked(t.client.createSession).mockImplementationOnce(
       () =>
@@ -1036,7 +758,7 @@ it.each(["pending", "finished"])(
       connectionId: "config-2",
     });
     t.c.state.blankConnectionId = "config-2";
-    t.c.draft.value = "new conversation";
+    t.c.draft.set("new conversation");
     await t.c.prompt();
     if (completion === "pending") {
       finish({ sessionId: previous.sessionId });
@@ -1058,13 +780,13 @@ it.each(["pending", "finished"])(
 it("restores a known first session after attachment failure without creating again", async () => {
   const t = setup();
   await t.c.connect();
-  t.c.draft.value = "first";
+  t.c.draft.set("first");
   vi.mocked(t.client.restore).mockRejectedValueOnce(
     new ClientError("transport_closed"),
   );
   await t.c.prompt();
   const id = vi.mocked(t.client.createSession).mock.calls[0][0].sessionId;
-  expect(t.c.draft.value).toBe("first");
+  expect(t.c.draft.get()).toBe("first");
   expect(t.submit).not.toHaveBeenCalled();
   vi.mocked(t.client.restore).mockResolvedValue({
     ...t.view,
@@ -1080,11 +802,11 @@ it("missing configuration and edits during creation preserve the blank draft", a
   const t = setup();
   await t.c.connect();
   t.c.state.connections = [];
-  t.c.draft.value = "keep";
+  t.c.draft.set("keep");
   await t.c.prompt();
   expect(t.c.state.createError).toBe("connection_required");
   expect(t.client.createSession).not.toHaveBeenCalled();
-  expect(t.c.draft.value).toBe("keep");
+  expect(t.c.draft.get()).toBe("keep");
   await t.c.refreshConnections();
   let finish!: (value: { sessionId: string }) => void;
   vi.mocked(t.client.createSession).mockImplementationOnce(
@@ -1099,12 +821,12 @@ it("missing configuration and edits during creation preserve the blank draft", a
   }));
   const sending = t.c.prompt();
   await flushPromises();
-  t.c.draft.value = "edited";
+  t.c.draft.set("edited");
   finish({
     sessionId: vi.mocked(t.client.createSession).mock.calls[0][0].sessionId,
   });
   await sending;
-  expect(t.c.draft.value).toBe("edited");
+  expect(t.c.draft.get()).toBe("edited");
   expect(t.c.state.selected).toBe("");
   expect(t.submit).not.toHaveBeenCalled();
   await t.c.prompt();
@@ -1220,37 +942,37 @@ describe("resource composition ownership", () => {
     const t = setup();
     await t.c.connect();
     await t.c.select("session-1");
-    t.c.draft.value = "解释版本";
+    t.c.draft.set("解释版本");
     const context = samplePageContext();
     t.c.stageContext(context);
     expect(t.submit).not.toHaveBeenCalled();
     expect(t.client.createSession).not.toHaveBeenCalled();
-    expect(t.c.context.value?.text).toBe(context.text);
+    expect(t.c.context()?.text).toBe(context.text);
     await t.c.prompt();
     expect(t.submit.mock.calls[0][0].input.text).toBe(
       "解释版本\n\n" + context.text,
     );
     expect(t.submit.mock.calls[0][0].sessionId).toBe("session-1");
-    expect(t.c.context.value).toBeUndefined();
-    expect(t.c.draft.value).toBe("");
+    expect(t.c.context()).toBeUndefined();
+    expect(t.c.draft.get()).toBe("");
     t.c.dispose();
   });
   it("freezes unknown acceptance and does not clear subsequent edits or replacement", async () => {
     const t = setup();
     await t.c.connect();
     await t.c.select("session-1");
-    t.c.draft.value = "original";
+    t.c.draft.set("original");
     t.c.stageContext(samplePageContext());
     t.submit.mockRejectedValueOnce(new ClientError("transport_closed"));
     await t.c.prompt();
     const original = JSON.parse(JSON.stringify(t.submit.mock.calls[0][0]));
-    t.c.draft.value = "next question";
+    t.c.draft.set("next question");
     t.c.stageContext(samplePageContext("另一个页面对象"));
-    const next = t.c.context.value;
+    const next = t.c.context();
     await t.c.retry();
     expect(t.submit.mock.calls[1][0]).toEqual(original);
-    expect(t.c.draft.value).toBe("next question");
-    expect(t.c.context.value).toEqual(next);
+    expect(t.c.draft.get()).toBe("next question");
+    expect(t.c.context()).toEqual(next);
     t.c.dispose();
     expect(t.c.state.drafts.size).toBe(0);
   });
@@ -1258,7 +980,7 @@ describe("resource composition ownership", () => {
     const t = setup();
     await t.c.connect();
     t.c.create();
-    t.c.draft.value = "question";
+    t.c.draft.set("question");
     t.c.stageContext(samplePageContext());
     vi.mocked(t.client.restore).mockImplementation(async (id) => ({
       ...structuredClone(t.view),
@@ -1279,7 +1001,7 @@ describe("resource composition ownership", () => {
     });
     await first;
     expect(t.submit).not.toHaveBeenCalled();
-    expect(t.c.draft.value).toBe("question");
+    expect(t.c.draft.get()).toBe("question");
     await t.c.prompt();
     expect(t.submit.mock.calls[0][0].input.text).toBe("question");
     expect(t.client.createSession).toHaveBeenCalledTimes(1);
@@ -1289,13 +1011,13 @@ describe("resource composition ownership", () => {
     const t = setup();
     await t.c.connect();
     await t.c.select("session-1");
-    t.c.draft.value = "question";
+    t.c.draft.set("question");
     t.c.stageContext(samplePageContext());
     t.c.create();
-    expect(t.c.context.value).toBeUndefined();
+    expect(t.c.context()).toBeUndefined();
     await t.c.select("session-1");
     t.c.validatePageContexts([]);
-    expect(t.c.context.value?.stale).toBe(true);
+    expect(t.c.context()?.stale).toBe(true);
     await t.c.prompt();
     expect(t.submit).not.toHaveBeenCalled();
     t.c.removeContext();
@@ -1332,14 +1054,14 @@ it("invalidates page attachments in every conversation while the sidebar is clos
     );
   const original = make("one");
   c.stageContext(original);
-  c.draft.value = "keep my question";
+  c.draft.set("keep my question");
   c.state.drafts.set("background", {
     text: "background question",
     context: original,
   });
   c.validatePageContexts([make("two")]);
-  expect(c.context.value?.stale).toBe(true);
-  expect(c.draft.value).toBe("keep my question");
+  expect(c.context()?.stale).toBe(true);
+  expect(c.draft.get()).toBe("keep my question");
   expect(c.state.drafts.get("background")?.context?.stale).toBe(true);
   c.dispose();
   expect(c.state.drafts.size).toBe(0);

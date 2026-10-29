@@ -2,6 +2,10 @@
 
 桌面生产入口通过认证 IPC 消费 `apps/agent-service`，不持有执行 SQLite 或 S1 runner。Vue 和 AI MCP 共享后台任务引用；系统服务持有唯一执行 intent、恢复和结果送达状态。独立 Node AI Host 与 provider worker 只承接会话，不签出企业批准。后台企业任务授权和来源由服务端决定；客户端校验签名、材料、设备注册及 OS 会话。
 
+React 重建 EPIC 的基础浏览器组件通过 `pnpm dev:assistant-fixture` 查看，
+当前宿主 WKWebView 基础检查使用 `pnpm check:desktop-native --foundation`。
+该入口只验证已交付的主题、组件与原生启动；业务页面和真实执行接线分别由后续实施项验收。
+
 ## 启动和运行包
 
 使用根 manifest 固定的 Node、pnpm 与 `rust-toolchain.toml`。所有命令在本仓运行。
@@ -185,16 +189,12 @@ AI 使用实际注册的 Policy 工具，风险 2 的原请求需要本人在桌
 
 ## 基础控件展示
 
-`pnpm dev:assistant-fixture` 启动后，在打印的地址追加 `?foundations=windows`、
-`?foundations=macos` 或 `?foundations=both`，可分别或并排操作 U01–U26。
-并排视图使用独立文档隔离浮层焦点；两侧使用同一组件目录和展示实现。
-`pnpm dev --fixture` 的“基础控件”入口直接展示当前平台，支持返回应用。
-这些入口只属于开发装配，不进入生产导航。
+`pnpm dev:assistant-fixture` 启动后打开打印的地址，可操作 React / Ant Design
+主题、表单、菜单、软件封面、状态、消息和详情抽屉。`pnpm dev --fixture` 在真实
+Tauri main/WKWebView 中打开同一显式开发装配。这些入口不进入生产导航。
 
-组件按 Windows 11 / macOS 26 的交互方向适配；Mac 浏览器中的 Windows 视图不证明 Windows 原生行为。
-平台控件参考 [Windows controls](https://learn.microsoft.com/en-us/windows/apps/develop/ui/controls/)、
-[Apple HIG](https://developer.apple.com/design/human-interface-guidelines/)，
-行为基础固定为 [Reka UI v2.10.5](https://github.com/unovue/reka-ui/tree/v2.10.5/packages/core/src)。
+`pnpm check:desktop-native --foundation` 只验证当前组件及原生启动；业务页面和
+真实执行使用完整候选验收。浏览器中的平台预览不证明 Windows 原生行为。
 实际 OS/build、浏览器和原生检查结果随交付 PR 记录。
 
 主页设备信息使用本地 IPC v15，桌面和本机服务必须作为同一候选更新；旧版本不降级或猜测字段。此变更不新增网络探测、设备写操作或 AI 设备信息附件。Windows 原生结果需在目标系统验证。

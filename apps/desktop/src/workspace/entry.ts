@@ -12,7 +12,7 @@ export const nativeNavigation = (): NavigationPort | undefined =>
   isTauri()
     ? (input) =>
         invoke("navigation", {
-          generation: currentUser.value?.generation,
+          generation: currentUser.current?.generation,
           input,
         })
     : undefined;

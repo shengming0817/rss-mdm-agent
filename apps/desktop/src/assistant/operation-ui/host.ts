@@ -17,7 +17,7 @@ export async function connectOperation(
   operationId: string,
   signal: AbortSignal,
 ) {
-  const session = c.view.value;
+  const session = c.view();
   if (!session) throw Error("会话不可用");
   let raw = await c.executionDetails(operationId, signal);
   const origin = operationOrigin(raw);
@@ -66,7 +66,7 @@ export async function connectOperation(
     mutating = false;
   let queriedEpoch: number | undefined = 0;
   const valid = () => {
-    const current = c.view.value;
+    const current = c.view();
     if (
       signal.aborted ||
       !current ||

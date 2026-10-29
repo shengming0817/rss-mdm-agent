@@ -43,7 +43,7 @@ const collectedTime = (value?: CollectedData) =>
     ? ""
     : ` · ${new Date(value.collectedAt * 1000).toLocaleTimeString()}`;
 export function homeFacts(controller?: SystemSettingsController) {
-  const facts = controller?.summary.value;
+  const facts = controller?.summary();
   const network = facts?.network,
     storage = facts?.storage,
     power = facts?.power;

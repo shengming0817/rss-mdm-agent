@@ -1,12 +1,10 @@
-// ref: Vue core packages/reactivity/src/computed.ts@478e3e83acd34dd213a860be4a2a2bf2090dc26b.
-import { reactive, type InjectionKey } from "vue";
 import type { SelfServiceDirectoryItem, SelfServicePort } from "./types";
 
 /** One current-subject directory; cursors are discovery positions, never permissions. */
 export function createDirectory(
   port: Pick<SelfServicePort, "policy_directory" | "policy_resolve"> | null,
 ) {
-  const state = reactive({
+  const state = {
     items: [] as SelfServiceDirectoryItem[],
     next: null as string | null,
     complete: false,
@@ -15,7 +13,7 @@ export function createDirectory(
     error: "",
     asOf: 0,
     readAt: 0,
-  });
+  };
   const visited = new Set<string>();
   let active = true,
     epoch = 0;
@@ -86,8 +84,6 @@ export function createDirectory(
   return { port, state, load, resolve, dispose };
 }
 export type DirectoryController = ReturnType<typeof createDirectory>;
-export const directoryKey: InjectionKey<DirectoryController> =
-  Symbol("policy-directory");
 
 /** A Resource-owned display projection; parameters and native credentials never enter it. */
 export function policyResource(

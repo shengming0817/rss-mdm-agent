@@ -1,5 +1,3 @@
-// ref: Vue core packages/reactivity/src/computed.ts@v3.5.38.
-import { computed, reactive, type InjectionKey } from "vue";
 import type {
   CollectedData,
   DataAccessPort,
@@ -50,7 +48,7 @@ export function createSystemSettings(
   identity: () => string = () => crypto.randomUUID(),
   tasks: import("../task-center/controller").Controller | null = null,
 ) {
-  const state = reactive({
+  const state = {
     observations: new Map<SettingsSection, SettingsResponse>(),
     facts: new Map<string, { source: QueryDescriptor; value: CollectedData }>(),
     sources: [] as QueryDescriptor[],
@@ -61,7 +59,7 @@ export function createSystemSettings(
       { request: string; operation: SettingsOperation }
     >(),
     now: Date.now(),
-  });
+  };
   let active = true,
     epoch = 0;
   function ageFact(value: CollectedData) {
@@ -307,7 +305,7 @@ export function createSystemSettings(
     if (!pending || state.busy.has(section)) return;
     await run(section, pending.operation);
   }
-  const summary = computed(() => ({
+  const summary = () => ({
     network: [...state.facts.values()].find((v) =>
       v.source.domains.includes("hardware.network"),
     )?.value,
@@ -317,7 +315,7 @@ export function createSystemSettings(
     power: [...state.facts.values()].find((v) =>
       v.source.domains.includes("hardware.battery"),
     )?.value,
-  }));
+  });
   function dispose() {
     if (!active) return;
     // The original worker owns its preview timeout and restoration after UI disposal.
@@ -346,5 +344,3 @@ export function createSystemSettings(
   };
 }
 export type SystemSettingsController = ReturnType<typeof createSystemSettings>;
-export const systemSettingsKey: InjectionKey<SystemSettingsController> =
-  Symbol("system-settings");

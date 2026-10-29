@@ -1,4 +1,3 @@
-import { shallowRef } from "vue";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { boundedJson, decode, accessLimits } from "@rss-mdm-agent/ai-contract";
 import type {
@@ -12,12 +11,12 @@ import type {
   AccountFailure,
 } from "@rss-mdm-agent/ai-contract/wire";
 import type { Result } from "@rss-mdm-agent/ai-contract/ports";
-export const currentUser = shallowRef<UserContext>();
-export const accountNotice = shallowRef("");
-export const accountBinding =
-  shallowRef<import("@rss-mdm-agent/ai-contract/wire").AccountBindingState>(
-    "unbound",
-  );
+export const currentUser = { current: undefined as UserContext | undefined };
+export const accountNotice = { current: "" };
+export const accountBinding = {
+  current:
+    "unbound" as import("@rss-mdm-agent/ai-contract/wire").AccountBindingState,
+};
 import type { EnterpriseLogin } from "./account/types";
 import { fixtureSelected } from "./assembly";
 export const nativeTestMode = isTauri() && !fixtureSelected;
@@ -43,7 +42,7 @@ function parsed<
 }
 export async function loadTestUsers(): Promise<TestUserPage> {
   const page = parsed(await invoke("test_users"), "testUserPage");
-  currentUser.value = page.current;
+  currentUser.current = page.current;
   return page;
 }
 export async function selectTestUser(name: string): Promise<UserContext> {
@@ -52,7 +51,7 @@ export async function selectTestUser(name: string): Promise<UserContext> {
       await invoke("select_test_user", { name }),
       "userContext",
     );
-    currentUser.value = context;
+    currentUser.current = context;
     return context;
   } catch (error) {
     await refreshAccount();
@@ -60,8 +59,8 @@ export async function selectTestUser(name: string): Promise<UserContext> {
   }
 }
 export function userGeneration(): string {
-  if (!currentUser.value) throw new Error("user_required");
-  return currentUser.value.generation;
+  if (!currentUser.current) throw new Error("user_required");
+  return currentUser.current.generation;
 }
 /** A secret crosses one native invocation and is never returned in connection metadata. */
 export async function saveNativeConnection(
@@ -109,7 +108,7 @@ export function selectionMessage(error: unknown): string {
 export async function enterGuest(): Promise<UserContext> {
   try {
     const context = parsed(await invoke("select_device"), "userContext");
-    currentUser.value = context;
+    currentUser.current = context;
     return context;
   } catch (error) {
     await refreshAccount();
@@ -124,7 +123,7 @@ export async function loginEnterprise(
       await invoke("account_login", { input }),
       "userContext",
     );
-    currentUser.value = context;
+    currentUser.current = context;
     return context;
   } catch (error) {
     // Native login revokes the preceding account before changing organizations.
@@ -135,13 +134,13 @@ export async function loginEnterprise(
 export async function recoverAccount(clear = false): Promise<void> {
   try {
     const value = await invoke("account_recover", { clear });
-    currentUser.value = value ? parsed(value, "userContext") : undefined;
+    currentUser.current = value ? parsed(value, "userContext") : undefined;
   } finally {
     await refreshAccount();
   }
 }
 export async function logoutAccount(): Promise<void> {
-  currentUser.value = undefined;
+  currentUser.current = undefined;
   try {
     await invoke("account_logout");
   } finally {
@@ -151,30 +150,30 @@ export async function logoutAccount(): Promise<void> {
 export async function refreshAccount(
   accept: () => boolean = () => true,
 ): Promise<void> {
-  const expected = currentUser.value?.generation;
+  const expected = currentUser.current?.generation;
   try {
     const status = parsed(await invoke("account_status"), "accountStatus");
-    if (!accept() || currentUser.value?.generation !== expected) return;
+    if (!accept() || currentUser.current?.generation !== expected) return;
     const value = status.current;
-    accountBinding.value = status.binding;
+    accountBinding.current = status.binding;
     if (status.failure)
-      accountNotice.value = accountFailureMessage(status.failure);
+      accountNotice.current = accountFailureMessage(status.failure);
     if (
       !value &&
       !status.failure &&
-      currentUser.value?.identity.mode === "user_device"
+      currentUser.current?.identity.mode === "user_device"
     )
-      accountNotice.value =
+      accountNotice.current =
         "企业会话已失效或无法完成在线核验。旧视图已关闭，请检查网络并重新登录。";
-    currentUser.value = value ? parsed(value, "userContext") : undefined;
+    currentUser.current = value ? parsed(value, "userContext") : undefined;
   } catch {
     if (
       accept() &&
-      currentUser.value?.generation === expected &&
-      currentUser.value?.identity.mode === "user_device"
+      currentUser.current?.generation === expected &&
+      currentUser.current?.identity.mode === "user_device"
     ) {
-      currentUser.value = undefined;
-      accountNotice.value =
+      currentUser.current = undefined;
+      accountNotice.current =
         "无法核验企业会话，旧视图已关闭。请检查网络、组织权限并重新登录。";
     }
   }

@@ -1,11 +1,10 @@
-import { reactive } from "vue";
 import type {
   DiagnosticPort,
   DiagnosticPreview,
   DiagnosticScopes,
 } from "./native";
 export function createDiagnostics(port?: DiagnosticPort) {
-  const state = reactive({
+  const state = {
     scopes: {
       host: true,
       service: true,
@@ -15,7 +14,7 @@ export function createDiagnostics(port?: DiagnosticPort) {
     preview: undefined as DiagnosticPreview | undefined,
     busy: false,
     message: "",
-  });
+  };
   let epoch = 0,
     disposed = false;
   function clear() {

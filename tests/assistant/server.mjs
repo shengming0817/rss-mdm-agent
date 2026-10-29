@@ -1,5 +1,5 @@
 import { createServer } from "vite";
-import vue from "@vitejs/plugin-vue";
+import react from "@vitejs/plugin-react";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -721,7 +721,7 @@ export async function startFixture() {
   const server = await createServer({
     configFile: false,
     root,
-    plugins: [fixture.plugin, vue()],
+    plugins: [fixture.plugin, react()],
     server: { host: "127.0.0.1", port: 0 },
     logLevel: "error",
   });

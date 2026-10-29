@@ -1,6 +1,8 @@
+const flushPromises = () =>
+  new Promise<void>((resolve) => setTimeout(resolve, 0));
 import { createOperationSurface } from "@rss-mdm-agent/ai-ui-bridge/surface";
 import { describe, it, expect } from "vitest";
-import { mount, flushPromises } from "@vue/test-utils";
+
 import {
   createOperationController,
   OperationDrafts,
@@ -14,8 +16,7 @@ import {
   operationFixture,
   operationTemplates,
 } from "../../../../../tests/assistant/operation-fixtures";
-import OperationCard from "./OperationCard.vue";
-import { NodeView, operationContext } from "./NodeView";
+
 import {
   Catalog,
   MessageProcessor,
@@ -23,8 +24,6 @@ import {
   getValue,
 } from "@a2ui/web_core/v0_9";
 
-const button = (wrapper: ReturnType<typeof mount>, name: string) =>
-  wrapper.findAll("button").find((b) => b.text() === name)!;
 describe("operation controllers", () => {
   it("preserves edits across updates/remounts and forces reconciliation after baseline change", async () => {
     const f = operationFixture(),
@@ -297,261 +296,6 @@ describe("operation controllers", () => {
     ).toThrow();
     expect(() => operationEvent({ kind: "executeShell" })).toThrow();
   });
-});
-
-describe("operation Vue templates", () => {
-  it("recovers from an invalid projection by querying the last trusted scope", async () => {
-    const f = operationFixture();
-    let reads = 0;
-    f.host.read = async () => {
-      reads++;
-      return f.snapshot;
-    };
-    const wrapper = mount(OperationCard, {
-      props: {
-        presentation: f.presentation,
-        snapshot: f.snapshot,
-        host: f.host,
-        drafts: new OperationDrafts(),
-      },
-    });
-    await wrapper.setProps({
-      snapshot: { ...f.snapshot, phase: "invalid" } as never,
-    });
-    await flushPromises();
-    expect(wrapper.text()).toContain("操作界面不可用");
-    expect(
-      button(wrapper, "查询原任务").attributes("disabled"),
-    ).toBeUndefined();
-    await button(wrapper, "查询原任务").trigger("click");
-    await flushPromises();
-    expect(reads).toBe(1);
-    expect(wrapper.find('input[type="text"]').exists()).toBe(true);
-    await wrapper.setProps({
-      snapshot: { ...f.snapshot, phase: "invalid" } as never,
-    });
-    await wrapper.setProps({
-      snapshot: { ...f.snapshot, revision: f.snapshot.revision + 1 },
-    });
-    await flushPromises();
-    expect(wrapper.find('input[type="text"]').exists()).toBe(true);
-    wrapper.unmount();
-  });
-  it("renders missing ordinary approval parameters and validates before dispatch", async () => {
-    const f = operationFixture("OperationApproval");
-    f.snapshot.current.name = "";
-    f.snapshot.proposal = {};
-    const wrapper = mount(OperationCard, {
-      props: {
-        presentation: f.presentation,
-        snapshot: f.snapshot,
-        host: f.host,
-        drafts: new OperationDrafts(),
-      },
-    });
-    await flushPromises();
-    await button(wrapper, "确认操作").trigger("click");
-    expect(f.events).toHaveLength(0);
-    await wrapper.get('input[type="text"]').setValue("completed");
-    await button(wrapper, "确认操作").trigger("click");
-    await flushPromises();
-    expect(f.events[0].values.name).toBe("completed");
-    wrapper.unmount();
-  });
-  it("keeps required inputs usable in a GuidedFlow renderer fallback", async () => {
-    const f = operationFixture("GuidedFlow");
-    f.snapshot.current.name = "";
-    f.snapshot.proposal = {};
-    const c = createOperationController(
-      f.presentation,
-      f.snapshot,
-      f.host,
-      new OperationDrafts(),
-    );
-    c.fallback();
-    const surface = createOperationSurface(f.presentation, true);
-    surface.update(c.state.draft.values);
-    const wrapper = mount(NodeView, {
-      props: { node: getValue(surface.root)! },
-      global: { provide: { [operationContext as symbol]: c } },
-    });
-    await wrapper
-      .get('[data-operation-field="name"] input')
-      .setValue("fallback value");
-    await button(wrapper, "确认操作").trigger("click");
-    await flushPromises();
-    expect(f.events[0].values.name).toBe("fallback value");
-    wrapper.unmount();
-    surface.dispose();
-    c.dispose();
-  });
-  for (const layout of ["tabs", "disclosure"] as const)
-    it(`reveals and focuses an invalid field inside ${layout}`, async () => {
-      const f = operationFixture();
-      f.presentation.layout = layout;
-      f.presentation.fields.find((field) => field.id === "secret")!.required =
-        true;
-      const wrapper = mount(OperationCard, {
-        attachTo: document.body,
-        props: {
-          presentation: f.presentation,
-          snapshot: f.snapshot,
-          host: f.host,
-          drafts: new OperationDrafts(),
-        },
-      });
-      if (layout === "disclosure")
-        for (const details of wrapper.findAll("details"))
-          details.element.removeAttribute("open");
-      await button(wrapper, "保存").trigger("click");
-      await flushPromises();
-      const input = wrapper.get('[data-operation-field="secret"] input');
-      expect(input.isVisible()).toBe(true);
-      expect(document.activeElement).toBe(input.element);
-      expect(f.events).toHaveLength(0);
-      wrapper.unmount();
-    });
-  it("focuses step validation errors before advancing", async () => {
-    const f = operationFixture("GuidedFlow");
-    f.snapshot.current.enabled = true;
-    const wrapper = mount(OperationCard, {
-      attachTo: document.body,
-      props: {
-        presentation: f.presentation,
-        snapshot: f.snapshot,
-        host: f.host,
-        drafts: new OperationDrafts(),
-      },
-    });
-    await button(wrapper, "下一步").trigger("click");
-    await flushPromises();
-    const input = wrapper.get('[data-operation-field="address"] input');
-    expect(input.isVisible()).toBe(true);
-    expect(document.activeElement).toBe(input.element);
-    wrapper.unmount();
-  });
-  for (const template of operationTemplates)
-    it(`${template} renders actual controls and processes an action`, async () => {
-      const f = operationFixture(template);
-      const wrapper = mount(OperationCard, {
-        props: {
-          presentation: f.presentation,
-          snapshot: f.snapshot,
-          host: f.host,
-          drafts: new OperationDrafts(),
-        },
-      });
-      await flushPromises();
-      expect(wrapper.text()).toContain(f.snapshot.presentation.targetLabel);
-      expect(wrapper.text()).toContain("企业批准");
-      if (template === "TaskExecution")
-        await button(wrapper, "继续").trigger("click");
-      else {
-        if (template === "GuidedFlow")
-          await button(wrapper, "下一步").trigger("click");
-        if (template === "ResourceSelection" || template === "ObjectActions")
-          await wrapper
-            .get('input[aria-label="选择 测试对象 A"]')
-            .setValue(true);
-        await button(
-          wrapper,
-          template === "OperationApproval" ? "确认操作" : "保存",
-        ).trigger("click");
-      }
-      await flushPromises();
-      expect(f.events).toHaveLength(1);
-      if (template !== "TaskExecution")
-        expect(wrapper.text()).toContain("fixture 已核实");
-      wrapper.unmount();
-    });
-  it("keyboard tabs, field errors, secret and path controls are usable", async () => {
-    const f = operationFixture();
-    const wrapper = mount(OperationCard, {
-      attachTo: document.body,
-      props: {
-        presentation: f.presentation,
-        snapshot: f.snapshot,
-        host: f.host,
-        drafts: new OperationDrafts(),
-      },
-    });
-    await flushPromises();
-    await wrapper.get('[role="switch"]').trigger("click");
-    await button(wrapper, "保存").trigger("click");
-    await flushPromises();
-    expect(wrapper.find('[aria-invalid="true"]').exists()).toBe(true);
-    (wrapper.findAll('[role="tab"]')[0].element as HTMLElement).focus();
-    await wrapper
-      .findAll('[role="tab"]')[0]
-      .trigger("keydown", { key: "ArrowRight" });
-    await flushPromises();
-    expect(wrapper.findAll('[role="tab"]')[1].attributes("aria-selected")).toBe(
-      "true",
-    );
-    await button(wrapper, "选择路径").trigger("click");
-    await wrapper.get('input[type="password"]').setValue("secret-canary-2733");
-    await flushPromises();
-    expect(
-      (wrapper.get('input[type="password"]').element as HTMLInputElement).value,
-    ).toBe("");
-    expect(wrapper.html()).not.toContain("secret-canary-2733");
-    expect(f.secretCount()).toBe(1);
-    wrapper.unmount();
-    expect(f.secretCount()).toBe(0);
-  });
-});
-
-// The same actual A2UI resolver/binding path used by one-shot question surfaces.
-describe("question TextField variants", () => {
-  for (const [variant, selector, value] of [
-    ["longText", "textarea", "line one\nline two"],
-    ["number", 'input[role="spinbutton"]', "42"],
-    ["obscured", 'input[type="password"]', "masked input"],
-  ])
-    it(`preserves ${variant} rendering and writable binding`, async () => {
-      const loaded = Catalog.fromSchema(operationCatalog);
-      const catalog = new Catalog(
-        loaded.id,
-        [...loaded.components.values()],
-        [],
-      );
-      const processor = new MessageProcessor([catalog], async () => {}, {
-        version: "v0.9.1",
-      });
-      processor.processMessages([
-        {
-          version: "v0.9.1",
-          createSurface: { surfaceId: "test", catalogId: catalog.id },
-        },
-        {
-          version: "v0.9.1",
-          updateComponents: {
-            surfaceId: "test",
-            components: [
-              {
-                id: "root",
-                component: "TextField",
-                label: "Question",
-                variant,
-                value: { path: "/answer" },
-              },
-            ],
-          },
-        },
-      ]);
-      const surface = processor.model.getSurface("test")!;
-      surface.dataModel.set("/answer", "");
-      const resolver = new NodeResolver(surface, catalog);
-      const wrapper = mount(NodeView, {
-        props: { node: getValue(resolver.rootNode)! },
-      });
-      await wrapper.get(selector).setValue(value);
-      if (variant === "number") await wrapper.get(selector).trigger("blur");
-      expect(surface.dataModel.get("/answer")).toBe(value);
-      wrapper.unmount();
-      resolver.dispose();
-      processor.model.dispose();
-    });
 });
 
 it("unknown presentation survives while secret handling belongs to the trusted snapshot", () => {
