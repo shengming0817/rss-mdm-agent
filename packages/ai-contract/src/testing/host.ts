@@ -306,7 +306,15 @@ export class FakeHost implements HostPort {
     let s = found.value;
     const prior = await this.store.command(namespace, command.commandId);
     if (!prior.ok) {
-      if (!s.currentStageId) {
+      const nextContext =
+        command.input.type === "prompt" &&
+        command.input.policy === "queue_next" &&
+        (s.freshContext ||
+          (!!s.currentStageId &&
+            activeStage(s).connectionId !== s.selectedConnectionId));
+      // Use the real activation transition, which rejects unsettled original commands.
+      // The scripted Host must exercise the next-context intent consumed by product UI.
+      if (!s.currentStageId || nextContext) {
         if (command.input.type !== "prompt") return fail("connection_required");
         const opened = await this.open(s, budget);
         if (!opened.ok) return opened;

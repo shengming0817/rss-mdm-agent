@@ -240,3 +240,100 @@ test("separate Host sessions cannot exchange provider observations", async () =>
     await host.close(budget());
   }
 });
+
+test("scripted Host activates explicitly selected/fresh contexts only on a new prompt and preserves original unsettled work", async () => {
+  const host = new FakeHost();
+  try {
+    for (const id of ["A", "B"])
+      unwrap(
+        await host.store.saveConnection(
+          fixtureCaller,
+          {
+            schemaVersion: 1,
+            kind: "connection",
+            connectionId: id,
+            presentation: { name: id },
+            provider: "codex",
+            configRevision: 1,
+            profile: "conversation",
+            status: "ready",
+            source: { type: "existing_config" },
+          },
+          null,
+        ),
+      );
+    const session = unwrap(
+      await host.createSession(fixtureCaller, { connectionId: "A" }, budget()),
+    );
+    const command = (id) => ({
+      ...fixtureCommand(),
+      sessionId: session.namespace.sessionId,
+      commandId: id,
+    });
+    const first = command("first"),
+      receipt = unwrap(await host.submit(fixtureCaller, first, budget()));
+    const stageA = activeStage(
+      unwrap(await host.store.session(session.namespace)),
+    );
+    unwrap(
+      await host.selectConnection(
+        fixtureCaller,
+        session.namespace.sessionId,
+        "B",
+        budget(),
+      ),
+    );
+    assert.equal(
+      activeStage(unwrap(await host.store.session(session.namespace))).stageId,
+      stageA.stageId,
+    );
+    assert.equal(
+      (await host.submit(fixtureCaller, command("blocked"), budget())).error
+        .code,
+      "connection_switch_pending",
+    );
+    assert.deepEqual(
+      unwrap(await host.submit(fixtureCaller, first, budget())),
+      receipt,
+    );
+    unwrap(
+      await host.advance(fixtureCaller, session.namespace.sessionId, "first", [
+        { type: "terminal", outcome: "completed" },
+      ]),
+    );
+    unwrap(await host.submit(fixtureCaller, command("second"), budget()));
+    const stageB = activeStage(
+      unwrap(await host.store.session(session.namespace)),
+    );
+    assert.equal(stageB.connectionId, "B");
+    assert.notEqual(stageB.binding.generation, stageA.binding.generation);
+    unwrap(
+      await host.advance(fixtureCaller, session.namespace.sessionId, "second", [
+        { type: "terminal", outcome: "completed" },
+      ]),
+    );
+    unwrap(
+      await host.selectConnection(
+        fixtureCaller,
+        session.namespace.sessionId,
+        "B",
+        budget(),
+        true,
+      ),
+    );
+    assert.equal(
+      activeStage(unwrap(await host.store.session(session.namespace))).binding
+        .generation,
+      stageB.binding.generation,
+    );
+    unwrap(await host.submit(fixtureCaller, command("third"), budget()));
+    const fresh = unwrap(await host.store.session(session.namespace));
+    assert.notEqual(
+      activeStage(fresh).binding.generation,
+      stageB.binding.generation,
+    );
+    assert.equal(fresh.freshContext, undefined);
+  } finally {
+    unwrap(await host.close(budget()));
+  }
+});
