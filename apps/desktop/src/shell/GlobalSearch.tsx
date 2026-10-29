@@ -179,6 +179,7 @@ export function GlobalSearch({
                     key={entry.id}
                     id={`${listId}-${index}`}
                     role="option"
+                    tabIndex={-1}
                     aria-selected={active === index}
                     onMouseEnter={() => setSelected(index)}
                     onMouseDown={(event) => event.preventDefault()}
