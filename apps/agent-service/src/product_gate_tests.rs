@@ -2684,9 +2684,17 @@ async fn software_self_service_binds_signed_policy_and_native_context() {
         assert_eq!(accepted.request_id.to_string(), choice.request.as_str());
         assert_eq!(c._server.data.lock().unwrap().self_service_offers.len(), 1);
         assert_eq!(c._server.data.lock().unwrap().invocations.len(), 1);
-        let offer = c.service.client.claim().await.unwrap().offer.unwrap();
         if change != 0 {
-            let mut payload = offer.payload().clone();
+            let mut payload = c
+                ._server
+                .data
+                .lock()
+                .unwrap()
+                .offer
+                .as_ref()
+                .unwrap()
+                .payload
+                .clone();
             let wire::TaskPayload::Software(spec) = &mut payload else {
                 panic!("software offer");
             };
@@ -2707,9 +2715,12 @@ async fn software_self_service_binds_signed_policy_and_native_context() {
                 let mut data = c._server.data.lock().unwrap();
                 data.offer = Some(data.signed(payload));
             }
-            let changed = c.service.client.claim().await.unwrap().offer.unwrap();
+        }
+        // First claim must verify this payload; the client separately pins later claims.
+        let offer = c.service.client.claim().await.unwrap().offer.unwrap();
+        if change != 0 {
             assert!(
-                c.service.bind_policy_offer(&changed).is_err(),
+                c.service.bind_policy_offer(&offer).is_err(),
                 "resource coordinate {change} drift"
             );
             assert_eq!(
