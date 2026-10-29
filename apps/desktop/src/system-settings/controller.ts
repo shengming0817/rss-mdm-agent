@@ -110,6 +110,7 @@ export function createSystemSettings(
   };
   function accept(section: SettingsSection, response: SettingsResponse) {
     if (!active) return;
+    state.now = Date.now();
     response = deepClone(response);
     const pending = state.pending.get(section);
     if (!response.request && pending) return;
@@ -192,6 +193,7 @@ export function createSystemSettings(
           }),
         );
         if (active && call === epoch) {
+          state.now = Date.now();
           ageFact(value);
           state.facts.set(source.reference.id, { source, value });
         }

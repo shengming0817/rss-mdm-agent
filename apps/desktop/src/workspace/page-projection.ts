@@ -12,6 +12,7 @@ export function pageResources(
   system: Snapshot<Workspace["system"]["state"]>,
   software: Snapshot<Workspace["software"]["state"]>,
   tasks: Snapshot<Workspace["tasks"]["state"]>,
+  now = Date.now(),
 ): PageResource[] {
   const rows: PageResource[] = [];
   if (page === "home" && device.value && !device.error && device.readAt != null)
@@ -22,10 +23,10 @@ export function pageResources(
       source: "本机设备概览",
       collectedAt: device.readAt,
       validUntil: device.readAt + 30000,
-      verified: device.readAt <= system.now,
+      verified: device.readAt <= now,
     });
   if (page === "home" || page === "system") {
-    const facts = homeFacts(workspace.system, system);
+    const facts = homeFacts(workspace.system, system, now);
     for (const [id, title, text, evidence] of [
       [
         "network",
@@ -79,7 +80,7 @@ export function pageResources(
           inventory.complete &&
           !inventory.error &&
           inventory.collectedAt != null &&
-          inventory.collectedAt * 1000 <= system.now,
+          inventory.collectedAt * 1000 <= now,
         ...(inventory.collectedAt == null
           ? {}
           : {
@@ -103,7 +104,7 @@ export function pageResources(
           tasks.recentLoaded &&
           !tasks.recentError &&
           tasks.recentAsOf > 0 &&
-          tasks.recentAsOf <= system.now,
+          tasks.recentAsOf <= now,
       });
   return rows;
 }

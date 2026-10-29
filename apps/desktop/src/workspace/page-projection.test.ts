@@ -12,7 +12,8 @@ it("uses the recent task read clock without requiring a task-list page and inval
     );
   try {
     await workspace.tasks.loadRecent();
-    workspace.system.state.now = Date.now() + 1;
+    // A sibling controller tick is not the observation clock for a newly received task page.
+    workspace.system.state.now = Date.now() - 1000;
     const resources = () =>
       pageResources(
         workspace,

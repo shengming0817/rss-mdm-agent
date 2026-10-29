@@ -74,6 +74,7 @@ export function homeFacts(
   current:
     | Snapshot<SystemSettingsController["state"]>
     | undefined = controller?.state,
+  now = current?.now ?? Date.now(),
 ) {
   const facts = controller?.summary(current);
   const network = facts?.network,
@@ -83,7 +84,7 @@ export function homeFacts(
   const nativeTime = (section: "network" | "power", label: string) => {
     const snapshot = observations?.get(section)?.snapshot;
     if (!snapshot) return "";
-    const age = (current?.now ?? Date.now()) - snapshot.collectedAtUnixMs;
+    const age = now - snapshot.collectedAtUnixMs;
     return `${label}${age < 0 ? "时间待核实" : age >= 30_000 ? "已过期" : "已读取"} · ${new Date(snapshot.collectedAtUnixMs).toLocaleTimeString()}`;
   };
   const source = observations
@@ -143,7 +144,6 @@ export function homeFacts(
     total > 0 &&
     free >= 0 &&
     free <= total;
-  const now = current?.now ?? Date.now();
   return {
     networkContext: contextEvidence(
       [network],

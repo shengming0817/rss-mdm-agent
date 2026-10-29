@@ -172,6 +172,7 @@ function WorkspaceView({
     void owner.refresh();
     return () => owner.dispose();
   }, [desktop, workspace]);
+  const now = Date.now();
   const pages: PageId[] = [...modules.map(([id]) => id), "settings"];
   const contexts = pages.map((page) =>
     pageContext(
@@ -194,9 +195,10 @@ function WorkspaceView({
         system,
         software,
         tasks,
+        now,
       ),
       workspace.key,
-      system.now,
+      now,
     ),
   );
   useEffect(() => {

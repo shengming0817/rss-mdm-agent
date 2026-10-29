@@ -113,6 +113,21 @@ export async function checkShellBrowser(page, fixture) {
   await primary.getByRole("button", { name: "主页", exact: true }).click();
   await page.getByRole("button", { name: "页面助手", exact: true }).click();
   await page.getByRole("complementary", { name: "页面助手" }).waitFor();
+  await page.waitForFunction(
+    () => !window.rssDesktop.state.workspace.assistant.compositionError(),
+  );
+  await page.evaluate(async () => {
+    await window.rssDesktop.state.workspace.tasks.loadRecent();
+    await new Promise((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(resolve)),
+    );
+  });
+  assert.equal(
+    await page.evaluate(() =>
+      window.rssDesktop.state.workspace.assistant.compositionError(),
+    ),
+    "",
+  );
   await page
     .getByRole("textbox", { name: "消息" })
     .fill("附上页面展示信息，先不发送");
