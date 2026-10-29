@@ -557,6 +557,16 @@ export async function checkConversationBrowser(page, fixture) {
   assert.ok(frozen.text.includes("连接 B 的稳定完成文本。"));
   for (const width of [1280, 420]) {
     await page.setViewportSize({ width, height: 900 });
+    const drawer = page.getByRole("dialog", { name: "会话选项" });
+    await drawer.locator(".ant-drawer-body").evaluate((node) => {
+      node.scrollTop = 0;
+    });
+    await page.evaluate(async () => {
+      await document.fonts.ready;
+      await new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      );
+    });
     const geometry = await page
       .getByRole("dialog", { name: "会话选项" })
       .evaluate((node) => ({
@@ -574,6 +584,30 @@ export async function checkConversationBrowser(page, fixture) {
       animations: "disabled",
     });
     evidence.captures.push({ file, ...geometry });
+    const footer = await drawer
+      .getByRole("button", { name: "完成", exact: true })
+      .boundingBox();
+    assert.ok(footer && footer.y >= 0 && footer.y + footer.height <= 900);
+    assert.equal(await drawer.locator(".ant-drawer-header").count(), 1);
+    await drawer.locator(".ant-drawer-body").evaluate((node) => {
+      node.scrollTop = node.scrollHeight;
+    });
+    await page.evaluate(
+      () =>
+        new Promise((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)),
+        ),
+    );
+    const endFile = `react-assistant-session-options-${width}-end.png`;
+    await page.screenshot({
+      path: new URL(endFile, directory).pathname,
+      animations: "disabled",
+    });
+    evidence.captures.push({
+      file: endFile,
+      ...geometry,
+      state: "history-confirmation-and-model-recovery",
+    });
   }
   await page.setViewportSize({ width: 1280, height: 900 });
   await page
