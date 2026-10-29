@@ -1,3 +1,5 @@
+import { proxy } from "valtio/vanilla";
+import { proxySet } from "valtio/vanilla/utils";
 import {
   operationPresentation,
   operationSnapshot,
@@ -36,18 +38,29 @@ interface Execution {
 }
 /** Owned by the application, not a renderer or localStorage. */
 export class OperationDrafts {
+  private epoch = 0;
+  get generation() {
+    return this.epoch;
+  }
+  private releases = new Set<() => void>();
+  own(release: () => void) {
+    this.releases.add(release);
+    return () => {
+      this.releases.delete(release);
+    };
+  }
   private entries = new Map<string, Draft>();
   private executions = new Map<string, Execution>();
   execution(snapshot: OperationSnapshot): Execution {
     const key = scopeKey(snapshot.scope);
     let entry = this.executions.get(key);
     if (!entry) {
-      entry = {
+      entry = proxy({
         snapshot,
         busy: false,
         unknown: false,
         unknownRevision: -1,
-      };
+      });
       this.executions.set(key, entry);
     }
     return entry;
@@ -75,19 +88,27 @@ export class OperationDrafts {
     let draft = this.entries.get(key);
     if (!draft || draft.schema !== schema) {
       const schemaReset = !!draft;
-      draft = {
+      draft = proxy({
         values: {},
-        dirty: new Set<string>(),
+        dirty: proxySet<string>(),
         baseline: snapshot.baseline,
         schema,
         selection: [],
         schemaReset,
-      };
+      });
       this.entries.set(key, draft);
     }
     return draft;
   }
   clear() {
+    this.epoch++;
+    for (const execution of this.executions.values()) execution.busy = false;
+    for (const release of [...this.releases]) release();
+    for (const draft of this.entries.values()) {
+      draft.values = {};
+      draft.dirty.clear();
+      draft.selection = [];
+    }
     this.entries.clear();
     this.executions.clear();
   }
@@ -118,9 +139,12 @@ export function createOperationController(
   }
   initial = operationSnapshot(initial);
   const scope = initial.scope;
+  const generation = drafts.generation;
+  const retired = () => generation !== drafts.generation;
   const draft = drafts.acquire(operationSnapshot(initial), presentation);
   const execution = drafts.execution(initial);
-  const state = {
+  const state = proxy({
+    execution,
     get snapshot() {
       return execution.snapshot;
     },
@@ -153,8 +177,8 @@ export function createOperationController(
     interactionExpired: false,
     preparationExpired: false,
     secrets: {} as Record<string, string>,
-    capturing: new Set<string>(),
-  };
+    capturing: proxySet<string>(),
+  });
   let disposed = false;
   let deadline: ReturnType<typeof setTimeout> | undefined;
   const captures = new Map<string, number>();
@@ -165,6 +189,7 @@ export function createOperationController(
     acknowledge = false,
     queried = false,
   ) {
+    if (retired()) return false;
     const next = operationSnapshot(snapshot);
     if (scopeKey(next.scope) !== scopeKey(scope))
       throw new Error("操作主体或目标不匹配");
@@ -396,7 +421,7 @@ export function createOperationController(
       const path = await host.choosePath(scope, id);
       if (path !== undefined && !disposed) edit(id, path);
     } catch {
-      state.notice = "路径选择不可用";
+      if (!disposed) state.notice = "路径选择不可用";
     }
   }
   async function act(kind: OperationEvent["kind"], answer?: string) {
@@ -445,6 +470,7 @@ export function createOperationController(
         kind === "refresh"
           ? await host.read(scope)
           : await host.dispatch(event, scope);
+      if (retired()) return;
       if (!merge(snapshot, kind === "submit"))
         throw new Error("操作状态已过期");
       state.unknown = snapshot.phase === "unknown";
@@ -453,6 +479,7 @@ export function createOperationController(
         clearSecrets();
       }
     } catch (error) {
+      if (retired()) return;
       if (error instanceof OperationRejectedError) {
         state.unknown = false;
         state.notice = error.message;
@@ -472,10 +499,11 @@ export function createOperationController(
       }
       clearSecrets();
     } finally {
-      state.busy = false;
+      if (!retired()) state.busy = false;
     }
   }
   const stop = host.observe(scope, ({ snapshot, kind }) => {
+    if (disposed) return;
     try {
       merge(snapshot, false, kind === "query");
     } catch {
@@ -483,12 +511,22 @@ export function createOperationController(
       state.unknown = true;
     }
   });
+  const releaseOwnership = drafts.own(dispose);
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    releaseOwnership();
+    clearTimeout(deadline);
+    clearSecrets();
+    stop();
+  }
   return {
     isSecret: (id: string) => secretFields.has(id),
     presentation,
     state,
-    update: (snapshot: OperationSnapshot) => merge(snapshot),
+    update: (snapshot: OperationSnapshot) => !disposed && merge(snapshot),
     invalidate() {
+      if (disposed) return;
       clearSecrets();
       state.unknown = true;
       state.notice = "操作状态无法核实，请查询原操作";
@@ -523,12 +561,7 @@ export function createOperationController(
       clearSecrets();
       state.fallbackReason = "专用界面渲染失败，已显示默认审批";
     },
-    dispose() {
-      disposed = true;
-      clearTimeout(deadline);
-      clearSecrets();
-      stop();
-    },
+    dispose,
   };
 }
 export type OperationController = ReturnType<typeof createOperationController>;

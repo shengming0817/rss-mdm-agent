@@ -39,6 +39,7 @@ const allowed = {
     "@agentclientprotocol/sdk",
   ],
   "packages/ai-ui-bridge": [
+    "valtio",
     "@rss-mdm-agent/ai-contract",
     "@rss-mdm-agent/ai-client",
     "@a2ui/web_core",
@@ -118,6 +119,8 @@ for (const [name, dependencies] of Object.entries(allowed)) {
             ? "workspace:*"
             : appExternalDependencies[dependency]),
       )) ||
+    (name === "packages/ai-ui-bridge" &&
+      manifest.dependencies?.valtio !== "2.3.2") ||
     manifest.optionalDependencies ||
     (name === "packages/ai-ui-bridge"
       ? JSON.stringify(

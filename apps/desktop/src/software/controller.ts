@@ -1,3 +1,5 @@
+import { deepClone, proxyMap, proxySet } from "valtio/vanilla/utils";
+import { proxy, type Snapshot } from "valtio/vanilla";
 import type {
   DataAccessPort,
   DataCursor,
@@ -10,9 +12,9 @@ import type {
   SoftwarePage,
   SoftwarePort,
 } from "../self-service/types";
-export const installationKey = (item: InstalledSoftware) =>
+export const installationKey = (item: Snapshot<InstalledSoftware>) =>
   item.reference.installation;
-const referenceKey = (item: InstalledSoftware) =>
+const referenceKey = (item: Snapshot<InstalledSoftware>) =>
   JSON.stringify(item.reference);
 export const ended = (status: LocalSoftwareStatus) =>
   [
@@ -36,7 +38,7 @@ export function createSoftware(
   port: SoftwarePort | null,
   tasks?: import("../task-center/controller").Controller,
 ) {
-  const state = {
+  const state = proxy({
     sources: [] as Source[],
     now: Date.now(),
     directoryNext: null as string | null,
@@ -44,16 +46,17 @@ export function createSoftware(
     loading: false,
     error: "",
     windowed: false,
-    operations: new Map<string, LocalSoftwareStatus>(),
-    prepared: new Map<string, LocalSoftwarePrepared>(),
-    requests: new Set<string>(),
-    busy: new Set<string>(),
+    operations: proxyMap<string, LocalSoftwareStatus>(),
+    prepared: proxyMap<string, LocalSoftwarePrepared>(),
+    requests: proxySet<string>(),
+    busy: proxySet<string>(),
     historyNext: null as string | null,
     historyComplete: false,
     historyBusy: false,
     historyError: "",
-    queries: new Map<string, QueryStatus>(),
-  };
+    queries: proxyMap<string, QueryStatus>(),
+  });
+  type ReadState = Snapshot<typeof state>;
   let active = true,
     epoch = 0;
   const timer = setInterval(() => {
@@ -62,6 +65,7 @@ export function createSoftware(
   const seenDirectory = new Set<string>(),
     seenHistory = new Set<string>();
   function accept(value: LocalSoftwareStatus) {
+    value = deepClone(value);
     if (
       !state.operations.has(value.prepared.request) &&
       state.operations.size >= 512
@@ -79,7 +83,7 @@ export function createSoftware(
   }
   // Each physical inventory needs one complete observation; delivery identities
   // (local recipe, enterprise task or periodic policy) may cover the same inventory.
-  const complete = (s: Source) =>
+  const complete = (s: Snapshot<Source>) =>
     !!s.page &&
     !s.after &&
     !s.page.stale &&
@@ -87,9 +91,9 @@ export function createSoftware(
     s.page.quality === "complete" &&
     s.page.enumerationComplete &&
     !s.error;
-  const observations = () => {
-    const selected = new Map<string, Source>();
-    for (const source of state.sources) {
+  const observations = (current: ReadState = state) => {
+    const selected = new Map<string, Snapshot<Source>>();
+    for (const source of current.sources) {
       for (const coverage of source.page?.coverage ?? []) {
         const previous = selected.get(coverage);
         if (
@@ -104,48 +108,50 @@ export function createSoftware(
     }
     return selected;
   };
-  const coverageComplete = () =>
-    state.sources.every(
+  const coverageComplete = (current: ReadState = state) =>
+    current.sources.every(
       (s) =>
         s.page &&
         s.page.coverage.length > 0 &&
         s.page.coverage.every((key) => {
-          const selected = observations().get(key);
+          const selected = observations(current).get(key);
           return selected && complete(selected);
         }),
     );
-  const installed = () => {
-    const rows = new Map<string, InstalledSoftware>();
-    for (const source of [...state.sources].sort(
+  const installed = (current: ReadState = state) => {
+    const rows = new Map<string, Snapshot<InstalledSoftware>>();
+    for (const source of [...current.sources].sort(
       (a, b) => (a.page?.collectedAt ?? 0) - (b.page?.collectedAt ?? 0),
     ))
       for (const item of source.items)
-        if (observations().get(item.coverage) === source)
+        if (observations(current).get(item.coverage) === source)
           rows.set(installationKey(item), item);
     // The inventory projection is replaced by its collection owner. Historical task
     // detections describe that task; their stable object references are not observation versions.
     return [...rows.values()];
   };
-  const summary = () => ({
-    items: installed(),
-    installed: installed().length,
-    updates: installed().filter((item) =>
+  const summary = (current: ReadState = state) => ({
+    items: installed(current),
+    installed: installed(current).length,
+    updates: installed(current).filter((item) =>
       item.actions.some(
         (a) => a.action === "update" && a.available && a.targetVersion,
       ),
     ).length,
     complete:
-      state.directoryComplete &&
-      !state.windowed &&
-      state.sources.length > 0 &&
-      coverageComplete(),
-    read: state.sources.some(
+      current.directoryComplete &&
+      !current.windowed &&
+      current.sources.length > 0 &&
+      coverageComplete(current),
+    read: current.sources.some(
       (s) =>
         s.page && ["complete", "partial", "truncated"].includes(s.page.quality),
     ),
-    loading: state.loading || state.sources.some((s) => s.busy),
-    error: state.error || state.sources.find((s) => s.error)?.error || "",
-    collectedAt: [...new Set(observations().values())].reduce<number | null>(
+    loading: current.loading || current.sources.some((s) => s.busy),
+    error: current.error || current.sources.find((s) => s.error)?.error || "",
+    collectedAt: [...new Set(observations(current).values())].reduce<
+      number | null
+    >(
       (time, s) =>
         s.page?.collectedAt == null
           ? time
@@ -154,7 +160,7 @@ export function createSoftware(
             : Math.min(time, s.page.collectedAt),
       null,
     ),
-    sources: state.sources.length,
+    sources: current.sources.length,
   });
   async function read(source: Source, append = false) {
     if (!active || !port || source.busy || (append && !source.after)) return;
@@ -163,14 +169,16 @@ export function createSoftware(
     source.error = "";
     const after = append ? source.after : null;
     try {
-      const page = await port.read({
-        read: {
-          selection: { kind: "query", query: source.descriptor.reference },
-          after,
-          limit: 128,
-          maxAgeSeconds: 300,
-        },
-      });
+      const page = deepClone(
+        await port.read({
+          read: {
+            selection: { kind: "query", query: source.descriptor.reference },
+            after,
+            limit: 128,
+            maxAgeSeconds: 300,
+          },
+        }),
+      );
       if (!active || call !== epoch) return;
       if (
         JSON.stringify(page.query) !==
@@ -259,7 +267,7 @@ export function createSoftware(
           continue;
         if (state.sources.length >= 128) throw Error("source capacity");
         state.sources.push({
-          descriptor,
+          descriptor: deepClone(descriptor),
           items: [],
           after: null,
           busy: false,
@@ -316,7 +324,10 @@ export function createSoftware(
     if (active && call === epoch) accept(value);
     return value;
   }
-  async function prepare(item: InstalledSoftware, action: LocalSoftwareAction) {
+  async function prepare(
+    item: Snapshot<InstalledSoftware>,
+    action: LocalSoftwareAction,
+  ) {
     if (
       !active ||
       !port ||

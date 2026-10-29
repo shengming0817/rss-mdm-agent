@@ -1,13 +1,15 @@
+import { deepClone } from "valtio/vanilla/utils";
+import { proxy } from "valtio/vanilla";
 import type { HostStatus } from "@rss-mdm-agent/ai-contract/wire";
 import type { nativeHost } from "./native";
 export function createHostSettings(port: ReturnType<typeof nativeHost>) {
-  const state = {
+  const state = proxy({
     status: undefined as HostStatus | undefined,
     busy: false,
     loading: false,
     message: "",
     readError: "",
-  };
+  });
   let epoch = 0,
     disposed = false;
   async function refresh() {
@@ -17,7 +19,7 @@ export function createHostSettings(port: ReturnType<typeof nativeHost>) {
     try {
       const next = await port.read();
       if (!disposed && current === epoch) {
-        state.status = next;
+        state.status = deepClone(next);
         state.readError = "";
       }
     } catch {
@@ -36,7 +38,7 @@ export function createHostSettings(port: ReturnType<typeof nativeHost>) {
     try {
       const next = await port.restart(state.status.generation);
       if (disposed) return false;
-      state.status = next;
+      state.status = deepClone(next);
       state.readError = "";
       return next.phase === "ready";
     } catch {
@@ -54,6 +56,11 @@ export function createHostSettings(port: ReturnType<typeof nativeHost>) {
     dispose() {
       disposed = true;
       epoch++;
+      state.status = undefined;
+      state.busy = false;
+      state.loading = false;
+      state.message = "";
+      state.readError = "";
     },
   };
 }

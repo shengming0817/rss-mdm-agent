@@ -1,3 +1,5 @@
+import { deepClone, proxyMap } from "valtio/vanilla/utils";
+import { proxy, type Snapshot } from "valtio/vanilla";
 import type {
   TaskPort,
   TaskDetail,
@@ -82,7 +84,7 @@ export function createTaskCenter(
   tasks: TaskPort | null,
   port: SelfServicePort | null,
 ) {
-  const state = {
+  const state = proxy({
     query: initialQuery(),
     items: [] as TaskDetail[],
     selected: null as TaskDetail | null,
@@ -93,7 +95,7 @@ export function createTaskCenter(
     uncertain: false,
     error: tasks ? "" : "本机任务服务未连接",
     taskId: "",
-    byRef: new Map<string, TaskDetail>(),
+    byRef: proxyMap<string, TaskDetail>(),
     recent: [] as TaskRef[],
     recentNext: null as string | null,
     recentLoaded: false,
@@ -115,7 +117,8 @@ export function createTaskCenter(
     page: 1,
     recentError: "",
     recentWindowed: false,
-  };
+  });
+  type ReadState = Snapshot<typeof state>;
   let alive = true,
     epoch = 0,
     listEpoch = 0,
@@ -143,8 +146,8 @@ export function createTaskCenter(
     }
   }
 
-  const preparations = () =>
-    [...state.byRef.values()].flatMap((t) =>
+  const preparations = (current: ReadState = state) =>
+    [...current.byRef.values()].flatMap((t) =>
       t.facts.kind === "preparation" ? [t.facts.value] : [],
     );
   function invalidate() {
@@ -193,7 +196,7 @@ export function createTaskCenter(
     state.loading = true;
     listFlight = (async () => {
       try {
-        const page = await tasks.list(query);
+        const page = deepClone(await tasks.list(query));
         if (!alive || call !== epoch || queryVersion !== listEpoch) return;
         acceptScope(page.scope);
         if (page.next && page.next === query.cursor)
@@ -254,10 +257,10 @@ export function createTaskCenter(
       state.page = oldPage;
     }
   }
-  const recentItems = () =>
-    state.recent
+  const recentItems = (current: ReadState = state) =>
+    current.recent
       .flatMap((ref) => {
-        const item = state.byRef.get(taskKey(ref));
+        const item = current.byRef.get(taskKey(ref));
         return item ? [item] : [];
       })
       .sort(
@@ -277,7 +280,9 @@ export function createTaskCenter(
     recentFlight = (async () => {
       try {
         const cursor = append ? state.recentNext : null;
-        const page = await tasks.list({ ...initialQuery(), limit: 32, cursor });
+        const page = deepClone(
+          await tasks.list({ ...initialQuery(), limit: 32, cursor }),
+        );
         if (!alive || call !== epoch) return;
         acceptScope(page.scope);
         if (page.next && page.next === cursor) throw Error("任务游标未推进");
@@ -338,7 +343,8 @@ export function createTaskCenter(
     const call = epoch;
     const promise = tasks
       .detail(reference)
-      .then((value) => {
+      .then((received) => {
+        const value = deepClone(received);
         if (!alive || call !== epoch) throw Error("任务主体已失效");
         acceptScope(value.scope);
         cache(value);

@@ -4,9 +4,9 @@ import { invoke } from "@tauri-apps/api/core";
 
 import type { UserContext } from "@rss-mdm-agent/ai-contract/wire";
 
-import { currentUser } from "../test-users";
+import { accountState, retireAccountOperations } from "../test-users";
 
-import { nativeHost, type ServicePort } from "./native";
+import { nativeHost, nativeService, type ServicePort } from "./native";
 
 vi.mock("@tauri-apps/api/core", () => ({
   isTauri: () => true,
@@ -54,12 +54,12 @@ const status = {
 
 beforeEach(() => {
   vi.mocked(invoke).mockReset();
-  currentUser.current = undefined;
+  accountState.user = undefined;
 });
 
 it("synchronizes a rotated identity even when Host startup fails", async () => {
-  currentUser.current = context("device");
-  const next = { ...currentUser.current, generation: "rotated-generation" };
+  accountState.user = context("device");
+  const next = { ...accountState.user, generation: "rotated-generation" };
   vi.mocked(invoke).mockImplementation(async (command) => {
     if (command === "ai_restart_host") throw Error("startup failed");
     if (command === "account_status")
@@ -72,11 +72,11 @@ it("synchronizes a rotated identity even when Host startup fails", async () => {
     throw Error("unexpected command");
   });
   await expect(nativeHost()!.restart(1)).rejects.toThrow("startup failed");
-  expect(currentUser.current).toEqual(next);
+  expect(accountState.user).toEqual(next);
 });
 
 it("restart completion cannot replace a concurrently selected identity", async () => {
-  currentUser.current = context("device");
+  accountState.user = context("device");
   let finish!: (value: unknown) => void;
   vi.mocked(invoke).mockImplementation(
     () =>
@@ -86,9 +86,33 @@ it("restart completion cannot replace a concurrently selected identity", async (
   );
   const pending = nativeHost()!.restart(1);
   const selected = { ...context("test"), generation: "selected-generation" };
-  currentUser.current = selected;
+  accountState.user = selected;
   finish(status);
   await pending;
-  expect(currentUser.current).toEqual(selected);
+  expect(accountState.user).toEqual(selected);
   expect(invoke).toHaveBeenCalledTimes(1);
 });
+
+it.each(["host", "registration"] as const)(
+  "retired %s completion cannot read or replace a new owner account",
+  async (kind) => {
+    accountState.user = context("device");
+    let release!: (value: unknown) => void;
+    vi.mocked(invoke).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    const pending =
+      kind === "host"
+        ? nativeHost()!.restart(1)
+        : nativeService()!.requestRegistration();
+    retireAccountOperations();
+    accountState.user = { ...context("device"), generation: "new-owner" };
+    release(status);
+    await pending;
+    expect(accountState.user?.generation).toBe("new-owner");
+    expect(vi.mocked(invoke).mock.calls).toHaveLength(1);
+  },
+);

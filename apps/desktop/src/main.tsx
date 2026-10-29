@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { UiProvider, StatePanel } from "@rss-mdm-agent/ui";
 import { App } from "./App";
+import { DesktopProvider } from "./state/react";
 import { fixtureSelected, verifyAssembly } from "./assembly";
 import "@rss-mdm-agent/ui/style.css";
 
@@ -20,9 +21,9 @@ async function main() {
   } else
     root.render(
       <StrictMode>
-        <UiProvider>
+        <DesktopProvider>
           <App />
-        </UiProvider>
+        </DesktopProvider>
       </StrictMode>,
     );
 }

@@ -3,9 +3,10 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 
 import {
-  currentUser,
-  accountNotice,
-  accountBinding,
+  accountState,
+  enterGuest,
+  loadTestUsers,
+  retireAccountOperations,
   refreshAccount,
   logoutAccount,
   accountErrorMessage,
@@ -50,17 +51,17 @@ const current = {
 };
 
 beforeEach(() => {
-  currentUser.current = undefined;
-  accountNotice.current = "";
-  accountBinding.current = "unbound";
+  retireAccountOperations();
+  accountState.notice = "";
+  accountState.binding = "unbound";
   vi.mocked(invoke).mockReset();
 });
 
 it("installs the native device workspace after logout retires the old generation", async () => {
-  currentUser.current = { ...current, generation: "old-enterprise-generation" };
+  accountState.user = { ...current, generation: "old-enterprise-generation" };
   const device = { ...current, generation: "new-device-generation" };
   vi.mocked(invoke).mockImplementation(async (command) => {
-    expect(currentUser.current).toBeUndefined();
+    expect(accountState.user).toBeUndefined();
     if (command === "account_logout") return;
     if (command === "account_status")
       return {
@@ -72,15 +73,15 @@ it("installs the native device workspace after logout retires the old generation
     throw Error("unexpected native request");
   });
   await logoutAccount();
-  expect(currentUser.current).toEqual(device);
-  expect(currentUser.current?.identity.mode).toBe("device");
+  expect(accountState.user).toEqual(device);
+  expect(accountState.user?.identity.mode).toBe("device");
 });
 
 it("keeps the retired identity unavailable when logout cleanup is unconfirmed", async () => {
-  currentUser.current = current;
+  accountState.user = current;
   vi.mocked(invoke).mockRejectedValue({ code: "logout_unconfirmed" });
   await expect(logoutAccount()).rejects.toEqual({ code: "logout_unconfirmed" });
-  expect(currentUser.current).toBeUndefined();
+  expect(accountState.user).toBeUndefined();
   expect(vi.mocked(invoke).mock.calls.map(([command]) => command)).toEqual([
     "account_logout",
     "account_status",
@@ -122,7 +123,7 @@ it("projects closed account errors without exposing native details and rejects i
 });
 
 it("ignores late account binding declarations after the native user generation changes", async () => {
-  currentUser.current = current;
+  accountState.user = current;
   let release!: (value: unknown) => void;
   vi.mocked(invoke).mockImplementation(
     () =>
@@ -131,8 +132,8 @@ it("ignores late account binding declarations after the native user generation c
       }),
   );
   const read = refreshAccount();
-  currentUser.current = { ...current, generation: "replacement" };
-  accountBinding.current = "bound";
+  accountState.user = { ...current, generation: "replacement" };
+  accountState.binding = "bound";
   release({
     schemaVersion: 1,
     kind: "accountStatus",
@@ -140,14 +141,14 @@ it("ignores late account binding declarations after the native user generation c
     current,
   });
   await read;
-  expect(currentUser.current?.generation).toBe("replacement");
-  expect(accountBinding.current).toBe("bound");
+  expect(accountState.user?.generation).toBe("replacement");
+  expect(accountState.binding).toBe("bound");
 });
 it.each(["cleanup_pending", "conflict"] as const)(
   "keeps native recovery binding after rejected logout: %s",
   async (binding) => {
-    currentUser.current = current;
-    accountBinding.current = "bound";
+    accountState.user = current;
+    accountState.binding = "bound";
     vi.mocked(invoke).mockImplementation(async (command) => {
       if (command === "account_logout") throw { code: "cleanup_pending" };
       if (command === "account_status")
@@ -155,7 +156,62 @@ it.each(["cleanup_pending", "conflict"] as const)(
       throw Error("unexpected request");
     });
     await expect(logoutAccount()).rejects.toEqual({ code: "cleanup_pending" });
-    expect(currentUser.current).toBeUndefined();
-    expect(accountBinding.current).toBe(binding);
+    expect(accountState.user).toBeUndefined();
+    expect(accountState.binding).toBe(binding);
   },
 );
+
+const deferred = <T>() => {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+};
+it("rejects concurrent mutations and discards a successful login after its owner retires", async () => {
+  const response = deferred<unknown>();
+  vi.mocked(invoke).mockImplementation(() => response.promise);
+  const first = enterGuest();
+  expect(accountState.busy).toBe(true);
+  await expect(enterGuest()).rejects.toThrow("account_busy");
+  expect(invoke).toHaveBeenCalledTimes(1);
+  retireAccountOperations();
+  response.resolve(current);
+  await expect(first).rejects.toThrow("account_operation_retired");
+  expect(accountState.user).toBeUndefined();
+  expect(accountState.busy).toBe(false);
+});
+it("only accepts the latest passive status and ignores a retired startup page", async () => {
+  const startup = deferred<unknown>(),
+    older = deferred<unknown>(),
+    newer = deferred<unknown>();
+  vi.mocked(invoke)
+    .mockImplementationOnce(() => startup.promise)
+    .mockImplementationOnce(() => older.promise)
+    .mockImplementationOnce(() => newer.promise);
+  const page = loadTestUsers(),
+    a = refreshAccount(),
+    b = refreshAccount();
+  newer.resolve({
+    schemaVersion: 1,
+    kind: "accountStatus",
+    binding: "bound",
+    current,
+  });
+  await b;
+  older.resolve({
+    schemaVersion: 1,
+    kind: "accountStatus",
+    binding: "invalidated",
+  });
+  await a;
+  startup.resolve({
+    schemaVersion: 1,
+    kind: "testUserPage",
+    users: [],
+    current: { ...current, generation: "stale" },
+  });
+  await page;
+  expect(accountState.user).toEqual(current);
+  expect(accountState.binding).toBe("bound");
+});

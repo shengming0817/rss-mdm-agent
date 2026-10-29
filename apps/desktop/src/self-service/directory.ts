@@ -1,10 +1,12 @@
+import { deepClone } from "valtio/vanilla/utils";
+import { proxy } from "valtio/vanilla";
 import type { SelfServiceDirectoryItem, SelfServicePort } from "./types";
 
 /** One current-subject directory; cursors are discovery positions, never permissions. */
 export function createDirectory(
   port: Pick<SelfServicePort, "policy_directory" | "policy_resolve"> | null,
 ) {
-  const state = {
+  const state = proxy({
     items: [] as SelfServiceDirectoryItem[],
     next: null as string | null,
     complete: false,
@@ -13,7 +15,7 @@ export function createDirectory(
     error: "",
     asOf: 0,
     readAt: 0,
-  };
+  });
   const visited = new Set<string>();
   let active = true,
     epoch = 0;
@@ -24,7 +26,7 @@ export function createDirectory(
     state.loading = true;
     try {
       if (append && visited.size >= 2048) throw Error("capacity");
-      const page = await port.policy_directory({ after });
+      const page = deepClone(await port.policy_directory({ after }));
       if (!active || call !== epoch) return;
       if (
         page.nextCursor &&
