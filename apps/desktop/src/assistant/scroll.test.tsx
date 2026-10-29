@@ -41,8 +41,13 @@ it("follows output only at the bottom, preserves each session's reading position
   app.rerender(<Probe session="a" version="2" />);
   expect(viewport.scrollTop).toBe(120);
   expect(screen.getByRole("button", { name: "最新" })).toBeTruthy();
+  // Browser clamps this reused viewport when the next session's shorter DOM is committed.
+  // It happens before the parent's layout cleanup, without an old-session scroll event.
+  viewport.scrollTop = 0;
+  height.mockReturnValue(100);
   app.rerender(<Probe session="b" version="1" />);
-  expect(viewport.scrollTop).toBe(2000);
+  expect(viewport.scrollTop).toBe(100);
+  height.mockReturnValue(2000);
   app.rerender(<Probe session="a" version="2" />);
   expect(viewport.scrollTop).toBe(120);
   app.rerender(<Probe session="a" version="3" />);

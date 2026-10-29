@@ -41,10 +41,7 @@ export function useConversationScroll(
     observer.observe(body);
     return () => {
       alive = false;
-      positions.current.set(scope, {
-        top: node.scrollTop,
-        pinned: pinned.current,
-      });
+      // Child DOM may already hold the next session; scroll/latest own the old snapshot.
       node.removeEventListener("scroll", read);
       observer.disconnect();
     };

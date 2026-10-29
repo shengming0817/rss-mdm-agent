@@ -346,6 +346,49 @@ export async function checkConversationBrowser(page, fixture) {
   await page.waitForFunction(
     () => !window.rssDesktop.state.workspace.assistant.canCancel(),
   );
+  // The same real viewport is reused: React may clamp its old scrollTop before layout cleanup.
+  await viewport.evaluate((node) => {
+    node.scrollTop = 900;
+    node.dispatchEvent(new Event("scroll"));
+  });
+  const readingPosition = await viewport.evaluate((node) => node.scrollTop);
+  assert.equal(readingPosition, 900);
+  const short = await send("短会话阅读位置验收");
+  await drive(short, {
+    action: "advance",
+    events: [
+      { type: "text", messageId: "short", text: "短回答。" },
+      { type: "terminal", outcome: "completed" },
+    ],
+  });
+  await page.waitForFunction(
+    () => !window.rssDesktop.state.workspace.assistant.busy(),
+  );
+  assert.equal(await viewport.evaluate((node) => node.scrollTop), 0);
+  await secondary("历史会话");
+  const historyReturn = page.getByRole("complementary", {
+    name: "历史会话清单",
+  });
+  await historyReturn
+    .getByRole("textbox", { name: "搜索历史会话" })
+    .fill(stream);
+  await historyReturn.locator(".rss-session-history-item").click();
+  await page.waitForFunction(
+    (id) =>
+      window.rssDesktop.state.workspace.assistant.state.selected === id &&
+      !window.rssDesktop.state.workspace.assistant.state.opening,
+    stream,
+  );
+  await historyReturn.getByRole("button", { name: "关闭历史会话" }).click();
+  assert.equal(
+    await viewport.evaluate((node) => node.scrollTop),
+    readingPosition,
+    "return from a shorter conversation preserves the prior reading position",
+  );
+  await capture("history-return-reading", "regression");
+  evidence.checks.push(
+    "real long-to-short history return: original scrollTop900 restored after shorter content clamps the reused viewport to0; bottom-follow behavior retained in streaming journey",
+  );
   evidence.checks.push(
     "real client/Host ordinary answer, one-request permission, official A2UI input/action, stable answer through navigation, genuine transient deltas preserve reading position, explicit latest, original cancellation command and terminal fact",
   );
