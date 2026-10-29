@@ -1,6 +1,5 @@
 import {
   createContext,
-  Fragment,
   useContext,
   useEffect,
   useState,
@@ -11,11 +10,19 @@ import { StatePanel, UiProvider } from "@rss-mdm-agent/ui";
 import { desktopPlatform } from "../appearance";
 import { createDesktop, type Desktop } from "./desktop";
 import type { WorkspaceInput } from "./workspace";
-const DesktopContext = createContext<Desktop | null>(null);
+const DesktopContext = createContext<{
+  desktop: Desktop;
+  platform: "macos" | "windows";
+} | null>(null);
 export function useDesktop() {
   const owner = useContext(DesktopContext);
   if (!owner) throw Error("desktop owner is required");
-  return owner;
+  return owner.desktop;
+}
+export function usePlatform() {
+  const context = useContext(DesktopContext);
+  if (!context) throw Error("desktop owner is required");
+  return context.platform;
 }
 export function useWorkspace() {
   return useSnapshot(useDesktop().state).workspace;
@@ -23,23 +30,23 @@ export function useWorkspace() {
 function OwnedDesktop({
   owner,
   children,
+  platform,
 }: {
+  platform: "macos" | "windows";
   owner: Desktop;
   children: ReactNode;
 }) {
   const state = useSnapshot(owner.state),
     appearance = useSnapshot(owner.appearance.state);
   return (
-    <DesktopContext.Provider value={owner}>
+    <DesktopContext.Provider value={{ desktop: owner, platform }}>
       <UiProvider
         theme={state.theme}
-        platform={desktopPlatform}
+        platform={platform}
         reducedMotion={appearance.reducedMotion}
         highContrast={appearance.highContrast}
       >
-        <Fragment key={state.workspace?.key ?? "no-workspace"}>
-          {children}
-        </Fragment>
+        {children}
       </UiProvider>
     </DesktopContext.Provider>
   );
@@ -48,7 +55,9 @@ function OwnedDesktop({
 export function DesktopProvider({
   input,
   children,
+  platform = desktopPlatform,
 }: {
+  platform?: "macos" | "windows";
   input?: WorkspaceInput;
   children: ReactNode;
 }) {
@@ -60,7 +69,9 @@ export function DesktopProvider({
     return () => created.dispose();
   }, [input]);
   return owner ? (
-    <OwnedDesktop owner={owner}>{children}</OwnedDesktop>
+    <OwnedDesktop owner={owner} platform={platform}>
+      {children}
+    </OwnedDesktop>
   ) : (
     <UiProvider>
       <StatePanel kind="loading" title="正在读取本机会话" />

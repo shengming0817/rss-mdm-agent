@@ -221,6 +221,7 @@ export function createDesktop(input: WorkspaceInput = {}) {
   };
   return {
     state,
+    fixture: input.environment,
     appearance,
     account: accountState,
     service: servicePort,

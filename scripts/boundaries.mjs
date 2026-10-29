@@ -176,6 +176,11 @@ export function checkSource(file, source) {
     "Symbol",
   ]);
   const ownerGlobals = {
+    "apps/desktop/src/shell/DesktopShell.tsx": [
+      "window",
+      "document",
+      "HTMLElement",
+    ],
     "apps/desktop/src/state/desktop.ts": [
       "document",
       "setInterval",
@@ -282,6 +287,12 @@ export function checkSource(file, source) {
     "dangerouslySetInnerHTML",
   ]);
   const dataIndex = {
+    "apps/desktop/src/shell/navigation-model.ts": [
+      "moduleIcons",
+      "sections",
+      "descriptions",
+    ],
+    "apps/desktop/src/shell/NavigationMenu.tsx": ["nav.selected"],
     "apps/desktop/src/state/navigation.ts": ["sections", "state.selected"],
     "packages/ui/src/theme.ts": ["palette"],
     "packages/ui/src/UiProvider.tsx": ["palette"],

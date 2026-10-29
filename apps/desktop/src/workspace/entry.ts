@@ -8,13 +8,10 @@ export type NavigationOutput = SelfServiceCommands["navigation"]["output"];
 export type NavigationPort = (
   input: NavigationInput,
 ) => Promise<NavigationOutput>;
-export const nativeNavigation = (): NavigationPort | undefined =>
-  isTauri()
-    ? (input) =>
-        invoke("navigation", {
-          generation: accountState.user?.generation,
-          input,
-        })
-    : undefined;
+export function nativeNavigation(): NavigationPort | undefined {
+  const generation = accountState.user?.generation;
+  if (!isTauri() || !generation) return undefined;
+  return (input) => invoke("navigation", { generation, input });
+}
 export const listenNavigation = (run: () => void) =>
   listen("navigation-pending", run);
