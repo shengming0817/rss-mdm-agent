@@ -35,7 +35,8 @@ export function SettingsEditor({
       section === "network" &&
       target.fields.some(
         (field) =>
-          ["http", "https", "socks"].includes(field.key) && field.writable,
+          ["http", "https", "socks", "bypass"].includes(field.key) &&
+          field.writable,
       )
     )
       return {
@@ -62,6 +63,8 @@ export function SettingsEditor({
       patch: SettingsPatch;
       expected: string;
       request?: string;
+      bypassText?: string;
+      origin?: { x: number | null; y: number | null };
     } | null>(null),
     state = useSnapshot(owner.state),
     result = state.observations.get(section),
@@ -84,12 +87,46 @@ export function SettingsEditor({
     }
   }, [edit?.request, result?.request, result?.finished, result?.effect]);
   if (!draft) return null;
-  const update = (patch: SettingsPatch) => {
-      setEdit({ patch, expected });
+  const update = (
+      patch: SettingsPatch,
+      values: Partial<
+        Pick<NonNullable<typeof edit>, "bypassText" | "origin">
+      > = {},
+    ) => {
+      setEdit({ ...edit, ...values, patch, expected, request: undefined });
     },
     reset = () => {
       setEdit(null);
     };
+  const rawOrigin = value("origin"),
+    observedOrigin =
+      rawOrigin &&
+      typeof rawOrigin === "object" &&
+      "x" in rawOrigin &&
+      "y" in rawOrigin &&
+      typeof rawOrigin.x === "number" &&
+      typeof rawOrigin.y === "number"
+        ? { x: rawOrigin.x, y: rawOrigin.y }
+        : { x: null, y: null },
+    origin =
+      edit?.origin ??
+      (draft.kind === "display" ? draft.origin : null) ??
+      observedOrigin,
+    validCoordinate = (coordinate: number | null): coordinate is number =>
+      coordinate != null &&
+      Number.isInteger(coordinate) &&
+      coordinate >= -2147483648 &&
+      coordinate <= 2147483647,
+    invalidOrigin =
+      !!edit?.origin &&
+      (!validCoordinate(origin.x) || !validCoordinate(origin.y)),
+    restricted = Object.entries(draft).some(
+      ([key, current]) =>
+        !["kind", "target"].includes(key) && current !== null && !writable(key),
+    ),
+    bypass = Array.isArray(value("bypass"))
+      ? (value("bypass") as readonly string[])
+      : [];
   return (
     <div className="rss-system-editor rss-stack">
       {entry?.patch?.target === target.id && (
@@ -188,8 +225,37 @@ export function SettingsEditor({
                 </fieldset>
               );
             })}
+          {target.fields.some((field) => field.key === "bypass") && (
+            <label className="rss-field">
+              <span>绕过代理的地址（每行一个）</span>
+              <Input.TextArea
+                aria-label={`${target.name} 绕过代理的地址`}
+                disabled={!writable("bypass")}
+                autoSize={{ minRows: 3, maxRows: 6 }}
+                value={edit?.bypassText ?? (draft.bypass ?? bypass).join("\n")}
+                onChange={(event) => {
+                  if (!writable("bypass")) return;
+                  const text = event.target.value,
+                    entries = text
+                      .split(/\r?\n/)
+                      .map((row) => row.trim())
+                      .filter(Boolean);
+                  update(
+                    {
+                      ...draft,
+                      bypass:
+                        JSON.stringify(entries) === JSON.stringify(bypass)
+                          ? null
+                          : entries,
+                    },
+                    { bypassText: text },
+                  );
+                }}
+              />
+            </label>
+          )}
           <p className="rss-muted">
-            只提交本次编辑的手动代理。自动配置、自动发现与其它协议分别显示原观察。
+            只提交本次编辑的手动代理和绕过列表；清空列表会移除全部绕过地址。自动配置、自动发现与其它协议保持原值。
           </p>
         </>
       ) : draft.kind === "display" ? (
@@ -213,6 +279,40 @@ export function SettingsEditor({
                 onChange={(mode) => update({ ...draft, mode })}
               />
             </label>
+          )}
+          {target.fields.some((field) => field.key === "origin") && (
+            <div className="rss-form-grid">
+              {(["x", "y"] as const).map((axis) => (
+                <label className="rss-field" key={axis}>
+                  <span>{axis === "x" ? "桌面横坐标" : "桌面纵坐标"}</span>
+                  <InputNumber
+                    aria-label={`${target.name} 桌面${axis === "x" ? "横" : "纵"}坐标`}
+                    min={-2147483648}
+                    max={2147483647}
+                    precision={0}
+                    disabled={!writable("origin")}
+                    value={origin[axis]}
+                    onChange={(coordinate) => {
+                      if (!writable("origin")) return;
+                      const next = { ...origin, [axis]: coordinate };
+                      update(
+                        {
+                          ...draft,
+                          origin:
+                            validCoordinate(next.x) && validCoordinate(next.y)
+                              ? { x: next.x, y: next.y }
+                              : null,
+                        },
+                        { origin: next },
+                      );
+                    }}
+                  />
+                </label>
+              ))}
+            </div>
+          )}
+          {invalidOrigin && (
+            <Alert type="warning" title="请填写完整的整数坐标后再保存。" />
           )}
           <p className="rss-muted">
             应用后由系统服务保留预览期限；未保留时由原执行器恢复配置。
@@ -267,6 +367,12 @@ export function SettingsEditor({
           )}
         </>
       )}
+      {dirty && restricted && !disabled && (
+        <Alert
+          type="warning"
+          title="草稿包含当前不可修改的字段，请还原草稿后重新核对。"
+        />
+      )}
       <div className="rss-settings-actions">
         <small>
           {edit?.request && state.pending.has(section)
@@ -280,7 +386,7 @@ export function SettingsEditor({
         </Button>
         <Button
           type="primary"
-          disabled={disabled || !dirty}
+          disabled={disabled || !dirty || invalidOrigin || restricted}
           onClick={() => {
             const submitted = edit;
             if (!submitted) return;

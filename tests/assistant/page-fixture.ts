@@ -8,6 +8,7 @@ import type {
   QueryStatus,
   SelfServiceDirectoryItem,
   SettingsResponse,
+  SettingsPatch,
   TaskDetail,
   TaskPhase,
   EffectAssessment,
@@ -32,8 +33,13 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
     offline = scene === "offline",
     empty = scene === "empty",
     taskScene = scene.startsWith("tasks");
-  const events: { operation: string; request?: string; controlId?: string }[] =
-    [];
+  const events: {
+    operation: string;
+    request?: string;
+    controlId?: string;
+    patch?: SettingsPatch;
+    expected?: string;
+  }[] = [];
   const operations = new Map<string, LocalSoftwareStatus>(),
     records = new Map<string, BackendRequest>(),
     queries = new Map<string, QueryStatus>(),
@@ -725,6 +731,13 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
                 quality: "complete" as const,
                 reason: null,
               },
+              {
+                key: "bypass",
+                writable: !readOnly,
+                value: ["localhost"],
+                quality: "complete" as const,
+                reason: null,
+              },
             ],
             options: [],
             reason: readOnly ? "此用户仅可读取" : null,
@@ -738,6 +751,13 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
                   key: "mode",
                   writable: !readOnly,
                   value: "default",
+                  quality: "complete" as const,
+                  reason: null,
+                },
+                {
+                  key: "origin",
+                  writable: !readOnly,
+                  value: { x: 0, y: 0 },
                   quality: "complete" as const,
                   reason: null,
                 },
@@ -870,6 +890,9 @@ export function configurePageFixture(input: WorkspaceInput, scene = "normal") {
     events.push({
       operation: `settings_${operation.kind}`,
       request: operation.request,
+      ...(operation.kind === "change"
+        ? { patch: deepClone(operation.patch), expected: operation.expected }
+        : {}),
     });
     if (operation.kind === "change" && section === "display") {
       response.effect = "preview";

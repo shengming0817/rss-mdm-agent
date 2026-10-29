@@ -274,6 +274,80 @@ export async function checkPagesBrowser(page, fixture) {
     () =>
       !window.rssDesktop.state.workspace.system.state.pending.has("network"),
   );
+  const bypassInput = page.getByRole("textbox", {
+    name: "Wi-Fi 绕过代理的地址",
+    exact: true,
+  });
+  const bypassRevision = await page.evaluate(
+    () =>
+      window.rssDesktop.state.workspace.system.state.observations.get("network")
+        .snapshot.revision,
+  );
+  await bypassInput.fill(" localhost\n *.corp.fixture.invalid \n");
+  await page.getByRole("button", { name: "保存更改", exact: true }).click();
+  await page.waitForFunction(
+    () =>
+      window.rssPageFixture.events.filter(
+        (event) => event.operation === "settings_change",
+      ).length === 3 &&
+      !window.rssDesktop.state.workspace.system.state.pending.has("network"),
+  );
+  const bypassChange = await page.evaluate(() =>
+    window.rssPageFixture.events
+      .filter((event) => event.operation === "settings_change")
+      .at(-1),
+  );
+  assert.deepEqual(bypassChange.patch, {
+    kind: "proxy",
+    target: "wifi",
+    http: null,
+    https: null,
+    socks: null,
+    bypass: ["localhost", "*.corp.fixture.invalid"],
+  });
+  assert.equal(bypassChange.expected, bypassRevision);
+  await bypassInput.fill("");
+  await page.getByRole("button", { name: "保存更改", exact: true }).click();
+  await page.waitForFunction(
+    () =>
+      window.rssPageFixture.events.filter(
+        (event) => event.operation === "settings_change",
+      ).length === 4 &&
+      !window.rssDesktop.state.workspace.system.state.pending.has("network"),
+  );
+  assert.deepEqual(
+    await page.evaluate(
+      () =>
+        window.rssPageFixture.events
+          .filter((event) => event.operation === "settings_change")
+          .at(-1).patch.bypass,
+    ),
+    [],
+  );
+  await capture("proxy-bypass-cleared");
+  await page.setViewportSize({ width: 420, height: 900 });
+  await bypassInput.scrollIntoViewIfNeeded();
+  await page.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      ),
+  );
+  assert.ok(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth + 1,
+    ),
+  );
+  await page.screenshot({
+    path: new URL("react-pages-proxy-bypass-narrow.png", directory).pathname,
+    animations: "disabled",
+  });
+  evidence.captures.push({
+    file: "react-pages-proxy-bypass-narrow.png",
+    width: 420,
+    state: "bypass-cleared",
+  });
+  await page.setViewportSize({ width: 1280, height: 900 });
   await section("显示器");
   const displayMode = page.getByRole("combobox", {
     name: "内建显示器 显示模式",
@@ -283,6 +357,17 @@ export async function checkPagesBrowser(page, fixture) {
   await displayMode.press("ArrowDown");
   await displayMode.press("ArrowDown");
   await displayMode.press("Enter");
+  const displayRevision = await page.evaluate(
+    () =>
+      window.rssDesktop.state.workspace.system.state.observations.get("display")
+        .snapshot.revision,
+  );
+  await page
+    .getByRole("spinbutton", { name: "内建显示器 桌面横坐标", exact: true })
+    .fill("-1920");
+  await page
+    .getByRole("spinbutton", { name: "内建显示器 桌面纵坐标", exact: true })
+    .fill("80");
   await page.getByRole("button", { name: "保存更改", exact: true }).click();
   const keepDisplay = page.getByRole("button", {
     name: "保留显示设置",
@@ -290,6 +375,18 @@ export async function checkPagesBrowser(page, fixture) {
   });
   await keepDisplay.waitFor();
   assert.equal(await keepDisplay.isEnabled(), true);
+  const displayChange = await page.evaluate(() =>
+    window.rssPageFixture.events
+      .filter((event) => event.operation === "settings_change")
+      .at(-1),
+  );
+  assert.deepEqual(displayChange.patch, {
+    kind: "display",
+    target: "internal",
+    mode: "large",
+    origin: { x: -1920, y: 80 },
+  });
+  assert.equal(displayChange.expected, displayRevision);
   assert.equal(
     await page
       .getByText(
@@ -300,6 +397,31 @@ export async function checkPagesBrowser(page, fixture) {
     0,
   );
   await capture("display-preview");
+  await page.setViewportSize({ width: 420, height: 900 });
+  await page
+    .getByRole("spinbutton", { name: "内建显示器 桌面纵坐标", exact: true })
+    .scrollIntoViewIfNeeded();
+  await page.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      ),
+  );
+  assert.ok(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth + 1,
+    ),
+  );
+  await page.screenshot({
+    path: new URL("react-pages-display-origin-narrow.png", directory).pathname,
+    animations: "disabled",
+  });
+  evidence.captures.push({
+    file: "react-pages-display-origin-narrow.png",
+    width: 420,
+    state: "display-preview",
+  });
+  await page.setViewportSize({ width: 1280, height: 900 });
   await keepDisplay.click();
   await page.waitForFunction(
     () =>
@@ -307,7 +429,7 @@ export async function checkPagesBrowser(page, fixture) {
   );
   assert.equal(await keepDisplay.count(), 0);
   evidence.checks.push(
-    "consecutive settings saves use changed CAS revisions; original display preview permits explicit keep before deadline",
+    "consecutive settings saves use changed CAS revisions; bypass edit and explicit empty clear send only exact deltas; signed display coordinates and chosen mode use the original revision, with preview and explicit keep before deadline",
   );
   await primary("工具中心");
   await section("连接与网络");
