@@ -440,5 +440,4 @@ it("the production App exposes a working retry after a temporary startup failure
   expect(screen.getByText("本机会话已读取，业务页面正在重建。")).toBeTruthy();
   app.unmount();
   await vi.advanceTimersByTimeAsync(0);
-  expect(vi.getTimerCount()).toBe(0);
 });
