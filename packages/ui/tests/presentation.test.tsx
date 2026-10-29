@@ -103,3 +103,41 @@ describe("product presentation", () => {
     expect(close).not.toHaveBeenCalled();
   });
 });
+
+it.each([true, false])(
+  "keeps busy drafts and blocks keyboard or button sends with cancel callback: %s",
+  (withCancel) => {
+    const send = vi.fn(),
+      cancel = vi.fn();
+    function Form() {
+      const [value, setValue] = useState("保留的草稿");
+      return (
+        <UiProvider>
+          <MessageComposer
+            value={value}
+            onChange={setValue}
+            onSend={send}
+            busy
+            onCancel={withCancel ? cancel : undefined}
+          />
+        </UiProvider>
+      );
+    }
+    render(<Form />);
+    const input = screen.getByRole("textbox", { name: "消息" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(send).not.toHaveBeenCalled();
+    expect((input as HTMLTextAreaElement).value).toBe("保留的草稿");
+    if (withCancel) {
+      fireEvent.click(screen.getByRole("button", { name: "请求取消" }));
+      expect(cancel).toHaveBeenCalledOnce();
+    } else {
+      const button = screen.getByRole("button", {
+        name: "发送消息",
+      }) as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
+      fireEvent.click(button);
+      expect(send).not.toHaveBeenCalled();
+    }
+  },
+);

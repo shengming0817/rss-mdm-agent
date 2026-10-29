@@ -203,7 +203,7 @@ export function checkSource(file, source) {
       "clearTimeout",
     ],
     "apps/desktop/src/assistant/clipboard.ts": ["navigator"],
-    "apps/desktop/src/main.tsx": ["document"],
+    "apps/desktop/src/main.tsx": ["document", "console"],
     "packages/ui/src/UiProvider.tsx": ["window"],
   };
   for (const name of ownerGlobals[file] ?? []) pureGlobals.add(name);
@@ -329,16 +329,21 @@ export function checkSource(file, source) {
     }
   }
   const factories = new Set();
+  const reactNamespaces = new Set();
   for (const statement of ast.statements) {
     if (
       ts.isImportDeclaration(statement) &&
       ["react", "react/jsx-runtime"].includes(statement.moduleSpecifier.text)
     ) {
+      if (statement.importClause?.name)
+        reactNamespaces.add(statement.importClause.name.text);
       const bindings = statement.importClause?.namedBindings;
+      if (bindings && ts.isNamespaceImport(bindings))
+        reactNamespaces.add(bindings.name.text);
       if (bindings && ts.isNamedImports(bindings))
         for (const entry of bindings.elements) {
           if (
-            ["createElement", "jsx", "jsxs"].includes(
+            ["createElement", "cloneElement", "jsx", "jsxs"].includes(
               entry.propertyName?.text ?? entry.name.text,
             )
           )
@@ -346,7 +351,12 @@ export function checkSource(file, source) {
         }
     }
   }
-  const factoryMembers = new Set(["createElement", "jsx", "jsxs"]);
+  const factoryMembers = new Set([
+    "createElement",
+    "cloneElement",
+    "jsx",
+    "jsxs",
+  ]);
   function elementFactory(expression) {
     return (
       (ts.isIdentifier(expression) && factories.has(expression.text)) ||
@@ -391,8 +401,24 @@ export function checkSource(file, source) {
       errors.push(`${file}: element factory cannot escape inspection`);
     if (ts.isJsxSpreadAttribute(node))
       errors.push(`${file}: unchecked JSX attributes`);
+    if (
+      ts.isBindingElement(node) &&
+      node.propertyName &&
+      factoryMembers.has(node.propertyName.getText(ast))
+    )
+      errors.push(`${file}: destructured element factory escapes inspection`);
     if (ts.isIdentifier(node)) {
       const parent = node.parent;
+      if (
+        reactNamespaces.has(node.text) &&
+        !ts.isImportClause(parent) &&
+        !ts.isNamespaceImport(parent) &&
+        !(
+          ts.isPropertyAccessExpression(parent) && parent.expression === node
+        ) &&
+        !(ts.isElementAccessExpression(parent) && parent.expression === node)
+      )
+        errors.push(`${file}: React namespace cannot escape member inspection`);
       const jsxName =
         (ts.isJsxAttribute(parent) && parent.name === node) ||
         ((ts.isJsxOpeningElement(parent) ||

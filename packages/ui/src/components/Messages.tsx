@@ -24,7 +24,7 @@ export function MessageComposer({
   const composing = useRef(false);
   const hintId = useId();
   const send = () => {
-    if (!disabled && value.trim()) onSend();
+    if (!disabled && !busy && value.trim()) onSend();
   };
   return (
     <div className="rss-composer-wrap">
@@ -69,7 +69,7 @@ export function MessageComposer({
               type="primary"
               aria-label="发送消息"
               icon={<ArrowUpOutlined />}
-              disabled={disabled || !value.trim()}
+              disabled={disabled || busy || !value.trim()}
               onClick={send}
             />
           )}

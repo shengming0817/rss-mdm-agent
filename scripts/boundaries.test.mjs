@@ -606,3 +606,14 @@ test("React component resources and element factories cannot bypass presentation
     [],
   );
 });
+
+test("React namespace destructuring and cloneElement cannot escape props checks", () => {
+  for (const source of [
+    'import React from "react"; const {createElement:h}=React; export const View=()=>h("img",{src:"https://attacker.invalid/leak"});',
+    'import {cloneElement} from "react"; export const View=()=>cloneElement(<div/>,{dangerouslySetInnerHTML:{__html:"<img src=x>"}});',
+    'import * as R from "react"; const copy=R; const {createElement:h}=copy; h("img",{src:"x"});',
+    'import React from "react"; const {["create"+"Element"]:h}=React; h("img",{src:"x"});',
+    'import {cloneElement as clone} from "react"; clone(<div/>, {href:"https://attacker.invalid"});',
+  ])
+    assert.ok(checkSource("packages/ui/src/Attack.tsx", source).length, source);
+});
