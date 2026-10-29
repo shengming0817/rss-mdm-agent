@@ -1372,6 +1372,7 @@ try {
         join(reports, `desktop-native-pages-${file}.png`),
       );
     }
+    mark("native staged network inspection and Escape");
     await click("开始检查");
     await wait(() => browser.$('[aria-label="网络检测主机"]').isDisplayed());
     assert.equal(
@@ -1387,8 +1388,12 @@ try {
       async () =>
         !(await browser.$('[aria-label="网络检测主机"]').isDisplayed()),
     );
+    mark("native redacted diagnostic snapshot");
     await click("用户菜单");
-    await click("运行与诊断");
+    const diagnosticMenu =
+      '//*[@role="menuitem" and normalize-space(.)="运行与诊断"]';
+    await wait(() => browser.$(diagnosticMenu).isDisplayed());
+    await browser.$(diagnosticMenu).click();
     await click("预览脱敏诊断");
     await wait(() => browser.$(".rss-diagnostic-preview").isDisplayed());
     await browser.saveScreenshot(
