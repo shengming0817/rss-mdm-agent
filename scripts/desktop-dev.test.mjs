@@ -1041,3 +1041,47 @@ test("development CLI owns preparation across rebuild, cached and override verif
     3,
   );
 });
+
+test("fixture CLI opens the product App by default and preserves later explicit Tauri URL overrides", (t) => {
+  const { root, write } = fixture(t);
+  write(
+    "scripts/desktop-dev.mjs",
+    readFileSync(new URL("desktop-dev.mjs", import.meta.url)),
+  );
+  write(
+    "scripts/desktop-dev-process.mjs",
+    `
+    import {writeFileSync} from 'node:fs';
+    export async function runPreparation() {return 0;}
+    export async function runDesktop(root, directory, args, env) {
+      writeFileSync(root+'/launch.json', JSON.stringify({args, assembly:env.RSS_DESKTOP_ASSEMBLY, runtime:directory}));
+      return 0;
+    }
+  `,
+  );
+  const override = JSON.stringify({
+    build: { devUrl: "http://127.0.0.1:1420/?state" },
+  });
+  for (const extra of [[], ["--config", override]]) {
+    const result = spawnSync(
+      process.execPath,
+      [join(root, "scripts/desktop-dev.mjs"), "--fixture", ...extra],
+      { encoding: "utf8" },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    const launch = JSON.parse(readFileSync(join(root, "launch.json"), "utf8"));
+    assert.equal(launch.assembly, "fixture");
+    assert.equal(launch.runtime, undefined);
+    const configs = launch.args.flatMap((arg, index) =>
+      arg === "--config" ? [JSON.parse(launch.args[index + 1])] : [],
+    );
+    assert.equal(configs[0].build.devUrl, "http://127.0.0.1:1420/?desktop");
+    assert.equal(
+      configs.at(-1).build.devUrl,
+      extra.length
+        ? "http://127.0.0.1:1420/?state"
+        : "http://127.0.0.1:1420/?desktop",
+    );
+    assert.ok(launch.args.includes("dev-fixture"));
+  }
+});

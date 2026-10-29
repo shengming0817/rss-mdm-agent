@@ -35,8 +35,18 @@ export async function checkPagesBrowser(page, fixture) {
       .getByRole("button", { name, exact: true })
       .click();
   const settings = async (name) => {
-    await page.getByRole("button", { name: "用户菜单", exact: true }).click();
-    await page.getByRole("menuitem", { name, exact: true }).click();
+    await page
+      .getByRole("button", { name: "RSS MDM Agent 设置", exact: true })
+      .click();
+    const destination = page
+      .getByRole("navigation", {
+        name: "RSS MDM Agent 设置二级菜单",
+        exact: true,
+      })
+      .getByRole("button", { name, exact: true });
+    // Direct account navigation restores this section, including an unfinished editor.
+    if ((await destination.getAttribute("aria-current")) !== "page")
+      await destination.click();
   };
   const capture = async (name) => {
     await page.evaluate(async () => {
@@ -611,7 +621,7 @@ export async function checkPagesBrowser(page, fixture) {
   assert.equal(
     await page
       .locator(
-        '.rss-page-viewport[aria-label="账号设置"] input[type="password"]',
+        '.rss-page-viewport[aria-label="RSS MDM Agent 设置"] input[type="password"]',
       )
       .count(),
     0,

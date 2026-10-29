@@ -332,3 +332,77 @@ it("stops only the registration wait and resumes the same retained grant", async
   expect(status.registered).toBe(false);
   f.app.unmount();
 });
+
+it("opens app settings directly above the account, apart from business settings, and preserves its last section", async () => {
+  const f = await fixture(),
+    workspace = f.desktop.state.workspace!;
+  fireEvent.click(screen.getByRole("button", { name: "切换侧栏布局" }));
+  fireEvent.click(screen.getByRole("button", { name: "切换侧栏布局" }));
+  const sidebar = f.app.container.querySelector(".rss-sidebar") as HTMLElement;
+  fireEvent.click(
+    within(sidebar).getByRole("button", { name: "RSS MDM Agent 设置" }),
+  );
+  expect(workspace.navigation.state.page).toBe("settings");
+  expect(screen.queryByRole("menu")).toBeNull();
+  const settings = await within(sidebar).findByRole("navigation", {
+    name: "RSS MDM Agent 设置二级菜单",
+  });
+  expect(settings.closest(".rss-sidebar-account")).toBeTruthy();
+  expect(settings.closest(".rss-primary-nav")).toBeNull();
+  fireEvent.click(within(settings).getByRole("button", { name: "外观与体验" }));
+  fireEvent.click(within(sidebar).getByRole("button", { name: "系统设置" }));
+  expect(workspace.navigation.state.page).toBe("system");
+  fireEvent.click(
+    within(sidebar).getByRole("button", { name: "RSS MDM Agent 设置" }),
+  );
+  expect(workspace.navigation.state.selected.settings).toBe("appearance");
+  fireEvent.click(within(sidebar).getByRole("button", { name: "软件中心" }));
+  const software = await within(sidebar).findByRole("navigation", {
+    name: "软件中心二级菜单",
+  });
+  expect([...software.children].map((node) => node.textContent)).toEqual([
+    "软件中心",
+    "发现",
+    "效率办公",
+    "创意设计",
+    "网络工具",
+    "开发工具",
+    "系统工具",
+    "按类别浏览",
+    "已安装",
+    "更新",
+  ]);
+  f.app.unmount();
+});
+it("anchors search to the header, refocuses with Cmd K, ignores composition, and closes without changing navigation", async () => {
+  const f = await fixture(),
+    workspace = f.desktop.state.workspace!;
+  const search = screen.getByRole("combobox", { name: "搜索应用、工具和设置" });
+  fireEvent.focus(search);
+  expect(await screen.findByRole("listbox", { name: "搜索结果" })).toBeTruthy();
+  expect(search.closest(".rss-topbar")).toBeTruthy();
+  expect(screen.queryByRole("dialog")).toBeNull();
+  fireEvent.change(search, { target: { value: "外观与体验" } });
+  fireEvent.keyDown(search, { key: "Enter", isComposing: true });
+  expect(workspace.navigation.state.page).toBe("home");
+  fireEvent.keyDown(document, { key: "k", metaKey: true });
+  expect(document.activeElement).toBe(search);
+  expect((search as HTMLInputElement).value).toBe("外观与体验");
+  fireEvent.keyDown(search, { key: "Escape" });
+  expect(workspace.navigation.state.searchOpen).toBe(false);
+  await waitFor(() =>
+    expect(search.getAttribute("aria-expanded")).toBe("false"),
+  );
+  expect(search.getAttribute("aria-activedescendant")).toBeNull();
+  fireEvent.click(search);
+  fireEvent.change(search, { target: { value: "no such result 1234" } });
+  expect(
+    await screen.findByText("没有匹配的结果。可以换个关键词。"),
+  ).toBeTruthy();
+  fireEvent.keyDown(search, { key: "Enter" });
+  expect(workspace.navigation.state.page).toBe("home");
+  fireEvent.pointerDown(document.body);
+  expect(workspace.navigation.state.searchOpen).toBe(false);
+  expect(f.execute).not.toHaveBeenCalled();
+  f.app.unmount();
+});

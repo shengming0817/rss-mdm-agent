@@ -271,8 +271,8 @@ const menu = (label) =>
     end repeat
     error "Owned application menu item missing: ${label}"`,
   );
-const click = async (name, scope = "") => {
-  const el = await wait(async () => {
+const visibleButton = (name, scope = "") =>
+  wait(async () => {
     for (const candidate of await browser.$$(
       `${scope}//button[normalize-space(.)=${JSON.stringify(name)} or @aria-label=${JSON.stringify(name)}]`,
     ))
@@ -288,7 +288,8 @@ const click = async (name, scope = "") => {
       )
         return candidate;
   });
-  await el.click();
+const click = async (name, scope = "") => {
+  await (await visibleButton(name, scope)).click();
 };
 const visibleText = async (text) =>
   browser.execute((value) => document.body.innerText.includes(value), text);
@@ -319,12 +320,12 @@ const expandNavigation = async () => {
 };
 const openAgentSettings = async (section) => {
   await closeNavigationDialog();
-  await click("用户菜单");
-  const item = await browser.$(
-    `//*[@role="menuitem" and normalize-space(.)=${JSON.stringify(section)}]`,
+  await click("RSS MDM Agent 设置");
+  const item = await visibleButton(
+    section,
+    '//nav[@aria-label="RSS MDM Agent 设置二级菜单"]',
   );
-  await wait(() => item.isDisplayed());
-  await item.click();
+  if ((await item.getAttribute("aria-current")) !== "page") await item.click();
 };
 const openHistory = async () => {
   if (!(await browser.$(".rss-session-history:not([hidden])").isExisting()))
@@ -1291,7 +1292,12 @@ try {
       .$('[role="combobox"][aria-label="搜索应用、工具和设置"]')
       .setValue("Workspace");
     key(36);
-    await wait(async () => !(await browser.$('[role="dialog"]').isDisplayed()));
+    await wait(
+      async () =>
+        !(await browser
+          .$('[role="listbox"][aria-label="搜索结果"]')
+          .isDisplayed()),
+    );
     await click("主页", "//div[contains(@class,'rss-hidden-primary')]");
     assert.equal(
       await browser.$('[aria-label="主页助手草稿"]').getValue(),
@@ -1571,11 +1577,7 @@ try {
       "production assistant in macOS WKWebView: native keyboard input, fixed secondary history keeps per-session draft, official A2UI binding/answer, original trusted Policy draft edited and submitted once; scripted Host/sample record, no real model or OS execution effect claimed",
     );
     mark("native redacted diagnostic snapshot");
-    await click("用户菜单");
-    const diagnosticMenu =
-      '//*[@role="menuitem" and normalize-space(.)="运行与诊断"]';
-    await wait(() => browser.$(diagnosticMenu).isDisplayed());
-    await browser.$(diagnosticMenu).click();
+    await openAgentSettings("运行与诊断");
     await click("预览脱敏诊断");
     await wait(() => browser.$(".rss-diagnostic-preview").isDisplayed());
     await browser.saveScreenshot(

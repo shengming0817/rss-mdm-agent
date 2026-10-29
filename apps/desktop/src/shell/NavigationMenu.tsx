@@ -87,12 +87,18 @@ export function PrimaryNavigation({
           {!inline && nav.page === id && <Secondary workspace={workspace} />}
         </div>
       ))}
-      {!inline && nav.page === "settings" && (
-        <Secondary workspace={workspace} />
-      )}
     </nav>
   );
 }
 export function HiddenSecondary({ workspace }: { workspace: Workspace }) {
   return <Secondary workspace={workspace} />;
+}
+
+export function AppSettingsNavigation({ workspace }: { workspace: Workspace }) {
+  return (
+    <div className="rss-app-settings-nav">
+      <span className="rss-nav-group">RSS MDM Agent 设置</span>
+      <Secondary workspace={workspace} />
+    </div>
+  );
 }

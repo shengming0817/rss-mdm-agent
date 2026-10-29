@@ -137,7 +137,7 @@ export function AssistantPage({ workspace }: { workspace: Workspace }) {
               <StatePanel
                 kind="readonly"
                 title="原模型上下文需要恢复"
-                description="读取会话只恢复历史视图。可在用户菜单的 AI 与连接 → 会话选项中，核对恢复能力或明确开始新上下文。"
+                description="读取会话只恢复历史视图。可在应用设置的 AI 与连接 → 会话选项中，核对恢复能力或明确开始新上下文。"
                 onRead={() => void owner.restore()}
               >
                 <Button
