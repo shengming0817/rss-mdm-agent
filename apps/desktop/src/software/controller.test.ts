@@ -554,3 +554,19 @@ it("an expired original preparation cannot submit even if a stale view still hol
   expect(port.submit).not.toHaveBeenCalled();
   c.dispose();
 });
+
+it("retains an unacknowledged preparation per installation instead of starting another operation", async () => {
+  const { data, port } = ports();
+  vi.mocked(port.prepare).mockRejectedValue(Error("lost reply"));
+  vi.mocked(port.status).mockRejectedValue(Error("unavailable"));
+  const owner = createSoftware(data, port);
+  await owner.prepare(item, "uninstall");
+  const request = owner.state.installations.get(item.reference.installation);
+  await owner.prepare(item, "uninstall");
+  expect(port.prepare).toHaveBeenCalledTimes(1);
+  expect(owner.state.installations.get(item.reference.installation)).toBe(
+    request,
+  );
+  expect(port.submit).not.toHaveBeenCalled();
+  owner.dispose();
+});

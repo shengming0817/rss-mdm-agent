@@ -96,7 +96,6 @@ export function PolicyTasks({
             }}
           >
             {taskTitle(item)} · {taskPhase[item.stage]}
-            <small>{taskKey(reference)}</small>
           </Button>
         ) : null;
       })}
@@ -113,7 +112,7 @@ export function PolicyTasks({
       )}
       {asOf > 0 && (
         <p className="rss-muted">
-          原任务服务 · 精确 Policy {policy} · {new Date(asOf).toLocaleString()}
+          最近更新： {new Date(asOf).toLocaleString()}
           {next ? " · 尚有后续记录" : " · 当前页已读完"}
           {complete ? " · 来源覆盖完整" : " · 来源覆盖未完整"}
           {remote ? " · 远端读取可用" : " · 远端当前不可用，保留结果供参考"}

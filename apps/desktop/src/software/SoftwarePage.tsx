@@ -17,10 +17,8 @@ import {
 import type { Workspace } from "../state/workspace";
 import type {
   InstalledSoftware,
-  LocalSoftwareAction,
   SelfServiceDirectoryItem,
 } from "../self-service/types";
-import { deepClone } from "valtio/vanilla/utils";
 import {
   categories,
   localAction,
@@ -28,7 +26,7 @@ import {
   scopeLabel,
 } from "./presentation";
 import { SoftwareDetail } from "./SoftwareDetail";
-import { SoftwarePreparation } from "./SoftwarePreparation";
+import { SoftwareActions } from "./SoftwareActions";
 import "./software.css";
 
 type Selection = { kind: "installed" | "policy"; id: string };
@@ -48,7 +46,6 @@ export function SoftwarePage({
     [category, setCategory] = useState("all"),
     [layout, setLayout] = useState("cards"),
     [selection, setSelection] = useState<Selection | null>(null),
-    [request, setRequest] = useState<string | null>(null),
     [message, setMessage] = useState(""),
     previousSection = useRef(section),
     catalogue = section === "discover" || section.startsWith("category:"),
@@ -129,37 +126,6 @@ export function SoftwarePage({
       for (const source of workspace.software.state.sources)
         void workspace.software.read(source);
   };
-  async function prepareInstalled(
-    item: Snapshot<InstalledSoftware>,
-    action: LocalSoftwareAction = "launch",
-  ) {
-    const before = new Set(workspace.software.state.requests);
-    const prepared = await workspace.software.prepare(item, action);
-    if (prepared) setRequest(prepared.request);
-    else {
-      const original = [...workspace.software.state.requests].find(
-        (id) => !before.has(id),
-      );
-      if (original) setRequest(original);
-    }
-  }
-  async function preparePolicy(item: Snapshot<SelfServiceDirectoryItem>) {
-    setMessage("");
-    if (
-      workspace.policies.state.item?.policyId !== item.policyId ||
-      !workspace.policies.state.item
-    ) {
-      if (!workspace.policies.clear()) {
-        setMessage("仍有原提交回执未确认，请先查询原请求。");
-        workspace.navigation.showPolicy();
-        return;
-      }
-      workspace.navigation.showPolicy();
-      await workspace.policies.select(
-        deepClone(item) as SelfServiceDirectoryItem,
-      );
-    } else workspace.navigation.showPolicy();
-  }
   const show = (kind: Selection["kind"], id: string) => {
       setSelection({ kind, id });
       if (kind === "installed") void workspace.software.history();
@@ -185,32 +151,14 @@ export function SoftwarePage({
     ),
     error = catalogue ? directory.error : inventory.error,
     loading = catalogue ? directory.loading : inventory.loading;
-  const localActions = (item: Snapshot<InstalledSoftware>) =>
-    (section === "updates"
-      ? (["update"] as const)
-      : (["launch", "uninstall"] as const)
-    ).map((action) => {
-      const capability = localAction(item, action);
-      return (
-        <span key={action} title={capability.reason}>
-          <Button
-            size="small"
-            danger={action === "uninstall"}
-            disabled={
-              !capability.available ||
-              software.busy.has(item.reference.installation)
-            }
-            onClick={() => void prepareInstalled(item, action)}
-          >
-            {action === "launch"
-              ? "打开"
-              : action === "update"
-                ? "更新"
-                : "卸载"}
-          </Button>
-        </span>
-      );
-    });
+  const localActions = (item: Snapshot<InstalledSoftware>) => (
+    <SoftwareActions
+      active={active}
+      workspace={workspace}
+      installed={item}
+      updates={section === "updates"}
+    />
+  );
   return (
     <>
       {selection ? (
@@ -221,11 +169,14 @@ export function SoftwarePage({
             installed={detailInstalled}
             policy={detailPolicy}
             onBack={() => setSelection(null)}
-            onPrepare={(action) => {
-              if (detailInstalled)
-                void prepareInstalled(detailInstalled, action);
-              else if (detailPolicy) void preparePolicy(detailPolicy);
-            }}
+            actions={
+              <SoftwareActions
+                active={active}
+                workspace={workspace}
+                installed={detailInstalled}
+                policy={detailPolicy}
+              />
+            }
           />
         ) : (
           <div className="rss-page">
@@ -434,12 +385,11 @@ export function SoftwarePage({
                       }
                       onDetails={() => show("policy", item.policyId)}
                       trailing={
-                        <Button
-                          size="small"
-                          onClick={() => void preparePolicy(item)}
-                        >
-                          查看
-                        </Button>
+                        <SoftwareActions
+                          active={active}
+                          workspace={workspace}
+                          policy={item}
+                        />
                       }
                     />
                   );
@@ -672,11 +622,6 @@ export function SoftwarePage({
           )}
         </div>
       )}
-      <SoftwarePreparation
-        workspace={workspace}
-        request={active ? request : null}
-        onClose={() => setRequest(null)}
-      />
     </>
   );
 }

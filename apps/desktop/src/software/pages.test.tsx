@@ -75,20 +75,16 @@ it("uses published categories and full detail while installed facts retain prote
       .disabled,
   ).toBe(true);
   fireEvent.click(within(card).getByRole("button", { name: "打开" }));
-  await screen.findByRole("dialog");
-  expect(
-    f.pages.events.filter((value) => value.operation === "software_prepare"),
-  ).toHaveLength(1);
-  expect(
-    f.pages.events.some((value) => value.operation === "software_submit"),
-  ).toBe(false);
-  const dialog = within(screen.getByRole("dialog"));
-  fireEvent.click(dialog.getByRole("button", { name: "确认打开" }));
   await waitFor(() =>
     expect(
       f.pages.events.filter((value) => value.operation === "software_submit"),
     ).toHaveLength(1),
   );
+  expect(
+    f.pages.events.filter((value) => value.operation === "software_prepare"),
+  ).toHaveLength(1);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(f.workspace.navigation.state.page).toBe("software");
   f.app.unmount();
 });
 it("reports unavailable observations and missing capabilities honestly in offline and read-only pages", async () => {
@@ -232,5 +228,69 @@ it("ends a verified settings save before the next edit using the new CAS revisio
     f.workspace.system.state.observations.get("network")?.snapshot?.revision,
   ).not.toBe(revision);
   expect(f.workspace.system.state.errors.size).toBe(0);
+  f.app.unmount();
+});
+
+it("installs an organization app with one click and keeps progress on the software page", async () => {
+  const f = await mount("tasks");
+  act(() => f.workspace.navigation.select("software", "discover"));
+  const install = (
+    await f.page("软件中心").findAllByRole("button", { name: "安装" })
+  )[0];
+  fireEvent.click(install);
+  fireEvent.click(install);
+  await waitFor(() =>
+    expect(
+      f.pages.events.filter((value) => value.operation === "policy_invoke"),
+    ).toHaveLength(1),
+  );
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(f.workspace.navigation.state.page).toBe("software");
+  await f.page("软件中心").findByRole("button", { name: "查询进度" });
+  expect(
+    f.page("软件中心").queryByText(/固定资源|发布 ID|配置版本|原工具调用/),
+  ).toBeNull();
+  f.app.unmount();
+});
+
+it("confirms uninstall once and displays the result without a preparation drawer", async () => {
+  const f = await mount();
+  act(() => f.workspace.navigation.select("software", "installed"));
+  await f.page("软件中心").findByRole("button", { name: "Workspace" });
+  act(() => {
+    for (const source of f.workspace.software.state.sources) {
+      for (const item of source.items) {
+        const uninstall = item.actions.find(
+          (value) => value.action === "uninstall",
+        );
+        if (uninstall) {
+          uninstall.available = true;
+          uninstall.reason = null;
+        }
+      }
+    }
+  });
+  const card = f.app.container.querySelector(
+    ".rss-installed-card",
+  ) as HTMLElement;
+  await waitFor(() =>
+    expect(
+      (within(card).getByRole("button", { name: "卸载" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false),
+  );
+  fireEvent.click(within(card).getByRole("button", { name: "卸载" }));
+  const dialog = within(await screen.findByRole("dialog"));
+  expect(
+    f.pages.events.filter((value) => value.operation === "software_prepare"),
+  ).toHaveLength(0);
+  fireEvent.click(dialog.getByRole("button", { name: "卸载" }));
+  await waitFor(() =>
+    expect(
+      f.pages.events.filter((value) => value.operation === "software_submit"),
+    ).toHaveLength(1),
+  );
+  expect(f.workspace.navigation.state.page).toBe("software");
+  expect(f.app.container.textContent).not.toContain("固定资源");
   f.app.unmount();
 });
