@@ -534,7 +534,12 @@ export async function checkPagesBrowser(page, fixture) {
   await go("loading");
   await primary("软件中心");
   const loadingPage = page.locator('.rss-page-viewport[aria-label="软件中心"]');
-  await loadingPage.getByText("正在读取发布目录", { exact: true }).waitFor();
+  const pendingDirectory = loadingPage.getByRole("status", {
+    name: "正在读取发布目录",
+    exact: true,
+  });
+  await pendingDirectory.waitFor();
+  assert.equal(await pendingDirectory.getAttribute("aria-busy"), "true");
   assert.equal(
     await loadingPage
       .getByRole("button", { name: "重读结果", exact: true })
