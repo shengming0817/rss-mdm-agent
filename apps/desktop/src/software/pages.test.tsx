@@ -38,7 +38,7 @@ async function mount(scene = "normal") {
         `.rss-page-viewport[aria-label="${name}"]`,
       ) as HTMLElement,
     );
-  return { app, workspace, page, pages };
+  return { app, workspace, page, pages, fixture };
 }
 it("uses published categories and full detail while installed facts retain protected actions and explicit original preparation", async () => {
   const f = await mount();
@@ -292,5 +292,63 @@ it("confirms uninstall once and displays the result without a preparation drawer
   );
   expect(f.workspace.navigation.state.page).toBe("software");
   expect(f.app.container.textContent).not.toContain("固定资源");
+  f.app.unmount();
+});
+
+it("resumes the same local request after a lost preparation response", async () => {
+  const f = await mount();
+  const port = f.workspace.software.port!;
+  const prepare = port.prepare.bind(port);
+  vi.spyOn(port, "prepare").mockImplementationOnce(async (input) => {
+    await prepare(input);
+    throw Error("lost reply");
+  });
+  act(() => f.workspace.navigation.select("software", "installed"));
+  await f.page("软件中心").findByRole("button", { name: "Workspace" });
+  const card = f.app.container.querySelector(
+    ".rss-installed-card",
+  ) as HTMLElement;
+  fireEvent.click(within(card).getByRole("button", { name: "打开" }));
+  const resume = await within(card).findByRole("button", { name: "继续打开" });
+  expect(
+    f.pages.events.filter((value) => value.operation === "software_submit"),
+  ).toHaveLength(0);
+  fireEvent.click(resume);
+  await waitFor(() =>
+    expect(
+      f.pages.events.filter((value) => value.operation === "software_submit"),
+    ).toHaveLength(1),
+  );
+  const events = f.pages.events.filter((value) =>
+    ["software_prepare", "software_submit"].includes(value.operation),
+  );
+  expect(new Set(events.map((value) => value.request)).size).toBe(1);
+  f.app.unmount();
+});
+
+it("recovers a lost install acknowledgement so another app can be installed", async () => {
+  const f = await mount("tasks");
+  const port = f.fixture.input.selfServicePort!;
+  const invoke = port.policy_invoke.bind(port);
+  vi.spyOn(port, "policy_invoke").mockImplementationOnce(async (input) => {
+    await invoke(input);
+    throw Error("lost reply");
+  });
+  act(() => f.workspace.navigation.select("software", "discover"));
+  const buttons = await f
+    .page("软件中心")
+    .findAllByRole("button", { name: "安装" });
+  fireEvent.click(buttons[0]);
+  await waitFor(
+    () => expect(f.workspace.policies.state.status?.kind).toBe("preparation"),
+    { timeout: 5000 },
+  );
+  fireEvent.click(buttons[1]);
+  await waitFor(() =>
+    expect(
+      f.pages.events.filter((value) => value.operation === "policy_invoke"),
+    ).toHaveLength(2),
+  );
+  expect(f.workspace.navigation.state.page).toBe("software");
   f.app.unmount();
 });

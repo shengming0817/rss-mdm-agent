@@ -9,6 +9,7 @@ import type {
   SelfServiceDirectoryItem,
   TaskDetail,
 } from "../self-service/types";
+import { canSubmitSoftware } from "./controller";
 import { localAction, localActionLabels } from "./presentation";
 import { taskPhase } from "../task-center/controller";
 import { presentTask } from "../task-center/presentation";
@@ -41,7 +42,7 @@ export function SoftwareActions({
       mounted.current = false;
     };
   }, []);
-  const operation = installed
+  const previousOperation = installed
     ? [...software.operations.values()]
         .filter(
           (value) =>
@@ -55,11 +56,12 @@ export function SoftwareActions({
   const request =
     (installed
       ? (software.installations.get(installed.reference.installation) ??
-        operation?.prepared.request)
+        previousOperation?.prepared.request)
       : policy
         ? software.policyRequests.get(policy.policyId)
         : undefined) ??
     (selectedPolicy ? policies.submission?.choice.request : undefined);
+  const operation = request ? software.operations.get(request) : undefined;
   const status = operation?.execution;
   // Poll facts only. Never re-submit a request when an acknowledgement is missing.
   useEffect(() => {
@@ -69,17 +71,47 @@ export function SoftwareActions({
     let timer: ReturnType<typeof setTimeout>;
     const read = async () => {
       try {
-        if (installed) await workspace.software.query(request);
-        else {
+        if (installed) {
+          const value = await workspace.software.query(request);
+          if (
+            value &&
+            [
+              "verified",
+              "cancelled",
+              "admissionDenied",
+              "failedBeforeDispatch",
+            ].includes(value.execution.phase)
+          ) {
+            if (current) setError("");
+            return;
+          }
+        } else {
+          if (workspace.policies.state.submission?.choice.request === request)
+            await workspace.policies.recover();
           const value = await workspace.tasks.detail(
             { kind: "request", request },
             true,
           );
           if (current) setDetail(value);
+          if (
+            [
+              "verified",
+              "cancelled",
+              "admissionDenied",
+              "failedBeforeDispatch",
+              "failed",
+            ].includes(value.stage)
+          ) {
+            if (current) setError("");
+            return;
+          }
         }
         if (current) setError("");
       } catch {
-        if (current) setError("暂时无法获取进度，请稍后查询。请勿重复操作。");
+        if (current) {
+          setDetail(null);
+          setError("暂时无法获取进度，请稍后查询。请勿重复操作。");
+        }
       }
       if (current) timer = setTimeout(read, 3000);
     };
@@ -148,6 +180,44 @@ export function SoftwareActions({
       if (mounted.current) setBusy(false);
     }
   }
+  async function refresh() {
+    if (!request) return;
+    try {
+      if (installed) await workspace.software.query(request);
+      else {
+        if (workspace.policies.state.submission?.choice.request === request)
+          await workspace.policies.recover();
+        const value = await workspace.tasks.detail(
+          { kind: "request", request },
+          true,
+        );
+        if (mounted.current) setDetail(value);
+      }
+      if (mounted.current) setError("");
+    } catch {
+      if (mounted.current) {
+        setDetail(null);
+        setError("暂时无法获取进度，请稍后查询。");
+      }
+    }
+  }
+  const resumable =
+    !!operation &&
+    !busy &&
+    !software.busy.has(operation.prepared.request) &&
+    !software.uncertain.has(operation.prepared.request) &&
+    canSubmitSoftware(operation, software.now);
+  const retryPolicy =
+    policy &&
+    (selectedPolicy
+      ? workspace.policies.canRestart(policies.status)
+      : !!detail &&
+        [
+          "failed",
+          "cancelled",
+          "failedBeforeDispatch",
+          "admissionDenied",
+        ].includes(detail.stage));
   const failure =
     error ||
     (selectedPolicy ? policies.error : "") ||
@@ -184,6 +254,9 @@ export function SoftwareActions({
                   }
                 >
                   {localActionLabels[action]}
+                  {action === "update" && capability.version
+                    ? `至 ${capability.version}`
+                    : ""}
                 </Button>
               </span>
             );
@@ -200,23 +273,48 @@ export function SoftwareActions({
             安装
           </Button>
         )}
-        {request && (
+        {resumable && (
           <Button
             onClick={() => {
-              if (installed)
-                void workspace.software
-                  .query(request)
-                  .catch(() => setError("暂时无法获取进度，请稍后查询。"));
-              else
-                void workspace.tasks
-                  .detail({ kind: "request", request }, true)
-                  .then(setDetail)
-                  .catch(() => setError("暂时无法获取进度，请稍后查询。"));
+              const original = workspace.software.state.prepared.get(
+                operation.prepared.request,
+              );
+              if (original) void workspace.software.submit(original);
             }}
           >
-            查询进度
+            继续{localActionLabels[operation.prepared.choice.action]}
+            {operation.prepared.targetVersion
+              ? `至 ${operation.prepared.targetVersion}`
+              : ""}
           </Button>
         )}
+        {selectedPolicy && policies.status?.kind === "absent" && (
+          <Button
+            disabled={policies.busy}
+            onClick={() => void workspace.policies.submit({})}
+          >
+            重试提交
+          </Button>
+        )}
+        {retryPolicy && (
+          <Button
+            disabled={policies.busy}
+            onClick={async () => {
+              if (selectedPolicy) await workspace.policies.restart();
+              else if (!workspace.policies.clear()) {
+                setError("另一项安装结果尚未确认，请先查询其进度。");
+                return;
+              }
+              if (!workspace.policies.state.submission && policy) {
+                workspace.software.state.policyRequests.delete(policy.policyId);
+                void run();
+              }
+            }}
+          >
+            重新安装
+          </Button>
+        )}
+        {request && <Button onClick={() => void refresh()}>查询进度</Button>}
       </div>
       {label && (
         <div role="status">
