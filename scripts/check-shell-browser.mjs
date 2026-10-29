@@ -168,6 +168,7 @@ export async function checkShellBrowser(page, fixture) {
     originalTask,
   );
   await page.keyboard.press("Escape");
+  await taskDialog.waitFor({ state: "hidden" });
   for (const [title, section] of [
     ["账号与组织", "account"],
     ["外观与体验", "appearance"],
@@ -287,6 +288,13 @@ export async function checkShellBrowser(page, fixture) {
     .getByRole("menuitem", { name: "登录企业账号", exact: true })
     .click();
   await capture("account-login");
+  await page.keyboard.press("Control+k");
+  assert.equal(
+    await page.evaluate(
+      () => window.rssDesktop.state.workspace.navigation.state.searchOpen,
+    ),
+    false,
+  );
   await page.getByRole("textbox", { name: "企业账号" }).fill("scoped-person");
   await page.getByLabel("企业密码", { exact: true }).fill("fixture-secret");
   await page.evaluate(() => {

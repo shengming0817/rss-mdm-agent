@@ -132,7 +132,18 @@ export function DesktopShell({
     narrow.addEventListener("change", resize);
     const keyboard = (event: KeyboardEvent) => {
       const target = event.target;
-      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      if (
+        [
+          ...document.querySelectorAll<HTMLElement>(
+            '[role="dialog"][aria-modal="true"]',
+          ),
+        ].some(
+          (dialog) =>
+            dialog.getClientRects().length > 0 &&
+            !dialog.closest('[hidden],[aria-hidden="true"]'),
+        )
+      )
+        return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         workspace.navigation.setSearch(true);
