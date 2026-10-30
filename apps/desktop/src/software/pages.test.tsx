@@ -38,7 +38,7 @@ async function mount(scene = "normal") {
         `.rss-page-viewport[aria-label="${name}"]`,
       ) as HTMLElement,
     );
-  return { app, workspace, page, pages };
+  return { app, workspace, page, pages, fixture };
 }
 it("uses published categories and full detail while installed facts retain protected actions and explicit original preparation", async () => {
   const f = await mount();
@@ -75,20 +75,16 @@ it("uses published categories and full detail while installed facts retain prote
       .disabled,
   ).toBe(true);
   fireEvent.click(within(card).getByRole("button", { name: "打开" }));
-  await screen.findByRole("dialog");
-  expect(
-    f.pages.events.filter((value) => value.operation === "software_prepare"),
-  ).toHaveLength(1);
-  expect(
-    f.pages.events.some((value) => value.operation === "software_submit"),
-  ).toBe(false);
-  const dialog = within(screen.getByRole("dialog"));
-  fireEvent.click(dialog.getByRole("button", { name: "确认打开" }));
   await waitFor(() =>
     expect(
       f.pages.events.filter((value) => value.operation === "software_submit"),
     ).toHaveLength(1),
   );
+  expect(
+    f.pages.events.filter((value) => value.operation === "software_prepare"),
+  ).toHaveLength(1);
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(f.workspace.navigation.state.page).toBe("software");
   f.app.unmount();
 });
 it("reports unavailable observations and missing capabilities honestly in offline and read-only pages", async () => {
@@ -232,5 +228,202 @@ it("ends a verified settings save before the next edit using the new CAS revisio
     f.workspace.system.state.observations.get("network")?.snapshot?.revision,
   ).not.toBe(revision);
   expect(f.workspace.system.state.errors.size).toBe(0);
+  f.app.unmount();
+});
+
+it("installs an organization app with one click and keeps progress on the software page", async () => {
+  const f = await mount("tasks");
+  act(() => f.workspace.navigation.select("software", "discover"));
+  const install = (
+    await f.page("软件中心").findAllByRole("button", { name: "安装" })
+  )[0];
+  fireEvent.click(install);
+  fireEvent.click(install);
+  await waitFor(() =>
+    expect(
+      f.pages.events.filter((value) => value.operation === "policy_invoke"),
+    ).toHaveLength(1),
+  );
+  expect(screen.queryByRole("dialog")).toBeNull();
+  expect(f.workspace.navigation.state.page).toBe("software");
+  await f.page("软件中心").findByRole("button", { name: "查询进度" });
+  expect(
+    f.page("软件中心").queryByText(/固定资源|发布 ID|配置版本|原工具调用/),
+  ).toBeNull();
+  f.app.unmount();
+});
+
+it("confirms uninstall once and displays the result without a preparation drawer", async () => {
+  const f = await mount();
+  act(() => f.workspace.navigation.select("software", "installed"));
+  await f.page("软件中心").findByRole("button", { name: "Workspace" });
+  act(() => {
+    for (const source of f.workspace.software.state.sources) {
+      for (const item of source.items) {
+        const uninstall = item.actions.find(
+          (value) => value.action === "uninstall",
+        );
+        if (uninstall) {
+          uninstall.available = true;
+          uninstall.reason = null;
+        }
+      }
+    }
+  });
+  const card = f.app.container.querySelector(
+    ".rss-installed-card",
+  ) as HTMLElement;
+  await waitFor(() =>
+    expect(
+      (within(card).getByRole("button", { name: "卸载" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false),
+  );
+  fireEvent.click(within(card).getByRole("button", { name: "卸载" }));
+  const dialog = within(await screen.findByRole("dialog"));
+  expect(
+    f.pages.events.filter((value) => value.operation === "software_prepare"),
+  ).toHaveLength(0);
+  fireEvent.click(dialog.getByRole("button", { name: "卸载" }));
+  await waitFor(() =>
+    expect(
+      f.pages.events.filter((value) => value.operation === "software_submit"),
+    ).toHaveLength(1),
+  );
+  expect(f.workspace.navigation.state.page).toBe("software");
+  expect(f.app.container.textContent).not.toContain("固定资源");
+  f.app.unmount();
+});
+
+it("resumes the same local request after a lost preparation response", async () => {
+  const f = await mount();
+  const port = f.workspace.software.port!;
+  const prepare = port.prepare.bind(port);
+  vi.spyOn(port, "prepare").mockImplementationOnce(async (input) => {
+    await prepare(input);
+    throw Error("lost reply");
+  });
+  act(() => f.workspace.navigation.select("software", "installed"));
+  await f.page("软件中心").findByRole("button", { name: "Workspace" });
+  const card = f.app.container.querySelector(
+    ".rss-installed-card",
+  ) as HTMLElement;
+  fireEvent.click(within(card).getByRole("button", { name: "打开" }));
+  const resume = await within(card).findByRole("button", { name: "继续打开" });
+  expect(
+    f.pages.events.filter((value) => value.operation === "software_submit"),
+  ).toHaveLength(0);
+  fireEvent.click(resume);
+  await waitFor(() =>
+    expect(
+      f.pages.events.filter((value) => value.operation === "software_submit"),
+    ).toHaveLength(1),
+  );
+  const events = f.pages.events.filter((value) =>
+    ["software_prepare", "software_submit"].includes(value.operation),
+  );
+  expect(new Set(events.map((value) => value.request)).size).toBe(1);
+  f.app.unmount();
+});
+
+it("recovers a lost install acknowledgement so another app can be installed", async () => {
+  const f = await mount("tasks");
+  const port = f.fixture.input.selfServicePort!;
+  const invoke = port.policy_invoke.bind(port);
+  vi.spyOn(port, "policy_invoke").mockImplementationOnce(async (input) => {
+    await invoke(input);
+    throw Error("lost reply");
+  });
+  act(() => f.workspace.navigation.select("software", "discover"));
+  const buttons = await f
+    .page("软件中心")
+    .findAllByRole("button", { name: "安装" });
+  fireEvent.click(buttons[0]);
+  await waitFor(
+    () => expect(f.workspace.policies.state.status?.kind).toBe("preparation"),
+    { timeout: 5000 },
+  );
+  fireEvent.click(buttons[1]);
+  await waitFor(() =>
+    expect(
+      f.pages.events.filter((value) => value.operation === "policy_invoke"),
+    ).toHaveLength(2),
+  );
+  expect(f.workspace.navigation.state.page).toBe("software");
+  f.app.unmount();
+});
+
+it("keeps a completed app reinstallable after installing another app and ignores late old progress", async () => {
+  const f = await mount("tasks");
+  act(() => f.workspace.navigation.select("software", "discover"));
+  const buttons = await f
+    .page("软件中心")
+    .findAllByRole("button", { name: "安装" });
+  const card = buttons[0].closest(".rss-software-card") as HTMLElement;
+  fireEvent.click(buttons[0]);
+  await waitFor(() => expect(f.workspace.policies.state.busy).toBe(false));
+  const original = f.workspace.policies.state.submission!.choice.request;
+  const port = f.fixture.input.selfServicePort!;
+  const status = port.policy_status.bind(port);
+  vi.spyOn(port, "policy_status").mockImplementation(async (input) =>
+    input.requestId === original
+      ? {
+          kind: "run",
+          value: {
+            requestId: original,
+            runId: "run-a",
+            attemptId: null,
+            state: {
+              execution: "succeeded",
+              delivery: { kind: "queued" },
+              cancellation: "none",
+              deadline: 0,
+              startedAt: 1,
+            },
+            availableAt: 0,
+            deadline: 0,
+            result: null,
+          },
+        }
+      : status(input),
+  );
+  fireEvent.click(
+    await within(card).findByRole("button", { name: "查询进度" }),
+  );
+  await within(card).findByRole("button", { name: "重新安装" });
+  fireEvent.click(buttons[1]);
+  await waitFor(() =>
+    expect(
+      f.pages.events.filter((value) => value.operation === "policy_invoke"),
+    ).toHaveLength(2),
+  );
+  const detail = f.workspace.tasks.detail.bind(f.workspace.tasks);
+  let resolveOld!: (value: Awaited<ReturnType<typeof detail>>) => void;
+  const old = await detail({ kind: "request", request: original }, true);
+  old.stage = "failed";
+  vi.spyOn(f.workspace.tasks, "detail").mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        resolveOld = resolve;
+      }),
+  );
+  fireEvent.click(within(card).getByRole("button", { name: "查询进度" }));
+  await waitFor(() => expect(resolveOld).toBeTruthy());
+  fireEvent.click(within(card).getByRole("button", { name: "重新安装" }));
+  await waitFor(() =>
+    expect(
+      f.pages.events.filter((value) => value.operation === "policy_invoke"),
+    ).toHaveLength(3),
+  );
+  const current = f.workspace.policies.state.submission!.choice.request;
+  expect(current).not.toBe(original);
+  await act(async () => resolveOld(old));
+  expect(within(card).queryByText("准备失败")).toBeNull();
+  expect(
+    f.workspace.software.state.policyRequests.get(
+      f.pages.published.filter((value) => value.task.kind === "software")[0]
+        .policyId,
+    ),
+  ).toBe(current);
   f.app.unmount();
 });

@@ -237,12 +237,18 @@ export async function checkTasksBrowser(page, fixture) {
         .getByRole("button", { name: "卸载", exact: true })
         .click();
       const prepare = page.getByRole("dialog");
-      await prepare
-        .getByRole("button", { name: "确认卸载", exact: true })
-        .click();
-      await prepare
-        .getByRole("button", { name: "查看原任务", exact: true })
-        .click();
+      await prepare.getByRole("button", { name: "卸载", exact: true }).click();
+      await page.waitForFunction(() =>
+        window.rssPageFixture.events.some(
+          (event) => event.operation === "software_submit",
+        ),
+      );
+      await page.evaluate(async () => {
+        const workspace = window.rssDesktop.state.workspace;
+        const request = [...workspace.software.state.requests].at(-1);
+        workspace.navigation.select("tasks", "history");
+        await workspace.tasks.openTask({ kind: "request", request });
+      });
     } else {
       await primary("软件中心");
       await secondary("发现");
@@ -251,21 +257,20 @@ export async function checkTasksBrowser(page, fixture) {
         .locator(".rss-store-grid")
         .getByRole("button", { name: `查看 ${title}`, exact: true })
         .click();
+      await page.getByRole("button", { name: "安装", exact: true }).click();
       await page
-        .getByRole("button", { name: "查看并准备", exact: true })
-        .click();
-      const prepare = page.getByRole("dialog");
-      await prepare
-        .getByRole("button", { name: "确认并提交", exact: true })
-        .click();
-      await prepare
-        .getByRole("button", { name: "查看原任务", exact: true })
+        .getByRole("button", { name: "查询进度", exact: true })
         .waitFor();
-      await capture(`${intent}-frozen-preparation`);
-
-      await prepare
-        .getByRole("button", { name: "查看原任务", exact: true })
-        .click();
+      await page.waitForFunction(
+        () => !window.rssDesktop.state.workspace.policies.state.busy,
+      );
+      await capture(`${intent}-inline-progress`);
+      await page.evaluate(async () => {
+        const workspace = window.rssDesktop.state.workspace;
+        const request = workspace.policies.state.submission.choice.request;
+        workspace.navigation.select("tasks", "history");
+        await workspace.tasks.openTask({ kind: "request", request });
+      });
     }
     drawer = page.getByRole("dialog", { name: /任务详情/ });
     await drawer
@@ -349,28 +354,23 @@ export async function checkTasksBrowser(page, fixture) {
     .getByRole("button", { name: "卸载", exact: true })
     .click();
   const expired = page.getByRole("dialog");
-  await expired
-    .getByRole("button", { name: "确认卸载", exact: true })
-    .waitFor();
+  await expired.getByRole("button", { name: "卸载", exact: true }).waitFor();
   await page.evaluate(() => {
-    const request = [...window.rssPageFixture.operations.keys()][0];
-    window.rssPageFixture.operations.get(request).prepared.startBeforeUnixMs =
-      Date.now() + 1200;
+    const port = window.rssDesktop.state.workspace.software.port;
+    const prepare = port.prepare.bind(port);
+    port.prepare = async (input) => {
+      const result = await prepare(input);
+      result.startBeforeUnixMs = Date.now() - 1;
+      window.rssPageFixture.operations.get(
+        input.request,
+      ).prepared.startBeforeUnixMs = result.startBeforeUnixMs;
+      return result;
+    };
   });
-  await expired
-    .getByRole("button", { name: "查询原请求", exact: true })
-    .click();
-  await page.waitForFunction(() =>
-    [...document.querySelectorAll(".rss-detail-drawer button")].some(
-      (button) => button.textContent === "确认卸载" && button.disabled,
-    ),
-  );
-  assert.equal(
-    await expired
-      .getByRole("button", { name: "确认卸载", exact: true })
-      .isDisabled(),
-    true,
-  );
+  await expired.getByRole("button", { name: "卸载", exact: true }).click();
+  await page
+    .getByText("本次操作已过期，未提交执行。", { exact: true })
+    .waitFor();
   assert.equal(
     await page.evaluate(
       () =>
@@ -382,7 +382,7 @@ export async function checkTasksBrowser(page, fixture) {
   );
   await capture("expired-frozen-preparation");
   evidence.checks.push(
-    "original software preparation naturally expires while open, frozen summary stays readable and no submission is emitted",
+    "expired original software preparation is shown in place and no submission is emitted",
   );
   for (const theme of ["light", "dark"])
     for (const width of [1280, 720, 420]) {

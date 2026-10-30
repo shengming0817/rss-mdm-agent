@@ -554,3 +554,41 @@ it("an expired original preparation cannot submit even if a stale view still hol
   expect(port.submit).not.toHaveBeenCalled();
   c.dispose();
 });
+
+it("retains an unacknowledged preparation per installation instead of starting another operation", async () => {
+  const { data, port } = ports();
+  vi.mocked(port.prepare).mockRejectedValue(Error("lost reply"));
+  vi.mocked(port.status).mockRejectedValue(Error("unavailable"));
+  const owner = createSoftware(data, port);
+  await owner.prepare(item, "uninstall");
+  const request = owner.state.installations.get(item.reference.installation);
+  await owner.prepare(item, "uninstall");
+  expect(port.prepare).toHaveBeenCalledTimes(1);
+  expect(owner.state.installations.get(item.reference.installation)).toBe(
+    request,
+  );
+  expect(port.submit).not.toHaveBeenCalled();
+  owner.dispose();
+});
+
+it.each([
+  "software_denied",
+  "software_unsupported",
+  "software_not_found",
+  "software_expired",
+])(
+  "allows a fresh operation after a definite preparation rejection: %s",
+  async (code) => {
+    const { data, port } = ports();
+    vi.mocked(port.prepare).mockRejectedValueOnce({ code });
+    const owner = createSoftware(data, port);
+    await owner.prepare(item, "uninstall");
+    expect(owner.state.installations.size).toBe(0);
+    expect(port.status).not.toHaveBeenCalled();
+    const prepared = await owner.prepare(item, "uninstall");
+    expect(prepared).toBeTruthy();
+    expect(port.prepare).toHaveBeenCalledTimes(2);
+    expect(port.submit).not.toHaveBeenCalled();
+    owner.dispose();
+  },
+);

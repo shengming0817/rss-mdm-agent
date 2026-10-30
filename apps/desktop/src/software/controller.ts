@@ -59,6 +59,8 @@ export function createSoftware(
     operations: proxyMap<string, LocalSoftwareStatus>(),
     prepared: proxyMap<string, LocalSoftwarePrepared>(),
     requests: proxySet<string>(),
+    installations: proxyMap<string, string>(),
+    policyRequests: proxyMap<string, string>(),
     busy: proxySet<string>(),
     uncertain: proxySet<string>(),
     historyNext: null as string | null,
@@ -378,6 +380,11 @@ export function createSoftware(
       return;
     const key = installationKey(item);
     if (state.busy.has(key)) return;
+    const unresolved = state.installations.get(key);
+    if (unresolved && !state.operations.has(unresolved)) {
+      await query(unresolved).catch(() => {});
+      return;
+    }
     const existing = [...state.operations.values()].find(
       (v) =>
         JSON.stringify(v.prepared.choice.software) === referenceKey(item) &&
@@ -388,6 +395,7 @@ export function createSoftware(
     state.busy.add(key);
     const request = crypto.randomUUID();
     state.requests.add(request);
+    state.installations.set(key, request);
     begin(request);
     writes.add(request);
     try {
@@ -401,7 +409,30 @@ export function createSoftware(
       writes.delete(request);
       await query(request);
       return value;
-    } catch {
+    } catch (error) {
+      // A typed preparation rejection precedes submission. Do not turn it into
+      // an unresolved action, but never treat a later status-read failure this way.
+      if (
+        active &&
+        call === epoch &&
+        !state.prepared.has(request) &&
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        [
+          "software_denied",
+          "software_unsupported",
+          "software_not_found",
+          "software_expired",
+        ].includes(String(error.code))
+      ) {
+        if (state.installations.get(key) === request)
+          state.installations.delete(key);
+        state.requests.delete(request);
+        latest.delete(request);
+        state.error = "当前无法执行此操作，请刷新软件信息或检查权限后再试。";
+        return;
+      }
       // Even prepare's lost acknowledgement is resolved by this UUID or service history.
       if (active && call === epoch)
         state.error = `准备回执未确认，请查询原请求：${request}`;
@@ -530,6 +561,8 @@ export function createSoftware(
     state.operations.clear();
     state.prepared.clear();
     state.requests.clear();
+    state.installations.clear();
+    state.policyRequests.clear();
     state.queries.clear();
     state.busy.clear();
     state.uncertain.clear();

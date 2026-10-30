@@ -154,16 +154,9 @@ export async function checkPagesBrowser(page, fixture) {
     await page.getByRole("tab", { name: tab, exact: true }).click();
     await capture(`detail-${tab}`);
   }
-  await page.getByRole("button", { name: "查看并准备", exact: true }).click();
-  const publishedPreparation = page.getByRole("dialog");
-  await publishedPreparation
-    .getByRole("button", { name: "确认并提交", exact: true })
-    .click();
-  await publishedPreparation
-    .getByRole("button", { name: "查询原请求", exact: true })
-    .waitFor();
-  await page.keyboard.press("Escape");
-  await publishedPreparation.waitFor({ state: "hidden" });
+  await page.getByRole("button", { name: "安装", exact: true }).click();
+  await page.getByRole("button", { name: "查询进度", exact: true }).waitFor();
+  assert.equal(await page.getByRole("dialog").count(), 0);
   await page.getByRole("button", { name: "重读发布任务", exact: true }).click();
   await page
     .locator(".rss-related-task")
@@ -196,7 +189,7 @@ export async function checkPagesBrowser(page, fixture) {
   await notes.getByRole("button", { name: "卸载", exact: true }).click();
   const preparation = page.getByRole("dialog");
   await preparation
-    .getByRole("button", { name: "确认卸载", exact: true })
+    .getByRole("button", { name: "卸载", exact: true })
     .waitFor();
   assert.equal(
     await page.evaluate(() =>
@@ -207,9 +200,7 @@ export async function checkPagesBrowser(page, fixture) {
     false,
   );
   await capture("software-preparation");
-  await preparation
-    .getByRole("button", { name: "确认卸载", exact: true })
-    .click();
+  await preparation.getByRole("button", { name: "卸载", exact: true }).click();
   await page.waitForFunction(() =>
     window.rssPageFixture.events.some(
       (event) => event.operation === "software_submit",

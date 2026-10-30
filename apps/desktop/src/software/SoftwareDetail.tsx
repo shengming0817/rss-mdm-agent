@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Alert, Button, Tabs, Tag } from "antd";
 import { ArrowLeftOutlined } from "@ant-design/icons";
 import { SoftwareCover, StatePanel } from "@rss-mdm-agent/ui";
@@ -7,7 +7,6 @@ import type { Snapshot } from "valtio/vanilla";
 import type { Workspace } from "../state/workspace";
 import type {
   InstalledSoftware,
-  LocalSoftwareAction,
   SelfServiceDirectoryItem,
 } from "../self-service/types";
 import {
@@ -24,13 +23,13 @@ export function SoftwareDetail({
   installed,
   policy,
   onBack,
-  onPrepare,
+  actions,
 }: {
   workspace: Workspace;
   installed?: Snapshot<InstalledSoftware>;
   policy?: Snapshot<SelfServiceDirectoryItem>;
   onBack(): void;
-  onPrepare(action?: LocalSoftwareAction): void;
+  actions: ReactNode;
 }) {
   const software = useSnapshot(workspace.software.state),
     [tab, setTab] = useState("overview"),
@@ -50,33 +49,6 @@ export function SoftwareDetail({
     source = installed
       ? `${installed.origin} · ${scopeLabel(installed.scope)}`
       : "当前主体可见的组织发布目录";
-  const actions = installed ? (
-    <>
-      {(["launch", "uninstall"] as const).map((action) => {
-        const capability = localAction(installed, action);
-        return (
-          <span key={action} title={capability.reason}>
-            <Button
-              danger={action === "uninstall"}
-              disabled={!capability.available}
-              onClick={() => onPrepare(action)}
-            >
-              {action === "launch" ? "打开" : "卸载"}
-            </Button>
-          </span>
-        );
-      })}
-      {update?.available && (
-        <Button type="primary" onClick={() => onPrepare("update")}>
-          更新至 {update.version}
-        </Button>
-      )}
-    </>
-  ) : (
-    <Button type="primary" onClick={() => onPrepare()}>
-      查看并准备
-    </Button>
-  );
   return (
     <div className="rss-page rss-software-page">
       <nav className="rss-software-breadcrumb" aria-label="软件详情路径">
@@ -244,9 +216,8 @@ export function SoftwareDetail({
                         });
                       }}
                     >
-                      {value.prepared.choice.action} ·{" "}
+                      {localActionLabels[value.prepared.choice.action]} ·{" "}
                       {taskPhase[value.execution.phase]}
-                      <small>{value.prepared.request}</small>
                     </Button>
                   ))}
                   {!related.length && (
@@ -291,17 +262,6 @@ export function SoftwareDetail({
             <dt>下载大小</dt>
             <dd>未提供</dd>
           </dl>
-          <Button
-            disabled={
-              !!installed && !localAction(installed, "launch").available
-            }
-            title={
-              installed ? localAction(installed, "launch").reason : undefined
-            }
-            onClick={() => onPrepare()}
-          >
-            快速查看与准备
-          </Button>
           <p className="rss-muted">
             独立本机事实与发布目录分别呈现；不会推断“已安装”或默认选择 latest。
           </p>
