@@ -8,7 +8,9 @@ import type {
   LocalSoftwareAction,
   SelfServiceDirectoryItem,
   TaskDetail,
+  PolicyStatus,
 } from "../self-service/types";
+import { canRestartPolicy } from "../self-service/policy-preparation";
 import { canSubmitSoftware } from "./controller";
 import { localAction, localActionLabels } from "./presentation";
 import { taskPhase } from "../task-center/controller";
@@ -34,6 +36,11 @@ export function SoftwareActions({
   const [error, setError] = useState("");
   const [uninstall, setUninstall] = useState(false);
   const [detail, setDetail] = useState<TaskDetail | null>(null);
+  const [policyResult, setPolicyResult] = useState<{
+    request: string;
+    status: PolicyStatus | null;
+  } | null>(null);
+  const currentRequest = useRef<string | undefined>(undefined);
   const lock = useRef(false);
   const mounted = useRef(true);
   useEffect(() => {
@@ -61,6 +68,7 @@ export function SoftwareActions({
         ? software.policyRequests.get(policy.policyId)
         : undefined) ??
     (selectedPolicy ? policies.submission?.choice.request : undefined);
+  currentRequest.current = request;
   const operation = request ? software.operations.get(request) : undefined;
   const status = operation?.execution;
   // Poll facts only. Never re-submit a request when an acknowledgement is missing.
@@ -86,14 +94,15 @@ export function SoftwareActions({
             return;
           }
         } else {
-          if (workspace.policies.state.submission?.choice.request === request)
-            await workspace.policies.recover();
+          const policyStatus = await workspace.policies.statusFor(request);
+          if (current) setPolicyResult({ request, status: policyStatus });
           const value = await workspace.tasks.detail(
             { kind: "request", request },
             true,
           );
           if (current) setDetail(value);
           if (
+            policyStatus &&
             [
               "verified",
               "cancelled",
@@ -127,7 +136,8 @@ export function SoftwareActions({
         ? "已完成"
         : "结果需关注"
       : taskPhase[status.phase]
-    : detail
+    : detail?.reference.kind === "request" &&
+        detail.reference.request === request
       ? presentTask(detail).label
       : request
         ? "正在获取进度"
@@ -185,17 +195,19 @@ export function SoftwareActions({
     try {
       if (installed) await workspace.software.query(request);
       else {
-        if (workspace.policies.state.submission?.choice.request === request)
-          await workspace.policies.recover();
+        const policyStatus = await workspace.policies.statusFor(request);
+        if (mounted.current && currentRequest.current === request)
+          setPolicyResult({ request, status: policyStatus });
         const value = await workspace.tasks.detail(
           { kind: "request", request },
           true,
         );
-        if (mounted.current) setDetail(value);
+        if (mounted.current && currentRequest.current === request)
+          setDetail(value);
       }
-      if (mounted.current) setError("");
+      if (mounted.current && currentRequest.current === request) setError("");
     } catch {
-      if (mounted.current) {
+      if (mounted.current && currentRequest.current === request) {
         setDetail(null);
         setError("暂时无法获取进度，请稍后查询。");
       }
@@ -208,16 +220,10 @@ export function SoftwareActions({
     !software.uncertain.has(operation.prepared.request) &&
     canSubmitSoftware(operation, software.now);
   const retryPolicy =
-    policy &&
-    (selectedPolicy
-      ? workspace.policies.canRestart(policies.status)
-      : !!detail &&
-        [
-          "failed",
-          "cancelled",
-          "failedBeforeDispatch",
-          "admissionDenied",
-        ].includes(detail.stage));
+    !!policy &&
+    !!policyResult &&
+    policyResult.request === request &&
+    canRestartPolicy(policyResult.status);
   const failure =
     error ||
     (selectedPolicy ? policies.error : "") ||

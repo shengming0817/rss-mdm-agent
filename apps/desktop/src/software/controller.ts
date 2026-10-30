@@ -409,7 +409,30 @@ export function createSoftware(
       writes.delete(request);
       await query(request);
       return value;
-    } catch {
+    } catch (error) {
+      // A typed preparation rejection precedes submission. Do not turn it into
+      // an unresolved action, but never treat a later status-read failure this way.
+      if (
+        active &&
+        call === epoch &&
+        !state.prepared.has(request) &&
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        [
+          "software_denied",
+          "software_unsupported",
+          "software_not_found",
+          "software_expired",
+        ].includes(String(error.code))
+      ) {
+        if (state.installations.get(key) === request)
+          state.installations.delete(key);
+        state.requests.delete(request);
+        latest.delete(request);
+        state.error = "当前无法执行此操作，请刷新软件信息或检查权限后再试。";
+        return;
+      }
       // Even prepare's lost acknowledgement is resolved by this UUID or service history.
       if (active && call === epoch)
         state.error = `准备回执未确认，请查询原请求：${request}`;

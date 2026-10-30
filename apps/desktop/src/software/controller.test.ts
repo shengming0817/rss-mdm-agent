@@ -570,3 +570,25 @@ it("retains an unacknowledged preparation per installation instead of starting a
   expect(port.submit).not.toHaveBeenCalled();
   owner.dispose();
 });
+
+it.each([
+  "software_denied",
+  "software_unsupported",
+  "software_not_found",
+  "software_expired",
+])(
+  "allows a fresh operation after a definite preparation rejection: %s",
+  async (code) => {
+    const { data, port } = ports();
+    vi.mocked(port.prepare).mockRejectedValueOnce({ code });
+    const owner = createSoftware(data, port);
+    await owner.prepare(item, "uninstall");
+    expect(owner.state.installations.size).toBe(0);
+    expect(port.status).not.toHaveBeenCalled();
+    const prepared = await owner.prepare(item, "uninstall");
+    expect(prepared).toBeTruthy();
+    expect(port.prepare).toHaveBeenCalledTimes(2);
+    expect(port.submit).not.toHaveBeenCalled();
+    owner.dispose();
+  },
+);

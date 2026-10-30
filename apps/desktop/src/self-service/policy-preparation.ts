@@ -8,6 +8,14 @@ import type {
   SelfServicePort,
 } from "./types";
 
+export function canRestartPolicy(status: Snapshot<PolicyStatus> | null) {
+  if (!status) return false;
+  return status.kind === "preparation"
+    ? ["failed", "cancelled"].includes(status.value.state)
+    : status.kind === "run" &&
+        ["succeeded", "failed"].includes(status.value.state.execution);
+}
+
 /** Human selections stay local until explicit submission; the service owns execution. */
 export function createPolicyPreparation(
   port: SelfServicePort | null,
@@ -56,11 +64,7 @@ export function createPolicyPreparation(
     }
   }
   const canRestart = (status: Snapshot<PolicyStatus> | null = state.status) => {
-    if (!state.submission || !status) return false;
-    return status.kind === "preparation"
-      ? ["failed", "cancelled"].includes(status.value.state)
-      : status.kind === "run" &&
-          ["succeeded", "failed"].includes(status.value.state.execution);
+    return !!state.submission && canRestartPolicy(status);
   };
   async function restart() {
     if (!active || !port || state.busy || !state.item || !canRestart()) return;
@@ -104,6 +108,17 @@ export function createPolicyPreparation(
     } finally {
       if (active && call === epoch) state.busy = false;
     }
+  }
+  async function statusFor(request: string): Promise<PolicyStatus | null> {
+    if (!active || !port) return null;
+    if (state.submission?.choice.request === request) {
+      await recover();
+      return active && state.submission?.choice.request === request
+        ? deepClone(state.status)
+        : null;
+    }
+    const value = await port.policy_status({ requestId: request });
+    return active ? deepClone(value) : null;
   }
   async function submit(parameters: Record<string, unknown>) {
     if (!active || !port || !state.item || state.busy) return;
@@ -177,6 +192,7 @@ export function createPolicyPreparation(
     select,
     submit,
     recover,
+    statusFor,
     canRestart,
     restart,
     clear,

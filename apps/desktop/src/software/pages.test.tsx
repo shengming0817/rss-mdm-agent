@@ -352,3 +352,78 @@ it("recovers a lost install acknowledgement so another app can be installed", as
   expect(f.workspace.navigation.state.page).toBe("software");
   f.app.unmount();
 });
+
+it("keeps a completed app reinstallable after installing another app and ignores late old progress", async () => {
+  const f = await mount("tasks");
+  act(() => f.workspace.navigation.select("software", "discover"));
+  const buttons = await f
+    .page("软件中心")
+    .findAllByRole("button", { name: "安装" });
+  const card = buttons[0].closest(".rss-software-card") as HTMLElement;
+  fireEvent.click(buttons[0]);
+  await waitFor(() => expect(f.workspace.policies.state.busy).toBe(false));
+  const original = f.workspace.policies.state.submission!.choice.request;
+  const port = f.fixture.input.selfServicePort!;
+  const status = port.policy_status.bind(port);
+  vi.spyOn(port, "policy_status").mockImplementation(async (input) =>
+    input.requestId === original
+      ? {
+          kind: "run",
+          value: {
+            requestId: original,
+            runId: "run-a",
+            attemptId: null,
+            state: {
+              execution: "succeeded",
+              delivery: { kind: "queued" },
+              cancellation: "none",
+              deadline: 0,
+              startedAt: 1,
+            },
+            availableAt: 0,
+            deadline: 0,
+            result: null,
+          },
+        }
+      : status(input),
+  );
+  fireEvent.click(
+    await within(card).findByRole("button", { name: "查询进度" }),
+  );
+  await within(card).findByRole("button", { name: "重新安装" });
+  fireEvent.click(buttons[1]);
+  await waitFor(() =>
+    expect(
+      f.pages.events.filter((value) => value.operation === "policy_invoke"),
+    ).toHaveLength(2),
+  );
+  const detail = f.workspace.tasks.detail.bind(f.workspace.tasks);
+  let resolveOld!: (value: Awaited<ReturnType<typeof detail>>) => void;
+  const old = await detail({ kind: "request", request: original }, true);
+  old.stage = "failed";
+  vi.spyOn(f.workspace.tasks, "detail").mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        resolveOld = resolve;
+      }),
+  );
+  fireEvent.click(within(card).getByRole("button", { name: "查询进度" }));
+  await waitFor(() => expect(resolveOld).toBeTruthy());
+  fireEvent.click(within(card).getByRole("button", { name: "重新安装" }));
+  await waitFor(() =>
+    expect(
+      f.pages.events.filter((value) => value.operation === "policy_invoke"),
+    ).toHaveLength(3),
+  );
+  const current = f.workspace.policies.state.submission!.choice.request;
+  expect(current).not.toBe(original);
+  await act(async () => resolveOld(old));
+  expect(within(card).queryByText("准备失败")).toBeNull();
+  expect(
+    f.workspace.software.state.policyRequests.get(
+      f.pages.published.filter((value) => value.task.kind === "software")[0]
+        .policyId,
+    ),
+  ).toBe(current);
+  f.app.unmount();
+});
