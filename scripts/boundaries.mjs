@@ -220,6 +220,10 @@ export function checkSource(file, source) {
       "clearInterval",
     ],
     "apps/desktop/src/shell/PolicyDrawer.tsx": ["setInterval", "clearInterval"],
+    "apps/desktop/src/software/SoftwareActions.tsx": [
+      "setTimeout",
+      "clearTimeout",
+    ],
     "apps/desktop/src/task-center/controller.ts": [
       "setTimeout",
       "clearTimeout",
@@ -352,6 +356,10 @@ export function checkSource(file, source) {
       "taskPhase",
     ],
     "apps/desktop/src/software/PolicyTasks.tsx": ["taskPhase"],
+    "apps/desktop/src/software/SoftwareActions.tsx": [
+      "taskPhase",
+      "localActionLabels",
+    ],
     "apps/desktop/src/software/presentation.ts": [
       "categoryTones",
       "blockReason",

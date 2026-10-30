@@ -356,24 +356,21 @@ export async function checkTasksBrowser(page, fixture) {
   const expired = page.getByRole("dialog");
   await expired.getByRole("button", { name: "卸载", exact: true }).waitFor();
   await page.evaluate(() => {
-    const request = [...window.rssPageFixture.operations.keys()][0];
-    window.rssPageFixture.operations.get(request).prepared.startBeforeUnixMs =
-      Date.now() + 1200;
+    const port = window.rssDesktop.state.workspace.software.port;
+    const prepare = port.prepare.bind(port);
+    port.prepare = async (input) => {
+      const result = await prepare(input);
+      result.startBeforeUnixMs = Date.now() - 1;
+      window.rssPageFixture.operations.get(
+        input.request,
+      ).prepared.startBeforeUnixMs = result.startBeforeUnixMs;
+      return result;
+    };
   });
-  await expired
-    .getByRole("button", { name: "查询原请求", exact: true })
-    .click();
-  await page.waitForFunction(() =>
-    [...document.querySelectorAll(".rss-detail-drawer button")].some(
-      (button) => button.textContent === "确认卸载" && button.disabled,
-    ),
-  );
-  assert.equal(
-    await expired
-      .getByRole("button", { name: "卸载", exact: true })
-      .isDisabled(),
-    true,
-  );
+  await expired.getByRole("button", { name: "卸载", exact: true }).click();
+  await page
+    .getByText("本次操作已过期，未提交执行。", { exact: true })
+    .waitFor();
   assert.equal(
     await page.evaluate(
       () =>
@@ -385,7 +382,7 @@ export async function checkTasksBrowser(page, fixture) {
   );
   await capture("expired-frozen-preparation");
   evidence.checks.push(
-    "original software preparation naturally expires while open, frozen summary stays readable and no submission is emitted",
+    "expired original software preparation is shown in place and no submission is emitted",
   );
   for (const theme of ["light", "dark"])
     for (const width of [1280, 720, 420]) {

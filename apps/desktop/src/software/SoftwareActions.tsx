@@ -322,6 +322,13 @@ export function SoftwareActions({
           {status?.cancelRequested && <span>正在取消，等待确认</span>}
         </div>
       )}
+      {operation &&
+        ["waiting", "confirmationRequired"].includes(
+          operation.execution.phase,
+        ) &&
+        operation.prepared.startBeforeUnixMs <= software.now && (
+          <Alert type="warning" title="本次操作已过期，未提交执行。" />
+        )}
       {failure && <Alert type="warning" title={failure} />}
       <Modal
         open={uninstall}
