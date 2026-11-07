@@ -475,7 +475,8 @@ export function createTaskCenter(
   async function reconcileControl() {
     if (!tasks || !state.pendingControl) return;
     const original = { ...state.pendingControl },
-      call = epoch;
+      call = epoch,
+      selection = selectionEpoch;
     const result = await tasks.controlStatus({
       reference: original.reference,
       id: original.id,
@@ -483,7 +484,8 @@ export function createTaskCenter(
     });
     if (!alive || call !== epoch) return;
     state.uncertain = result.disposition === "unknown";
-    if (result.created) await openTask(result.created);
+    if (result.created && selection === selectionEpoch && !state.entryView)
+      await openTask(result.created);
     if (!state.uncertain) {
       state.pendingControl = null;
       state.error =
@@ -510,12 +512,14 @@ export function createTaskCenter(
     };
     state.pendingControl = input;
     state.busy = true;
-    const call = epoch;
+    const call = epoch,
+      selection = selectionEpoch;
     try {
       const receipt = await tasks.control(input);
       if (!alive || call !== epoch) return;
       state.uncertain = receipt.disposition === "unknown";
-      if (receipt.created) await openTask(receipt.created);
+      if (receipt.created && selection === selectionEpoch && !state.entryView)
+        await openTask(receipt.created);
       if (!state.uncertain) {
         state.pendingControl = null;
         state.error =
@@ -541,7 +545,12 @@ export function createTaskCenter(
     } finally {
       if (alive && call === epoch) {
         state.busy = false;
-        if (action !== "retry") await openTask(task.reference, state.node);
+        if (
+          action !== "retry" &&
+          selection === selectionEpoch &&
+          !state.entryView
+        )
+          await openTask(task.reference, state.node);
       }
     }
   }
@@ -563,7 +572,8 @@ export function createTaskCenter(
     )
       return;
     state.busy = true;
-    const call = epoch;
+    const call = epoch,
+      selection = selectionEpoch;
     try {
       await port.confirm({
         request: item.request,
@@ -579,7 +589,8 @@ export function createTaskCenter(
     } finally {
       if (alive && call === epoch) {
         state.busy = false;
-        await openTask(requestRef(item.request));
+        if (selection === selectionEpoch && !state.entryView)
+          await openTask(requestRef(item.request));
       }
     }
   }

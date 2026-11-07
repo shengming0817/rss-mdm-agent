@@ -280,7 +280,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             }
             R::InvalidIdentity => Error::Identity,
             R::PermissionDenied => Error::Denied,
-            R::OperationConflict => Error::Conflict,
+            R::OperationConflict | R::ActivityCursorInvalidated => Error::Conflict,
             R::OperationUnknown | R::ServiceUnavailable => Error::Unavailable,
             _ => Error::Protocol,
         };

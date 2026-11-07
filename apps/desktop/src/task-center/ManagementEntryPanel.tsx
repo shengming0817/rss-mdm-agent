@@ -19,7 +19,7 @@ export function ManagementEntryPanel({
     entry.kind === "batch" ? deepClone(entry.value.page) : null,
   );
   const [loading, setLoading] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const [failure, setFailure] = useState<"stale" | "unavailable" | null>(null);
   const selector = entry.kind === "batch" ? entry.value.intent.selector : null;
 
   async function read(after: string | null) {
@@ -33,10 +33,17 @@ export function ManagementEntryPanel({
       });
       if (value?.kind !== "activities") throw Error("Invalid activity page");
       setPage(value.value.page);
-      setFailed(false);
-    } catch {
+      setFailure(null);
+    } catch (error) {
       setPage(null);
-      setFailed(true);
+      setFailure(
+        typeof error === "object" &&
+          error !== null &&
+          "code" in error &&
+          error.code === "navigation_cursor_stale"
+          ? "stale"
+          : "unavailable",
+      );
     } finally {
       setLoading(false);
     }
@@ -55,10 +62,14 @@ export function ManagementEntryPanel({
         }
         actions={<Button onClick={onClose}>返回管理活动</Button>}
       />
-      {failed && (
+      {failure && (
         <Alert
           type="warning"
-          title="无法读取原批次，请重新核对当前注册与权限。"
+          title={
+            failure === "stale"
+              ? "批次分页已失效，请重新读取批次。"
+              : "无法读取原批次，请重新核对当前注册与权限。"
+          }
         />
       )}
       {page && (
@@ -77,6 +88,19 @@ export function ManagementEntryPanel({
             locale={{ emptyText: "本页没有可见的批次活动" }}
             columns={[
               { title: "原活动", dataIndex: "id" },
+              {
+                title: "原关联",
+                render: (_, { links }) =>
+                  [
+                    links.member,
+                    links.policy,
+                    links.task,
+                    links.operation,
+                    links.retirement,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ") || "—",
+              },
               { title: "阶段", render: (_, fact) => activityLabel(fact.phase) },
               {
                 title: "受理",

@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Button, Modal, Progress, Tag, Timeline } from "antd";
 import { useSnapshot } from "valtio";
 import { deepClone } from "valtio/vanilla/utils";
 import { DetailDrawer, StatePanel } from "@rss-mdm-agent/ui";
 import type { Workspace } from "../state/workspace";
-import type { TaskAction, TaskDetail } from "../self-service/types";
+import type { TaskAction, TaskDetail, TaskRef } from "../self-service/types";
 import { ExecutionFacts, PolicyFacts } from "./PreparationFacts";
 import { taskKey, taskTitle } from "./controller";
 import {
@@ -45,15 +45,18 @@ export function TaskDetailDrawer({
           : null;
     else setIntent(null);
   }, [open]);
+  const focusStep = useCallback(() => {
+    selectedNode.current?.scrollIntoView?.({ block: "nearest" });
+    selectedNode.current?.focus({ preventScroll: true });
+  }, []);
   useEffect(() => {
-    if (open && state.node) {
-      selectedNode.current?.scrollIntoView?.({ block: "nearest" });
-      selectedNode.current?.focus({ preventScroll: true });
-    }
-  }, [open, state.node]);
+    if (open && state.node) focusStep();
+  }, [open, state.node, focusStep]);
   useEffect(() => {
     if (state.entryView) setIntent(null);
   }, [state.entryView]);
+  const openRelated = (reference: TaskRef) =>
+    void owner.openTask(reference, "", state.entryView ? "task" : null);
   const close = () => {
       setIntent(null);
       owner.closeTask();
@@ -89,6 +92,7 @@ export function TaskDetailDrawer({
         onClose={close}
         title="任务详情"
         description="原请求、执行过程与核实结果"
+        focusContent={focusStep}
         returnFocus={() => {
           const row = [
             ...document.querySelectorAll<HTMLButtonElement>(
@@ -218,7 +222,7 @@ export function TaskDetailDrawer({
                       <Button
                         type="link"
                         onClick={() =>
-                          void owner.openTask({
+                          openRelated({
                             kind: "request",
                             request: task.retryOf!,
                           })
@@ -482,13 +486,7 @@ export function TaskDetailDrawer({
                     <Button
                       key={taskKey(reference)}
                       type="link"
-                      onClick={() =>
-                        void owner.openTask(
-                          deepClone(reference),
-                          "",
-                          state.entryView ? "task" : null,
-                        )
-                      }
+                      onClick={() => openRelated(deepClone(reference))}
                     >
                       {referenceLabel(reference)}
                     </Button>

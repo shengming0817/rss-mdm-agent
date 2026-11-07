@@ -412,8 +412,8 @@ pub async fn dispatch<R: tauri::Runtime>(
             node: None,
             step_unavailable: false,
         }),
-        Reply::EntryStep { reference, node } => NavigationResponse::Task(TaskEntry {
-            reference,
+        Reply::EntryStep { value, node } => NavigationResponse::Task(TaskEntry {
+            reference: value.reference,
             step_unavailable: node.is_none(),
             node,
         }),
@@ -427,6 +427,14 @@ pub async fn dispatch<R: tauri::Runtime>(
             intent: batch_intent.ok_or_else(denied)?,
             page: value,
         }),
+        Reply::DataFailure {
+            reason: execution_contract::DataError::Conflict,
+        } if batch_intent.is_some() => {
+            return Err(super::super::self_service::error(
+                "navigation_cursor_stale",
+                "批次分页已失效，请重新读取",
+            ));
+        }
         _ => return Err(denied()),
     })
 }

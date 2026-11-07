@@ -367,6 +367,8 @@ impl<S: IdentityProvider> DeviceService<S> {
         after: Option<&str>,
         commands: &mut tokio::sync::mpsc::Receiver<Command>,
     ) -> Result<Reply, Error> {
+        // Supplementary step evidence shares the entry's interactive IPC budget.
+        let step_deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(2400);
         let reference = match &intent.selector {
             EntrySelector::LocalTool { name } => {
                 return Ok(Reply::LocalTool {
@@ -462,10 +464,11 @@ impl<S: IdentityProvider> DeviceService<S> {
                 .find(|node| node.id == step)
                 .map(|node| node.id.clone())
         } else {
-            self.resolve_entry_step(&detail, step, commands).await?
+            self.resolve_entry_step(&detail, step, step_deadline, commands)
+                .await?
         };
         Ok(Reply::EntryStep {
-            reference: detail.reference,
+            value: detail,
             node,
         })
     }
@@ -481,6 +484,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         &mut self,
         detail: &execution_app::tasks::TaskDetail,
         step: &str,
+        deadline: tokio::time::Instant,
         commands: &mut tokio::sync::mpsc::Receiver<Command>,
     ) -> Result<Option<String>, Error> {
         let TaskFacts::Execution(facts) = &detail.facts else {
@@ -499,8 +503,8 @@ impl<S: IdentityProvider> DeviceService<S> {
         };
         let task = uuid::Uuid::parse_str(task.as_str()).map_err(|_| Error::Protocol)?;
         let attempt = uuid::Uuid::parse_str(attempt.as_str()).map_err(|_| Error::Protocol)?;
-        let offered = tokio::time::timeout(
-            std::time::Duration::from_secs(4),
+        let offered = match tokio::time::timeout_at(
+            deadline,
             network(
                 self.client.offered_steps(task, attempt),
                 &mut self.core,
@@ -508,7 +512,11 @@ impl<S: IdentityProvider> DeviceService<S> {
             ),
         )
         .await
-        .map_err(|_| Error::Unavailable)??;
+        {
+            Ok(Ok(offered)) => offered,
+            Err(_) | Ok(Err(Error::Unavailable | Error::Network)) => return Ok(None),
+            Ok(Err(error)) => return Err(error),
+        };
         Ok(offered.and_then(|ids| {
             entry_step_node(
                 &ids,

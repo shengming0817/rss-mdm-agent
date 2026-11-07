@@ -6719,7 +6719,65 @@ async fn shared_views_keep_original_registration_and_indirect_batch_members() {
         c.policy_call(resolve(event, None)).await,
         Reply::EntryEvent { .. }
     ));
+    let task = uuid::Uuid::parse_str(&task).unwrap();
+    let attempt = uuid::Uuid::new_v4();
+    let old_attempt = uuid::Uuid::new_v4();
+    let activity = |id, phase, attempt, step| {
+        let mut item = fact(
+            id,
+            "execution",
+            serde_json::json!({
+                "task":task, "attempt":attempt, "steps":[step], "operations":[]
+            }),
+        );
+        item.phase = phase;
+        item
+    };
+    use rss_mdm_agent_wire::activities::ActivityPhase;
+    c._server.data.lock().unwrap().management_page = Some(page(
+        vec![
+            activity(
+                "execution:old-offer",
+                ActivityPhase::Offered,
+                old_attempt,
+                "old-step",
+            ),
+            activity(
+                "execution:result",
+                ActivityPhase::Result,
+                attempt,
+                "result-step",
+            ),
+            activity(
+                "execution:original-offer",
+                ActivityPhase::Offered,
+                attempt,
+                "original-step",
+            ),
+        ],
+        None,
+    ));
+    assert_eq!(
+        c.service.client.offered_steps(task, attempt).await.unwrap(),
+        Some(vec!["original-step".into()])
+    );
     let data = c._server.data.lock().unwrap();
+    let queries = data
+        .management_calls
+        .iter()
+        .map(|uri| {
+            url::form_urlencoded::parse(uri.split_once('?').unwrap().1.as_bytes())
+                .into_owned()
+                .collect::<std::collections::BTreeMap<_, _>>()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(queries.len(), 3);
+    assert_eq!(queries[0]["batch"], batch);
+    assert!(!queries[0].contains_key("cursor"));
+    assert_eq!(queries[1]["batch"], batch);
+    assert_eq!(queries[1]["cursor"], "next");
+    assert_eq!(queries[2]["task"], task.to_string());
+    assert_eq!(queries[2]["status"], "offered");
     assert_eq!(data.policy_event_calls, 0);
     assert!(data.start_ops.is_empty());
 }

@@ -2,7 +2,7 @@
 use execution_contract::{Digest, Id, RequestId, VersionedRef};
 use serde::{Deserialize, Serialize};
 /// Current desktop/system IPC. No negotiation or legacy parser exists.
-pub const IPC_VERSION: u8 = 9;
+pub const IPC_VERSION: u8 = 10;
 /// Current protected installation document format.
 pub const DEPLOYMENT_VERSION: u32 = 7;
 
@@ -976,8 +976,8 @@ pub enum Reply {
     },
     /// An authorized task and the result of locating its exact step.
     EntryStep {
-        /// Original authorized task.
-        reference: execution_app::tasks::TaskRef,
+        /// Original authorized task detail, retaining status and effect facts.
+        value: Box<execution_app::tasks::TaskDetail>,
         /// Exact existing desktop node, absent if the original step could not be located.
         node: Option<String>,
     },

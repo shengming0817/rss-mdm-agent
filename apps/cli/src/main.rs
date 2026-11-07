@@ -809,10 +809,10 @@ fn result_exit(result: &serde_json::Value) -> u8 {
             _ => 8,
         };
     }
-    let status = if result["kind"] == "task" && result["value"]["kind"] == "detail" {
-        &result["value"]["value"]
-    } else {
-        return 0;
+    let status = match result["kind"].as_str() {
+        Some("task") if result["value"]["kind"] == "detail" => &result["value"]["value"],
+        Some("entryStep") => &result["value"],
+        _ => return 0,
     };
     if status["facts"]["kind"] == "execution" {
         let execution = &status["facts"]["value"]["status"];
@@ -885,6 +885,9 @@ mod outcome_tests {
                 "facts":{"kind":"execution","value":{"status":typed}}
             }}});
             assert_eq!(result_exit(&reply), expected);
+            let step =
+                serde_json::json!({"kind":"entryStep","value":reply["value"]["value"],"node":null});
+            assert_eq!(result_exit(&step), expected);
         }
     }
 }
