@@ -329,7 +329,7 @@ impl EntryIntent {
             EntrySelector::Task { task, attempt }
                 if !canonical_uuid(task) || !canonical_uuid(attempt) =>
             {
-                return Err(EntryError)
+                return Err(EntryError);
             }
             EntrySelector::Activity { id } if !bounded(id) => return Err(EntryError),
             EntrySelector::Batch { id } if !canonical_uuid(id) => return Err(EntryError),
@@ -411,7 +411,19 @@ impl EntryIntent {
                 }
             }
         }
-        let value = decode(segments[3])?;
+        let value = match (segments[2], segments[3]) {
+            ("alias" | "event", "~.") => ".".into(),
+            ("alias" | "event", "~..") => "..".into(),
+            (kind, segment) => {
+                let value = decode(segment)?;
+                if matches!(kind, "alias" | "event")
+                    && matches!(value.as_str(), "." | ".." | "~." | "~..")
+                {
+                    return Err(EntryError);
+                }
+                value
+            }
+        };
         let selector = match segments[2] {
             "task" => EntrySelector::Task {
                 task: value,
@@ -487,6 +499,11 @@ impl EntryIntent {
             EntrySelector::Batch { id } => ("batch", id.clone()),
             EntrySelector::Task { task, .. } => ("task", task.clone()),
             EntrySelector::Sampling { query } => ("sampling", query.id.as_str().into()),
+        };
+        // The native URL receiver removes whole dot segments before it calls the parser.
+        let value = match (kind, value.as_str()) {
+            ("alias" | "event", "." | "..") => format!("~{value}"),
+            _ => value,
         };
         let action = match self.action {
             EntryAction::View => "view",

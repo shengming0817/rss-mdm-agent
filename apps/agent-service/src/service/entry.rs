@@ -1,5 +1,6 @@
 //! CLI and Deep Link consume the original business owners; no directory or journal lives here.
 use super::*;
+use execution_app::tasks::{TaskFacts, TaskOperation, TaskRef, TaskResponse};
 use execution_contract::*;
 use execution_ipc::{
     entry::{EntryContext, EntryOperation},
@@ -132,107 +133,35 @@ impl<S: IdentityProvider> DeviceService<S> {
                 self.data_command(command, &context, &origin, &input, commands)
                     .await
             }
-            EntryOperation::Resolve { selector } => match selector {
-                EntrySelector::LocalTool { name } => Ok(Reply::LocalTool {
-                    value: LocalToolDescriptor {
-                        name: *name,
-                        input_schema: name.schema(),
-                        node: name.node().into(),
-                    },
-                }),
-                EntrySelector::Node { id } if PAGE_NODES.contains(&id.as_str()) => {
-                    Ok(Reply::EntryNodes {
-                        value: vec![id.clone()],
-                    })
+            EntryOperation::Resolve { intent, after } => {
+                intent.validate().map_err(|_| Error::Protocol)?;
+                let namespace = self.entry_namespace();
+                if intent.action != EntryAction::View
+                    || (intent.namespace.is_some() && intent.namespace != namespace)
+                    || (after.is_some() && !matches!(intent.selector, EntrySelector::Batch { .. }))
+                {
+                    return Err(Error::Denied);
                 }
-                EntrySelector::Capability { selector } => Ok(Reply::PolicyResolved {
-                    value: Box::new(
-                        self.resolve_policy(&bound, &origin, selector.clone(), commands)
-                            .await?,
-                    ),
-                }),
-                EntrySelector::Request { request } => self.core.task_operation(
-                    command,
-                    &execution_app::tasks::TaskOperation::Detail(
-                        execution_app::tasks::TaskRef::Request {
-                            request: request.clone(),
-                        },
-                    ),
-                    &origin,
-                ),
-                EntrySelector::Sampling { query } => self.core.task_operation(
-                    command,
-                    &execution_app::tasks::TaskOperation::Detail(
-                        execution_app::tasks::TaskRef::Sampling {
-                            query: query.clone(),
-                        },
-                    ),
-                    &origin,
-                ),
-                EntrySelector::Activity { id } => {
-                    let scope = self.core.task_scope(command)?;
-                    let cache = network(
-                        self.client.management_detail(&scope, id),
-                        &mut self.core,
-                        commands,
-                    )
+                let reply = self
+                    .resolve_entry(command, intent, after.as_deref(), commands)
                     .await?;
-                    self.core.context(command)?;
-                    self.core.management = Some(cache);
-                    self.core.task_operation(
-                        command,
-                        &execution_app::tasks::TaskOperation::Detail(
-                            execution_app::tasks::TaskRef::Activity { id: id.clone() },
-                        ),
-                        &origin,
-                    )
-                }
-                EntrySelector::Batch { id } => {
-                    let value = network(
-                        self.client.management_page(Some(id), None, None, 64),
-                        &mut self.core,
-                        commands,
-                    )
-                    .await?;
-                    self.core.context(command)?;
-                    Ok(Reply::Activities { value })
-                }
-                EntrySelector::Task { task, attempt } => {
-                    let request = self
-                        .core
-                        .app
-                        .service_remote_request(&plan::id(task)?, &plan::id(attempt)?)
-                        .map_err(map_app_error)?
-                        .ok_or(Error::NotFound)?;
-                    self.core.task_operation(
-                        command,
-                        &execution_app::tasks::TaskOperation::Detail(
-                            execution_app::tasks::TaskRef::Request { request },
-                        ),
-                        &origin,
-                    )
-                }
-                EntrySelector::Event { .. } => Err(Error::Unsupported),
-                _ => Err(Error::Protocol),
-            },
+                self.check_entry_scope(command, &context, namespace.as_ref())?;
+                Ok(reply)
+            }
             EntryOperation::Activities {
-                batch,
                 related,
                 after,
                 limit,
             } => {
+                let namespace = self.entry_namespace().ok_or(Error::Identity)?;
                 let value = network(
-                    self.client.management_page(
-                        batch.as_deref(),
-                        related.as_deref(),
-                        after.as_deref(),
-                        *limit,
-                    ),
+                    self.client
+                        .management_page(None, related.as_deref(), after.as_deref(), *limit),
                     &mut self.core,
                     commands,
                 )
                 .await?;
-                self.core.context(command)?;
+                self.check_entry_scope(command, &context, Some(&namespace))?;
                 Ok(Reply::Activities { value })
             }
             EntryOperation::Invoke { intent, request } => {
@@ -417,6 +346,180 @@ impl<S: IdentityProvider> DeviceService<S> {
             EntryOperation::Checkin => unreachable!(),
         }
     }
+    fn check_entry_scope(
+        &self,
+        command: &Command,
+        context: &NativeContextRef,
+        namespace: Option<&EntryNamespace>,
+    ) -> Result<(), Error> {
+        if &self.core.context(command)?.context != context
+            || self.entry_namespace().as_ref() != namespace
+        {
+            return Err(Error::Identity);
+        }
+        Ok(())
+    }
+
+    async fn resolve_entry(
+        &mut self,
+        command: &Command,
+        intent: &EntryIntent,
+        after: Option<&str>,
+        commands: &mut tokio::sync::mpsc::Receiver<Command>,
+    ) -> Result<Reply, Error> {
+        let reference = match &intent.selector {
+            EntrySelector::LocalTool { name } => {
+                return Ok(Reply::LocalTool {
+                    value: LocalToolDescriptor {
+                        name: *name,
+                        input_schema: name.schema(),
+                        node: name.node().into(),
+                    },
+                });
+            }
+            EntrySelector::Node { id } => {
+                return Ok(Reply::EntryNodes {
+                    value: vec![id.clone()],
+                });
+            }
+            EntrySelector::Event { name } => return Ok(Reply::EntryEvent { name: name.clone() }),
+            EntrySelector::Batch { id } => {
+                let value = network(
+                    self.client.management_page(Some(id), None, after, 64),
+                    &mut self.core,
+                    commands,
+                )
+                .await?;
+                return Ok(Reply::Activities { value });
+            }
+            EntrySelector::Request { request } => TaskRef::Request {
+                request: request.clone(),
+            },
+            EntrySelector::Sampling { query } => TaskRef::Sampling {
+                query: query.clone(),
+            },
+            EntrySelector::Activity { id } => {
+                let scope = self.core.task_scope(command)?;
+                let cache = network(
+                    self.client.management_detail(&scope, id),
+                    &mut self.core,
+                    commands,
+                )
+                .await?;
+                self.core.context(command)?;
+                self.core.management = Some(cache);
+                TaskRef::Activity { id: id.clone() }
+            }
+            EntrySelector::Task { task, attempt } => TaskRef::Request {
+                request: self
+                    .entry_task_request(task, attempt)?
+                    .ok_or(Error::NotFound)?,
+            },
+            _ => return Err(Error::Unsupported),
+        };
+        let origin = ClientOrigin::Desktop {};
+        let reply =
+            self.core
+                .task_operation(command, &TaskOperation::Detail(reference), &origin)?;
+        let Some(step) = intent.step.as_deref() else {
+            return Ok(reply);
+        };
+        let Reply::Task {
+            value: TaskResponse::Detail(mut detail),
+        } = reply
+        else {
+            return Err(Error::Protocol);
+        };
+        if let TaskFacts::Management(fact) = &detail.facts {
+            if let Some((task, attempt)) = fact
+                .links
+                .task
+                .zip(fact.links.attempt)
+                .filter(|_| fact.links.steps.iter().any(|id| id == step))
+            {
+                if let Some(request) =
+                    self.entry_task_request(&task.to_string(), &attempt.to_string())?
+                {
+                    match self.core.task_operation(
+                        command,
+                        &TaskOperation::Detail(TaskRef::Request { request }),
+                        &origin,
+                    ) {
+                        Ok(Reply::Task {
+                            value: TaskResponse::Detail(value),
+                        }) => detail = value,
+                        Ok(_) => return Err(Error::Protocol),
+                        Err(Error::Denied | Error::NotFound) => {}
+                        Err(error) => return Err(error),
+                    }
+                }
+            }
+        }
+        let node = if matches!(intent.selector, EntrySelector::Request { .. }) {
+            detail
+                .nodes
+                .iter()
+                .find(|node| node.id == step)
+                .map(|node| node.id.clone())
+        } else {
+            self.resolve_entry_step(&detail, step, commands).await?
+        };
+        Ok(Reply::EntryStep {
+            reference: detail.reference,
+            node,
+        })
+    }
+
+    fn entry_task_request(&self, task: &str, attempt: &str) -> Result<Option<RequestId>, Error> {
+        self.core
+            .app
+            .service_remote_request(&plan::id(task)?, &plan::id(attempt)?)
+            .map_err(map_app_error)
+    }
+
+    async fn resolve_entry_step(
+        &mut self,
+        detail: &execution_app::tasks::TaskDetail,
+        step: &str,
+        commands: &mut tokio::sync::mpsc::Receiver<Command>,
+    ) -> Result<Option<String>, Error> {
+        let TaskFacts::Execution(facts) = &detail.facts else {
+            return Ok(None);
+        };
+        let execution_app::ExecutionSummary::SoftwareProgram { steps, .. } =
+            &facts.action.execution
+        else {
+            return Ok(None);
+        };
+        let Initiator::Backend { task, attempt, .. } = &facts.action.initiator else {
+            return Ok(None);
+        };
+        let Some(local_attempt) = &facts.status.attempt_id else {
+            return Ok(None);
+        };
+        let task = uuid::Uuid::parse_str(task.as_str()).map_err(|_| Error::Protocol)?;
+        let attempt = uuid::Uuid::parse_str(attempt.as_str()).map_err(|_| Error::Protocol)?;
+        let offered = tokio::time::timeout(
+            std::time::Duration::from_secs(4),
+            network(
+                self.client.offered_steps(task, attempt),
+                &mut self.core,
+                commands,
+            ),
+        )
+        .await
+        .map_err(|_| Error::Unavailable)??;
+        Ok(offered.and_then(|ids| {
+            entry_step_node(
+                &ids,
+                steps.len(),
+                local_attempt.as_str(),
+                step,
+                &detail.nodes,
+            )
+        }))
+    }
+
     fn check_machine_data(
         &mut self,
         command: &Command,
@@ -641,5 +744,65 @@ fn input_id(record: &BackendRequest) -> Result<uuid::Uuid, Error> {
     match &record.action {
         PreparedAction::Event { input, .. } => Ok(input.operation_id),
         _ => Err(Error::Protocol),
+    }
+}
+
+fn entry_step_node(
+    original: &[String],
+    frozen_count: usize,
+    local_attempt: &str,
+    step: &str,
+    nodes: &[execution_app::tasks::TaskNode],
+) -> Option<String> {
+    if original.len() != frozen_count {
+        return None;
+    }
+    let mut matches = original
+        .iter()
+        .enumerate()
+        .filter(|(_, id)| id.as_str() == step);
+    let (index, _) = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    let id = format!("step/{local_attempt}/{index}");
+    nodes
+        .iter()
+        .any(|node| node.id == id && node.parent.is_none())
+        .then_some(id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn historical_step_uses_the_original_index_and_only_an_existing_parent_node() {
+        use execution_app::tasks::TaskNode;
+        let nodes = [TaskNode {
+            id: "step/local-attempt/1".into(),
+            parent: None,
+            stage: "software-step".into(),
+            bytes: None,
+            total: None,
+            attempt: Some("local-attempt".into()),
+            reason: None,
+            exit_code: None,
+            detected: None,
+            quiescent: None,
+        }];
+        let original = ["prerequisite".into(), "install".into()];
+        assert_eq!(
+            entry_step_node(&original, 2, "local-attempt", "install", &nodes),
+            Some(nodes[0].id.clone()),
+        );
+        for (count, attempt, step) in [
+            (2, "local-attempt", "prerequisite"),
+            (2, "local-attempt", "unknown"),
+            (2, "other-attempt", "install"),
+            (3, "local-attempt", "install"),
+        ] {
+            assert!(entry_step_node(&original, count, attempt, step, &nodes).is_none());
+        }
     }
 }

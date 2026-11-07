@@ -65,29 +65,33 @@ function NativeEntryObserver({ workspace }: { workspace: Workspace }) {
       desktop.fixture ? undefined : nativeNavigation(),
       desktop.fixture ? undefined : listenNavigation,
       async (result: NavigationOutput) => {
-        if (
-          result.kind === "event" &&
-          result.value.selector.kind === "node" &&
-          result.value.action === "view"
-        ) {
-          const [page, section] = result.value.selector.id.split(".");
-          if (
-            ![
-              "home",
-              "assistant",
-              "software",
-              "tools",
-              "system",
-              "tasks",
-              "settings",
-            ].includes(page)
-          )
-            return false;
+        if (result.kind === "node" && result.value.kind === "node") {
+          const [page, section] = result.value.id.split(".");
           return workspace.navigation.select(page as PageId, section);
         }
+        if (result.kind === "sharedEvent" || result.kind === "activities") {
+          workspace.tasks.closeTask();
+          workspace.navigation.showManagementEntry(
+            result.kind === "sharedEvent"
+              ? { kind: "event", name: result.value }
+              : { kind: "batch", value: result.value },
+          );
+          return true;
+        }
         if (result.kind === "task") {
-          workspace.navigation.select("tasks", "history");
-          return (await workspace.tasks.openTask(result.value)) === "ready";
+          workspace.navigation.select(
+            "tasks",
+            result.value.reference.kind === "activity"
+              ? "management"
+              : "history",
+          );
+          return (
+            (await workspace.tasks.openTask(
+              result.value.reference,
+              result.value.node ?? "",
+              result.value.stepUnavailable ? "missing-step" : "task",
+            )) === "ready"
+          );
         }
         if (result.kind === "localTool") {
           if (result.value.kind === "software" && result.value.software) {

@@ -71,3 +71,29 @@ fn display_names_are_not_exact_tool_selectors() {
     assert!(EntrySelector::parse("alias", "Repair").is_ok());
     assert!(EntrySelector::parse("event", "Repair").is_ok());
 }
+
+#[test]
+fn dots_are_canonical_after_the_native_url_parser() {
+    let query = "device=fixture%20%2B%20%E6%B5%8B%E8%AF%95&generation=3&instance=17c72b26-774a-492c-9bf4-5e1c47c8501e&registration=360a2191-9d5f-4fea-9f5c-6ecb02394aad&tenant=534610c5-1c82-42b1-bc9d-4b834c973cb3";
+    for kind in ["alias", "event"] {
+        for name in [".", ".."] {
+            let uri = format!("rssmdm://view/v1/{kind}/~{name}?{query}");
+            let native = url::Url::parse(&uri).unwrap();
+            let intent = EntryIntent::parse(native.as_str()).unwrap();
+            assert_eq!(
+                serde_json::to_value(&intent.selector).unwrap(),
+                serde_json::to_value(EntrySelector::parse(kind, name).unwrap()).unwrap()
+            );
+            assert_eq!(intent.uri().unwrap(), uri);
+            for old in [
+                name.to_owned(),
+                name.replace('.', "%2E"),
+                format!("%7E{name}"),
+            ] {
+                assert!(
+                    EntryIntent::parse(&format!("rssmdm://view/v1/{kind}/{old}?{query}")).is_err()
+                );
+            }
+        }
+    }
+}

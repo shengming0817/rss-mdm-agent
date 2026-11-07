@@ -29,6 +29,7 @@ export function createEntryNavigation(
         const resolved = await port({
           kind: "resolve",
           intent: next.value.intent,
+          after: null,
         });
         if (!active) return;
         if (!(await open(resolved))) {

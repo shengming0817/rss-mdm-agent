@@ -260,15 +260,22 @@ mod tests {
             NavigationInstance::claim_named(None, move |uri| sender.send(uri).is_ok(), &name)
                 .unwrap()
                 .unwrap();
-        let uri = "rssmdm://view/v1/node/settings.account";
-        assert!(NavigationInstance::claim_named(
-            Some(uri),
-            |_| panic!("secondary received"),
-            &name
-        )
-        .unwrap()
-        .is_none());
-        assert_eq!(receiver.recv_timeout(Duration::from_secs(1)).unwrap(), uri);
+        let scope = "device=fixture&generation=3&instance=17c72b26-774a-492c-9bf4-5e1c47c8501e&registration=360a2191-9d5f-4fea-9f5c-6ecb02394aad&tenant=534610c5-1c82-42b1-bc9d-4b834c973cb3";
+        for uri in [
+            "rssmdm://view/v1/node/settings.account".to_owned(),
+            format!("rssmdm://view/v1/event/~..?{scope}"),
+            format!("rssmdm://view/v1/batch/11111111-1111-4111-8111-111111111111?{scope}"),
+            format!("rssmdm://view/v1/task/11111111-1111-4111-8111-111111111111?attempt=22222222-2222-4222-8222-222222222222&{scope}&step=install.1"),
+        ] {
+            assert!(NavigationInstance::claim_named(
+                Some(&uri),
+                |_| panic!("secondary received"),
+                &name
+            )
+            .unwrap()
+            .is_none());
+            assert_eq!(receiver.recv_timeout(Duration::from_secs(1)).unwrap(), uri);
+        }
         drop(primary);
         // A closed owner releases its lock and socket, allowing the same login to recover.
         assert!(NavigationInstance::claim_named(None, |_| true, &name)

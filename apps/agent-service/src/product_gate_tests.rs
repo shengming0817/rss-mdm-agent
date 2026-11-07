@@ -6598,6 +6598,133 @@ async fn task_history_first_page_merges_new_execution_and_latest_preparation_bef
 }
 
 #[tokio::test]
+async fn shared_views_keep_original_registration_and_indirect_batch_members() {
+    let _budget = crate::scenario_budget::enter();
+    use execution_contract::{EntryAction, EntryIntent, EntrySelector};
+    use execution_ipc::{entry::EntryOperation, host::Request};
+    use rss_mdm_agent_wire::activities::{ManagementActivity, ManagementActivityPage};
+    let mut c = Case::new(None).await;
+    c.device("entry-view-device").await;
+    let Reply::EntryContext { value } = c
+        .policy_call(Request::Entry {
+            input: EntryOperation::Attach,
+        })
+        .await
+    else {
+        panic!("current entry context");
+    };
+    let namespace = value.namespace.unwrap();
+    let batch = uuid::Uuid::new_v4().to_string();
+    let task = uuid::Uuid::new_v4().to_string();
+    let member = uuid::Uuid::new_v4().to_string();
+    let now = c._server.time.now().unwrap();
+    let fact = |id: &str, kind: &str, links: serde_json::Value| -> ManagementActivity {
+        serde_json::from_value(serde_json::json!({
+            "id":id, "source":"execution", "kind":kind, "phase":"accepted",
+            "recordedAt":now, "observedAt":now, "origin":"policy",
+            "target":{"device":namespace.device,"registration":namespace.registration,"generation":namespace.generation},
+            "links":links, "auditOutcome":"recorded"
+        })).unwrap()
+    };
+    let page = |items, next_cursor| ManagementActivityPage {
+        items,
+        next_cursor,
+        sync_cursor: "snapshot".into(),
+        as_of: now,
+        retained_from: None,
+        coverage: vec![],
+    };
+    c._server.data.lock().unwrap().management_page = Some(page(
+        vec![fact(
+            "execution:parent",
+            "batch",
+            serde_json::json!({
+                "batch":batch, "member":member, "steps":[], "operations":[{"kind":"run","id":task}]
+            }),
+        )],
+        Some("next".into()),
+    ));
+    let intent = EntryIntent {
+        action: EntryAction::View,
+        selector: EntrySelector::Batch { id: batch.clone() },
+        namespace: Some(namespace.clone()),
+        version: None,
+        revision: None,
+        step: None,
+        parameters: Default::default(),
+    };
+    let resolve = |intent, after| Request::Entry {
+        input: EntryOperation::Resolve { intent, after },
+    };
+    let Reply::Activities { value } = c.policy_call(resolve(intent.clone(), None)).await else {
+        panic!("batch page");
+    };
+    assert_eq!(value.items[0].links.batch.unwrap().to_string(), batch);
+    c._server.data.lock().unwrap().management_page = Some(page(
+        vec![
+            fact(
+                "execution:indirect",
+                "execution",
+                serde_json::json!({
+                    "task":task, "steps":[], "operations":[]
+                }),
+            ),
+            fact(
+                "execution:another-member",
+                "batch",
+                serde_json::json!({
+                    "batch":batch, "member":uuid::Uuid::new_v4(), "steps":[], "operations":[]
+                }),
+            ),
+        ],
+        None,
+    ));
+    let Reply::Activities {
+        value: continuation,
+    } = c
+        .policy_call(resolve(intent.clone(), value.next_cursor.clone()))
+        .await
+    else {
+        panic!("indirect child on the batch continuation");
+    };
+    assert_eq!(continuation.items.len(), 2);
+    assert!(continuation.items[0].links.batch.is_none());
+    assert_eq!(continuation.items[0].links.task.unwrap().to_string(), task);
+    let changed = uuid::Uuid::new_v4().to_string();
+    for index in 0..5 {
+        let mut stale = intent.clone();
+        let ns = stale.namespace.as_mut().unwrap();
+        match index {
+            0 => ns.instance = changed.clone(),
+            1 => ns.tenant = changed.clone(),
+            2 => ns.device = "another-device".into(),
+            3 => ns.registration = changed.clone(),
+            _ => ns.generation += 1,
+        }
+        assert!(!matches!(
+            c.policy_call(resolve(stale, value.next_cursor.clone()))
+                .await,
+            Reply::Activities { .. }
+        ));
+    }
+    let mut event = intent;
+    event.selector = EntrySelector::Event {
+        name: wire::PolicyEventName::parse("repair").unwrap(),
+    };
+    assert!(
+        matches!(c.policy_call(resolve(event.clone(), None)).await, Reply::EntryEvent { name } if name.as_str() == "repair")
+    );
+    event.action = EntryAction::Invoke;
+    assert!(!matches!(
+        c.policy_call(resolve(event, None)).await,
+        Reply::EntryEvent { .. }
+    ));
+    let data = c._server.data.lock().unwrap();
+    assert_eq!(data.policy_event_calls, 0);
+    assert!(data.start_ops.is_empty());
+}
+
+#[tokio::test]
 async fn entry_event_freezes_before_transport_and_recovers_the_same_request() {
     let _budget = crate::scenario_budget::enter();
     use execution_contract::{EntryAction, EntryIntent, EntrySelector};

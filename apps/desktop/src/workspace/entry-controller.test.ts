@@ -42,10 +42,10 @@ it("suppresses late resolved targets after identity retirement", async () => {
     owner = createEntryNavigation(port, async () => () => {}, open),
     starting = owner.start();
   await vi.waitFor(() =>
-    expect(port).toHaveBeenCalledWith({ kind: "resolve", intent }),
+    expect(port).toHaveBeenCalledWith({ kind: "resolve", intent, after: null }),
   );
   owner.dispose();
-  resolved.resolve({ kind: "event", value: intent });
+  resolved.resolve({ kind: "node", value: intent.selector });
   await starting;
   expect(open).not.toHaveBeenCalled();
   expect(
@@ -62,7 +62,8 @@ it("keeps unsupported deliveries pending until explicitly dismissed and never su
         kind: "pending",
         value: pending ? { id: "original", intent } : null,
       };
-    if (input.kind === "resolve") return { kind: "event", value: intent };
+    if (input.kind === "resolve")
+      return { kind: "node", value: intent.selector };
     if (input.kind === "ack") {
       expect(input.id).toBe("original");
       pending = false;
@@ -98,7 +99,8 @@ it("coalesces native notifications while opening a target and acknowledges only 
           kind: "pending",
           value: pending ? { id: "original", intent } : null,
         };
-      if (input.kind === "resolve") return { kind: "event", value: intent };
+      if (input.kind === "resolve")
+        return { kind: "node", value: intent.selector };
       if (input.kind === "ack") {
         pending = false;
         return { kind: "done" };

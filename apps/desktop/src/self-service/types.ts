@@ -28,19 +28,13 @@ export type NavigationOperation =
     }
   | {
       intent: EntryIntent;
+      after: string | null;
       kind: "resolve";
     }
   | {
       intent: EntryIntent;
       request: RequestId;
       kind: "submit";
-    }
-  | {
-      batch: string | null;
-      related: string | null;
-      after: string | null;
-      limit: number;
-      kind: "activities";
     }
   | {
       kind: "nodes";
@@ -222,15 +216,19 @@ export type NavigationResponse =
     }
   | {
       kind: "task";
-      value: TaskRef;
+      value: TaskEntry;
     }
   | {
       kind: "activities";
-      value: ManagementActivityPage;
+      value: ActivityEntry;
     }
   | {
-      kind: "event";
-      value: EntryIntent;
+      kind: "sharedEvent";
+      value: PolicyEventName;
+    }
+  | {
+      kind: "node";
+      value: EntrySelector;
     }
   | {
       kind: "localTool";
@@ -2814,6 +2812,23 @@ export interface TaskResource {
    * Exact selected variant.
    */
   variant: string;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "TaskEntry".
+ */
+export interface TaskEntry {
+  reference: TaskRef;
+  node: string | null;
+  stepUnavailable: boolean;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "ActivityEntry".
+ */
+export interface ActivityEntry {
+  intent: EntryIntent;
+  page: ManagementActivityPage;
 }
 /**
  * Snapshot history page or incremental page from the same authorized activity projection.

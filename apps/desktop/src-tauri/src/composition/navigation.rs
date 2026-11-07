@@ -1,6 +1,9 @@
 //! Bounded native navigation queue. Business identity and execution stay with the service.
 use execution_contract::{EntryAction, EntryIntent, EntrySelector, LocalTool};
-use execution_ipc::{entry::EntryOperation, host::Reply};
+use execution_ipc::{
+    entry::{EntryContext, EntryOperation},
+    host::Reply,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -196,16 +199,11 @@ pub enum NavigationOperation {
     },
     Resolve {
         intent: EntryIntent,
+        after: Option<String>,
     },
     Submit {
         intent: EntryIntent,
         request: execution_contract::RequestId,
-    },
-    Activities {
-        batch: Option<String>,
-        related: Option<String>,
-        after: Option<String>,
-        limit: u16,
     },
     Nodes,
 }
@@ -217,11 +215,32 @@ pub enum NavigationResponse {
     Uri(String),
     Nodes(Vec<String>),
     Policy(Box<rss_mdm_agent_wire::runtime::SelfServiceDirectoryItem>),
-    Task(execution_app::tasks::TaskRef),
-    Activities(rss_mdm_agent_wire::activities::ManagementActivityPage),
-    Event(execution_contract::EntryIntent),
+    Task(TaskEntry),
+    Activities(ActivityEntry),
+    SharedEvent(rss_mdm_agent_wire::runtime::PolicyEventName),
+    Node(EntrySelector),
     LocalTool(LocalPreparation),
     Request(Box<execution_contract::BackendRequest>),
+}
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskEntry {
+    reference: execution_app::tasks::TaskRef,
+    node: Option<String>,
+    step_unavailable: bool,
+}
+#[derive(Serialize, JsonSchema)]
+pub struct ActivityEntry {
+    intent: EntryIntent,
+    page: rss_mdm_agent_wire::activities::ManagementActivityPage,
+}
+async fn entry_context(
+    execution: &super::execution::ExecutionHandle,
+) -> super::super::self_service::Result<EntryContext> {
+    match execution.entry(EntryOperation::Attach).await? {
+        Reply::EntryContext { value } => Ok(value),
+        _ => Err(denied()),
+    }
 }
 fn denied() -> super::super::self_service::ServiceError {
     super::super::self_service::error(
@@ -255,7 +274,7 @@ pub async fn dispatch<R: tauri::Runtime>(
             return Ok(NavigationResponse::Done);
         }
         NavigationOperation::Format { intent } => {
-            return Ok(NavigationResponse::Uri(intent.uri().map_err(|_| denied())?))
+            return Ok(NavigationResponse::Uri(intent.uri().map_err(|_| denied())?));
         }
         NavigationOperation::Nodes => {
             return Ok(NavigationResponse::Nodes(
@@ -263,7 +282,7 @@ pub async fn dispatch<R: tauri::Runtime>(
                     .iter()
                     .map(|v| (*v).into())
                     .collect(),
-            ))
+            ));
         }
         NavigationOperation::Link {
             ref selector,
@@ -284,11 +303,13 @@ pub async fn dispatch<R: tauri::Runtime>(
                 return Ok(NavigationResponse::Uri(uri));
             }
         }
-        NavigationOperation::Resolve { ref intent }
-            if matches!(
-                intent.selector,
-                EntrySelector::Node { .. } | EntrySelector::LocalTool { .. }
-            ) && intent.namespace.is_none() =>
+        NavigationOperation::Resolve {
+            ref intent,
+            after: None,
+        } if matches!(
+            intent.selector,
+            EntrySelector::Node { .. } | EntrySelector::LocalTool { .. }
+        ) && intent.namespace.is_none() =>
         {
             intent.validate().map_err(|_| denied())?;
             if matches!(intent.selector, EntrySelector::LocalTool { .. })
@@ -298,7 +319,7 @@ pub async fn dispatch<R: tauri::Runtime>(
                     local_preparation(intent).map_err(|_| denied())?,
                 ));
             }
-            return Ok(NavigationResponse::Event(intent.clone()));
+            return Ok(NavigationResponse::Node(intent.selector.clone()));
         }
         _ => {}
     }
@@ -307,11 +328,7 @@ pub async fn dispatch<R: tauri::Runtime>(
         .ok_or_else(denied)?;
     let generation = generation.ok_or_else(denied)?;
     let execution = runtime.execution_for(&generation).await?;
-    let attach = execution.entry(EntryOperation::Attach).await?;
-    let Reply::EntryContext { value: context } = attach else {
-        return Err(denied());
-    };
-    runtime.current(&generation)?;
+    let mut batch_intent = None;
     let reply = match input {
         NavigationOperation::Link {
             selector,
@@ -319,6 +336,8 @@ pub async fn dispatch<R: tauri::Runtime>(
             revision,
             step,
         } => {
+            let context = entry_context(&execution).await?;
+            runtime.current(&generation)?;
             let mut intent = EntryIntent {
                 action: EntryAction::View,
                 selector,
@@ -343,58 +362,41 @@ pub async fn dispatch<R: tauri::Runtime>(
             }
             return Ok(NavigationResponse::Uri(intent.uri().map_err(|_| denied())?));
         }
-        NavigationOperation::Resolve { intent } => {
+        NavigationOperation::Resolve { intent, after } => {
             intent.validate().map_err(|_| denied())?;
-            if intent.namespace.is_some() && intent.namespace != context.namespace {
-                return Err(denied());
-            }
             match &intent.selector {
-                EntrySelector::Node { .. }
-                | EntrySelector::Event { .. }
-                | EntrySelector::LocalTool { .. } => {
-                    if matches!(intent.selector, EntrySelector::LocalTool { .. })
-                        && intent.action == EntryAction::Invoke
-                    {
-                        return Ok(NavigationResponse::LocalTool(
-                            local_preparation(&intent).map_err(|_| denied())?,
-                        ));
+                EntrySelector::LocalTool { .. } if intent.action == EntryAction::Invoke => {
+                    let context = entry_context(&execution).await?;
+                    runtime.current(&generation)?;
+                    if after.is_some() || intent.namespace != context.namespace {
+                        return Err(denied());
                     }
-                    return Ok(NavigationResponse::Event(intent));
+                    return Ok(NavigationResponse::LocalTool(
+                        local_preparation(&intent).map_err(|_| denied())?,
+                    ));
                 }
-                _ => {}
-            }
-            if matches!(intent.selector, EntrySelector::Capability { .. }) {
-                execution.entry(EntryOperation::Preview { intent }).await?
-            } else {
-                execution
-                    .entry(EntryOperation::Resolve {
-                        selector: intent.selector,
-                    })
-                    .await?
+                EntrySelector::Capability { .. } if after.is_none() => {
+                    execution.entry(EntryOperation::Preview { intent }).await?
+                }
+                _ => {
+                    if matches!(intent.selector, EntrySelector::Batch { .. }) {
+                        batch_intent = Some(intent.clone());
+                    }
+                    execution
+                        .entry(EntryOperation::Resolve { intent, after })
+                        .await?
+                }
             }
         }
         NavigationOperation::Submit { intent, request } => {
             intent.validate().map_err(|_| denied())?;
+            let context = entry_context(&execution).await?;
+            runtime.current(&generation)?;
             if intent.namespace != context.namespace || intent.action != EntryAction::Invoke {
                 return Err(denied());
             }
             execution
                 .entry(EntryOperation::Invoke { intent, request })
-                .await?
-        }
-        NavigationOperation::Activities {
-            batch,
-            related,
-            after,
-            limit,
-        } => {
-            execution
-                .entry(EntryOperation::Activities {
-                    batch,
-                    related,
-                    after,
-                    limit,
-                })
                 .await?
         }
         _ => return Err(denied()),
@@ -405,8 +407,26 @@ pub async fn dispatch<R: tauri::Runtime>(
         Reply::PolicyRequest { value } => NavigationResponse::Request(value),
         Reply::Task {
             value: execution_app::tasks::TaskResponse::Detail(value),
-        } => NavigationResponse::Task(value.reference),
-        Reply::Activities { value } => NavigationResponse::Activities(value),
+        } => NavigationResponse::Task(TaskEntry {
+            reference: value.reference,
+            node: None,
+            step_unavailable: false,
+        }),
+        Reply::EntryStep { reference, node } => NavigationResponse::Task(TaskEntry {
+            reference,
+            step_unavailable: node.is_none(),
+            node,
+        }),
+        Reply::EntryEvent { name } => NavigationResponse::SharedEvent(name),
+        Reply::EntryNodes { value } if value.len() == 1 => {
+            NavigationResponse::Node(EntrySelector::Node {
+                id: value.into_iter().next().ok_or_else(denied)?,
+            })
+        }
+        Reply::Activities { value } => NavigationResponse::Activities(ActivityEntry {
+            intent: batch_intent.ok_or_else(denied)?,
+            page: value,
+        }),
         _ => return Err(denied()),
     })
 }
@@ -475,6 +495,33 @@ mod tests {
             assert!(prepared(tool, input).is_err());
         }
     }
+    #[test]
+    fn shared_view_addresses_reach_the_same_native_queue() {
+        let state = Navigation::default();
+        let query = "device=fixture%20%2B%20%E6%B5%8B%E8%AF%95&generation=3&instance=17c72b26-774a-492c-9bf4-5e1c47c8501e&registration=360a2191-9d5f-4fea-9f5c-6ecb02394aad&tenant=534610c5-1c82-42b1-bc9d-4b834c973cb3";
+        for uri in [
+            format!("rssmdm://view/v1/event/~..?{query}"),
+            format!("rssmdm://view/v1/batch/11111111-1111-4111-8111-111111111111?{query}"),
+            format!(
+                "rssmdm://view/v1/task/11111111-1111-4111-8111-111111111111?attempt=22222222-2222-4222-8222-222222222222&{query}&step=install.1"
+            ),
+        ] {
+            let received = url::Url::parse(&uri).unwrap();
+            assert!(state.receive(received.as_str()));
+            assert!(state.receive(&uri)); // Repeated OS delivery of the same CLI URL.
+        }
+        let queue = state.queue.lock().unwrap();
+        assert_eq!(queue.len(), 3);
+        assert!(
+            matches!(&queue[0].delivery.intent.selector, EntrySelector::Event { name } if name.as_str() == "..")
+        );
+        assert!(matches!(
+            &queue[1].delivery.intent.selector,
+            EntrySelector::Batch { .. }
+        ));
+        assert_eq!(queue[2].delivery.intent.step.as_deref(), Some("install.1"));
+    }
+
     #[test]
     fn navigation_is_bounded_and_never_transforms_a_delivery_into_a_submission() {
         let state = Navigation::default();

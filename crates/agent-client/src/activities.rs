@@ -2,7 +2,8 @@
 use crate::http as h;
 use crate::{store::encode, Client, Clock, Error, IdentityProvider};
 use rss_mdm_agent_wire::activities::{
-    ActivityCoverage, ManagementActivity, ManagementActivityDetail, ManagementActivityPage,
+    ActivityCoverage, ActivityPhase, ManagementActivity, ManagementActivityDetail,
+    ManagementActivityPage,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -61,18 +62,75 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 query.append_pair(key, value);
             }
         }
-        let value: ManagementActivityPage = self
-            .employee_json::<h::Activities>(None, &[], Some(&query.finish()), None)
+        // The producer's batch filter includes exact operation edges from its entire
+        // authorized snapshot. A member can omit a batch ID and its parent can be on another page.
+        self.read_activity_page(&query.finish(), after, limit).await
+    }
+
+    /// Locate the immutable step order recorded for one original attempt.
+    pub async fn offered_steps(
+        &self,
+        task: uuid::Uuid,
+        attempt: uuid::Uuid,
+    ) -> Result<Option<Vec<String>>, Error> {
+        let registration = self.registration()?;
+        let mut after = None;
+        let mut seen = std::collections::BTreeSet::new();
+        loop {
+            let mut query = url::form_urlencoded::Serializer::new(String::new());
+            query
+                .append_pair("limit", "64")
+                .append_pair("view", "summary")
+                .append_pair("kind", "execution")
+                .append_pair("status", "offered")
+                .append_pair("task", &task.to_string());
+            if let Some(cursor) = after.as_deref() {
+                query.append_pair("cursor", cursor);
+            }
+            let page = self
+                .read_activity_page(&query.finish(), after.as_deref(), 64)
+                .await?;
+            if page.items.iter().any(|fact| fact.links.task != Some(task)) {
+                return Err(Error::Untrusted);
+            }
+            if let Some(fact) = page.items.into_iter().find(|fact| {
+                fact.links.attempt == Some(attempt)
+                    && fact.phase == ActivityPhase::Offered
+                    && fact.target.as_ref().is_some_and(|target| {
+                        target.device == registration.device_id
+                            && target.registration == registration.registration_id
+                            && u64::try_from(target.generation).ok()
+                                == Some(registration.generation)
+                    })
+                    && !fact.links.steps.is_empty()
+            }) {
+                return Ok(Some(fact.links.steps));
+            }
+            let Some(cursor) = page.next_cursor else {
+                return Ok(None);
+            };
+            if !seen.insert(cursor.clone()) {
+                return Err(Error::Untrusted);
+            }
+            after = Some(cursor);
+        }
+    }
+
+    async fn read_activity_page(
+        &self,
+        query: &str,
+        after: Option<&str>,
+        limit: u16,
+    ) -> Result<ManagementActivityPage, Error> {
+        let value = self
+            .employee_json::<h::Activities>(None, &[], Some(query), None)
             .await?;
         if value.items.len() > usize::from(limit)
             || value.as_of < 0
             || value
                 .next_cursor
                 .as_deref()
-                .is_some_and(|v| Some(v) == after || v.len() > 4096)
-            || value.items.iter().any(|v| {
-                batch.is_some_and(|id| v.links.batch.map(|v| v.to_string()).as_deref() != Some(id))
-            })
+                .is_some_and(|v| v.is_empty() || Some(v) == after || v.len() > 4096)
         {
             return Err(Error::Untrusted);
         }

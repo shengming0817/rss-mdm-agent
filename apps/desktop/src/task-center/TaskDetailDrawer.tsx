@@ -34,6 +34,7 @@ export function TaskDetailDrawer({
       action: TaskAction;
     } | null>(null),
     trigger = useRef<HTMLElement | null>(null),
+    selectedNode = useRef<HTMLDivElement>(null),
     now = useTaskClock(open),
     display = task ? presentTask(task) : null;
   useEffect(() => {
@@ -44,6 +45,15 @@ export function TaskDetailDrawer({
           : null;
     else setIntent(null);
   }, [open]);
+  useEffect(() => {
+    if (open && state.node) {
+      selectedNode.current?.scrollIntoView?.({ block: "nearest" });
+      selectedNode.current?.focus({ preventScroll: true });
+    }
+  }, [open, state.node]);
+  useEffect(() => {
+    if (state.entryView) setIntent(null);
+  }, [state.entryView]);
   const close = () => {
       setIntent(null);
       owner.closeTask();
@@ -51,7 +61,11 @@ export function TaskDetailDrawer({
     read = () => {
       const reference = owner.state.requested;
       if (reference)
-        void owner.openTask(deepClone(reference), owner.state.node);
+        void owner.openTask(
+          deepClone(reference),
+          owner.state.node,
+          owner.state.entryView,
+        );
     },
     stale =
       !!intent &&
@@ -62,6 +76,7 @@ export function TaskDetailDrawer({
           JSON.stringify(intent.task.revision) ||
         !task.allowedActions.includes(intent.action)),
     blocked =
+      !!state.entryView ||
       state.busy ||
       state.detailLoading ||
       !!state.detailError ||
@@ -95,18 +110,19 @@ export function TaskDetailDrawer({
             >
               查询原请求
             </Button>
-            {task?.allowedActions.map((action) => (
-              <Button
-                key={action}
-                danger={action === "cancel"}
-                disabled={blocked}
-                onClick={() =>
-                  setIntent({ task: deepClone(task) as TaskDetail, action })
-                }
-              >
-                {actionLabels[action]}
-              </Button>
-            ))}
+            {!state.entryView &&
+              task?.allowedActions.map((action) => (
+                <Button
+                  key={action}
+                  danger={action === "cancel"}
+                  disabled={blocked}
+                  onClick={() =>
+                    setIntent({ task: deepClone(task) as TaskDetail, action })
+                  }
+                >
+                  {actionLabels[action]}
+                </Button>
+              ))}
           </div>
         }
       >
@@ -261,30 +277,31 @@ export function TaskDetailDrawer({
                       description="请在原 AI 动作卡片核对冻结参数与期限后确认；本人确认仍不能覆盖企业拒绝或 OS 权限。"
                     />
                   )}
-                  {task.facts.value.action.kind === "offered" && (
-                    <Button
-                      type="primary"
-                      disabled={
-                        blocked ||
-                        !task.humanConfirmation ||
-                        task.facts.value.state !== "awaitingConfirmation" ||
-                        task.facts.value.action.offer.expiresAt * 1000 <= now
-                      }
-                      onClick={() => {
-                        const selected = owner.state.selected;
-                        if (
-                          selected?.humanConfirmation &&
-                          selected.facts.kind === "preparation" &&
-                          selected.facts.value.action.kind === "offered"
-                        )
-                          void owner.confirmPreparation(
-                            deepClone(selected.facts.value.action.offer),
-                          );
-                      }}
-                    >
-                      确认原准备的具体动作
-                    </Button>
-                  )}
+                  {!state.entryView &&
+                    task.facts.value.action.kind === "offered" && (
+                      <Button
+                        type="primary"
+                        disabled={
+                          blocked ||
+                          !task.humanConfirmation ||
+                          task.facts.value.state !== "awaitingConfirmation" ||
+                          task.facts.value.action.offer.expiresAt * 1000 <= now
+                        }
+                        onClick={() => {
+                          const selected = owner.state.selected;
+                          if (
+                            selected?.humanConfirmation &&
+                            selected.facts.kind === "preparation" &&
+                            selected.facts.value.action.kind === "offered"
+                          )
+                            void owner.confirmPreparation(
+                              deepClone(selected.facts.value.action.offer),
+                            );
+                        }}
+                      >
+                        确认原准备的具体动作
+                      </Button>
+                    )}
                 </>
               )}
               {task.facts.kind === "management" && (
@@ -353,7 +370,15 @@ export function TaskDetailDrawer({
                       color: state.node === node.id ? "blue" : "gray",
                       title: <strong>{nodeLabel(node)}</strong>,
                       content: (
-                        <div className="rss-task-node" data-node={node.id}>
+                        <div
+                          className="rss-task-node"
+                          data-node={node.id}
+                          aria-current={state.node === node.id || undefined}
+                          ref={
+                            state.node === node.id ? selectedNode : undefined
+                          }
+                          tabIndex={state.node === node.id ? -1 : undefined}
+                        >
                           <p className="rss-reference">{node.id}</p>
                           {node.parent && <p>所属节点：{node.parent}</p>}
                           {node.attempt && (
@@ -457,7 +482,13 @@ export function TaskDetailDrawer({
                     <Button
                       key={taskKey(reference)}
                       type="link"
-                      onClick={() => void owner.openTask(deepClone(reference))}
+                      onClick={() =>
+                        void owner.openTask(
+                          deepClone(reference),
+                          "",
+                          state.entryView ? "task" : null,
+                        )
+                      }
                     >
                       {referenceLabel(reference)}
                     </Button>
@@ -487,7 +518,7 @@ export function TaskDetailDrawer({
         </div>
       </DetailDrawer>
       <Modal
-        open={!!intent && open}
+        open={!!intent && open && !state.entryView}
         title={intent ? `${actionLabels[intent.action]}？` : "核对原任务操作"}
         onCancel={() => setIntent(null)}
         okText={intent ? actionLabels[intent.action] : "确认"}

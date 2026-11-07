@@ -119,6 +119,7 @@ export function createTaskCenter(
     requested: null as TaskRef | null,
     detailLoading: false,
     detailError: "",
+    entryView: null as "task" | "missing-step" | null,
     next: null as string | null,
     loading: false,
     loaded: false,
@@ -194,6 +195,7 @@ export function createTaskCenter(
     state.requested = null;
     state.detailLoading = false;
     state.detailError = "";
+    state.entryView = null;
     state.next = null;
     state.pendingControl = null;
     state.node = "";
@@ -413,12 +415,18 @@ export function createTaskCenter(
     state.selected = null;
     state.detailLoading = false;
     state.detailError = "";
+    state.entryView = null;
     state.node = "";
   }
-  async function openTask(reference: TaskRef, node = "") {
+  async function openTask(
+    reference: TaskRef,
+    node = "",
+    entryView: typeof state.entryView = null,
+  ) {
     const call = epoch,
       selection = ++selectionEpoch;
     state.requested = deepClone(reference);
+    state.entryView = entryView;
     state.detailLoading = true;
     state.detailError = "";
     if (
@@ -451,6 +459,8 @@ export function createTaskCenter(
       state.selected = value;
       state.taskId = reference.kind === "request" ? reference.request : "";
       state.node = node;
+      if (entryView === "missing-step")
+        state.detailError = "未找到原尝试的步骤证据，已打开原记录";
       return "ready" as const;
     } catch {
       if (!alive || call !== epoch || selection !== selectionEpoch)
@@ -575,7 +585,8 @@ export function createTaskCenter(
   }
   async function refresh() {
     await load();
-    if (state.selected) await openTask(state.selected.reference, state.node);
+    if (state.selected && !state.detailLoading)
+      await openTask(state.selected.reference, state.node, state.entryView);
     if (state.pendingControl) await reconcileControl().catch(() => {});
   }
   async function setQuery(query: Partial<TaskQuery>) {

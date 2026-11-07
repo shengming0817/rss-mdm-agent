@@ -1,7 +1,11 @@
 import type { NavigationTarget } from "../workspace/page-navigation";
 import { proxy } from "valtio/vanilla";
 import { deepClone } from "valtio/vanilla/utils";
-import type { LocalPreparation } from "../self-service/types";
+import type { ActivityEntry, LocalPreparation } from "../self-service/types";
+
+export type ManagementEntry =
+  | { kind: "event"; name: string }
+  | { kind: "batch"; value: ActivityEntry };
 
 export const modules = [
   ["home", "主页"],
@@ -63,8 +67,10 @@ export function createNavigation() {
     historyOpen: false,
     searchOpen: false,
     policyOpen: false,
+    managementEntry: null as { id: number; entry: ManagementEntry } | null,
     preparation: null as { id: number; input: LocalPreparation } | null,
   });
+  let managementEntryId = 0;
   return {
     state,
     select(page: PageId, section?: string) {
@@ -75,8 +81,17 @@ export function createNavigation() {
       )
         return false;
       if (section !== undefined) state.selected[page] = section;
+      state.managementEntry = null;
       state.page = page;
       return true;
+    },
+    showManagementEntry(entry: ManagementEntry) {
+      state.managementEntry = { id: ++managementEntryId, entry };
+      state.selected.tasks = "management";
+      state.page = "tasks";
+    },
+    closeManagementEntry() {
+      state.managementEntry = null;
     },
     cycle() {
       state.layoutStep = ((state.layoutStep + 1) % 4) as LayoutStep;
@@ -92,6 +107,7 @@ export function createNavigation() {
       state.policyOpen = false;
     },
     stage(input: LocalPreparation) {
+      state.managementEntry = null;
       state.preparation = {
         id: (state.preparation?.id ?? 0) + 1,
         input: deepClone(input),
