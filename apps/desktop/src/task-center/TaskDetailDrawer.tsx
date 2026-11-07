@@ -56,7 +56,7 @@ export function TaskDetailDrawer({
     if (state.entryView) setIntent(null);
   }, [state.entryView]);
   const openRelated = (reference: TaskRef) =>
-    void owner.openTask(reference, "", state.entryView ? "task" : null);
+    void owner.openTask(reference, "", state.entryView ? {} : null);
   const close = () => {
       setIntent(null);
       owner.closeTask();
@@ -364,6 +364,12 @@ export function TaskDetailDrawer({
               )}
               <div>
                 <h3>处理过程</h3>
+                {state.entryView?.step && (
+                  <p className="rss-reference">
+                    原步骤：{state.entryView.step}
+                    {state.node ? "" : " · 尚无本机进度证据"}
+                  </p>
+                )}
                 <p className="rss-muted">
                   只显示原服务保留的节点；未提供的步骤或时间不补造。
                 </p>

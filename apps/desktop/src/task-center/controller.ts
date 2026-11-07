@@ -119,7 +119,7 @@ export function createTaskCenter(
     requested: null as TaskRef | null,
     detailLoading: false,
     detailError: "",
-    entryView: null as "task" | "missing-step" | null,
+    entryView: null as { step?: string; unavailable?: boolean } | null,
     next: null as string | null,
     loading: false,
     loaded: false,
@@ -459,7 +459,7 @@ export function createTaskCenter(
       state.selected = value;
       state.taskId = reference.kind === "request" ? reference.request : "";
       state.node = node;
-      if (entryView === "missing-step")
+      if (entryView?.unavailable)
         state.detailError = "未找到原尝试的步骤证据，已打开原记录";
       return "ready" as const;
     } catch {

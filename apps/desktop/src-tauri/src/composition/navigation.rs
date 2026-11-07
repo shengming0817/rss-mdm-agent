@@ -1,7 +1,7 @@
 //! Bounded native navigation queue. Business identity and execution stay with the service.
 use execution_contract::{EntryAction, EntryIntent, EntrySelector, LocalTool};
 use execution_ipc::{
-    entry::{EntryContext, EntryOperation},
+    entry::{EntryContext, EntryOperation, OriginalStep},
     host::Reply,
 };
 use schemars::JsonSchema;
@@ -226,7 +226,7 @@ pub enum NavigationResponse {
 #[serde(rename_all = "camelCase")]
 pub struct TaskEntry {
     reference: execution_app::tasks::TaskRef,
-    node: Option<String>,
+    step: Option<OriginalStep>,
     step_unavailable: bool,
 }
 #[derive(Serialize, JsonSchema)]
@@ -409,13 +409,13 @@ pub async fn dispatch<R: tauri::Runtime>(
             value: execution_app::tasks::TaskResponse::Detail(value),
         } => NavigationResponse::Task(TaskEntry {
             reference: value.reference,
-            node: None,
+            step: None,
             step_unavailable: false,
         }),
-        Reply::EntryStep { value, node } => NavigationResponse::Task(TaskEntry {
+        Reply::EntryStep { value, step } => NavigationResponse::Task(TaskEntry {
             reference: value.reference,
-            step_unavailable: node.is_none(),
-            node,
+            step_unavailable: step.is_none(),
+            step,
         }),
         Reply::EntryEvent { name } => NavigationResponse::SharedEvent(name),
         Reply::EntryNodes { value } if value.len() == 1 => {

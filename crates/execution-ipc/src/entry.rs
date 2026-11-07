@@ -114,6 +114,16 @@ impl CliPolicy {
         self.machine_actions.contains(&action)
     }
 }
+/// A step proven by the original attempt, with a local checkpoint only when observed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OriginalStep {
+    /// Exact original step identity.
+    pub id: String,
+    /// Local timeline node when the original step produced a checkpoint.
+    pub node: Option<String>,
+}
+
 /// Safe attachment; no employee credential leaves the service.
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

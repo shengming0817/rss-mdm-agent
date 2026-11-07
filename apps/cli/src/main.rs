@@ -886,7 +886,7 @@ mod outcome_tests {
             }}});
             assert_eq!(result_exit(&reply), expected);
             let step =
-                serde_json::json!({"kind":"entryStep","value":reply["value"]["value"],"node":null});
+                serde_json::json!({"kind":"entryStep","value":reply["value"]["value"],"step":null});
             assert_eq!(result_exit(&step), expected);
         }
     }

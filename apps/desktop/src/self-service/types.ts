@@ -2819,8 +2819,24 @@ export interface TaskResource {
  */
 export interface TaskEntry {
   reference: TaskRef;
-  node: string | null;
+  step: OriginalStep | null;
   stepUnavailable: boolean;
+}
+/**
+ * A step proven by the original attempt, with a local checkpoint only when observed.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "OriginalStep".
+ */
+export interface OriginalStep {
+  /**
+   * Exact original step identity.
+   */
+  id: string;
+  /**
+   * Local timeline node when the original step produced a checkpoint.
+   */
+  node: string | null;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema

@@ -87,7 +87,7 @@ it("keeps a shared view selected when an older control receipt arrives", async (
   const owner = createTaskCenter(port, null);
   await owner.openTask(original.reference);
   const pending = owner.control(original, "cancel");
-  await owner.openTask(linked, "", "task");
+  await owner.openTask(linked, "", { step: "frozen-step" });
   finish({
     id: owner.state.pendingControl!.id,
     disposition: "confirmed",
@@ -95,7 +95,7 @@ it("keeps a shared view selected when an older control receipt arrives", async (
   });
   await pending;
   expect(owner.state.selected?.reference).toEqual(linked);
-  expect(owner.state.entryView).toBe("task");
+  expect(owner.state.entryView).toEqual({ step: "frozen-step" });
   owner.dispose();
 });
 

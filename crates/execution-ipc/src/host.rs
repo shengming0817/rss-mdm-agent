@@ -978,8 +978,8 @@ pub enum Reply {
     EntryStep {
         /// Original authorized task detail, retaining status and effect facts.
         value: Box<execution_app::tasks::TaskDetail>,
-        /// Exact existing desktop node, absent if the original step could not be located.
-        node: Option<String>,
+        /// Original step evidence, absent when the step could not be located.
+        step: Option<crate::entry::OriginalStep>,
     },
     /// Original authorized management facts, using the existing wire DTO.
     Activities {

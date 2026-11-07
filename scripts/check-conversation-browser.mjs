@@ -177,7 +177,7 @@ export async function checkConversationBrowser(page, fixture) {
     );
     // A fresh active prompt drives the delivery; the authority remains the original record/port.
     await input.fill("请准备组织修复参数");
-    await input.press("Enter");
+    await page.getByRole("button", { name: "发送消息", exact: true }).click();
     await page.waitForFunction(() =>
       window.rssDesktop.state.workspace.assistant.busy(),
     );

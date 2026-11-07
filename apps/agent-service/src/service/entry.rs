@@ -3,7 +3,7 @@ use super::*;
 use execution_app::tasks::{TaskFacts, TaskOperation, TaskRef, TaskResponse};
 use execution_contract::*;
 use execution_ipc::{
-    entry::{EntryContext, EntryOperation},
+    entry::{EntryContext, EntryOperation, OriginalStep},
     host::{ClientOrigin, NativeContextSession, Reply, Request},
 };
 
@@ -457,19 +457,22 @@ impl<S: IdentityProvider> DeviceService<S> {
                 }
             }
         }
-        let node = if matches!(intent.selector, EntrySelector::Request { .. }) {
+        let step = if matches!(intent.selector, EntrySelector::Request { .. }) {
             detail
                 .nodes
                 .iter()
                 .find(|node| node.id == step)
-                .map(|node| node.id.clone())
+                .map(|node| OriginalStep {
+                    id: step.into(),
+                    node: Some(node.id.clone()),
+                })
         } else {
             self.resolve_entry_step(&detail, step, step_deadline, commands)
                 .await?
         };
         Ok(Reply::EntryStep {
             value: detail,
-            node,
+            step,
         })
     }
 
@@ -486,7 +489,15 @@ impl<S: IdentityProvider> DeviceService<S> {
         step: &str,
         deadline: tokio::time::Instant,
         commands: &mut tokio::sync::mpsc::Receiver<Command>,
-    ) -> Result<Option<String>, Error> {
+    ) -> Result<Option<OriginalStep>, Error> {
+        if let TaskFacts::Management(fact) = &detail.facts {
+            let original = fact.links.task.zip(fact.links.attempt).is_some()
+                && fact.links.steps.iter().any(|id| id == step);
+            return Ok(original.then(|| OriginalStep {
+                id: step.into(),
+                node: None,
+            }));
+        }
         let TaskFacts::Execution(facts) = &detail.facts else {
             return Ok(None);
         };
@@ -496,9 +507,6 @@ impl<S: IdentityProvider> DeviceService<S> {
             return Ok(None);
         };
         let Initiator::Backend { task, attempt, .. } = &facts.action.initiator else {
-            return Ok(None);
-        };
-        let Some(local_attempt) = &facts.status.attempt_id else {
             return Ok(None);
         };
         let task = uuid::Uuid::parse_str(task.as_str()).map_err(|_| Error::Protocol)?;
@@ -518,10 +526,10 @@ impl<S: IdentityProvider> DeviceService<S> {
             Ok(Err(error)) => return Err(error),
         };
         Ok(offered.and_then(|ids| {
-            entry_step_node(
+            entry_step_selection(
                 &ids,
                 steps.len(),
-                local_attempt.as_str(),
+                facts.status.attempt_id.as_ref().map(|id| id.as_str()),
                 step,
                 &detail.nodes,
             )
@@ -755,13 +763,13 @@ fn input_id(record: &BackendRequest) -> Result<uuid::Uuid, Error> {
     }
 }
 
-fn entry_step_node(
+fn entry_step_selection(
     original: &[String],
     frozen_count: usize,
-    local_attempt: &str,
+    local_attempt: Option<&str>,
     step: &str,
     nodes: &[execution_app::tasks::TaskNode],
-) -> Option<String> {
+) -> Option<OriginalStep> {
     if original.len() != frozen_count {
         return None;
     }
@@ -773,11 +781,17 @@ fn entry_step_node(
     if matches.next().is_some() {
         return None;
     }
-    let id = format!("step/{local_attempt}/{index}");
-    nodes
-        .iter()
-        .any(|node| node.id == id && node.parent.is_none())
-        .then_some(id)
+    let node = local_attempt.and_then(|attempt| {
+        let id = format!("step/{attempt}/{index}");
+        nodes
+            .iter()
+            .any(|node| node.id == id && node.parent.is_none())
+            .then_some(id)
+    });
+    Some(OriginalStep {
+        id: step.into(),
+        node,
+    })
 }
 
 #[cfg(test)]
@@ -785,7 +799,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn historical_step_uses_the_original_index_and_only_an_existing_parent_node() {
+    fn historical_step_keeps_frozen_identity_without_inventing_a_checkpoint() {
         use execution_app::tasks::TaskNode;
         let nodes = [TaskNode {
             id: "step/local-attempt/1".into(),
@@ -801,16 +815,26 @@ mod tests {
         }];
         let original = ["prerequisite".into(), "install".into()];
         assert_eq!(
-            entry_step_node(&original, 2, "local-attempt", "install", &nodes),
-            Some(nodes[0].id.clone()),
+            entry_step_selection(&original, 2, Some("local-attempt"), "install", &nodes),
+            Some(OriginalStep {
+                id: "install".into(),
+                node: Some(nodes[0].id.clone())
+            }),
         );
-        for (count, attempt, step) in [
-            (2, "local-attempt", "prerequisite"),
-            (2, "local-attempt", "unknown"),
-            (2, "other-attempt", "install"),
-            (3, "local-attempt", "install"),
+        for (attempt, step) in [
+            (Some("local-attempt"), "prerequisite"),
+            (Some("other-attempt"), "install"),
+            (None, "install"),
         ] {
-            assert!(entry_step_node(&original, count, attempt, step, &nodes).is_none());
+            assert_eq!(
+                entry_step_selection(&original, 2, attempt, step, &nodes),
+                Some(OriginalStep {
+                    id: step.into(),
+                    node: None
+                })
+            );
         }
+        assert!(entry_step_selection(&original, 2, None, "unknown", &nodes).is_none());
+        assert!(entry_step_selection(&original, 3, None, "install", &nodes).is_none());
     }
 }

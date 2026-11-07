@@ -88,8 +88,11 @@ function NativeEntryObserver({ workspace }: { workspace: Workspace }) {
           return (
             (await workspace.tasks.openTask(
               result.value.reference,
-              result.value.node ?? "",
-              result.value.stepUnavailable ? "missing-step" : "task",
+              result.value.step?.node ?? "",
+              {
+                step: result.value.step?.id,
+                unavailable: result.value.stepUnavailable,
+              },
             )) === "ready"
           );
         }
