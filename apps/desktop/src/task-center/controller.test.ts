@@ -72,6 +72,70 @@ it("queries the original control receipt after reply loss, without submitting an
   expect(c.state.pendingControl).toBeNull();
   c.dispose();
 });
+it("keeps a shared view selected when an older control receipt arrives", async () => {
+  const port = taskPort();
+  const original = taskDetail();
+  const linked = { kind: "request" as const, request: "shared-read" };
+  port.detail = vi.fn(async (reference) => ({ ...taskDetail(), reference }));
+  let finish!: (receipt: Awaited<ReturnType<typeof port.control>>) => void;
+  port.control = vi.fn(
+    () =>
+      new Promise<Awaited<ReturnType<typeof port.control>>>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const owner = createTaskCenter(port, null);
+  await owner.openTask(original.reference);
+  const pending = owner.control(original, "cancel");
+  await owner.openTask(linked, "", { step: "frozen-step" });
+  finish({
+    id: owner.state.pendingControl!.id,
+    disposition: "confirmed",
+    created: null,
+  });
+  await pending;
+  expect(owner.state.selected?.reference).toEqual(linked);
+  expect(owner.state.entryView).toEqual({ step: "frozen-step" });
+  owner.dispose();
+});
+
+it("re-resolves the original entry when its checkpoint appears", async () => {
+  const port = taskPort();
+  const owner = createTaskCenter(port, null);
+  const detail = taskDetail();
+  const node = {
+    id: "step/local-attempt/1",
+    stage: "software-step",
+    attempt: "local-attempt",
+    parent: null,
+    reason: null,
+    bytes: null,
+    total: null,
+    exitCode: null,
+    detected: null,
+    quiescent: null,
+  };
+  const read = vi
+    .fn()
+    .mockResolvedValueOnce({
+      detail: { ...detail, nodes: [node] },
+      step: { id: "original-step", node: node.id },
+      stepUnavailable: false,
+    })
+    .mockRejectedValueOnce(Error("registration changed"));
+  await owner.openEntry({ detail, step: null, stepUnavailable: true }, read);
+  expect(owner.state.detailError).toContain("未找到原尝试");
+  await owner.refresh();
+  expect(owner.state.node).toBe(node.id);
+  expect(owner.state.entryView?.step).toBe("original-step");
+  expect(owner.state.detailError).toBe("");
+  await owner.readTask();
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(owner.state.selected).toBeNull();
+  expect(owner.state.entryView).not.toBeNull();
+  owner.dispose();
+});
+
 it("rejects old-scope and late detail responses and clears allowed actions", async () => {
   const port = taskPort(),
     c = createTaskCenter(port, null);

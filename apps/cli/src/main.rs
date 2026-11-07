@@ -478,16 +478,11 @@ fn dispatch(command: Command, client: &ServiceClient) -> Result<serde_json::Valu
                 entry(client, EntryOperation::Preview { intent: target })?
             } else {
                 target.validate().map_err(|_| invalid())?;
-                if target.namespace.is_some() && target.namespace != attach(client)?.namespace {
-                    return Err(Failure {
-                        code: 3,
-                        reason: "namespace_mismatch",
-                    });
-                }
                 entry(
                     client,
                     EntryOperation::Resolve {
-                        selector: target.selector,
+                        intent: target,
+                        after: None,
                     },
                 )?
             }
@@ -631,33 +626,34 @@ fn dispatch(command: Command, client: &ServiceClient) -> Result<serde_json::Valu
             control(client, &target, &action, control_id)?
         }
         Command::Tasks(TaskCommand::Wait { target, timeout }) => {
-            return observe(client, &target, timeout, false)
+            return observe(client, &target, timeout, false);
         }
         Command::Tasks(TaskCommand::Watch { target, timeout }) => {
-            return observe(client, &target, timeout, true)
+            return observe(client, &target, timeout, true);
         }
         Command::Batches(BatchCommand::List { after }) => entry(
             client,
             EntryOperation::Activities {
-                batch: None,
                 related: None,
                 after,
                 limit: 64,
             },
         )?,
-        Command::Batches(BatchCommand::Show { id, after }) => entry(
-            client,
-            EntryOperation::Activities {
-                batch: Some(id),
-                related: None,
-                after,
-                limit: 64,
-            },
-        )?,
+        Command::Batches(BatchCommand::Show { id, after }) => {
+            let target = if id.starts_with("rssmdm:") {
+                id
+            } else {
+                format!("batch:{id}")
+            };
+            let intent = intent(client, &target, EntryAction::View)?;
+            if !matches!(&intent.selector, EntrySelector::Batch { .. }) {
+                return Err(invalid());
+            }
+            entry(client, EntryOperation::Resolve { intent, after })?
+        }
         Command::Batches(BatchCommand::Related { activity, after }) => entry(
             client,
             EntryOperation::Activities {
-                batch: None,
                 related: Some(activity),
                 after,
                 limit: 50,
@@ -813,10 +809,10 @@ fn result_exit(result: &serde_json::Value) -> u8 {
             _ => 8,
         };
     }
-    let status = if result["kind"] == "task" && result["value"]["kind"] == "detail" {
-        &result["value"]["value"]
-    } else {
-        return 0;
+    let status = match result["kind"].as_str() {
+        Some("task") if result["value"]["kind"] == "detail" => &result["value"]["value"],
+        Some("entryStep") => &result["value"],
+        _ => return 0,
     };
     if status["facts"]["kind"] == "execution" {
         let execution = &status["facts"]["value"]["status"];
@@ -889,6 +885,9 @@ mod outcome_tests {
                 "facts":{"kind":"execution","value":{"status":typed}}
             }}});
             assert_eq!(result_exit(&reply), expected);
+            let step =
+                serde_json::json!({"kind":"entryStep","value":reply["value"]["value"],"step":null});
+            assert_eq!(result_exit(&step), expected);
         }
     }
 }

@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Button, Modal, Progress, Tag, Timeline } from "antd";
 import { useSnapshot } from "valtio";
 import { deepClone } from "valtio/vanilla/utils";
 import { DetailDrawer, StatePanel } from "@rss-mdm-agent/ui";
 import type { Workspace } from "../state/workspace";
-import type { TaskAction, TaskDetail } from "../self-service/types";
+import type { TaskAction, TaskDetail, TaskRef } from "../self-service/types";
 import { ExecutionFacts, PolicyFacts } from "./PreparationFacts";
 import { taskKey, taskTitle } from "./controller";
 import {
@@ -34,6 +34,7 @@ export function TaskDetailDrawer({
       action: TaskAction;
     } | null>(null),
     trigger = useRef<HTMLElement | null>(null),
+    selectedNode = useRef<HTMLDivElement>(null),
     now = useTaskClock(open),
     display = task ? presentTask(task) : null;
   useEffect(() => {
@@ -44,15 +45,23 @@ export function TaskDetailDrawer({
           : null;
     else setIntent(null);
   }, [open]);
+  const focusStep = useCallback(() => {
+    selectedNode.current?.scrollIntoView?.({ block: "nearest" });
+    selectedNode.current?.focus({ preventScroll: true });
+  }, []);
+  useEffect(() => {
+    if (open && state.node) focusStep();
+  }, [open, state.node, focusStep]);
+  useEffect(() => {
+    if (state.entryView) setIntent(null);
+  }, [state.entryView]);
+  const openRelated = (reference: TaskRef) =>
+    void owner.openTask(reference, "", state.entryView ? {} : null);
   const close = () => {
       setIntent(null);
       owner.closeTask();
     },
-    read = () => {
-      const reference = owner.state.requested;
-      if (reference)
-        void owner.openTask(deepClone(reference), owner.state.node);
-    },
+    read = () => void owner.readTask(),
     stale =
       !!intent &&
       (!task ||
@@ -62,6 +71,7 @@ export function TaskDetailDrawer({
           JSON.stringify(intent.task.revision) ||
         !task.allowedActions.includes(intent.action)),
     blocked =
+      !!state.entryView ||
       state.busy ||
       state.detailLoading ||
       !!state.detailError ||
@@ -74,6 +84,7 @@ export function TaskDetailDrawer({
         onClose={close}
         title="任务详情"
         description="原请求、执行过程与核实结果"
+        focusContent={focusStep}
         returnFocus={() => {
           const row = [
             ...document.querySelectorAll<HTMLButtonElement>(
@@ -95,18 +106,19 @@ export function TaskDetailDrawer({
             >
               查询原请求
             </Button>
-            {task?.allowedActions.map((action) => (
-              <Button
-                key={action}
-                danger={action === "cancel"}
-                disabled={blocked}
-                onClick={() =>
-                  setIntent({ task: deepClone(task) as TaskDetail, action })
-                }
-              >
-                {actionLabels[action]}
-              </Button>
-            ))}
+            {!state.entryView &&
+              task?.allowedActions.map((action) => (
+                <Button
+                  key={action}
+                  danger={action === "cancel"}
+                  disabled={blocked}
+                  onClick={() =>
+                    setIntent({ task: deepClone(task) as TaskDetail, action })
+                  }
+                >
+                  {actionLabels[action]}
+                </Button>
+              ))}
           </div>
         }
       >
@@ -202,7 +214,7 @@ export function TaskDetailDrawer({
                       <Button
                         type="link"
                         onClick={() =>
-                          void owner.openTask({
+                          openRelated({
                             kind: "request",
                             request: task.retryOf!,
                           })
@@ -261,30 +273,31 @@ export function TaskDetailDrawer({
                       description="请在原 AI 动作卡片核对冻结参数与期限后确认；本人确认仍不能覆盖企业拒绝或 OS 权限。"
                     />
                   )}
-                  {task.facts.value.action.kind === "offered" && (
-                    <Button
-                      type="primary"
-                      disabled={
-                        blocked ||
-                        !task.humanConfirmation ||
-                        task.facts.value.state !== "awaitingConfirmation" ||
-                        task.facts.value.action.offer.expiresAt * 1000 <= now
-                      }
-                      onClick={() => {
-                        const selected = owner.state.selected;
-                        if (
-                          selected?.humanConfirmation &&
-                          selected.facts.kind === "preparation" &&
-                          selected.facts.value.action.kind === "offered"
-                        )
-                          void owner.confirmPreparation(
-                            deepClone(selected.facts.value.action.offer),
-                          );
-                      }}
-                    >
-                      确认原准备的具体动作
-                    </Button>
-                  )}
+                  {!state.entryView &&
+                    task.facts.value.action.kind === "offered" && (
+                      <Button
+                        type="primary"
+                        disabled={
+                          blocked ||
+                          !task.humanConfirmation ||
+                          task.facts.value.state !== "awaitingConfirmation" ||
+                          task.facts.value.action.offer.expiresAt * 1000 <= now
+                        }
+                        onClick={() => {
+                          const selected = owner.state.selected;
+                          if (
+                            selected?.humanConfirmation &&
+                            selected.facts.kind === "preparation" &&
+                            selected.facts.value.action.kind === "offered"
+                          )
+                            void owner.confirmPreparation(
+                              deepClone(selected.facts.value.action.offer),
+                            );
+                        }}
+                      >
+                        确认原准备的具体动作
+                      </Button>
+                    )}
                 </>
               )}
               {task.facts.kind === "management" && (
@@ -343,6 +356,12 @@ export function TaskDetailDrawer({
               )}
               <div>
                 <h3>处理过程</h3>
+                {state.entryView?.step && (
+                  <p className="rss-reference">
+                    原步骤：{state.entryView.step}
+                    {state.node ? "" : " · 尚无本机进度证据"}
+                  </p>
+                )}
                 <p className="rss-muted">
                   只显示原服务保留的节点；未提供的步骤或时间不补造。
                 </p>
@@ -353,7 +372,15 @@ export function TaskDetailDrawer({
                       color: state.node === node.id ? "blue" : "gray",
                       title: <strong>{nodeLabel(node)}</strong>,
                       content: (
-                        <div className="rss-task-node" data-node={node.id}>
+                        <div
+                          className="rss-task-node"
+                          data-node={node.id}
+                          aria-current={state.node === node.id || undefined}
+                          ref={
+                            state.node === node.id ? selectedNode : undefined
+                          }
+                          tabIndex={state.node === node.id ? -1 : undefined}
+                        >
                           <p className="rss-reference">{node.id}</p>
                           {node.parent && <p>所属节点：{node.parent}</p>}
                           {node.attempt && (
@@ -457,7 +484,7 @@ export function TaskDetailDrawer({
                     <Button
                       key={taskKey(reference)}
                       type="link"
-                      onClick={() => void owner.openTask(deepClone(reference))}
+                      onClick={() => openRelated(deepClone(reference))}
                     >
                       {referenceLabel(reference)}
                     </Button>
@@ -487,7 +514,7 @@ export function TaskDetailDrawer({
         </div>
       </DetailDrawer>
       <Modal
-        open={!!intent && open}
+        open={!!intent && open && !state.entryView}
         title={intent ? `${actionLabels[intent.action]}？` : "核对原任务操作"}
         onCancel={() => setIntent(null)}
         okText={intent ? actionLabels[intent.action] : "确认"}

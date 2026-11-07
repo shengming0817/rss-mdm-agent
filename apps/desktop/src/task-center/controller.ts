@@ -10,6 +10,10 @@ import type {
   SelfServicePort,
   BackendTask,
 } from "../self-service/types";
+import type { NavigationOutput } from "../workspace/entry";
+
+type EntryTask = Extract<NavigationOutput, { kind: "task" }>["value"];
+type EntryReader = () => Promise<EntryTask>;
 
 // IPC and provider objects may order their properties differently. Identity is
 // the typed original value, including the complete sampling definition version.
@@ -119,6 +123,7 @@ export function createTaskCenter(
     requested: null as TaskRef | null,
     detailLoading: false,
     detailError: "",
+    entryView: null as { step?: string; unavailable?: boolean } | null,
     next: null as string | null,
     loading: false,
     loaded: false,
@@ -161,6 +166,7 @@ export function createTaskCenter(
     recentFlight: Promise<void> | undefined;
 
   let listFlight: Promise<void> | undefined;
+  let readEntry: EntryReader | undefined;
   const detailFlights = new Map<string, Promise<TaskDetail>>();
   const readAt = new Map<string, number>();
   let listRevision = 0,
@@ -194,6 +200,8 @@ export function createTaskCenter(
     state.requested = null;
     state.detailLoading = false;
     state.detailError = "";
+    state.entryView = null;
+    readEntry = undefined;
     state.next = null;
     state.pendingControl = null;
     state.node = "";
@@ -413,12 +421,21 @@ export function createTaskCenter(
     state.selected = null;
     state.detailLoading = false;
     state.detailError = "";
+    state.entryView = null;
+    readEntry = undefined;
     state.node = "";
   }
-  async function openTask(reference: TaskRef, node = "") {
+  async function openTask(
+    reference: TaskRef,
+    node = "",
+    entryView: typeof state.entryView = null,
+    entry?: { read: EntryReader; initial?: EntryTask },
+  ) {
     const call = epoch,
       selection = ++selectionEpoch;
     state.requested = deepClone(reference);
+    state.entryView = entryView;
+    readEntry = entry?.read;
     state.detailLoading = true;
     state.detailError = "";
     if (
@@ -429,9 +446,24 @@ export function createTaskCenter(
       state.node = "";
     }
     try {
-      const value = await detail(reference, true);
+      const resolved = entry ? (entry.initial ?? (await entry.read())) : null;
+      const value = resolved
+        ? deepClone(resolved.detail)
+        : await detail(reference, true);
       if (!alive || call !== epoch || selection !== selectionEpoch)
         return "stale" as const;
+      if (resolved) {
+        acceptScope(value.scope);
+        reference = value.reference;
+        cache(value);
+        state.requested = deepClone(reference);
+        node = resolved.step?.node ?? "";
+        entryView = {
+          step: resolved.step?.id,
+          unavailable: resolved.stepUnavailable,
+        };
+        state.entryView = entryView;
+      }
       if (node && !value.nodes.some((n) => n.id === node)) {
         state.selected = value;
         state.node = "";
@@ -451,10 +483,17 @@ export function createTaskCenter(
       state.selected = value;
       state.taskId = reference.kind === "request" ? reference.request : "";
       state.node = node;
+      if (entryView?.unavailable)
+        state.detailError = "未找到原尝试的步骤证据，已打开原记录";
       return "ready" as const;
     } catch {
       if (!alive || call !== epoch || selection !== selectionEpoch)
         return "stale" as const;
+      if (entry) {
+        forget(reference);
+        state.selected = null;
+        state.node = "";
+      }
       state.detailError = "原任务不可访问或状态未确认，请重试读取";
       return "unknown" as const;
     } finally {
@@ -462,10 +501,24 @@ export function createTaskCenter(
         state.detailLoading = false;
     }
   }
+  function openEntry(initial: EntryTask, read: EntryReader) {
+    return openTask(initial.detail.reference, "", {}, { initial, read });
+  }
+  function readTask() {
+    const reference = state.requested;
+    if (reference)
+      return openTask(
+        reference,
+        state.node,
+        state.entryView,
+        readEntry ? { read: readEntry } : undefined,
+      );
+  }
   async function reconcileControl() {
     if (!tasks || !state.pendingControl) return;
     const original = { ...state.pendingControl },
-      call = epoch;
+      call = epoch,
+      selection = selectionEpoch;
     const result = await tasks.controlStatus({
       reference: original.reference,
       id: original.id,
@@ -473,7 +526,8 @@ export function createTaskCenter(
     });
     if (!alive || call !== epoch) return;
     state.uncertain = result.disposition === "unknown";
-    if (result.created) await openTask(result.created);
+    if (result.created && selection === selectionEpoch && !state.entryView)
+      await openTask(result.created);
     if (!state.uncertain) {
       state.pendingControl = null;
       state.error =
@@ -500,12 +554,14 @@ export function createTaskCenter(
     };
     state.pendingControl = input;
     state.busy = true;
-    const call = epoch;
+    const call = epoch,
+      selection = selectionEpoch;
     try {
       const receipt = await tasks.control(input);
       if (!alive || call !== epoch) return;
       state.uncertain = receipt.disposition === "unknown";
-      if (receipt.created) await openTask(receipt.created);
+      if (receipt.created && selection === selectionEpoch && !state.entryView)
+        await openTask(receipt.created);
       if (!state.uncertain) {
         state.pendingControl = null;
         state.error =
@@ -531,7 +587,12 @@ export function createTaskCenter(
     } finally {
       if (alive && call === epoch) {
         state.busy = false;
-        if (action !== "retry") await openTask(task.reference, state.node);
+        if (
+          action !== "retry" &&
+          selection === selectionEpoch &&
+          !state.entryView
+        )
+          await openTask(task.reference, state.node);
       }
     }
   }
@@ -553,7 +614,8 @@ export function createTaskCenter(
     )
       return;
     state.busy = true;
-    const call = epoch;
+    const call = epoch,
+      selection = selectionEpoch;
     try {
       await port.confirm({
         request: item.request,
@@ -569,13 +631,14 @@ export function createTaskCenter(
     } finally {
       if (alive && call === epoch) {
         state.busy = false;
-        await openTask(requestRef(item.request));
+        if (selection === selectionEpoch && !state.entryView)
+          await openTask(requestRef(item.request));
       }
     }
   }
   async function refresh() {
     await load();
-    if (state.selected) await openTask(state.selected.reference, state.node);
+    if ((state.selected || readEntry) && !state.detailLoading) await readTask();
     if (state.pendingControl) await reconcileControl().catch(() => {});
   }
   async function setQuery(query: Partial<TaskQuery>) {
@@ -658,6 +721,8 @@ export function createTaskCenter(
     refresh,
     detail,
     openTask,
+    openEntry,
+    readTask,
     closeTask,
     openNode: openTask,
     control,

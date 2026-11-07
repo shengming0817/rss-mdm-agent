@@ -129,6 +129,7 @@ export function DetailDrawer({
   description,
   children,
   footer,
+  focusContent,
   returnFocus,
 }: {
   open: boolean;
@@ -137,6 +138,7 @@ export function DetailDrawer({
   description?: string;
   children: ReactNode;
   footer?: ReactNode;
+  focusContent?(): void;
   returnFocus?(): void;
 }) {
   return (
@@ -144,7 +146,8 @@ export function DetailDrawer({
       open={open}
       onClose={onClose}
       afterOpenChange={(visible) => {
-        if (!visible) returnFocus?.();
+        if (visible) focusContent?.();
+        else returnFocus?.();
       }}
       title={
         <>

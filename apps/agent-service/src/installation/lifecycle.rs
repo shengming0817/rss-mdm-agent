@@ -407,7 +407,7 @@ fn refresh(
             }
             Step::RemoveCandidate => platform::remove(true, candidate, config),
             Step::RestoreCurrent => publish(config, &json(&old)?),
-            Step::RegisterCurrent => platform::register(true, current, config),
+            Step::RegisterCurrent => platform::restore_registration(current, config),
         }
     })
 }

@@ -174,6 +174,30 @@ fn job(system: bool, binary: &Path, config: &Path) -> plist::Dictionary {
 }
 pub(super) fn register(system: bool, binary: &Path, config: &Path) -> Result<(), Error> {
     let deployment = Deployment::load(config)?;
+    register_verified(system, binary, config, &deployment)
+}
+/// Compensation only: the retained executable validates its own persistent format.
+pub(super) fn restore_registration(binary: &Path, config: &Path) -> Result<(), Error> {
+    let deployment = Deployment::load_persistent(config)?;
+    if deployment.service.path != binary {
+        return Err(Error::Identity);
+    }
+    command(
+        binary,
+        &[
+            "--config".into(),
+            config.into(),
+            "--validate-persistent".into(),
+        ],
+    )?;
+    register_verified(true, binary, config, &deployment)
+}
+fn register_verified(
+    system: bool,
+    binary: &Path,
+    config: &Path,
+    deployment: &Deployment,
+) -> Result<(), Error> {
     if deployment.service.path != binary {
         return Err(Error::Identity);
     }

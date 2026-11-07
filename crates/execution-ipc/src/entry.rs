@@ -1,5 +1,5 @@
 //! Finite CLI/native entry operations; business facts remain with their original owners.
-use execution_contract::{EntryIntent, EntrySelector, NativeContextRef, QueryRef, RequestId};
+use execution_contract::{EntryIntent, NativeContextRef, QueryRef, RequestId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -21,8 +21,10 @@ pub enum EntryOperation {
     Attach,
     /// Resolve the exact current authorized target, without execution.
     Resolve {
-        /// Exact typed address.
-        selector: EntrySelector,
+        /// Original typed view address, including its namespace and optional step.
+        intent: EntryIntent,
+        /// Producer cursor for another page of the same batch.
+        after: Option<String>,
     },
     /// Validate an external intent's namespace, exact version and non-secret parameters.
     Preview {
@@ -38,8 +40,6 @@ pub enum EntryOperation {
     },
     /// Read already-consumed producer facts using the existing activity HTTP owner.
     Activities {
-        /// Exact existing batch, when filtering a batch.
-        batch: Option<String>,
         /// Exact activity whose related history is being read.
         related: Option<String>,
         /// Producer cursor for the same filter.
@@ -114,6 +114,16 @@ impl CliPolicy {
         self.machine_actions.contains(&action)
     }
 }
+/// A step proven by the original attempt, with a local checkpoint only when observed.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OriginalStep {
+    /// Exact original step identity.
+    pub id: String,
+    /// Local timeline node when the original step produced a checkpoint.
+    pub node: Option<String>,
+}
+
 /// Safe attachment; no employee credential leaves the service.
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -148,7 +158,8 @@ mod tests {
         assert!(!policy.permits(&Request::Offers {}));
         assert!(!policy.permits(&Request::Entry {
             input: EntryOperation::Resolve {
-                selector: execution_contract::EntrySelector::Node { id: "home".into() }
+                intent: EntryIntent::parse("rssmdm://view/v1/node/home").unwrap(),
+                after: None,
             }
         }));
         assert!(!CliPolicy {

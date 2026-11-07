@@ -14,6 +14,7 @@ import {
   recordedTime,
   sourceLabels,
 } from "./presentation";
+import { ManagementEntryPanel } from "./ManagementEntryPanel";
 import "./tasks.css";
 export function TaskCenterPage({
   workspace,
@@ -26,6 +27,7 @@ export function TaskCenterPage({
 }) {
   const owner = workspace.tasks,
     state = useSnapshot(owner.state),
+    { managementEntry } = useSnapshot(workspace.navigation.state),
     [search, setSearch] = useState(""),
     [source, setSource] = useState<TaskSource | null>(null),
     view: TaskView =
@@ -33,11 +35,19 @@ export function TaskCenterPage({
     applied = useRef("");
   useEffect(() => {
     const query = JSON.stringify([view, source]);
-    if (active && applied.current !== query) {
+    if (active && !managementEntry && applied.current !== query) {
       applied.current = query;
       void owner.setQuery({ view, source });
     }
-  }, [active, owner, view, source]);
+  }, [active, owner, view, source, managementEntry]);
+  if (active && section === "management" && managementEntry)
+    return (
+      <ManagementEntryPanel
+        key={managementEntry.id}
+        entry={managementEntry.entry}
+        onClose={workspace.navigation.closeManagementEntry}
+      />
+    );
   const rows = state.items.filter((item) =>
     `${taskTitle(item)} ${referenceLabel(item.reference)}`
       .toLocaleLowerCase()

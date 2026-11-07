@@ -2,7 +2,7 @@
 use execution_contract::{Digest, Id, RequestId, VersionedRef};
 use serde::{Deserialize, Serialize};
 /// Current desktop/system IPC. No negotiation or legacy parser exists.
-pub const IPC_VERSION: u8 = 9;
+pub const IPC_VERSION: u8 = 10;
 /// Current protected installation document format.
 pub const DEPLOYMENT_VERSION: u32 = 7;
 
@@ -969,6 +969,18 @@ pub enum Reply {
         /// Registered stable IDs.
         value: Vec<String>,
     },
+    /// An event address accepted for the current native context and registration.
+    EntryEvent {
+        /// Exact event name.
+        name: rss_mdm_agent_wire::runtime::PolicyEventName,
+    },
+    /// An authorized task and the result of locating its exact step.
+    EntryStep {
+        /// Original authorized task detail, retaining status and effect facts.
+        value: Box<execution_app::tasks::TaskDetail>,
+        /// Original step evidence, absent when the step could not be located.
+        step: Option<crate::entry::OriginalStep>,
+    },
     /// Original authorized management facts, using the existing wire DTO.
     Activities {
         /// One bounded producer page, with independent coverage and continuation.
@@ -1189,7 +1201,7 @@ impl ServiceClient {
                     Ok(false) => ServiceView::NotInstalled,
                     Ok(true) => ServiceView::ConfigurationRequired,
                     Err(_) => ServiceView::Unavailable,
-                }
+                };
             }
             Err(_) => return ServiceView::Rejected,
             Ok(_) => (),
@@ -1200,7 +1212,7 @@ impl ServiceClient {
         let client = match Self::installed() {
             Ok(v) => v,
             Err(execution_app::Error::Configuration | execution_app::Error::InvalidInput) => {
-                return ServiceView::Mismatch
+                return ServiceView::Mismatch;
             }
             Err(execution_app::Error::Denied) => return ServiceView::Rejected,
             Err(_) => return ServiceView::Unavailable,

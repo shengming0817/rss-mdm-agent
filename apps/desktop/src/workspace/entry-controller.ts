@@ -1,10 +1,17 @@
 import { proxy } from "valtio/vanilla";
-import type { NavigationOutput, NavigationPort } from "./entry";
+import type {
+  NavigationInput,
+  NavigationOutput,
+  NavigationPort,
+} from "./entry";
 /** Reads and resolves the native queue; only the destination page decides what it can display. */
 export function createEntryNavigation(
   port: NavigationPort | undefined,
   listen: ((notify: () => void) => Promise<() => void>) | undefined,
-  open: (result: NavigationOutput) => Promise<boolean>,
+  open: (
+    result: NavigationOutput,
+    resolve: () => Promise<NavigationOutput>,
+  ) => Promise<boolean>,
 ) {
   const state = proxy({ notice: "", pending: "" });
   let active = true,
@@ -26,12 +33,15 @@ export function createEntryNavigation(
         if (!active) return;
         if (next.kind !== "pending" || !next.value) return;
         state.pending = next.value.id;
-        const resolved = await port({
+        const input: NavigationInput = {
           kind: "resolve",
           intent: next.value.intent,
-        });
+          after: null,
+        };
+        const resolve = () => port(input);
+        const resolved = await resolve();
         if (!active) return;
-        if (!(await open(resolved))) {
+        if (!(await open(resolved, resolve))) {
           if (active)
             state.notice =
               "当前入口暂不可用；未执行任何操作。可以稍后重试或忽略此入口。";

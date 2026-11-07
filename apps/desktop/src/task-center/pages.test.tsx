@@ -75,6 +75,22 @@ async function mount(scene = "tasks") {
     open,
   };
 }
+it("shows a proven frozen step before any checkpoint and keeps the shared view read-only", async () => {
+  const f = await mount();
+  await act(async () => {
+    await f.workspace.tasks.openTask(
+      { kind: "request", request: "fixture-update" },
+      "",
+      { step: "frozen-original" },
+    );
+  });
+  const step = await screen.findByText(/原步骤：frozen-original/);
+  expect(step.textContent).toContain("尚无本机进度证据");
+  const detail = within(step.closest('[role="dialog"]') as HTMLElement);
+  expect(detail.queryByRole("button", { name: "请求取消" })).toBeNull();
+  expect(f.control).not.toHaveBeenCalled();
+});
+
 it("uses the original task owner for three views, real nodes and assessment-aware history", async () => {
   const f = await mount();
   expect(f.list).toHaveBeenCalledWith(

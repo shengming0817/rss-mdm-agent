@@ -6598,6 +6598,247 @@ async fn task_history_first_page_merges_new_execution_and_latest_preparation_bef
 }
 
 #[tokio::test]
+async fn shared_views_keep_original_registration_and_indirect_batch_members() {
+    let _budget = crate::scenario_budget::enter();
+    use execution_contract::{EntryAction, EntryIntent, EntrySelector};
+    use execution_ipc::{entry::EntryOperation, host::Request};
+    use rss_mdm_agent_wire::activities::{ManagementActivity, ManagementActivityPage};
+    let mut c = Case::new(None).await;
+    c.device("entry-view-device").await;
+    let Reply::EntryContext { value } = c
+        .policy_call(Request::Entry {
+            input: EntryOperation::Attach,
+        })
+        .await
+    else {
+        panic!("current entry context");
+    };
+    let namespace = value.namespace.unwrap();
+    let wire::TaskPayload::Software(spec) = c.offer.payload() else {
+        panic!("original software offer");
+    };
+    let digest = plan::hex(&spec.definition_digest);
+    let expected = spec
+        .steps
+        .iter()
+        .map(|step| plan::hex(&step.step_id))
+        .collect();
+    assert_eq!(
+        c.service
+            .client
+            .retained_attempt_steps(spec.task_id, spec.attempt_id, Some(&digest))
+            .unwrap(),
+        Some(expected)
+    );
+    for (attempt, digest) in [
+        (uuid::Uuid::new_v4(), digest.as_str()),
+        (spec.attempt_id, "another-definition"),
+    ] {
+        assert_eq!(
+            c.service
+                .client
+                .retained_attempt_steps(spec.task_id, attempt, Some(digest))
+                .unwrap(),
+            None
+        );
+    }
+    let batch = uuid::Uuid::new_v4().to_string();
+    let task = uuid::Uuid::new_v4().to_string();
+    let member = uuid::Uuid::new_v4().to_string();
+    let now = c._server.time.now().unwrap();
+    let fact = |id: &str, kind: &str, links: serde_json::Value| -> ManagementActivity {
+        serde_json::from_value(serde_json::json!({
+            "id":id, "source":"execution", "kind":kind, "phase":"accepted",
+            "recordedAt":now, "observedAt":now, "origin":"policy",
+            "target":{"device":namespace.device,"registration":namespace.registration,"generation":namespace.generation},
+            "links":links, "auditOutcome":"recorded"
+        })).unwrap()
+    };
+    let page = |items, next_cursor| ManagementActivityPage {
+        items,
+        next_cursor,
+        sync_cursor: "snapshot".into(),
+        as_of: now,
+        retained_from: None,
+        coverage: vec![],
+    };
+    c._server.data.lock().unwrap().management_page = Some(page(
+        vec![fact(
+            "execution:parent",
+            "batch",
+            serde_json::json!({
+                "batch":batch, "member":member, "steps":[], "operations":[{"kind":"run","id":task}]
+            }),
+        )],
+        Some("next".into()),
+    ));
+    let intent = EntryIntent {
+        action: EntryAction::View,
+        selector: EntrySelector::Batch { id: batch.clone() },
+        namespace: Some(namespace.clone()),
+        version: None,
+        revision: None,
+        step: None,
+        parameters: Default::default(),
+    };
+    let resolve = |intent, after| Request::Entry {
+        input: EntryOperation::Resolve { intent, after },
+    };
+    let Reply::Activities { value } = c.policy_call(resolve(intent.clone(), None)).await else {
+        panic!("batch page");
+    };
+    assert_eq!(value.items[0].links.batch.unwrap().to_string(), batch);
+    c._server.data.lock().unwrap().management_page = Some(page(
+        vec![
+            fact(
+                "execution:indirect",
+                "execution",
+                serde_json::json!({
+                    "task":task, "steps":[], "operations":[]
+                }),
+            ),
+            fact(
+                "execution:another-member",
+                "batch",
+                serde_json::json!({
+                    "batch":batch, "member":uuid::Uuid::new_v4(), "steps":[], "operations":[]
+                }),
+            ),
+        ],
+        None,
+    ));
+    let Reply::Activities {
+        value: continuation,
+    } = c
+        .policy_call(resolve(intent.clone(), value.next_cursor.clone()))
+        .await
+    else {
+        panic!("indirect child on the batch continuation");
+    };
+    assert_eq!(continuation.items.len(), 2);
+    assert!(continuation.items[0].links.batch.is_none());
+    assert_eq!(continuation.items[0].links.task.unwrap().to_string(), task);
+    let changed = uuid::Uuid::new_v4().to_string();
+    for index in 0..5 {
+        let mut stale = intent.clone();
+        let ns = stale.namespace.as_mut().unwrap();
+        match index {
+            0 => ns.instance = changed.clone(),
+            1 => ns.tenant = changed.clone(),
+            2 => ns.device = "another-device".into(),
+            3 => ns.registration = changed.clone(),
+            _ => ns.generation += 1,
+        }
+        assert!(!matches!(
+            c.policy_call(resolve(stale, value.next_cursor.clone()))
+                .await,
+            Reply::Activities { .. }
+        ));
+    }
+    let mut event = intent;
+    event.selector = EntrySelector::Event {
+        name: wire::PolicyEventName::parse("repair").unwrap(),
+    };
+    assert!(
+        matches!(c.policy_call(resolve(event.clone(), None)).await, Reply::EntryEvent { name } if name.as_str() == "repair")
+    );
+    event.action = EntryAction::Invoke;
+    assert!(!matches!(
+        c.policy_call(resolve(event, None)).await,
+        Reply::EntryEvent { .. }
+    ));
+    let task = uuid::Uuid::parse_str(&task).unwrap();
+    let attempt = uuid::Uuid::new_v4();
+    let old_attempt = uuid::Uuid::new_v4();
+    let activity = |id, phase, attempt, step| {
+        let mut item = fact(
+            id,
+            "execution",
+            serde_json::json!({
+                "task":task, "attempt":attempt, "steps":[step], "operations":[]
+            }),
+        );
+        item.phase = phase;
+        item
+    };
+    use rss_mdm_agent_wire::activities::ActivityPhase;
+    c._server.data.lock().unwrap().management_page = Some(page(
+        vec![
+            activity(
+                "execution:old-offer",
+                ActivityPhase::Offered,
+                old_attempt,
+                "old-step",
+            ),
+            activity(
+                "execution:partial",
+                ActivityPhase::Received,
+                attempt,
+                "partial-step",
+            ),
+            activity(
+                "execution:original-result",
+                ActivityPhase::Result,
+                attempt,
+                "original-step",
+            ),
+        ],
+        None,
+    ));
+    let task_link = EntryIntent {
+        action: EntryAction::View,
+        selector: EntrySelector::Task {
+            task: task.to_string(),
+            attempt: attempt.to_string(),
+        },
+        namespace: Some(namespace),
+        version: None,
+        revision: None,
+        step: Some("original-step".into()),
+        parameters: Default::default(),
+    };
+    let Reply::EntryStep {
+        value,
+        step: Some(step),
+    } = c.policy_call(resolve(task_link.clone(), None)).await
+    else {
+        panic!("exact producer step before a local execution journal exists");
+    };
+    assert_eq!(step.id, "original-step");
+    assert!(step.node.is_none());
+    assert!(matches!(
+        value.reference,
+        execution_app::tasks::TaskRef::Activity { id } if id == "execution:original-result"
+    ));
+    let mut wrong_step = task_link;
+    wrong_step.step = Some("partial-step".into());
+    assert!(matches!(
+        c.policy_call(resolve(wrong_step, None)).await,
+        Reply::EntryStep { step: None, .. }
+    ));
+    let data = c._server.data.lock().unwrap();
+    let queries = data
+        .management_calls
+        .iter()
+        .map(|uri| {
+            url::form_urlencoded::parse(uri.split_once('?').unwrap().1.as_bytes())
+                .into_owned()
+                .collect::<std::collections::BTreeMap<_, _>>()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(queries.len(), 4);
+    assert_eq!(queries[0]["batch"], batch);
+    assert!(!queries[0].contains_key("cursor"));
+    assert_eq!(queries[1]["batch"], batch);
+    assert_eq!(queries[1]["cursor"], "next");
+    assert_eq!(queries[2]["task"], task.to_string());
+    assert_eq!(queries[2]["kind"], "execution");
+    assert!(!queries[2].contains_key("status"));
+    assert_eq!(data.policy_event_calls, 0);
+    assert!(data.start_ops.is_empty());
+}
+
+#[tokio::test]
 async fn entry_event_freezes_before_transport_and_recovers_the_same_request() {
     let _budget = crate::scenario_budget::enter();
     use execution_contract::{EntryAction, EntryIntent, EntrySelector};
