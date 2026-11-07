@@ -638,7 +638,7 @@ export function createTaskCenter(
   }
   async function refresh() {
     await load();
-    if (state.requested && !state.detailLoading) await readTask();
+    if ((state.selected || readEntry) && !state.detailLoading) await readTask();
     if (state.pendingControl) await reconcileControl().catch(() => {});
   }
   async function setQuery(query: Partial<TaskQuery>) {
