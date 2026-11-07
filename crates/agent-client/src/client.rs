@@ -560,12 +560,22 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         })
     }
     pub(crate) fn stored_offer(&self, task: Uuid) -> Result<Offer, Error> {
-        let body:Vec<u8>=self.store.conn.query_row("SELECT CASE WHEN typeof(body)='blob' AND length(body)<=16777216 THEN body END FROM tasks WHERE id=?1",[task.to_string()],|r|r.get(0))?;
+        self.find_stored_offer(task)?.ok_or(Error::Storage)
+    }
+    pub(crate) fn find_stored_offer(&self, task: Uuid) -> Result<Option<Offer>, Error> {
+        let body: Option<Vec<u8>> = self.store.conn.query_row(
+            "SELECT CASE WHEN typeof(body)='blob' AND length(body)<=16777216 THEN body END FROM tasks WHERE id=?1",
+            [task.to_string()],
+            |r| r.get(0),
+        ).optional()?;
+        let Some(body) = body else {
+            return Ok(None);
+        };
         let signed: wire::SignedTask = decode(&body)?;
         if signed.payload.task_id() != task {
             return Err(Error::Storage);
         }
-        Ok(Offer { signed })
+        Ok(Some(Offer { signed }))
     }
     /// Recover a current offer; expiry is never ignored for a new Start or download.
     pub fn offer(&self, task: Uuid) -> Result<Offer, Error> {

@@ -225,7 +225,7 @@ pub enum NavigationResponse {
 #[derive(Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskEntry {
-    reference: execution_app::tasks::TaskRef,
+    detail: Box<execution_app::tasks::TaskDetail>,
     step: Option<OriginalStep>,
     step_unavailable: bool,
 }
@@ -408,12 +408,12 @@ pub async fn dispatch<R: tauri::Runtime>(
         Reply::Task {
             value: execution_app::tasks::TaskResponse::Detail(value),
         } => NavigationResponse::Task(TaskEntry {
-            reference: value.reference,
+            detail: value,
             step: None,
             step_unavailable: false,
         }),
         Reply::EntryStep { value, step } => NavigationResponse::Task(TaskEntry {
-            reference: value.reference,
+            detail: value,
             step_unavailable: step.is_none(),
             step,
         }),

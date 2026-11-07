@@ -2,7 +2,7 @@
 use crate::http as h;
 use crate::{store::encode, Client, Clock, Error, IdentityProvider};
 use rss_mdm_agent_wire::activities::{
-    ActivityCoverage, ActivityPhase, ManagementActivity, ManagementActivityDetail,
+    ActivityCoverage, ActivityKind, ActivityPhase, ManagementActivity, ManagementActivityDetail,
     ManagementActivityPage,
 };
 use serde::{Deserialize, Serialize};
@@ -67,12 +67,44 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         self.read_activity_page(&query.finish(), after, limit).await
     }
 
-    /// Locate the immutable step order recorded for one original attempt.
-    pub async fn offered_steps(
+    /// Read the original order from a retained verified software Offer in the current registration.
+    pub fn retained_attempt_steps(
         &self,
         task: uuid::Uuid,
         attempt: uuid::Uuid,
+        definition_digest: Option<&str>,
     ) -> Result<Option<Vec<String>>, Error> {
+        let registration = self.registration()?;
+        let Some(offer) = self.find_stored_offer(task)? else {
+            return Ok(None);
+        };
+        let crate::wire::TaskPayload::Software(spec) = offer.payload() else {
+            return Ok(None);
+        };
+        if spec.attempt_id != attempt
+            || spec.tenant_id != self.configuration().tenant
+            || spec.device_id != registration.device_id
+            || spec.registration_id != registration.registration_id
+            || spec.generation != registration.generation
+            || definition_digest
+                .is_some_and(|digest| digest != crate::native_source::hex(&spec.definition_digest))
+        {
+            return Ok(None);
+        }
+        Ok(Some(
+            spec.steps
+                .iter()
+                .map(|step| crate::native_source::hex(&step.step_id))
+                .collect(),
+        ))
+    }
+
+    /// Locate a producer fact containing the immutable step order of one original attempt.
+    pub async fn attempt_activity(
+        &self,
+        task: uuid::Uuid,
+        attempt: uuid::Uuid,
+    ) -> Result<Option<ManagementActivity>, Error> {
         let registration = self.registration()?;
         let mut after = None;
         let mut seen = std::collections::BTreeSet::new();
@@ -82,7 +114,6 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 .append_pair("limit", "64")
                 .append_pair("view", "summary")
                 .append_pair("kind", "execution")
-                .append_pair("status", "offered")
                 .append_pair("task", &task.to_string());
             if let Some(cursor) = after.as_deref() {
                 query.append_pair("cursor", cursor);
@@ -90,12 +121,16 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             let page = self
                 .read_activity_page(&query.finish(), after.as_deref(), 64)
                 .await?;
-            if page.items.iter().any(|fact| fact.links.task != Some(task)) {
+            if page
+                .items
+                .iter()
+                .any(|fact| fact.links.task != Some(task) || fact.kind != ActivityKind::Execution)
+            {
                 return Err(Error::Untrusted);
             }
             if let Some(fact) = page.items.into_iter().find(|fact| {
                 fact.links.attempt == Some(attempt)
-                    && fact.phase == ActivityPhase::Offered
+                    && matches!(fact.phase, ActivityPhase::Offered | ActivityPhase::Result)
                     && fact.target.as_ref().is_some_and(|target| {
                         target.device == registration.device_id
                             && target.registration == registration.registration_id
@@ -104,7 +139,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                     })
                     && !fact.links.steps.is_empty()
             }) {
-                return Ok(Some(fact.links.steps));
+                return Ok(Some(fact));
             }
             let Some(cursor) = page.next_cursor else {
                 return Ok(None);

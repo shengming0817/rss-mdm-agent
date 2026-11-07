@@ -6614,6 +6614,34 @@ async fn shared_views_keep_original_registration_and_indirect_batch_members() {
         panic!("current entry context");
     };
     let namespace = value.namespace.unwrap();
+    let wire::TaskPayload::Software(spec) = c.offer.payload() else {
+        panic!("original software offer");
+    };
+    let digest = plan::hex(&spec.definition_digest);
+    let expected = spec
+        .steps
+        .iter()
+        .map(|step| plan::hex(&step.step_id))
+        .collect();
+    assert_eq!(
+        c.service
+            .client
+            .retained_attempt_steps(spec.task_id, spec.attempt_id, Some(&digest))
+            .unwrap(),
+        Some(expected)
+    );
+    for (attempt, digest) in [
+        (uuid::Uuid::new_v4(), digest.as_str()),
+        (spec.attempt_id, "another-definition"),
+    ] {
+        assert_eq!(
+            c.service
+                .client
+                .retained_attempt_steps(spec.task_id, attempt, Some(digest))
+                .unwrap(),
+            None
+        );
+    }
     let batch = uuid::Uuid::new_v4().to_string();
     let task = uuid::Uuid::new_v4().to_string();
     let member = uuid::Uuid::new_v4().to_string();
@@ -6743,24 +6771,51 @@ async fn shared_views_keep_original_registration_and_indirect_batch_members() {
                 "old-step",
             ),
             activity(
-                "execution:result",
-                ActivityPhase::Result,
+                "execution:partial",
+                ActivityPhase::Received,
                 attempt,
-                "result-step",
+                "partial-step",
             ),
             activity(
-                "execution:original-offer",
-                ActivityPhase::Offered,
+                "execution:original-result",
+                ActivityPhase::Result,
                 attempt,
                 "original-step",
             ),
         ],
         None,
     ));
-    assert_eq!(
-        c.service.client.offered_steps(task, attempt).await.unwrap(),
-        Some(vec!["original-step".into()])
-    );
+    let task_link = EntryIntent {
+        action: EntryAction::View,
+        selector: EntrySelector::Task {
+            task: task.to_string(),
+            attempt: attempt.to_string(),
+        },
+        namespace: Some(namespace),
+        version: None,
+        revision: None,
+        step: Some("original-step".into()),
+        parameters: Default::default(),
+    };
+    let Reply::EntryStep {
+        value,
+        step: Some(step),
+    } = c.policy_call(resolve(task_link.clone(), None)).await
+    else {
+        panic!("exact producer step before a local execution journal exists");
+    };
+    assert_eq!(step.id, "original-step");
+    assert!(step.node.is_none());
+    assert!(matches!(
+        value.reference,
+        execution_app::tasks::TaskRef::Activity { id } if id == "execution:original-result"
+    ));
+    let mut wrong_step = task_link;
+    wrong_step.step = Some("partial-step".into());
+    assert!(matches!(
+        c.policy_call(resolve(wrong_step, None)).await,
+        Reply::EntryStep { step: None, .. }
+    ));
     let data = c._server.data.lock().unwrap();
     let queries = data
         .management_calls
@@ -6771,13 +6826,14 @@ async fn shared_views_keep_original_registration_and_indirect_batch_members() {
                 .collect::<std::collections::BTreeMap<_, _>>()
         })
         .collect::<Vec<_>>();
-    assert_eq!(queries.len(), 3);
+    assert_eq!(queries.len(), 4);
     assert_eq!(queries[0]["batch"], batch);
     assert!(!queries[0].contains_key("cursor"));
     assert_eq!(queries[1]["batch"], batch);
     assert_eq!(queries[1]["cursor"], "next");
     assert_eq!(queries[2]["task"], task.to_string());
-    assert_eq!(queries[2]["status"], "offered");
+    assert_eq!(queries[2]["kind"], "execution");
+    assert!(!queries[2].contains_key("status"));
     assert_eq!(data.policy_event_calls, 0);
     assert!(data.start_ops.is_empty());
 }

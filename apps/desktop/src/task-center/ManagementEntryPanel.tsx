@@ -97,6 +97,7 @@ export function ManagementEntryPanel({
                     links.task,
                     links.operation,
                     links.retirement,
+                    ...links.operations.map(({ kind, id }) => `${kind}: ${id}`),
                   ]
                     .filter(Boolean)
                     .join(" · ") || "—",

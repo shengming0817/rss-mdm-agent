@@ -6,6 +6,7 @@ use execution_ipc::{
     entry::{EntryContext, EntryOperation, OriginalStep},
     host::{ClientOrigin, NativeContextSession, Reply, Request},
 };
+use rss_mdm_agent_wire::activities::{ActivityPhase, ManagementActivity};
 
 impl<S: IdentityProvider> DeviceService<S> {
     fn entry_namespace(&self) -> Option<EntryNamespace> {
@@ -412,11 +413,42 @@ impl<S: IdentityProvider> DeviceService<S> {
                 self.core.management = Some(cache);
                 TaskRef::Activity { id: id.clone() }
             }
-            EntrySelector::Task { task, attempt } => TaskRef::Request {
-                request: self
-                    .entry_task_request(task, attempt)?
-                    .ok_or(Error::NotFound)?,
-            },
+            EntrySelector::Task { task, attempt } => {
+                if let Some(request) = self.entry_task_request(task, attempt)? {
+                    TaskRef::Request { request }
+                } else if let Some(step) = intent.step.as_deref() {
+                    let task = uuid::Uuid::parse_str(task).map_err(|_| Error::Protocol)?;
+                    let attempt = uuid::Uuid::parse_str(attempt).map_err(|_| Error::Protocol)?;
+                    let fact = self
+                        .entry_attempt_activity(task, attempt, step_deadline, commands)
+                        .await?
+                        .ok_or(Error::NotFound)?;
+                    let step = activity_step(&fact, step);
+                    let reference = TaskRef::Activity {
+                        id: fact.id.clone(),
+                    };
+                    // This exact read must not replace the regular management timeline cache.
+                    let mut projection = agent_client::ManagementCache::default();
+                    projection.scope = self.core.task_scope(command)?;
+                    projection.items.insert(fact.id.clone(), fact);
+                    let previous = self.core.management.replace(projection);
+                    let reply = self.core.task_operation(
+                        command,
+                        &TaskOperation::Detail(reference),
+                        &ClientOrigin::Desktop {},
+                    );
+                    self.core.management = previous;
+                    let Reply::Task {
+                        value: TaskResponse::Detail(value),
+                    } = reply?
+                    else {
+                        return Err(Error::Protocol);
+                    };
+                    return Ok(Reply::EntryStep { value, step });
+                } else {
+                    return Err(Error::NotFound);
+                }
+            }
             _ => return Err(Error::Unsupported),
         };
         let origin = ClientOrigin::Desktop {};
@@ -432,13 +464,18 @@ impl<S: IdentityProvider> DeviceService<S> {
         else {
             return Err(Error::Protocol);
         };
+        let mut original_activity = None;
         if let TaskFacts::Management(fact) = &detail.facts {
-            if let Some((task, attempt)) = fact
-                .links
-                .task
-                .zip(fact.links.attempt)
-                .filter(|_| fact.links.steps.iter().any(|id| id == step))
-            {
+            let namespace = self.entry_namespace().ok_or(Error::Identity)?;
+            if let Some((task, attempt)) = fact.links.task.zip(fact.links.attempt) {
+                if !fact.target.as_ref().is_some_and(|target| {
+                    target.device == namespace.device
+                        && target.registration.to_string() == namespace.registration
+                        && u64::try_from(target.generation).ok() == Some(namespace.generation)
+                }) {
+                    return Err(Error::Identity);
+                }
+                original_activity = Some(fact.clone());
                 if let Some(request) =
                     self.entry_task_request(&task.to_string(), &attempt.to_string())?
                 {
@@ -467,8 +504,14 @@ impl<S: IdentityProvider> DeviceService<S> {
                     node: Some(node.id.clone()),
                 })
         } else {
-            self.resolve_entry_step(&detail, step, step_deadline, commands)
-                .await?
+            self.resolve_entry_step(
+                &detail,
+                original_activity.as_deref(),
+                step,
+                step_deadline,
+                commands,
+            )
+            .await?
         };
         Ok(Reply::EntryStep {
             value: detail,
@@ -486,54 +529,75 @@ impl<S: IdentityProvider> DeviceService<S> {
     async fn resolve_entry_step(
         &mut self,
         detail: &execution_app::tasks::TaskDetail,
+        activity: Option<&ManagementActivity>,
         step: &str,
         deadline: tokio::time::Instant,
         commands: &mut tokio::sync::mpsc::Receiver<Command>,
     ) -> Result<Option<OriginalStep>, Error> {
-        if let TaskFacts::Management(fact) = &detail.facts {
-            let original = fact.links.task.zip(fact.links.attempt).is_some()
-                && fact.links.steps.iter().any(|id| id == step);
-            return Ok(original.then(|| OriginalStep {
-                id: step.into(),
-                node: None,
-            }));
+        let observed = activity.and_then(|fact| activity_step(fact, step));
+        let pair = tasks::remote_pair(&detail.facts)
+            .or_else(|| activity.and_then(|fact| fact.links.task.zip(fact.links.attempt)));
+        let Some((task, attempt)) = pair else {
+            return Ok(observed);
+        };
+        let local = match &detail.facts {
+            TaskFacts::Execution(facts) => match &facts.action.execution {
+                execution_app::ExecutionSummary::SoftwareProgram { steps, .. } => Some((
+                    steps.len(),
+                    facts.status.attempt_id.as_ref().map(|id| id.as_str()),
+                    facts.action.operation.resource.revision.as_str(),
+                )),
+                _ => return Ok(observed),
+            },
+            _ => None,
+        };
+        let selection = |ids: &[String]| match local {
+            Some((count, attempt, _)) => {
+                entry_step_selection(ids, count, attempt, step, &detail.nodes)
+            }
+            None => original_step(ids, step),
+        };
+        if let Some(ids) =
+            self.client
+                .retained_attempt_steps(task, attempt, local.map(|(_, _, digest)| digest))?
+        {
+            return Ok(selection(&ids).or(observed));
         }
-        let TaskFacts::Execution(facts) = &detail.facts else {
-            return Ok(None);
-        };
-        let execution_app::ExecutionSummary::SoftwareProgram { steps, .. } =
-            &facts.action.execution
-        else {
-            return Ok(None);
-        };
-        let Initiator::Backend { task, attempt, .. } = &facts.action.initiator else {
-            return Ok(None);
-        };
-        let task = uuid::Uuid::parse_str(task.as_str()).map_err(|_| Error::Protocol)?;
-        let attempt = uuid::Uuid::parse_str(attempt.as_str()).map_err(|_| Error::Protocol)?;
-        let offered = match tokio::time::timeout_at(
+        if let Some(value) = activity
+            .filter(|fact| matches!(fact.phase, ActivityPhase::Offered | ActivityPhase::Result))
+            .and_then(|fact| selection(&fact.links.steps))
+        {
+            return Ok(Some(value));
+        }
+        let fact = self
+            .entry_attempt_activity(task, attempt, deadline, commands)
+            .await;
+        match fact {
+            Ok(fact) => Ok(fact
+                .and_then(|fact| selection(&fact.links.steps))
+                .or(observed)),
+            Err(Error::Unavailable | Error::Network) => Ok(observed),
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn entry_attempt_activity(
+        &mut self,
+        task: uuid::Uuid,
+        attempt: uuid::Uuid,
+        deadline: tokio::time::Instant,
+        commands: &mut tokio::sync::mpsc::Receiver<Command>,
+    ) -> Result<Option<ManagementActivity>, Error> {
+        tokio::time::timeout_at(
             deadline,
             network(
-                self.client.offered_steps(task, attempt),
+                self.client.attempt_activity(task, attempt),
                 &mut self.core,
                 commands,
             ),
         )
         .await
-        {
-            Ok(Ok(offered)) => offered,
-            Err(_) | Ok(Err(Error::Unavailable | Error::Network)) => return Ok(None),
-            Ok(Err(error)) => return Err(error),
-        };
-        Ok(offered.and_then(|ids| {
-            entry_step_selection(
-                &ids,
-                steps.len(),
-                facts.status.attempt_id.as_ref().map(|id| id.as_str()),
-                step,
-                &detail.nodes,
-            )
-        }))
+        .map_err(|_| Error::Unavailable)?
     }
 
     fn check_machine_data(
@@ -761,6 +825,20 @@ fn input_id(record: &BackendRequest) -> Result<uuid::Uuid, Error> {
         PreparedAction::Event { input, .. } => Ok(input.operation_id),
         _ => Err(Error::Protocol),
     }
+}
+
+fn activity_step(fact: &ManagementActivity, step: &str) -> Option<OriginalStep> {
+    fact.links.task.zip(fact.links.attempt)?;
+    original_step(&fact.links.steps, step)
+}
+
+fn original_step(ids: &[String], step: &str) -> Option<OriginalStep> {
+    let mut matches = ids.iter().filter(|id| id.as_str() == step);
+    matches.next()?;
+    matches.next().is_none().then(|| OriginalStep {
+        id: step.into(),
+        node: None,
+    })
 }
 
 fn entry_step_selection(

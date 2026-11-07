@@ -99,6 +99,43 @@ it("keeps a shared view selected when an older control receipt arrives", async (
   owner.dispose();
 });
 
+it("re-resolves the original entry when its checkpoint appears", async () => {
+  const port = taskPort();
+  const owner = createTaskCenter(port, null);
+  const detail = taskDetail();
+  const node = {
+    id: "step/local-attempt/1",
+    stage: "software-step",
+    attempt: "local-attempt",
+    parent: null,
+    reason: null,
+    bytes: null,
+    total: null,
+    exitCode: null,
+    detected: null,
+    quiescent: null,
+  };
+  const read = vi
+    .fn()
+    .mockResolvedValueOnce({
+      detail: { ...detail, nodes: [node] },
+      step: { id: "original-step", node: node.id },
+      stepUnavailable: false,
+    })
+    .mockRejectedValueOnce(Error("registration changed"));
+  await owner.openEntry({ detail, step: null, stepUnavailable: true }, read);
+  expect(owner.state.detailError).toContain("未找到原尝试");
+  await owner.refresh();
+  expect(owner.state.node).toBe(node.id);
+  expect(owner.state.entryView?.step).toBe("original-step");
+  expect(owner.state.detailError).toBe("");
+  await owner.readTask();
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(owner.state.selected).toBeNull();
+  expect(owner.state.entryView).not.toBeNull();
+  owner.dispose();
+});
+
 it("rejects old-scope and late detail responses and clears allowed actions", async () => {
   const port = taskPort(),
     c = createTaskCenter(port, null);

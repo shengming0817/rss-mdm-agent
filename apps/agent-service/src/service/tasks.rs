@@ -40,7 +40,7 @@ fn trigger_source(v: &BackendTrigger) -> TaskSource {
         _ => TaskSource::Policy,
     }
 }
-fn remote_pair(value: &TaskFacts) -> Option<(uuid::Uuid, uuid::Uuid)> {
+pub(super) fn remote_pair(value: &TaskFacts) -> Option<(uuid::Uuid, uuid::Uuid)> {
     let (task, attempt) = match value {
         TaskFacts::Preparation(v) => {
             let v = v.action.offer()?;

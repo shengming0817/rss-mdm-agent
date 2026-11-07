@@ -10,6 +10,10 @@ import type {
   SelfServicePort,
   BackendTask,
 } from "../self-service/types";
+import type { NavigationOutput } from "../workspace/entry";
+
+type EntryTask = Extract<NavigationOutput, { kind: "task" }>["value"];
+type EntryReader = () => Promise<EntryTask>;
 
 // IPC and provider objects may order their properties differently. Identity is
 // the typed original value, including the complete sampling definition version.
@@ -162,6 +166,7 @@ export function createTaskCenter(
     recentFlight: Promise<void> | undefined;
 
   let listFlight: Promise<void> | undefined;
+  let readEntry: EntryReader | undefined;
   const detailFlights = new Map<string, Promise<TaskDetail>>();
   const readAt = new Map<string, number>();
   let listRevision = 0,
@@ -196,6 +201,7 @@ export function createTaskCenter(
     state.detailLoading = false;
     state.detailError = "";
     state.entryView = null;
+    readEntry = undefined;
     state.next = null;
     state.pendingControl = null;
     state.node = "";
@@ -416,17 +422,20 @@ export function createTaskCenter(
     state.detailLoading = false;
     state.detailError = "";
     state.entryView = null;
+    readEntry = undefined;
     state.node = "";
   }
   async function openTask(
     reference: TaskRef,
     node = "",
     entryView: typeof state.entryView = null,
+    entry?: { read: EntryReader; initial?: EntryTask },
   ) {
     const call = epoch,
       selection = ++selectionEpoch;
     state.requested = deepClone(reference);
     state.entryView = entryView;
+    readEntry = entry?.read;
     state.detailLoading = true;
     state.detailError = "";
     if (
@@ -437,9 +446,24 @@ export function createTaskCenter(
       state.node = "";
     }
     try {
-      const value = await detail(reference, true);
+      const resolved = entry ? (entry.initial ?? (await entry.read())) : null;
+      const value = resolved
+        ? deepClone(resolved.detail)
+        : await detail(reference, true);
       if (!alive || call !== epoch || selection !== selectionEpoch)
         return "stale" as const;
+      if (resolved) {
+        acceptScope(value.scope);
+        reference = value.reference;
+        cache(value);
+        state.requested = deepClone(reference);
+        node = resolved.step?.node ?? "";
+        entryView = {
+          step: resolved.step?.id,
+          unavailable: resolved.stepUnavailable,
+        };
+        state.entryView = entryView;
+      }
       if (node && !value.nodes.some((n) => n.id === node)) {
         state.selected = value;
         state.node = "";
@@ -465,12 +489,30 @@ export function createTaskCenter(
     } catch {
       if (!alive || call !== epoch || selection !== selectionEpoch)
         return "stale" as const;
+      if (entry) {
+        forget(reference);
+        state.selected = null;
+        state.node = "";
+      }
       state.detailError = "原任务不可访问或状态未确认，请重试读取";
       return "unknown" as const;
     } finally {
       if (alive && call === epoch && selection === selectionEpoch)
         state.detailLoading = false;
     }
+  }
+  function openEntry(initial: EntryTask, read: EntryReader) {
+    return openTask(initial.detail.reference, "", {}, { initial, read });
+  }
+  function readTask() {
+    const reference = state.requested;
+    if (reference)
+      return openTask(
+        reference,
+        state.node,
+        state.entryView,
+        readEntry ? { read: readEntry } : undefined,
+      );
   }
   async function reconcileControl() {
     if (!tasks || !state.pendingControl) return;
@@ -596,8 +638,7 @@ export function createTaskCenter(
   }
   async function refresh() {
     await load();
-    if (state.selected && !state.detailLoading)
-      await openTask(state.selected.reference, state.node, state.entryView);
+    if (state.requested && !state.detailLoading) await readTask();
     if (state.pendingControl) await reconcileControl().catch(() => {});
   }
   async function setQuery(query: Partial<TaskQuery>) {
@@ -680,6 +721,8 @@ export function createTaskCenter(
     refresh,
     detail,
     openTask,
+    openEntry,
+    readTask,
     closeTask,
     openNode: openTask,
     control,

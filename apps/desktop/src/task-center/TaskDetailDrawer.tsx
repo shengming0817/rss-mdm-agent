@@ -61,15 +61,7 @@ export function TaskDetailDrawer({
       setIntent(null);
       owner.closeTask();
     },
-    read = () => {
-      const reference = owner.state.requested;
-      if (reference)
-        void owner.openTask(
-          deepClone(reference),
-          owner.state.node,
-          owner.state.entryView,
-        );
-    },
+    read = () => void owner.readTask(),
     stale =
       !!intent &&
       (!task ||
