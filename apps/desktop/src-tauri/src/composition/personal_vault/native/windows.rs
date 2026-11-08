@@ -1,8 +1,12 @@
 use windows_sys::Win32::Graphics::Gdi::COLOR_WINDOW;
 // ref: Microsoft IUserConsentVerifierInterop; Win32 ES_PASSWORD / WM_WTSSESSION_CHANGE.
-use super::*;
+use super::{lock_slot, SharedVault};
+use passkey_vault::{Error, Result};
 use std::{
-    sync::atomic::{AtomicIsize, AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicIsize, AtomicU64, Ordering},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 use windows_sys::Win32::{
@@ -15,6 +19,7 @@ use windows_sys::Win32::{
         WindowsAndMessaging::*,
     },
 };
+use zeroize::Zeroizing;
 static MAIN: AtomicIsize = AtomicIsize::new(0);
 static DIALOG: AtomicIsize = AtomicIsize::new(0);
 static CANCEL: AtomicU64 = AtomicU64::new(0);
