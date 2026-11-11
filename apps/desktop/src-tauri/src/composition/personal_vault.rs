@@ -219,6 +219,7 @@ pub async fn execute<R: Runtime>(
         #[cfg(windows)]
         if changes {
             passkey_vault::platform::notify_management_change();
+            #[cfg(target_arch = "x86_64")]
             if windows_passkey_provider::registration::invalidate_index().is_err() {
                 eprintln!("personal passkey index refresh pending");
             }

@@ -3,7 +3,7 @@ use windows_sys::{
     core::GUID,
     Win32::{
         Security::{Authorization::ConvertSidToStringSidW, *},
-        System::{LibraryLoader::*, Registry::*},
+        System::{LibraryLoader::*, Registry::*, RemoteDesktop::ProcessIdToSessionId},
     },
 };
 pub fn guid_bytes(id: &GUID) -> [u8; 16] {
