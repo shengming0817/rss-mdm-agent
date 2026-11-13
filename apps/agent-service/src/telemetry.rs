@@ -118,7 +118,7 @@ impl Telemetry {
                 .try_into()
                 .map_err(|_| Error::Protocol)?,
         ) ^ u64::from_le_bytes(
-            p.registration_id.as_bytes()[..8]
+            p.device_id.as_uuid().as_bytes()[..8]
                 .try_into()
                 .map_err(|_| Error::Protocol)?,
         );
@@ -149,8 +149,7 @@ impl Telemetry {
             {
                 self.collector.cancel()?;
                 self.spool.gap_for(
-                    self.registration.registration_id,
-                    self.registration.generation,
+                    self.registration.device_id,
                     if at < wall {
                         GapReason::Clock
                     } else {
@@ -184,8 +183,7 @@ impl Telemetry {
             if let Some(configuration) = preparing {
                 let p = configuration.payload();
                 self.spool.gap_for(
-                    p.registration_id,
-                    p.generation,
+                    p.device_id,
                     if error == Error::Capacity {
                         GapReason::Capacity
                     } else if error == Error::Denied {
@@ -232,8 +230,7 @@ impl Telemetry {
                 let elapsed = now.saturating_duration_since(slot.due).as_millis();
                 if elapsed >= u128::from(cadence) {
                     self.spool.gap_for(
-                        p.registration_id,
-                        p.generation,
+                        p.device_id,
                         GapReason::Suspended,
                         (elapsed / u128::from(cadence)).min(i64::MAX as u128) as u64,
                         at.saturating_sub((elapsed * 1000).min(at as u128) as i64),
@@ -244,8 +241,7 @@ impl Telemetry {
                 let allowed = environment.collect && at / 1_000_000 < p.expires_at;
                 if !allowed {
                     self.spool.gap_for(
-                        p.registration_id,
-                        p.generation,
+                        p.device_id,
                         if at / 1_000_000 >= p.expires_at {
                             GapReason::Lease
                         } else if environment.capacity {
@@ -267,8 +263,7 @@ impl Telemetry {
                         at,
                     ) {
                         self.spool.gap_for(
-                            p.registration_id,
-                            p.generation,
+                            p.device_id,
                             if e == Error::Capacity {
                                 GapReason::Capacity
                             } else {
@@ -281,8 +276,7 @@ impl Telemetry {
                     }
                 } else {
                     self.spool.gap_for(
-                        p.registration_id,
-                        p.generation,
+                        p.device_id,
                         GapReason::Collection,
                         1,
                         at,
@@ -301,8 +295,7 @@ impl Telemetry {
         if now >= self.summary_at {
             self.spool.prune(
                 at / 1_000_000,
-                self.registration.registration_id,
-                self.registration.generation,
+                self.registration.device_id,
             )?;
             self.summary =
                 serde_json::to_value(self.spool.summary()?).map_err(|_| Error::Storage)?;
@@ -342,8 +335,7 @@ impl Telemetry {
                 Ok(_) => (),
                 Err(e) => {
                     self.spool.gap_for(
-                        p.registration_id,
-                        p.generation,
+                        p.device_id,
                         if e == Error::Capacity {
                             GapReason::Capacity
                         } else {
@@ -357,8 +349,7 @@ impl Telemetry {
             }
         } else {
             self.spool.gap_for(
-                p.registration_id,
-                p.generation,
+                p.device_id,
                 GapReason::Configuration,
                 1,
                 observed.min(at),
@@ -418,13 +409,11 @@ impl Telemetry {
                     if now >= self.send_at && self.environment.observe(self.spool.root()).upload {
                         let at = timestamp()?;
                         self.spool.freeze_gaps(
-                            self.registration.registration_id,
-                            self.registration.generation,
+                            self.registration.device_id,
                             at,
                         )?;
                         if let Some(p) = self.spool.pending_gap(
-                            self.registration.registration_id,
-                            self.registration.generation,
+                            self.registration.device_id,
                             at,
                         )? {
                             self.send_at = now
@@ -578,8 +567,7 @@ impl Telemetry {
             match result {
                 Ok(_) => (),
                 Err(_) => self.spool.gap_for(
-                    active.configuration.payload().registration_id,
-                    active.configuration.payload().generation,
+                    active.configuration.payload().device_id,
                     GapReason::Collection,
                     1,
                     active.observed,

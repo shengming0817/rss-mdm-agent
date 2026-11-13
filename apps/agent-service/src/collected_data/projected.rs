@@ -267,18 +267,14 @@ impl Data {
             ReadSource::Task { task, .. } => crate::backend::plan::enterprise_binding(
                 self.service_id,
                 task.tenant_id,
-                task.registration_id,
-                task.generation,
-                &task.device_id,
+                task.device_id,
             )?,
             ReadSource::Periodic {
                 configuration: c, ..
             } => crate::backend::plan::enterprise_binding(
                 self.service_id,
                 c.tenant_id,
-                c.registration_id,
-                c.generation,
-                &c.device_id,
+                c.device_id,
             )?,
             _ => return Ok(None),
         };
@@ -585,9 +581,7 @@ impl Data {
         let binding = crate::backend::plan::enterprise_binding(
             self.service_id,
             task.tenant_id,
-            task.registration_id,
-            task.generation,
-            &task.device_id,
+            task.device_id,
         )?;
         let enterprise = Some(digest(&(&binding.authority, &binding.device))?);
         let association: Option<Association> = self

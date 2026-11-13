@@ -55,41 +55,21 @@ pub(crate) fn platform() -> Result<Platform, Error> {
     }
 }
 pub(crate) fn context(
-    service_id: uuid::Uuid,
-    tenant: uuid::Uuid,
-    r: &wire::BindingProfile,
+    service_id: uuid::Uuid, tenant: uuid::Uuid, r: &wire::BindingProfile,
 ) -> Result<(execution_app::ServiceBinding, ActorId), Error> {
-    Ok((
-        enterprise_binding(
-            service_id,
-            tenant,
-            r.registration_id,
-            r.generation,
-            &r.device_id,
-        )?,
-        ActorId::new(format!(
-            "registration:{}:{}",
-            r.registration_id, r.generation
-        ))
-        .map_err(|_| Error::Protocol)?,
-    ))
+    Ok((enterprise_binding(service_id, tenant, r.device_id)?,
+        ActorId::new(format!("device:{}", r.device_id)).map_err(|_| Error::Protocol)?))
 }
 pub(crate) fn enterprise_binding(
-    service_id: uuid::Uuid,
-    tenant: uuid::Uuid,
-    registration: uuid::Uuid,
-    generation: u64,
-    device: &str,
+    service_id: uuid::Uuid, tenant: uuid::Uuid, device: rss_mdm_agent_wire::DeviceId,
 ) -> Result<execution_app::ServiceBinding, Error> {
     use sha2::{Digest as _, Sha256};
-    let bytes =
-        serde_json::to_vec(&(service_id, registration, generation)).map_err(|_| Error::Protocol)?;
+    let bytes = serde_json::to_vec(&(service_id, tenant, device)).map_err(|_| Error::Protocol)?;
     Ok(execution_app::ServiceBinding {
         authority: Authority::Enterprise {
-            id: id(format!("agent-{:x}", Sha256::digest(bytes)))?,
-            tenant: id(tenant.to_string())?,
+            id: id(format!("agent-{:x}", Sha256::digest(bytes)))?, tenant: id(tenant.to_string())?,
         },
-        device: DeviceId::new(device).map_err(|_| Error::Protocol)?,
+        device: DeviceId::new(device.to_string()).map_err(|_| Error::Protocol)?,
     })
 }
 pub(crate) fn script_profile(profile: wire::ExecutorProfile) -> Result<ScriptProfile, Error> {
@@ -179,7 +159,7 @@ pub(crate) fn script(
     let mut compared = payload.clone();
     compared.permit = original.permit;
     compared.expires_at = original.expires_at;
-    if compared != **original || payload.device_id != binding.device.as_str() {
+    if compared != **original || payload.device_id.to_string() != binding.device.as_str() {
         return Err(Error::Untrusted);
     }
     let interpreter = interpreters

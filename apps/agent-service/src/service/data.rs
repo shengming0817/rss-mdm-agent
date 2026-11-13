@@ -178,9 +178,7 @@ impl Core {
                 Some(plan::enterprise_binding(
                     self.data.service_id,
                     task.tenant_id,
-                    task.registration_id,
-                    task.generation,
-                    &task.device_id,
+                    task.device_id,
                 )?)
             }
             crate::collection_worker::ReadSource::Periodic {
@@ -188,9 +186,7 @@ impl Core {
             } => Some(plan::enterprise_binding(
                 self.data.service_id,
                 c.tenant_id,
-                c.registration_id,
-                c.generation,
-                &c.device_id,
+                c.device_id,
             )?),
             crate::collection_worker::ReadSource::Local { .. } => None,
         };
@@ -224,9 +220,7 @@ impl Core {
             let b = plan::enterprise_binding(
                 self.data.service_id,
                 task.tenant_id,
-                task.registration_id,
-                task.generation,
-                &task.device_id,
+                task.device_id,
             )?;
             if b.authority != input.spec().request.authority
                 || b.device != input.spec().request.target.device

@@ -20,7 +20,7 @@ pub(super) struct Record {
 pub(super) fn name(task: &w::CredentialTaskSpec, suffix: &str) -> String {
     format!(
         "{}-{}-{}-{}.{}",
-        task.registration_id, task.generation, task.task_id, task.attempt_id, suffix
+        task.tenant_id, task.device_id, task.task_id, task.attempt_id, suffix
     )
 }
 pub(crate) fn lock(root: &Path) -> Result<std::fs::File, Error> {

@@ -643,9 +643,7 @@ impl Data {
                     let b = crate::backend::plan::enterprise_binding(
                         self.service_id,
                         c.tenant_id,
-                        c.registration_id,
-                        c.generation,
-                        &c.device_id,
+                        c.device_id,
                     )?;
                     Some(digest(&(&b.authority, &b.device))?)
                 },

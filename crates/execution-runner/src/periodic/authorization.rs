@@ -150,8 +150,8 @@ fn verify_binding(
         || p.budget.max_attempts != 1
         || !matches!(&p.request.authority, Authority::Enterprise { tenant, .. } if tenant.as_str() == c.tenant_id.to_string())
         || p.request.actor.as_str()
-            != format!("registration:{}:{}", c.registration_id, c.generation)
-        || p.request.target.device.as_str() != c.device_id
+            != format!("device:{}", c.device_id)
+        || p.request.target.device.as_str() != c.device_id.to_string()
         || !matches!(p.request.target.scope, TargetScope::Device {})
         || p.request.delegation.is_some()
         || !matches!(p.session_requirement, SessionRequirement::NotRequired {})
