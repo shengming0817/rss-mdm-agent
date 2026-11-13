@@ -5,9 +5,7 @@ use super::*;
 #[serde(deny_unknown_fields)]
 pub struct Registration {
     pub tenant: Uuid,
-    pub device: String,
-    pub id: Uuid,
-    pub generation: u64,
+    pub device: rss_mdm_agent_wire::DeviceId,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -19,22 +17,13 @@ impl Authority {
     pub fn registration(&self) -> Registration {
         Registration {
             tenant: self.tenant,
-            device: self.device.clone(),
-            id: self.registration,
-            generation: self.registration_generation,
+            device: self.device,
         }
     }
 }
 impl Registration {
     fn validate(&self) -> Result<(), Error> {
-        if self.tenant.is_nil()
-            || self.id.is_nil()
-            || self.generation == 0
-            || self.generation > i64::MAX as u64
-            || self.device.is_empty()
-            || self.device.len() > 256
-            || self.device.chars().any(char::is_control)
-        {
+        if self.tenant.is_nil() {
             return Err(Error::Invalid);
         }
         Ok(())
@@ -122,9 +111,7 @@ impl Store {
             || value.registration
                 != (Registration {
                     tenant: task.tenant_id,
-                    device: task.device_id.clone(),
-                    id: task.registration_id,
-                    generation: task.generation,
+                    device: task.device_id,
                 })
         {
             return Err(Error::Changed);
@@ -216,9 +203,7 @@ impl Store {
             || current.registration
                 != (Registration {
                     tenant: task.tenant_id,
-                    device: task.device_id.clone(),
-                    id: task.registration_id,
-                    generation: task.generation,
+                    device: task.device_id,
                 })
         {
             return Err(Error::Changed);
@@ -285,10 +270,7 @@ impl Store {
                     Ok(())
                 };
             }
-            if old.registration.tenant != registration.tenant
-                || old.registration.device != registration.device
-                || registration.generation <= old.registration.generation
-            {
+            if old.registration.tenant != registration.tenant {
                 return Err(Error::Changed);
             }
             retire_records(&tx, false)?;

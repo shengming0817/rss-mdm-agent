@@ -63,9 +63,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let registration = self.registration()?;
         Ok(state.confirmed
             && state.ack.as_ref().is_some_and(|ack| {
-                ack.registration == registration.registration_id
-                    && ack.generation == registration.generation
-                    && ack.matches(document).unwrap_or(false)
+                ack.device_id == registration.device_id && ack.matches(document).unwrap_or(false)
             }))
     }
     fn observe_task_trust(
@@ -85,8 +83,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let observation = Observation {
             operation: Uuid::new_v4(),
             version: 1,
-            registration: registration.registration_id,
-            generation: registration.generation,
+            device_id: registration.device_id,
             sequence: stored.sequence,
             target_revision: target.map(|v| v.revision),
             target_digest: target.map(Trust::installation_digest).transpose()?,
@@ -108,6 +105,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let Some(pending) = state.pending.as_ref() else {
             return Ok(());
         };
+        if pending.device_id != self.registration()?.device_id {
+            return Err(Error::Identity);
+        }
         let reply: Observation = self
             .runtime_json::<h::TaskObservation>(&[], Some(pending))
             .await?;
@@ -126,10 +126,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let trust = state.document.as_ref().ok_or(Error::Storage)?;
         self.bind_task_trust(trust)?;
         let registration = self.registration()?;
-        if !ack.matches(trust)?
-            || ack.registration != registration.registration_id
-            || ack.generation != registration.generation
-        {
+        if !ack.matches(trust)? || ack.device_id != registration.device_id {
             return Err(Error::Untrusted);
         }
         if state.confirmed {
@@ -161,15 +158,12 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         state = self.task_trust_state()?;
         let registration = self.registration()?;
         if state.ack.as_ref().is_none_or(|a| {
-            a.registration != registration.registration_id
-                || a.generation != registration.generation
-                || !a.matches(&trust).unwrap_or(false)
+            a.device_id != registration.device_id || !a.matches(&trust).unwrap_or(false)
         }) {
             state.ack = Some(Acknowledgement {
                 operation: Uuid::new_v4(),
                 version: 1,
-                registration: registration.registration_id,
-                generation: registration.generation,
+                device_id: registration.device_id,
                 revision: trust.revision,
                 digest: trust.installation_digest()?,
             });

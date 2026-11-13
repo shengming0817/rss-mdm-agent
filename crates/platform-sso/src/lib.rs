@@ -24,7 +24,7 @@ pub enum Error {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Context {
     pub tenant: Uuid,
-    pub agent_registration: Uuid,
+    pub device_id: rss_mdm_agent_wire::DeviceId,
     pub installation: Uuid,
     pub origin: String,
     pub kind: w::Kind,
@@ -37,7 +37,7 @@ pub struct Context {
 }
 impl Context {
     pub fn validate(&self) -> Result<(), Error> {
-        if self.agent_registration.is_nil() || self.installation.is_nil() {
+        if self.installation.is_nil() {
             return Err(Error::Identity);
         }
         w::Endpoints::new(&self.origin, self.tenant).map_err(|_| Error::Identity)?;
@@ -161,7 +161,7 @@ impl Registration {
             return Err(Error::Identity);
         }
         w::RegistrationClaims {
-            iss: self.context.agent_registration,
+            iss: self.context.device_id,
             aud: format!("{}/register", challenge.endpoints.base),
             challenge_id: challenge.id,
             source_id: self.source_id,
@@ -279,8 +279,7 @@ pub fn public_key(point: &[u8]) -> Result<w::PublicKey, Error> {
 pub struct LocalBinding {
     pub installation: Uuid,
     pub tenant: Uuid,
-    pub agent_registration: Uuid,
-    pub registration_generation: u64,
+    pub device_id: rss_mdm_agent_wire::DeviceId,
     pub binding: Uuid,
     pub binding_generation: i64,
     pub revision: i64,
@@ -298,8 +297,7 @@ impl LocalBinding {
     ) -> bool {
         self.installation == installation
             && self.tenant == tenant
-            && self.agent_registration == registration.registration_id
-            && self.registration_generation == registration.generation
+            && self.device_id == registration.device_id
             && self.generated_uid == account
             && self.binding_generation > 0
             && self.revision > 0
@@ -346,7 +344,7 @@ mod tests {
         let source = Uuid::from_u128(2);
         let context = Context {
             tenant,
-            agent_registration: Uuid::from_u128(3),
+            device_id: Uuid::from_u128(3).try_into().unwrap(),
             installation: Uuid::from_u128(4),
             origin: "https://mdm.example".into(),
             kind: w::Kind::User,

@@ -190,9 +190,7 @@ fn fixture(create: bool) -> (Root, Input, Fake, Vec<u8>, String) {
     let task = w::AccessTaskSpec {
         wire_version: 1,
         tenant_id: Uuid::new_v4(),
-        device_id: "device".into(),
-        registration_id: Uuid::new_v4(),
-        generation: 1,
+        device_id: "11111111-2222-4333-8444-555555555555".parse().unwrap(),
         platform: w::TaskPlatform::Windows,
         architecture: w::TaskArchitecture::X86_64,
         task_id: Uuid::new_v4(),

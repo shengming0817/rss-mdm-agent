@@ -190,6 +190,63 @@ pub fn validate_sqlite_file(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Read only the DELETE-mode file's application/version markers before recovery.
+/// Use a fresh connection, after validating its private file and sidecars. These
+/// markers admit recovery, not schema or identity: SQLite must validate those
+/// after its pager has replayed any hot journal. Products never migrate markers.
+/// An empty file represents interrupted initial creation.
+///
+/// Use SQLite's own descriptor: opening/closing another descriptor would release
+/// this process's live POSIX SQLite locks. No URI bypass or journal parser is used.
+/// ref: SQLite c3ref/file_control.html; fileformat.html §1.3; pager.c.
+pub fn sqlite_format(conn: &rusqlite::Connection) -> rusqlite::Result<Option<(u32, u32)>> {
+    use rusqlite::{ffi, Error};
+    fn check(code: i32) -> rusqlite::Result<()> {
+        if code == ffi::SQLITE_OK {
+            Ok(())
+        } else {
+            Err(Error::SqliteFailure(ffi::Error::new(code), None))
+        }
+    }
+    let mut file: *mut ffi::sqlite3_file = std::ptr::null_mut();
+    let mut header = [0u8; 100];
+    // SAFETY: conn owns the handle for this call and cannot be shared across
+    // threads. FILE_POINTER initializes a borrowed sqlite3_file pointer; the
+    // required VFS methods and the file remain owned by that live connection.
+    // xRead receives exactly the writable buffer length, at fixed offset zero.
+    unsafe {
+        check(ffi::sqlite3_file_control(
+            conn.handle(),
+            c"main".as_ptr(),
+            ffi::SQLITE_FCNTL_FILE_POINTER,
+            (&mut file as *mut *mut ffi::sqlite3_file).cast(),
+        ))?;
+        let methods = file
+            .as_ref()
+            .and_then(|f| f.pMethods.as_ref())
+            .ok_or(Error::InvalidQuery)?;
+        let mut size = 0;
+        check(methods.xFileSize.ok_or(Error::InvalidQuery)?(
+            file, &mut size,
+        ))?;
+        if size == 0 {
+            return Ok(None);
+        }
+        check(methods.xRead.ok_or(Error::InvalidQuery)?(
+            file,
+            header.as_mut_ptr().cast(),
+            100,
+            0,
+        ))?;
+    }
+    if &header[..16] != b"SQLite format 3\0" || header[18..20] != [1, 1] {
+        return Err(Error::InvalidQuery);
+    }
+    let application = u32::from_be_bytes(header[68..72].try_into().unwrap());
+    let version = u32::from_be_bytes(header[60..64].try_into().unwrap());
+    Ok(Some((application, version)))
+}
+
 /// Validate a directory or regular file, never a symbolic link or special file.
 pub fn validate(path: &Path) -> io::Result<()> {
     #[cfg(unix)]

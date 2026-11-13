@@ -449,8 +449,7 @@ fn apply(input: &Input) -> Result<Effect, Error> {
         &platform_sso::LocalBinding {
             installation: input.installation,
             tenant: task.tenant_id,
-            agent_registration: task.registration_id,
-            registration_generation: task.generation,
+            device_id: task.device_id,
             binding: task.binding_id,
             binding_generation: task.binding_generation,
             revision: task.revision,
@@ -558,8 +557,7 @@ pub(crate) fn refresh_with(
             let next = platform_sso::LocalBinding {
                 installation,
                 tenant: task.tenant_id,
-                agent_registration: task.registration_id,
-                registration_generation: task.generation,
+                device_id: task.device_id,
                 binding: task.binding_id,
                 binding_generation: task.binding_generation,
                 revision: task.revision,

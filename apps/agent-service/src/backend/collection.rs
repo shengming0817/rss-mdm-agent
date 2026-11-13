@@ -22,7 +22,7 @@ pub(crate) fn compile(
     compared.permit = original.permit;
     compared.expires_at = original.expires_at;
     if compared != **original
-        || payload.device_id != binding.device.as_str()
+        || payload.device_id.to_string() != binding.device.as_str()
         || !materials.files().is_empty()
     {
         return Err(Error::Untrusted);

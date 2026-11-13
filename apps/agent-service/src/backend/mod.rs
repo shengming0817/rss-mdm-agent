@@ -39,49 +39,13 @@ pub(crate) fn request_id(offer: &Offer) -> Result<execution_contract::RequestId,
             .map_err(|_| Error::Protocol);
     }
     let bytes = match offer.payload() {
-        wire::TaskPayload::DeviceAccess(v) => encode(&(
-            v.tenant_id,
-            &v.device_id,
-            v.registration_id,
-            v.generation,
-            v.task_id,
-        ))?,
+        wire::TaskPayload::DeviceAccess(v) => encode(&(v.tenant_id, &v.device_id, v.task_id))?,
         wire::TaskPayload::Unmanage(_) => return Err(Error::Unsupported),
-        wire::TaskPayload::Credential(v) => encode(&(
-            v.tenant_id,
-            &v.device_id,
-            v.registration_id,
-            v.generation,
-            v.task_id,
-        ))?,
-        wire::TaskPayload::Collection(v) => encode(&(
-            v.tenant_id,
-            &v.device_id,
-            v.registration_id,
-            v.generation,
-            v.task_id,
-        ))?,
-        wire::TaskPayload::Script(v) => encode(&(
-            v.tenant_id,
-            &v.device_id,
-            v.registration_id,
-            v.generation,
-            v.task_id,
-        ))?,
-        wire::TaskPayload::Software(v) => encode(&(
-            v.tenant_id,
-            &v.device_id,
-            v.registration_id,
-            v.generation,
-            v.task_id,
-        ))?,
-        wire::TaskPayload::Enrollment(v) => encode(&(
-            v.tenant_id,
-            &v.device_id,
-            v.registration_id,
-            v.generation,
-            v.task_id,
-        ))?,
+        wire::TaskPayload::Credential(v) => encode(&(v.tenant_id, &v.device_id, v.task_id))?,
+        wire::TaskPayload::Collection(v) => encode(&(v.tenant_id, &v.device_id, v.task_id))?,
+        wire::TaskPayload::Script(v) => encode(&(v.tenant_id, &v.device_id, v.task_id))?,
+        wire::TaskPayload::Software(v) => encode(&(v.tenant_id, &v.device_id, v.task_id))?,
+        wire::TaskPayload::Enrollment(v) => encode(&(v.tenant_id, &v.device_id, v.task_id))?,
     };
     execution_contract::RequestId::new(format!("agent-v1-{:x}", sha2::Sha256::digest(&bytes)))
         .map_err(|_| Error::Protocol)

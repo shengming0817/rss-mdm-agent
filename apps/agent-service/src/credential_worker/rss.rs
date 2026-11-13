@@ -63,8 +63,6 @@ pub(super) fn execute(
             || record.task.attempt_id != reference.attempt_id
             || record.task.tenant_id != task.tenant_id
             || record.task.device_id != task.device_id
-            || record.task.registration_id != task.registration_id
-            || record.task.generation != task.generation
             || record.subject.as_ref() != Some(&subject)
             || !matches!(record.task.operation, Op::RotateRssLogin { .. })
         {

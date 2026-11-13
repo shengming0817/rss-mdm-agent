@@ -66,7 +66,7 @@ pub(crate) struct State {
 #[serde(deny_unknown_fields)]
 struct Ack {
     request: Acknowledgement,
-    registration: Uuid,
+    device_id: rss_mdm_agent_wire::DeviceId,
     completed: bool,
 }
 
@@ -226,7 +226,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         }
         // Re-read persisted private trust and validate the current identity before every ACK.
         self.restore_runtime_transport()?;
-        let registration = self.registration()?.registration_id;
+        let registration = self.registration()?.device_id;
         let mut state = self.pki_state()?;
         let document = state.document.as_ref().ok_or(Error::Identity)?;
         let digest = document.installation_digest();
@@ -244,7 +244,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         }
         let document = state.document.as_ref().ok_or(Error::Identity)?;
         if !state.ack.as_ref().is_some_and(|a| {
-            a.registration == registration
+            a.device_id == registration
                 && a.request.revision == document.revision
                 && a.request.digest == digest
         }) {
@@ -255,7 +255,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                     revision: document.revision,
                     digest,
                 },
-                registration,
+                device_id: registration,
                 completed: false,
             });
             self.store.put("pki", &state)?;
@@ -364,7 +364,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             a.completed
                 && registration
                     .as_ref()
-                    .is_some_and(|r| r.registration_id == a.registration)
+                    .is_some_and(|r| r.device_id == a.device_id)
                 && state.document.as_ref().is_some_and(|d| {
                     d.revision == a.request.revision && d.installation_digest() == a.request.digest
                 })
@@ -390,8 +390,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let observation = Observation {
             operation: Uuid::new_v4(),
             version: 1,
-            registration: registration.registration_id,
-            generation: registration.generation,
+            device_id: registration.device_id,
             sequence: state.observation_sequence,
             target_revision: target.map(|v| v.revision),
             target_digest: target.map(Trust::installation_digest),
@@ -413,6 +412,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let Some(pending) = state.pending_observation.as_ref() else {
             return Ok(());
         };
+        if pending.device_id != self.registration()?.device_id {
+            return Err(Error::Identity);
+        }
         self.restore_runtime_transport()?;
         let (status, bytes) = self
             .agent_json_transport(

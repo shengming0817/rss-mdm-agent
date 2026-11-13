@@ -160,11 +160,7 @@ pub struct EntryNamespace {
     /// Exact tenant UUID.
     pub tenant: String,
     /// Exact device identity.
-    pub device: String,
-    /// Exact registration UUID.
-    pub registration: String,
-    /// Exact registration generation.
-    pub generation: u64,
+    pub device: rss_mdm_agent_wire::DeviceId,
 }
 /// The external link selects a view or prepares an original user interface.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -301,10 +297,7 @@ impl EntryIntent {
         if let Some(n) = &self.namespace {
             if !bounded(&n.instance)
                 || n.instance.contains(['/', ':', '\\', '@', '?', '#'])
-                || !bounded(&n.device)
                 || !canonical_uuid(&n.tenant)
-                || !canonical_uuid(&n.registration)
-                || n.generation == 0
             {
                 return Err(EntryError);
             }
@@ -395,8 +388,6 @@ impl EntryIntent {
                     "instance",
                     "tenant",
                     "device",
-                    "registration",
-                    "generation",
                     "version",
                     "revision",
                     "step",
@@ -441,17 +432,15 @@ impl EntryIntent {
         if fields.contains_key("attempt") || fields.contains_key("queryRevision") {
             return Err(EntryError);
         }
-        let namespace = if ["instance", "tenant", "device", "registration", "generation"]
+        let namespace = if ["instance", "tenant", "device"]
             .iter()
             .any(|k| fields.contains_key(k))
         {
             Some(EntryNamespace {
                 instance: fields.remove("instance").ok_or(EntryError)?,
                 tenant: fields.remove("tenant").ok_or(EntryError)?,
-                device: fields.remove("device").ok_or(EntryError)?,
-                registration: fields.remove("registration").ok_or(EntryError)?,
-                generation: fields
-                    .remove("generation")
+                device: fields
+                    .remove("device")
                     .ok_or(EntryError)?
                     .parse()
                     .map_err(|_| EntryError)?,
@@ -520,9 +509,7 @@ impl EntryIntent {
             fields.extend([
                 ("instance", n.instance.clone()),
                 ("tenant", n.tenant.clone()),
-                ("device", n.device.clone()),
-                ("registration", n.registration.clone()),
-                ("generation", n.generation.to_string()),
+                ("device", n.device.to_string()),
             ]);
         }
         if let Some(v) = &self.version {

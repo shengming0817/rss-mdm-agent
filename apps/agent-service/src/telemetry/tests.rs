@@ -219,7 +219,7 @@ async fn gap_network_turn_recovers_unknown_receipt_and_does_not_starve() {
     t.directory_at = Instant::now() + Duration::from_secs(60);
     let at = timestamp().unwrap();
     t.spool
-        .gap_for(r.registration_id, r.generation, GapReason::Lease, 1, at, at)
+        .gap_for(r.device_id, GapReason::Lease, 1, at, at)
         .unwrap();
     t.refresh
         .push_back((uuid::Uuid::new_v4(), uuid::Uuid::new_v4()));
@@ -236,7 +236,7 @@ async fn gap_network_turn_recovers_unknown_receipt_and_does_not_starve() {
     t.apply(&action, result).unwrap();
     let p = t
         .spool
-        .pending_gap(r.registration_id, r.generation, at + 1_000_000_000)
+        .pending_gap(r.device_id, at + 1_000_000_000)
         .unwrap()
         .unwrap();
     assert!(p.attempted());
@@ -246,7 +246,7 @@ async fn gap_network_turn_recovers_unknown_receipt_and_does_not_starve() {
     t.apply(&retry, result).unwrap();
     assert!(t
         .spool
-        .pending_gap(r.registration_id, r.generation, at + 1_000_000_000)
+        .pending_gap(r.device_id, at + 1_000_000_000)
         .unwrap()
         .is_none());
     assert_eq!(server.data.lock().unwrap().telemetry.gap_attempts.len(), 1);

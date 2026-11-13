@@ -370,7 +370,7 @@ async fn administrator_recovery_rejects_foreign_registration_and_retains_origina
             data.issuance = uuid::Uuid::new_v4();
             data.candidate_not_after = 4_071_000_000;
             if foreign {
-                data.binding.as_mut().unwrap().registration_id = uuid::Uuid::new_v4();
+                data.binding.as_mut().unwrap().device_id = rss_mdm_agent_wire::DeviceId::new_v4();
             }
         }
         let material = agent_client::GrantImport {

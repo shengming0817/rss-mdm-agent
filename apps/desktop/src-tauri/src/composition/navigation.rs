@@ -506,7 +506,7 @@ mod tests {
     #[test]
     fn shared_view_addresses_reach_the_same_native_queue() {
         let state = Navigation::default();
-        let query = "device=fixture%20%2B%20%E6%B5%8B%E8%AF%95&generation=3&instance=17c72b26-774a-492c-9bf4-5e1c47c8501e&registration=360a2191-9d5f-4fea-9f5c-6ecb02394aad&tenant=534610c5-1c82-42b1-bc9d-4b834c973cb3";
+        let query = "device=11111111-2222-4333-8444-555555555555&instance=17c72b26-774a-492c-9bf4-5e1c47c8501e&tenant=534610c5-1c82-42b1-bc9d-4b834c973cb3";
         for uri in [
             format!("rssmdm://view/v1/event/~..?{query}"),
             format!("rssmdm://view/v1/batch/11111111-1111-4111-8111-111111111111?{query}"),

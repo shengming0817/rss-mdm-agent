@@ -44,7 +44,7 @@ pub(crate) struct Input {
 pub(crate) fn name(task: &w::AccessTaskSpec, suffix: &str) -> String {
     format!(
         "{}-{}-{}-{}.access-{suffix}",
-        task.registration_id, task.generation, task.task_id, task.attempt_id
+        task.tenant_id, task.device_id, task.task_id, task.attempt_id
     )
 }
 pub(crate) fn root(config: &crate::ExecutionConfig) -> PathBuf {
@@ -87,9 +87,7 @@ fn authority(
         login,
         join,
         tenant: task.tenant_id,
-        device: task.device_id.clone(),
-        registration: task.registration_id,
-        registration_generation: task.generation,
+        device: task.device_id,
         binding: task.binding_id,
         binding_generation: task.binding_generation,
         factor_generation: task.factor_generation,

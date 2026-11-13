@@ -383,15 +383,13 @@ async fn native_integer_baselines_samples_and_configuration_remain_exact_after_r
     );
     assert_eq!(
         encode(&(
-            signed.configuration.registration_id,
-            signed.configuration.generation,
+            signed.configuration.device_id,
             signed.configuration.source,
             signed.configuration.source_epoch
         ))
         .unwrap(),
         crate::store::encode(&(
-            signed.configuration.registration_id,
-            signed.configuration.generation,
+            signed.configuration.device_id,
             signed.configuration.source,
             signed.configuration.source_epoch
         ))

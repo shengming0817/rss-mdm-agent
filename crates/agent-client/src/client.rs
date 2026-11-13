@@ -332,6 +332,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         observed_at: i64,
     ) -> Result<Uuid, Error> {
         self.active()?;
+        let device_id = self.registration()?.device_id;
         let definition = self
             .store
             .registration()?
@@ -350,8 +351,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let request = wire::ReportRequest::new(id, sequence, observed_at, definition, body)?;
         let bytes = request.canonical()?;
         tx.execute(
-            "INSERT INTO reports VALUES(?1,?2)",
-            params![id.to_string(), bytes],
+            "INSERT INTO reports VALUES(?1,?2,?3)",
+            params![id.to_string(), device_id.to_string(), bytes],
         )?;
         let next = sequence
             .checked_add(1)
@@ -367,16 +368,23 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             return Err(Error::Configuration);
         }
         let reports = {
-            let mut stmt=self.store.conn.prepare("SELECT id,CASE WHEN typeof(body)='blob' AND length(body)<=16384 THEN body END FROM reports ORDER BY rowid LIMIT ?1")?;
+            let mut stmt=self.store.conn.prepare("SELECT id,device,CASE WHEN typeof(body)='blob' AND length(body)<=16384 THEN body END FROM reports ORDER BY rowid LIMIT ?1")?;
             let rows = stmt
                 .query_map([limit as i64], |r| {
-                    Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, Vec<u8>>(2)?,
+                    ))
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
             rows
         };
         let mut sent = 0;
-        for (id, body) in reports {
+        for (id, device, body) in reports {
+            if device != self.registration()?.device_id.to_string() {
+                return Err(Error::Identity);
+            }
             let ack: wire::ReportAck = self.runtime_frozen_json::<h::Report>(&[], &body).await?;
             if ack.report_id.to_string() != id {
                 return Err(Error::Protocol);
@@ -429,11 +437,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 key_id: &signed.key_id,
                 public_key: &key,
                 tenant_id: self.store.cfg.tenant,
-                device_id: &registration.device_id,
+                device_id: registration.device_id,
                 platform: self.store.cfg.platform,
                 architecture: self.store.cfg.architecture,
-                registration_id: registration.registration_id,
-                generation: registration.generation,
                 task_id: p.task_id(),
                 attempt_id: p.attempt_id(),
                 permit,
@@ -753,11 +759,24 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         task: Uuid,
         request: &wire::TaskEventRequest,
     ) -> Result<wire::TaskEventAck, Error> {
+        let offer = self.stored_offer(task)?;
+        self.check_offer_identity(&offer)?;
+        if request.attempt_id() != offer.attempt_id() {
+            return Err(Error::Identity);
+        }
         self.runtime_json::<h::Event>(&[&task.to_string()], Some(request))
             .await
     }
+    pub(crate) fn check_offer_identity(&self, offer: &Offer) -> Result<(), Error> {
+        let (tenant, device) = crate::protocol::task_identity(offer.payload());
+        if tenant != self.store.cfg.tenant || device != self.registration()?.device_id {
+            return Err(Error::Identity);
+        }
+        Ok(())
+    }
     /// Acknowledgement of an authenticated offer never grants execution.
     pub async fn received(&mut self, offer: &Offer) -> Result<(), Error> {
+        self.check_offer_identity(offer)?;
         let key = format!("received/{}/{}", offer.task_id(), offer.attempt_id());
         let accepted: Option<bool> = self
             .store

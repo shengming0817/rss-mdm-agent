@@ -155,9 +155,7 @@ pub fn configuration(
     let configuration = TelemetryConfiguration {
         resource_digest: [7; 32],
         tenant_id: d.tenant,
-        device_id: registration.device_id.clone(),
-        registration_id: registration.registration_id,
-        generation: registration.generation,
+        device_id: registration.device_id,
         source_epoch: registration.epoch,
         issued_at: now,
         expires_at: now + 300,

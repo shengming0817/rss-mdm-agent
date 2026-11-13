@@ -116,8 +116,6 @@ impl Store {
         if task.permit != w::TaskPermit::Start
             || authority.tenant != task.tenant_id
             || authority.device != task.device_id
-            || authority.registration != task.registration_id
-            || authority.registration_generation != task.generation
             || authority.binding != task.binding_id
             || authority.binding_generation != task.binding_generation
             || authority.factor_generation != task.factor_generation

@@ -32,8 +32,7 @@ struct Pending {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct State {
-    registration: Uuid,
-    generation: u64,
+    device_id: rss_mdm_agent_wire::DeviceId,
     pending: Option<Pending>,
     receipt: Option<w::Receipt>,
     next_check: i64,
@@ -54,10 +53,9 @@ impl State {
         )?;
         Ok(())
     }
-    fn new(registration: Uuid, generation: u64) -> Self {
+    fn new(device_id: rss_mdm_agent_wire::DeviceId) -> Self {
         Self {
-            registration,
-            generation,
+            device_id,
             pending: None,
             receipt: None,
             next_check: 0,
@@ -161,15 +159,11 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             Err(Error::Identity) => return Ok(Status::NotConfigured),
             Err(error) => return Err(error),
         };
-        Ok(
-            if (state.registration, state.generation)
-                == (current.registration_id, current.generation)
-            {
-                state.status
-            } else {
-                Status::NotConfigured
-            },
-        )
+        Ok(if state.device_id == current.device_id {
+            state.status
+        } else {
+            Status::NotConfigured
+        })
     }
     /// Start a bounded collection check immediately after host startup/configuration replacement.
     /// A frozen pending operation and its transport payload remain unchanged.
@@ -193,11 +187,11 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let mut state = self
             .store
             .get::<State>(KEY)?
-            .unwrap_or_else(|| State::new(current.registration_id, current.generation));
-        if (state.registration, state.generation) != (current.registration_id, current.generation) {
+            .unwrap_or_else(|| State::new(current.device_id));
+        if state.device_id != current.device_id {
             // A confirmed registration replacement revokes the old uploader. Discard its local
             // carrier, never transplant its operation/configuration into the new authenticated source.
-            state = State::new(current.registration_id, current.generation);
+            state = State::new(current.device_id);
             state.save(&self.store)?;
         }
         let now = self.now()?;

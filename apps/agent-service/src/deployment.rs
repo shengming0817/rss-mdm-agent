@@ -296,6 +296,17 @@ impl Deployment {
             return Err(Error::Identity);
         }
         agent_client::validate_existing(&root.join("communication"), &network)?;
+        agent_client::telemetry::validate_existing(&root.join("communication"), &network)?;
+        let access = crate::access_worker::root(&self.execution);
+        match access.join("device-access.sqlite").symlink_metadata() {
+            Ok(_) => device_access::Store::validate_existing(&access, self.service_id)
+                .map_err(|_| Error::Schema)?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+            Err(e) => return Err(e.into()),
+        }
+        #[cfg(target_os = "macos")]
+        crate::service::platform_sso::upgrade_preflight(self)?;
+
         if root.join("execution-initialized").exists() && !root.join("execution.sqlite").exists() {
             return Err(Error::Storage);
         }

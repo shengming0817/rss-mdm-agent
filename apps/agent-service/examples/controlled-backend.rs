@@ -26,10 +26,11 @@ fn task_history(server: &protocol::Server) -> serde_json::Value {
     let activity: ManagementActivity = serde_json::from_value(serde_json::json!({
         "id":"execution:native-background", "source":"execution", "kind":"execution",
         "phase":"received", "recordedAt":now, "observedAt":now, "origin":"policy",
-        "target":{"device":binding.device_id,"registration":binding.registration_id,"generation":binding.generation},
+        "target":{"device":binding.device_id},
         "links":{"steps":[],"operations":[]}, "delivery":"received", "execution":"running",
         "effect":"unknown", "reporting":null, "decision":null, "auditOutcome":"recorded"
-    })).unwrap();
+    }))
+    .unwrap();
     let mut data = server.data.lock().unwrap();
     data.telemetry.configuration = Some(signed);
     data.management_page = Some(ManagementActivityPage {

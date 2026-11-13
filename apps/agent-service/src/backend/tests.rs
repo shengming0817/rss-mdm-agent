@@ -19,7 +19,14 @@ async fn mismatched_and_unsubmitted_started_offers_settle_without_journal_or_cac
     let materials = client.prepare(&offer).await.unwrap();
     client.received(&offer).await.unwrap();
     let db = local::Database::new();
-    let host = local::TestHost::new();
+    let mut host = local::TestHost::new();
+    let mut input = host.template.spec().clone();
+    input.request.target.device =
+        execution_contract::DeviceId::new(client.registration().unwrap().device_id.to_string())
+            .unwrap();
+    host.template =
+        execution_contract::FrozenExecution::freeze(input, &execution_app::test_execution_limits())
+            .unwrap();
     let runner =
         DeterministicTestRunner::new(local::id("test-runner"), TestScenario::Wait, 16).unwrap();
     let app = create_app(&db.path, host, runner.clone(), AppConfig::test_defaults()).unwrap();
@@ -65,7 +72,7 @@ async fn denied_admission_without_attempt_delivers_and_releases() {
     let offer = client.claim().await.unwrap().offer.unwrap();
     let materials = client.prepare(&offer).await.unwrap();
     client.received(&offer).await.unwrap();
-    let plan = adapted_plan(false, "device-1", &offer);
+    let plan = adapted_plan(false, "11111111-2222-4333-8444-555555555555", &offer);
     let db = local::Database::new();
     let mut host = local::TestHost::new();
     host.template = plan.clone();
@@ -121,7 +128,7 @@ async fn reserved_binding_without_journal_can_settle_after_permission_revocation
     let offer = client.claim().await.unwrap().offer.unwrap();
     let materials = client.prepare(&offer).await.unwrap();
     client.received(&offer).await.unwrap();
-    let plan = adapted_plan(false, "device-1", &offer);
+    let plan = adapted_plan(false, "11111111-2222-4333-8444-555555555555", &offer);
     let db = local::Database::new();
     let mut host = local::TestHost::new();
     host.template = plan.clone();
@@ -181,7 +188,7 @@ async fn no_process_terminal(cancel: bool) {
     let offer = client.claim().await.unwrap().offer.unwrap();
     let materials = client.prepare(&offer).await.unwrap();
     client.received(&offer).await.unwrap();
-    let plan = adapted_plan(false, "device-1", &offer);
+    let plan = adapted_plan(false, "11111111-2222-4333-8444-555555555555", &offer);
     let db = local::Database::new();
     let mut host = local::TestHost::new();
     host.template = plan.clone();
@@ -269,7 +276,7 @@ async fn accepted_remote_result_with_failed_local_confirmation_never_resends() {
     let offer = client.claim().await.unwrap().offer.unwrap();
     let materials = client.prepare(&offer).await.unwrap();
     client.received(&offer).await.unwrap();
-    let plan = adapted_plan(false, "device-1", &offer);
+    let plan = adapted_plan(false, "11111111-2222-4333-8444-555555555555", &offer);
     let db = local::Database::new();
     let mut host = local::TestHost::new();
     host.template = plan.clone();
@@ -341,7 +348,7 @@ async fn exercise_bridge(software: bool) {
     client.received(&offer).await.unwrap();
     let db = local::Database::new();
     let mut host = local::TestHost::new();
-    let plan = adapted_plan(software, "device-1", &offer);
+    let plan = adapted_plan(software, "11111111-2222-4333-8444-555555555555", &offer);
     host.template = plan.clone();
     let runner = CapturingRunner {
         inner: DeterministicTestRunner::new(local::id("test-runner"), TestScenario::Complete, 16)
@@ -485,7 +492,14 @@ async fn partial_cache_reopens_and_checks_range_etag_and_reference_cleanup() {
         .any(|v| v.as_deref() == Some("bytes=100-")));
     assert_eq!(client.cleanup(128).unwrap(), 0);
     let db = local::Database::new();
-    let host = local::TestHost::new();
+    let mut host = local::TestHost::new();
+    let mut input = host.template.spec().clone();
+    input.request.target.device =
+        execution_contract::DeviceId::new(client.registration().unwrap().device_id.to_string())
+            .unwrap();
+    host.template =
+        execution_contract::FrozenExecution::freeze(input, &execution_app::test_execution_limits())
+            .unwrap();
     let runner = execution_app::DeterministicTestRunner::new(
         local::id("test-runner"),
         execution_app::TestScenario::Wait,
@@ -680,7 +694,7 @@ async fn check_encoded_result(
     let offer = client.claim().await.unwrap().offer.unwrap();
     let materials = client.prepare(&offer).await.unwrap();
     client.received(&offer).await.unwrap();
-    let original = adapted_plan(false, "device-1", &offer);
+    let original = adapted_plan(false, "11111111-2222-4333-8444-555555555555", &offer);
     let mut spec = original.spec().clone();
     spec.launch.output.stdout = encoding;
     spec.launch.output.stderr = encoding;
@@ -745,7 +759,9 @@ async fn start_window_does_not_replace_the_signed_runtime_budget() {
     let materials = client.prepare(&offer).await.unwrap();
     client.received(&offer).await.unwrap();
     let start = client.request_start(&offer, &materials).await.unwrap();
-    let mut input = adapted_plan(false, "device-1", &offer).spec().clone();
+    let mut input = adapted_plan(false, "11111111-2222-4333-8444-555555555555", &offer)
+        .spec()
+        .clone();
     input.validity.expires_at_unix_ms = start.payload().expires_at() as u64 * 1000;
     let plan =
         execution_contract::FrozenExecution::freeze(input, &test_execution_limits()).unwrap();
@@ -780,7 +796,7 @@ async fn root_exit_is_delivered_while_overall_quiescence_stays_unknown() {
     let offer = client.claim().await.unwrap().offer.unwrap();
     let materials = client.prepare(&offer).await.unwrap();
     client.received(&offer).await.unwrap();
-    let plan = adapted_plan(false, "device-1", &offer);
+    let plan = adapted_plan(false, "11111111-2222-4333-8444-555555555555", &offer);
     let db = local::Database::new();
     let mut host = local::TestHost::new();
     host.template = plan.clone();
@@ -845,7 +861,7 @@ async fn acknowledged_v6_result_is_not_replaced_by_later_local_facts() {
     let offer = client.claim().await.unwrap().offer.unwrap();
     let materials = client.prepare(&offer).await.unwrap();
     client.received(&offer).await.unwrap();
-    let plan = adapted_plan(false, "device-1", &offer);
+    let plan = adapted_plan(false, "11111111-2222-4333-8444-555555555555", &offer);
     let db = local::Database::new();
     let mut host = local::TestHost::new();
     host.template = plan.clone();
@@ -947,7 +963,7 @@ impl Started {
         let materials = client.prepare(&offer).await.unwrap();
         client.received(&offer).await.unwrap();
         let db = local::Database::new();
-        let plan = adapted_plan(steps > 0, "device-1", &offer);
+        let plan = adapted_plan(steps > 0, "11111111-2222-4333-8444-555555555555", &offer);
         let mut host = local::TestHost::new();
         host.template = plan.clone();
         let runner = CapturingRunner {
@@ -1236,7 +1252,9 @@ async fn revoked_and_expired_unknown_keeps_original_execution_and_association() 
     next_server.register(&mut next_client).await;
     let next_offer = next_client.claim().await.unwrap().offer.unwrap();
     let mut next_host = local::TestHost::new();
-    let mut next_spec = adapted_plan(false, "device-1", &next_offer).spec().clone();
+    let mut next_spec = adapted_plan(false, "11111111-2222-4333-8444-555555555555", &next_offer)
+        .spec()
+        .clone();
     // Keep the runner explicitly Test; use a distinct namespace for the new deployment.
     next_spec.request.authority = execution_contract::Authority::Test {
         id: local::id("separately-registered-deployment"),
@@ -1671,7 +1689,7 @@ async fn management_snapshot_checkpoint_scope_and_exact_detail_survive_restart_w
     let mut client = server.client(&root, OpenMode::Create);
     server.register(&mut client).await;
     let binding = client.registration().unwrap();
-    let activity:ManagementActivity=serde_json::from_value(serde_json::json!({"id":"execution:original","source":"execution","kind":"execution","phase":"received","recordedAt":1000,"observedAt":1000,"origin":"policy","target":{"device":"device-1","registration":binding.registration_id,"generation":binding.generation},"links":{"steps":[],"operations":[]},"delivery":"received","execution":"running","effect":"unknown","reporting":null,"decision":null,"auditOutcome":"recorded"})).unwrap();
+    let activity:ManagementActivity=serde_json::from_value(serde_json::json!({"id":"execution:original","source":"execution","kind":"execution","phase":"received","recordedAt":1000,"observedAt":1000,"origin":"policy","target":{"device":binding.device_id},"links":{"steps":[],"operations":[]},"delivery":"received","execution":"running","effect":"unknown","reporting":null,"decision":null,"auditOutcome":"recorded"})).unwrap();
     let page = ManagementActivityPage {
         items: vec![activity.clone()],
         next_cursor: Some("snapshot-next".into()),
@@ -1816,7 +1834,7 @@ async fn management_byte_retention_does_not_pin_the_original_sync_checkpoint() {
     .unwrap();
     server.register(&mut client).await;
     let binding = client.registration().unwrap();
-    let activity:ManagementActivity=serde_json::from_value(serde_json::json!({"id":"execution:original","source":"execution","kind":"execution","phase":"received","recordedAt":1000,"observedAt":1000,"origin":"policy","target":{"device":"device-1","registration":binding.registration_id,"generation":binding.generation},"links":{"steps":[],"operations":[]},"delivery":"received","execution":"running","effect":"unknown","reporting":null,"decision":null,"auditOutcome":"recorded"})).unwrap();
+    let activity:ManagementActivity=serde_json::from_value(serde_json::json!({"id":"execution:original","source":"execution","kind":"execution","phase":"received","recordedAt":1000,"observedAt":1000,"origin":"policy","target":{"device":binding.device_id},"links":{"steps":[],"operations":[]},"delivery":"received","execution":"running","effect":"unknown","reporting":null,"decision":null,"auditOutcome":"recorded"})).unwrap();
     for page in 0..3 {
         let mut items = Vec::new();
         for index in 0..12 {

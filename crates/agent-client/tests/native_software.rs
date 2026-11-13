@@ -27,11 +27,9 @@ async fn complete_native_binding_and_local_identity_remain_inside_signature_admi
             key_id: "test",
             public_key: &keys["test"],
             tenant_id: spec.tenant_id,
-            device_id: &spec.device_id,
+            device_id: spec.device_id,
             platform: spec.platform,
             architecture: spec.architecture,
-            registration_id: spec.registration_id,
-            generation: spec.generation,
             task_id: spec.task_id,
             attempt_id: spec.attempt_id,
             permit: TaskPermit::Offer,
@@ -44,10 +42,8 @@ async fn complete_native_binding_and_local_identity_remain_inside_signature_admi
             "target_digest",
             "document",
             "credential",
-            "generation",
             "device",
             "tenant",
-            "registration",
         ] {
             let mut changed = signed.clone();
             let TaskPayload::Software(spec) = &mut changed.payload else {
@@ -71,10 +67,8 @@ async fn complete_native_binding_and_local_identity_remain_inside_signature_admi
                     SoftwareTaskExport::Winget { identifier, .. } => identifier.push_str("-other"),
                     _ => unreachable!(),
                 },
-                "generation" => spec.generation += 1,
-                "device" => spec.device_id.push_str("-other"),
+                "device" => spec.device_id = rss_mdm_agent_wire::DeviceId::new_v4(),
                 "tenant" => spec.tenant_id = uuid::Uuid::new_v4(),
-                "registration" => spec.registration_id = uuid::Uuid::new_v4(),
                 _ => unreachable!(),
             }
             spec.definition_digest =
@@ -246,8 +240,8 @@ async fn rejected_or_changed_source_never_starts_or_revokes_device_identity() {
             .denied = true;
         assert!(matches!(client.prepare(&offer).await, Err(Error::Denied)));
         assert_eq!(
-            client.registration().unwrap().registration_id,
-            registration.registration_id
+            client.registration().unwrap().device_id,
+            registration.device_id
         );
         server
             .data

@@ -293,7 +293,7 @@ pub(crate) fn preflight(deployment: &crate::deployment::Deployment) -> Result<()
     if candidate.windows_login.is_none() && exists(&provider())? {
         return Err(Error::Unsupported);
     }
-    device_access::Store::open(
+    device_access::Store::validate_existing(
         &crate::access_worker::root(&deployment.execution),
         deployment.service_id,
     )

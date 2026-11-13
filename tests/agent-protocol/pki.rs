@@ -248,9 +248,22 @@ pub fn chain_for(tenant: uuid::Uuid, public: Vec<u8>) -> Vec<String> {
     chain_until(tenant, public, 4_070_908_800)
 }
 pub fn chain_until(tenant: uuid::Uuid, public: Vec<u8>, until: u64) -> Vec<String> {
+    chain_until_device(
+        tenant,
+        "11111111-2222-4333-8444-555555555555".parse().unwrap(),
+        public,
+        until,
+    )
+}
+pub fn chain_until_device(
+    tenant: uuid::Uuid,
+    device: rss_mdm_agent_wire::DeviceId,
+    public: Vec<u8>,
+    until: u64,
+) -> Vec<String> {
     let uri = format!(
         "urn:rss-mdm:agent:v1:{tenant}:{}",
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode("device-1")
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(device.to_string())
     );
     let certificate = certificate_until(
         "CN=Agent fixture CA",
@@ -327,10 +340,15 @@ pub fn rotation_issuer(root_revoked: bool) -> serde_json::Value {
         "root_crl":crl_signed(renewal_key(), "CN=Agent rotation root", if root_revoked {2} else {1}, 0, 4_102_444_800, if root_revoked {&[7]} else {&[]}, vec![]),
         "provisioner":"rss-agent","kid":"fixture-rotation" })
 }
-pub fn rotation_chain(tenant: uuid::Uuid, public: Vec<u8>, until: u64) -> Vec<String> {
+pub fn rotation_chain_device(
+    tenant: uuid::Uuid,
+    device: rss_mdm_agent_wire::DeviceId,
+    public: Vec<u8>,
+    until: u64,
+) -> Vec<String> {
     let mut leaf = Certificate::from_der(
         &base64::engine::general_purpose::STANDARD
-            .decode(chain_until(tenant, public, until)[0].as_bytes())
+            .decode(chain_until_device(tenant, device, public, until)[0].as_bytes())
             .unwrap(),
     )
     .unwrap();
@@ -441,4 +459,13 @@ pub fn bootstrap_chain(installation: uuid::Uuid, attempt: uuid::Uuid) -> Vec<Vec
         4_070_908_800,
     );
     vec![certificate.to_der().unwrap()]
+}
+
+pub fn rotation_chain(tenant: uuid::Uuid, public: Vec<u8>, until: u64) -> Vec<String> {
+    rotation_chain_device(
+        tenant,
+        "11111111-2222-4333-8444-555555555555".parse().unwrap(),
+        public,
+        until,
+    )
 }

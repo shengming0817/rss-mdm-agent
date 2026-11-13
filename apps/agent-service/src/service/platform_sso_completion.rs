@@ -64,9 +64,7 @@ async fn native_observation_refresh_settles_original_journal_after_restart_and_a
         let task = r::AccessTaskSpec {
             wire_version: 1,
             tenant_id: d.tenant,
-            device_id: "device-1".into(),
-            registration_id: d.registration,
-            generation: 1,
+            device_id: "11111111-2222-4333-8444-555555555555".parse().unwrap(),
             platform: r::TaskPlatform::Macos,
             architecture: r::TaskArchitecture::Aarch64,
             task_id: d.task,
@@ -117,8 +115,7 @@ async fn native_observation_refresh_settles_original_journal_after_restart_and_a
     let local_binding = ::platform_sso::LocalBinding {
         installation,
         tenant: task.tenant_id,
-        agent_registration: task.registration_id,
-        registration_generation: 1,
+        device_id: task.device_id,
         binding: binding_id,
         binding_generation: 1,
         revision: 1,
@@ -135,7 +132,7 @@ async fn native_observation_refresh_settles_original_journal_after_restart_and_a
         context: ::platform_sso::Context {
             installation,
             tenant: task.tenant_id,
-            agent_registration: task.registration_id,
+            device_id: task.device_id,
             origin: "https://mdm.example".into(),
             kind: w::Kind::User,
             binding: Some(binding_id),
@@ -319,7 +316,9 @@ async fn native_observation_refresh_settles_original_journal_after_restart_and_a
         .unwrap();
     }
 
-    let mut spec = adapted_plan(false, "device-1", &offer).spec().clone();
+    let mut spec = adapted_plan(false, "11111111-2222-4333-8444-555555555555", &offer)
+        .spec()
+        .clone();
     spec.constraints = IsolationPolicy::OsIdentity {};
     spec.launch.interpreter.profile =
         crate::backend::plan::reference(crate::access_worker::PROFILE, "1").unwrap();

@@ -93,7 +93,7 @@ pub(crate) fn validity(
     provider: &impl IdentityProvider,
     now: i64,
     trust: &crate::trust::VerifiedTrust,
-) -> Result<(i64, i64, String), Error> {
+) -> Result<(i64, i64, rss_mdm_agent_wire::DeviceId), Error> {
     use x509_cert::ext::pkix::{
         name::GeneralName, BasicConstraints, ExtendedKeyUsage, KeyUsage, KeyUsages, SubjectAltName,
     };
@@ -153,13 +153,10 @@ pub(crate) fn validity(
         .decode(encoded)
         .map_err(|_| Error::Untrusted)?;
     let device = String::from_utf8(bytes).map_err(|_| Error::Untrusted)?;
-    if device.is_empty()
-        || device.len() > 256
-        || device.chars().any(char::is_control)
-        || base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&device) != encoded
-    {
+    if base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&device) != encoded {
         return Err(Error::Untrusted);
     }
+    let device = rss_mdm_agent_wire::DeviceId::parse(&device).map_err(|_| Error::Untrusted)?;
     Ok((before, after, device))
 }
 

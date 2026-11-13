@@ -5214,6 +5214,8 @@
                 "kind": { "const": "tool_name", "type": "string" },
                 "name": {
                   "description": "Complete canonical name.",
+                  "maxLength": 39,
+                  "minLength": 39,
                   "type": "string"
                 }
               },
@@ -5237,6 +5239,8 @@
         },
         "PolicyAlias": {
           "description": "Tenant-local canonical Policy alias.",
+          "maxLength": 64,
+          "minLength": 1,
           "type": "string"
         }
       },
@@ -5410,6 +5414,8 @@
                 "kind": { "const": "tool_name", "type": "string" },
                 "name": {
                   "description": "Complete canonical name.",
+                  "maxLength": 39,
+                  "minLength": 39,
                   "type": "string"
                 }
               },
@@ -5443,6 +5449,8 @@
         },
         "PolicyAlias": {
           "description": "Tenant-local canonical Policy alias.",
+          "maxLength": 64,
+          "minLength": 1,
           "type": "string"
         }
       },
@@ -5965,6 +5973,8 @@
                 "kind": { "const": "tool_name", "type": "string" },
                 "name": {
                   "description": "Complete canonical name.",
+                  "maxLength": 39,
+                  "minLength": 39,
                   "type": "string"
                 }
               },
@@ -5987,6 +5997,14 @@
           ]
         },
         "DeviceId": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "not": { "const": "00000000-0000-0000-0000-000000000000" },
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "type": "string"
+        },
+        "DeviceId2": {
           "description": "Device reference, not verified registration evidence.",
           "maxLength": 128,
           "minLength": 1,
@@ -6040,32 +6058,16 @@
           "description": "Enterprise coordinates are compared with the active registration, never used to switch it.",
           "properties": {
             "device": {
-              "description": "Exact device identity.",
-              "type": "string"
-            },
-            "generation": {
-              "description": "Exact registration generation.",
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
+              "$ref": "#/$defs/DeviceId",
+              "description": "Exact device identity."
             },
             "instance": {
               "description": "Product instance identity, not a server URL.",
               "type": "string"
             },
-            "registration": {
-              "description": "Exact registration UUID.",
-              "type": "string"
-            },
             "tenant": { "description": "Exact tenant UUID.", "type": "string" }
           },
-          "required": [
-            "instance",
-            "tenant",
-            "device",
-            "registration",
-            "generation"
-          ],
+          "required": ["instance", "tenant", "device"],
           "type": "object"
         },
         "EntrySelector": {
@@ -6305,7 +6307,7 @@
               "description": "Login account at the origin; never implicitly equated to the product actor."
             },
             "device": {
-              "$ref": "#/$defs/DeviceId",
+              "$ref": "#/$defs/DeviceId2",
               "description": "Origin device reference; it does not establish registration or target authority."
             },
             "session": {
@@ -6392,6 +6394,8 @@
         },
         "PolicyAlias": {
           "description": "Tenant-local canonical Policy alias.",
+          "maxLength": 64,
+          "minLength": 1,
           "type": "string"
         },
         "PolicyChoice": {
@@ -6441,6 +6445,8 @@
         },
         "PolicyEventName": {
           "description": "Tenant-local event name shared by any number of Policies; never an object alias.",
+          "maxLength": 64,
+          "minLength": 1,
           "type": "string"
         },
         "PolicyEventRequest": {
@@ -7896,6 +7902,8 @@
                 "kind": { "const": "tool_name", "type": "string" },
                 "name": {
                   "description": "Complete canonical name.",
+                  "maxLength": 39,
+                  "minLength": 39,
                   "type": "string"
                 }
               },
@@ -7918,6 +7926,14 @@
           ]
         },
         "DeviceId": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "not": { "const": "00000000-0000-0000-0000-000000000000" },
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "type": "string"
+        },
+        "DeviceId2": {
           "description": "Device reference, not verified registration evidence.",
           "maxLength": 128,
           "minLength": 1,
@@ -7971,32 +7987,16 @@
           "description": "Enterprise coordinates are compared with the active registration, never used to switch it.",
           "properties": {
             "device": {
-              "description": "Exact device identity.",
-              "type": "string"
-            },
-            "generation": {
-              "description": "Exact registration generation.",
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
+              "$ref": "#/$defs/DeviceId",
+              "description": "Exact device identity."
             },
             "instance": {
               "description": "Product instance identity, not a server URL.",
               "type": "string"
             },
-            "registration": {
-              "description": "Exact registration UUID.",
-              "type": "string"
-            },
             "tenant": { "description": "Exact tenant UUID.", "type": "string" }
           },
-          "required": [
-            "instance",
-            "tenant",
-            "device",
-            "registration",
-            "generation"
-          ],
+          "required": ["instance", "tenant", "device"],
           "type": "object"
         },
         "EntrySelector": {
@@ -8236,7 +8236,7 @@
               "description": "Login account at the origin; never implicitly equated to the product actor."
             },
             "device": {
-              "$ref": "#/$defs/DeviceId",
+              "$ref": "#/$defs/DeviceId2",
               "description": "Origin device reference; it does not establish registration or target authority."
             },
             "session": {
@@ -8323,6 +8323,8 @@
         },
         "PolicyAlias": {
           "description": "Tenant-local canonical Policy alias.",
+          "maxLength": 64,
+          "minLength": 1,
           "type": "string"
         },
         "PolicyChoice": {
@@ -8372,6 +8374,8 @@
         },
         "PolicyEventName": {
           "description": "Tenant-local event name shared by any number of Policies; never an object alias.",
+          "maxLength": 64,
+          "minLength": 1,
           "type": "string"
         },
         "PolicyEventRequest": {
@@ -10163,21 +10167,11 @@
           "description": "Registration coordinates of the original producer fact.",
           "properties": {
             "device": {
-              "description": "Authorized endpoint identity, which can differ between paired channels.",
-              "type": "string"
-            },
-            "generation": {
-              "description": "Exact registration generation.",
-              "format": "int64",
-              "type": "integer"
-            },
-            "registration": {
-              "description": "Exact registration identity.",
-              "format": "uuid",
-              "type": "string"
+              "$ref": "#/$defs/DeviceId2",
+              "description": "Authorized endpoint identity, which can differ between paired channels."
             }
           },
-          "required": ["device", "registration", "generation"],
+          "required": ["device"],
           "type": "object"
         },
         "ActorId": {
@@ -10707,6 +10701,8 @@
                 "kind": { "const": "tool_name", "type": "string" },
                 "name": {
                   "description": "Complete canonical name.",
+                  "maxLength": 39,
+                  "minLength": 39,
                   "type": "string"
                 }
               },
@@ -10898,6 +10894,14 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
         },
+        "DeviceId2": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "not": { "const": "00000000-0000-0000-0000-000000000000" },
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "type": "string"
+        },
         "Digest": {
           "description": "Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.",
           "maxLength": 64,
@@ -11027,32 +11031,16 @@
           "description": "Enterprise coordinates are compared with the active registration, never used to switch it.",
           "properties": {
             "device": {
-              "description": "Exact device identity.",
-              "type": "string"
-            },
-            "generation": {
-              "description": "Exact registration generation.",
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
+              "$ref": "#/$defs/DeviceId2",
+              "description": "Exact device identity."
             },
             "instance": {
               "description": "Product instance identity, not a server URL.",
               "type": "string"
             },
-            "registration": {
-              "description": "Exact registration UUID.",
-              "type": "string"
-            },
             "tenant": { "description": "Exact tenant UUID.", "type": "string" }
           },
-          "required": [
-            "instance",
-            "tenant",
-            "device",
-            "registration",
-            "generation"
-          ],
+          "required": ["instance", "tenant", "device"],
           "type": "object"
         },
         "EntrySelector": {
@@ -11964,6 +11952,8 @@
         },
         "PolicyAlias": {
           "description": "Tenant-local canonical Policy alias.",
+          "maxLength": 64,
+          "minLength": 1,
           "type": "string"
         },
         "PolicyChoice": {
@@ -12013,6 +12003,8 @@
         },
         "PolicyEventName": {
           "description": "Tenant-local event name shared by any number of Policies; never an object alias.",
+          "maxLength": 64,
+          "minLength": 1,
           "type": "string"
         },
         "PolicyEventOperation": {
@@ -14511,21 +14503,11 @@
           "description": "Registration coordinates of the original producer fact.",
           "properties": {
             "device": {
-              "description": "Authorized endpoint identity, which can differ between paired channels.",
-              "type": "string"
-            },
-            "generation": {
-              "description": "Exact registration generation.",
-              "format": "int64",
-              "type": "integer"
-            },
-            "registration": {
-              "description": "Exact registration identity.",
-              "format": "uuid",
-              "type": "string"
+              "$ref": "#/$defs/DeviceId2",
+              "description": "Authorized endpoint identity, which can differ between paired channels."
             }
           },
-          "required": ["device", "registration", "generation"],
+          "required": ["device"],
           "type": "object"
         },
         "ActorId": {
@@ -15055,6 +15037,8 @@
                 "kind": { "const": "tool_name", "type": "string" },
                 "name": {
                   "description": "Complete canonical name.",
+                  "maxLength": 39,
+                  "minLength": 39,
                   "type": "string"
                 }
               },
@@ -15246,6 +15230,14 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$",
           "type": "string"
         },
+        "DeviceId2": {
+          "format": "uuid",
+          "maxLength": 36,
+          "minLength": 36,
+          "not": { "const": "00000000-0000-0000-0000-000000000000" },
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+          "type": "string"
+        },
         "Digest": {
           "description": "Lowercase SHA-256 bytes expressed as hex; a digest alone grants no trust.",
           "maxLength": 64,
@@ -15375,32 +15367,16 @@
           "description": "Enterprise coordinates are compared with the active registration, never used to switch it.",
           "properties": {
             "device": {
-              "description": "Exact device identity.",
-              "type": "string"
-            },
-            "generation": {
-              "description": "Exact registration generation.",
-              "format": "uint64",
-              "minimum": 0,
-              "type": "integer"
+              "$ref": "#/$defs/DeviceId2",
+              "description": "Exact device identity."
             },
             "instance": {
               "description": "Product instance identity, not a server URL.",
               "type": "string"
             },
-            "registration": {
-              "description": "Exact registration UUID.",
-              "type": "string"
-            },
             "tenant": { "description": "Exact tenant UUID.", "type": "string" }
           },
-          "required": [
-            "instance",
-            "tenant",
-            "device",
-            "registration",
-            "generation"
-          ],
+          "required": ["instance", "tenant", "device"],
           "type": "object"
         },
         "EntrySelector": {
@@ -16312,6 +16288,8 @@
         },
         "PolicyAlias": {
           "description": "Tenant-local canonical Policy alias.",
+          "maxLength": 64,
+          "minLength": 1,
           "type": "string"
         },
         "PolicyChoice": {
@@ -16361,6 +16339,8 @@
         },
         "PolicyEventName": {
           "description": "Tenant-local event name shared by any number of Policies; never an object alias.",
+          "maxLength": 64,
+          "minLength": 1,
           "type": "string"
         },
         "PolicyEventOperation": {

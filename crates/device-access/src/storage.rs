@@ -7,10 +7,13 @@ CREATE TABLE candidates(id TEXT PRIMARY KEY,body BLOB NOT NULL);
 CREATE TABLE bindings(sid TEXT PRIMARY KEY,body BLOB NOT NULL);
 CREATE TABLE hello_bindings(sid TEXT PRIMARY KEY,body BLOB NOT NULL);
 CREATE TABLE recovery_uses(id TEXT PRIMARY KEY,body BLOB NOT NULL);
-PRAGMA application_id=1380204865; PRAGMA user_version=2;";
+PRAGMA application_id=1380204865; PRAGMA user_version=3;";
 pub(super) fn open(root: &Path, installation: Uuid, create: bool) -> Result<Store, Error> {
     if installation.is_nil() || !platform_private_storage::is_canonical_path(root)? {
         return Err(Error::Invalid);
+    }
+    if !create {
+        validate_existing(root, installation)?;
     }
     let directory = platform_private_storage::PrivateDirectory::open(root)?;
     let path = root.join("device-access.sqlite");
@@ -22,11 +25,17 @@ pub(super) fn open(root: &Path, installation: Uuid, create: bool) -> Result<Stor
         &path,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
-    conn.pragma_update(None, "max_page_count", 16384)?;
+    validate_format(&conn, create)?;
     conn.busy_timeout(std::time::Duration::from_millis(250))?;
-    conn.execute_batch(
-        "PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA trusted_schema=OFF;",
-    )?;
+    conn.execute_batch("PRAGMA trusted_schema=OFF;")?;
+    if !create {
+        // SQLite's pager owns the exclusive recovery lock. Validate recovered
+        // facts before configuration changes or any factor transaction.
+        // ref: SQLite src/pager.c sqlite3PagerSharedLock.
+        validate_schema(&conn, installation)?;
+    }
+    conn.pragma_update(None, "max_page_count", 16384)?;
+    conn.execute_batch("PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;")?;
     if create {
         conn.execute_batch("PRAGMA journal_mode=DELETE;")?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -37,12 +46,22 @@ pub(super) fn open(root: &Path, installation: Uuid, create: bool) -> Result<Stor
         )?;
         tx.commit()?;
         directory.sync()?;
+        validate_schema(&conn, installation)?;
     }
+    check_files(&path)?;
+    Ok(Store {
+        conn,
+        path,
+        _directory: directory,
+    })
+}
+
+fn validate_schema(conn: &Connection, installation: Uuid) -> Result<(), Error> {
     let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     let app: i64 = conn.pragma_query_value(None, "application_id", |r| r.get(0))?;
     let binding: String = conn.query_row("SELECT id FROM installation", [], |r| r.get(0))?;
     let mode: String = conn.pragma_query_value(None, "journal_mode", |r| r.get(0))?;
-    if version != 2 || app != 1380204865 || binding != installation.to_string() || mode != "delete"
+    if version != 3 || app != 1380204865 || binding != installation.to_string() || mode != "delete"
     {
         return Err(Error::Invalid);
     }
@@ -55,19 +74,14 @@ pub(super) fn open(root: &Path, installation: Uuid, create: bool) -> Result<Stor
         let rows = query.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
-    if catalog(&conn)? != catalog(&expected)? {
+    if catalog(conn)? != catalog(&expected)? {
         return Err(Error::Invalid);
     }
     let check: String = conn.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
     if check != "ok" {
         return Err(Error::Storage);
     }
-    check_files(&path)?;
-    Ok(Store {
-        conn,
-        path,
-        _directory: directory,
-    })
+    Ok(())
 }
 impl Store {
     pub(super) fn check_files(&self) -> Result<(), Error> {
@@ -87,4 +101,33 @@ fn check_files(path: &Path) -> Result<(), Error> {
         }
     }
     Ok(())
+}
+
+pub(super) fn validate_existing(root: &Path, installation: Uuid) -> Result<(), Error> {
+    if installation.is_nil() || !platform_private_storage::is_canonical_path(root)? {
+        return Err(Error::Invalid);
+    }
+    let path = root.join("device-access.sqlite");
+    check_files(&path)?;
+    let conn = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    validate_format(&conn, false)?;
+    match conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)) {
+        Err(rusqlite::Error::SqliteFailure(e, _))
+            if e.extended_code == rusqlite::ffi::SQLITE_READONLY_ROLLBACK =>
+        {
+            Ok(())
+        }
+        result => {
+            result?;
+            validate_schema(&conn, installation)
+        }
+    }
+}
+
+fn validate_format(conn: &Connection, create: bool) -> Result<(), Error> {
+    match platform_private_storage::sqlite_format(conn).map_err(|_| Error::Invalid)? {
+        None if create => Ok(()),
+        Some((1380204865, 3)) => Ok(()),
+        _ => Err(Error::Invalid),
+    }
 }

@@ -34,9 +34,7 @@ impl Fixture {
                 source: rss_mdm_agent_wire::runtime::AccessWindowsAuthority::Local,
                 login: "LOCAL\\test".into(),
                 tenant: Uuid::new_v4(),
-                device: "device".into(),
-                registration: Uuid::new_v4(),
-                registration_generation: 1,
+                device: rss_mdm_agent_wire::DeviceId::new_v4(),
                 binding: Uuid::new_v4(),
                 binding_generation: 1,
                 factor_generation: 1,
@@ -432,15 +430,14 @@ fn native_source_and_enterprise_subject_are_part_of_consumption_identity() {
 }
 
 #[test]
-fn registration_replacement_retires_old_bindings_and_cannot_roll_back() {
+fn device_replacement_retires_old_bindings_and_retirement_cannot_reopen() {
     let f = Fixture::new();
     let (mut store, _, _, operation, facts) = f.setup();
     let original = f.authority.registration();
     let mut next = original.clone();
-    next.id = Uuid::new_v4();
-    next.generation += 1;
+    next.device = rss_mdm_agent_wire::DeviceId::new_v4();
     store.bind_registration(next.clone()).unwrap();
-    assert!(store.bind_registration(original).is_err());
+    // Only the communication owner binds the current ID; old factor authority remains fenced.
     assert!(store.authority(&f.authority.sid).unwrap().is_none());
     assert!(store
         .activate(
@@ -640,4 +637,105 @@ fn changed_join_retires_cloud_factors_durably_but_preserves_local_binding() {
             .unwrap(),
         Decision::Accepted
     );
+}
+
+#[test]
+fn old_offline_format_is_rejected_read_only_without_changing_the_database() {
+    let f = Fixture::new();
+    drop(Store::create(&f.root, f.id).unwrap());
+    let path = f.root.join("device-access.sqlite");
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.pragma_update(None, "user_version", 2).unwrap();
+    drop(db);
+    let before = std::fs::read(&path).unwrap();
+    assert!(Store::validate_existing(&f.root, f.id).is_err());
+    assert!(Store::open(&f.root, f.id).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+}
+
+#[test]
+fn crash_offline_writer() {
+    let Some(path) = std::env::var_os("RSS_TEST_CRASH_OFFLINE") else {
+        return;
+    };
+    let db = rusqlite::Connection::open(path).unwrap();
+    db.execute_batch("PRAGMA cache_size=2; BEGIN IMMEDIATE;")
+        .unwrap();
+    db.execute("UPDATE candidates SET body=?1", [vec![b'y'; 2000]])
+        .unwrap();
+    std::process::exit(0);
+}
+
+#[test]
+fn hot_offline_recovers_current_format_and_preserves_old_format_bytes() {
+    for (version, foreign_installation, altered_schema) in [
+        (3, false, false),
+        (2, false, false),
+        (3, true, false),
+        (3, false, true),
+    ] {
+        let f = Fixture::new();
+        drop(Store::create(&f.root, f.id).unwrap());
+        let path = f.root.join("device-access.sqlite");
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.pragma_update(None, "user_version", version).unwrap();
+        for i in 0..200 {
+            db.execute(
+                "INSERT INTO candidates VALUES(?1,?2)",
+                rusqlite::params![i.to_string(), vec![b'x'; 2000]],
+            )
+            .unwrap();
+        }
+        if altered_schema {
+            db.execute_batch("ALTER TABLE candidates ADD COLUMN unexpected TEXT;")
+                .unwrap();
+        }
+        drop(db);
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "crash_offline_writer", "--nocapture"])
+            .env("RSS_TEST_CRASH_OFFLINE", &path)
+            .output()
+            .unwrap();
+        assert!(child.status.success(), "{child:?}");
+        let journal = f.root.join("device-access.sqlite-journal");
+        let before = std::fs::read(&path).unwrap();
+        let before_journal = std::fs::read(&journal).unwrap();
+        assert_eq!(
+            &before_journal[..8],
+            &[0xd9, 0xd5, 0x05, 0xf9, 0x20, 0xa1, 0x63, 0xd7]
+        );
+        let candidate = if foreign_installation {
+            Uuid::new_v4()
+        } else {
+            f.id
+        };
+        let preflight = Store::validate_existing(&f.root, candidate);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(std::fs::read(&journal).unwrap(), before_journal);
+        if version == 2 {
+            assert!(preflight.is_err());
+            assert!(Store::open(&f.root, candidate).is_err());
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+            assert_eq!(std::fs::read(&journal).unwrap(), before_journal);
+            continue;
+        }
+        preflight.unwrap();
+        let reopened = Store::open(&f.root, candidate);
+        if foreign_installation || altered_schema {
+            assert!(matches!(reopened, Err(Error::Invalid)));
+        } else {
+            drop(reopened.unwrap());
+            Store::validate_existing(&f.root, candidate).unwrap();
+        }
+        assert!(!journal.exists());
+        let db = rusqlite::Connection::open(&path).unwrap();
+        let restored: u64 = db
+            .query_row(
+                "SELECT count(*) FROM candidates WHERE body=?1",
+                [vec![b'x'; 2000]],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(restored, 200, "uncommitted factor values must roll back");
+    }
 }

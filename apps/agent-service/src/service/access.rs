@@ -33,8 +33,6 @@ fn sync_registration<S: agent_client::IdentityProvider, C: agent_client::Clock>(
             .bind_registration(device_access::Registration {
                 tenant: client.configuration().tenant,
                 device: r.device_id,
-                id: r.registration_id,
-                generation: r.generation,
             })
             .map_err(|_| Error::Identity)?,
         Err(Error::Identity) => store.retire_registration().map_err(|_| Error::Storage)?,
@@ -749,8 +747,6 @@ mod tests {
         let authority = Authority {
             tenant: client.configuration().tenant,
             device: r.device_id,
-            registration: r.registration_id,
-            registration_generation: r.generation,
             instance: Uuid::new_v4(),
             principal: Uuid::new_v4(),
             binding: Uuid::new_v4(),

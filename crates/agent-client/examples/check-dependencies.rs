@@ -208,7 +208,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         policy.package(package, &root)?;
     }
     contract::from_metadata(&metadata)?;
-    println!("Agent consumes one fixed protocol package and its committed HTTP contract");
+    println!("Agent consumes one fixed protocol package and its pinned Agent HTTP snapshot");
     Ok(())
 }
 #[cfg(test)]
@@ -219,6 +219,34 @@ mod tests {
             rev: "0".repeat(40),
         }
     }
+    #[test]
+    fn fixed_http_snapshot_rejects_foreign_revision_and_modified_content() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let input = root.join("tests/agent-protocol");
+        let source: serde_json::Value =
+            serde_json::from_slice(&fs::read(input.join("http-v1-source.json")).unwrap()).unwrap();
+        let revision = source["revision"].as_str().unwrap();
+        let temporary =
+            std::env::temp_dir().join(format!("agent-http-source-{}", uuid::Uuid::new_v4()));
+        let destination = temporary.join("tests/agent-protocol");
+        fs::create_dir_all(&destination).unwrap();
+        for name in ["http-v1.json", "http-v1-source.json"] {
+            fs::copy(input.join(name), destination.join(name)).unwrap();
+        }
+        let mut metadata = serde_json::json!({"workspace_root":temporary,"packages":[{"name":WIRE,"version":"1.0.0","source":format!("git+{WIRE_URL}?rev={revision}#{revision}")}]});
+        assert!(contract::from_metadata(&metadata).is_ok());
+        metadata["packages"][0]["source"] =
+            format!("git+{WIRE_URL}?rev={}#{}", "0".repeat(40), "0".repeat(40)).into();
+        assert!(contract::from_metadata(&metadata).is_err());
+        metadata["packages"][0]["source"] =
+            format!("git+{WIRE_URL}?rev={revision}#{revision}").into();
+        let mut changed = fs::read(destination.join("http-v1.json")).unwrap();
+        changed.push(b' ');
+        fs::write(destination.join("http-v1.json"), changed).unwrap();
+        assert!(contract::from_metadata(&metadata).is_err());
+        fs::remove_dir_all(temporary).unwrap();
+    }
+
     #[test]
     fn accepts_only_canonical_protocol_declarations() {
         let p = policy();

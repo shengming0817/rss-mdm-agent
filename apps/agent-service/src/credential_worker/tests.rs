@@ -160,11 +160,9 @@ fn input(root: &Root, operation: Op) -> Input {
     let mut task = w::CredentialTaskSpec {
         wire_version: 1,
         tenant_id: uuid::Uuid::from_u128(1),
-        device_id: "device".into(),
+        device_id: "11111111-2222-4333-8444-555555555555".parse().unwrap(),
         platform: w::TaskPlatform::Windows,
         architecture: w::TaskArchitecture::X86_64,
-        registration_id: uuid::Uuid::from_u128(2),
-        generation: 1,
         task_id: uuid::Uuid::new_v4(),
         attempt_id: uuid::Uuid::new_v4(),
         permit: w::TaskPermit::Start,
@@ -369,7 +367,7 @@ fn prepared_recovery_proves_not_attempted_and_mismatched_generation_cannot_recov
         Some(w::CredentialRecoveryOutcome::NotAttempted)
     );
     next.task.task_id = uuid::Uuid::new_v4();
-    next.task.generation = 2;
+    next.task.device_id = rss_mdm_agent_wire::DeviceId::new_v4();
     assert_eq!(
         engine::execute(&next, &mut n).unwrap().failure,
         Some(Failure::RecoveryState)
@@ -641,9 +639,7 @@ fn rss_rotation_changes_only_recovery_after_ack_and_verification_reuses_material
         source: rss_mdm_agent_wire::runtime::AccessWindowsAuthority::Local,
         login: "LOCAL\\test".into(),
         tenant: task.task.tenant_id,
-        device: task.task.device_id.clone(),
-        registration: task.task.registration_id,
-        registration_generation: 1,
+        device: task.task.device_id,
         binding,
         binding_generation: 1,
         factor_generation: 1,
