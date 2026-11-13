@@ -31,7 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         path,
         format!("{}\n", serde_json::to_string_pretty(&vectors)?),
     )?;
-    for name in ["script", "software", "enrollment"] {
+    for name in ["script"] {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("tests/fixtures/{name}-task-v1.json"));
         let mut value: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
