@@ -19,7 +19,14 @@ async fn mismatched_and_unsubmitted_started_offers_settle_without_journal_or_cac
     let materials = client.prepare(&offer).await.unwrap();
     client.received(&offer).await.unwrap();
     let db = local::Database::new();
-    let host = local::TestHost::new();
+    let mut host = local::TestHost::new();
+    let mut input = host.template.spec().clone();
+    input.request.target.device =
+        execution_contract::DeviceId::new(client.registration().unwrap().device_id.to_string())
+            .unwrap();
+    host.template =
+        execution_contract::FrozenExecution::freeze(input, &execution_app::test_execution_limits())
+            .unwrap();
     let runner =
         DeterministicTestRunner::new(local::id("test-runner"), TestScenario::Wait, 16).unwrap();
     let app = create_app(&db.path, host, runner.clone(), AppConfig::test_defaults()).unwrap();
@@ -485,7 +492,14 @@ async fn partial_cache_reopens_and_checks_range_etag_and_reference_cleanup() {
         .any(|v| v.as_deref() == Some("bytes=100-")));
     assert_eq!(client.cleanup(128).unwrap(), 0);
     let db = local::Database::new();
-    let host = local::TestHost::new();
+    let mut host = local::TestHost::new();
+    let mut input = host.template.spec().clone();
+    input.request.target.device =
+        execution_contract::DeviceId::new(client.registration().unwrap().device_id.to_string())
+            .unwrap();
+    host.template =
+        execution_contract::FrozenExecution::freeze(input, &execution_app::test_execution_limits())
+            .unwrap();
     let runner = execution_app::DeterministicTestRunner::new(
         local::id("test-runner"),
         execution_app::TestScenario::Wait,

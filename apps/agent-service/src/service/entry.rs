@@ -466,10 +466,10 @@ impl<S: IdentityProvider> DeviceService<S> {
         if let TaskFacts::Management(fact) = &detail.facts {
             let namespace = self.entry_namespace().ok_or(Error::Identity)?;
             if let Some((task, attempt)) = fact.links.task.zip(fact.links.attempt) {
-                if !fact
+                if fact
                     .target
                     .as_ref()
-                    .is_some_and(|target| target.device == namespace.device)
+                    .is_none_or(|target| target.device != namespace.device)
                 {
                     return Err(Error::Identity);
                 }

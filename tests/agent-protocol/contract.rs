@@ -1,6 +1,7 @@
-//! Test/dependency-check consumer of the exact Git objects already fetched by Cargo.
-//! No backend build, workspace file, copied schema or independent revision setting.
+//! Offline consumer of the Agent projection exported during an explicit wire upgrade.
+//! The snapshot is generated from the locked producer commit; tests never build the backend.
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::{
     collections::BTreeMap,
     path::Path,
@@ -48,53 +49,34 @@ pub fn from_metadata(metadata: &Value) -> Result<Contract, Box<dyn std::error::E
     {
         return Err("wire needs one complete commit".into());
     }
-    let manifest = Path::new(package["manifest_path"].as_str().ok_or("wire manifest")?);
-    let directory = manifest.parent().ok_or("wire directory")?;
-    let git = |args: &[&str]| {
-        output(
-            Command::new("/usr/bin/git")
-                .arg("-C")
-                .arg(directory)
-                .args(args),
-        )
-    };
-    if git(&["cat-file", "-t", revision.0])? != b"commit\n" {
-        return Err("wire revision is not a commit".into());
-    }
-    // Reuse the producer's fixed, stdlib-only extraction/validation entry. --extract
-    // and --verify-source never invoke its generation/build path.
-    let tool = git(&[
-        "show",
-        &format!("{}:hack/http_contract_artifact.py", revision.0),
-    ])?;
-    let script = format!(
-        "__file__ = 'http_contract_artifact.py'\n{}",
-        String::from_utf8(tool)?
-    );
     let root = Path::new(
         metadata["workspace_root"]
             .as_str()
             .ok_or("workspace root")?,
     );
-    let destination = root
-        .join(".local-ci-runs/agent-http-contract")
-        .join(format!("{}-{}", revision.0, std::process::id()))
-        .join("http-v1.json");
-    output(
-        Command::new("python3")
-            .args(["-c", &script, "--repository"])
-            .arg(directory)
-            .args(["--extract", revision.0, "--output"])
-            .arg(&destination),
-    )?;
-    output(
-        Command::new("python3")
-            .args(["-c", &script, "--repository"])
-            .arg(directory)
-            .args(["--verify-source", revision.0, "--input"])
-            .arg(&destination),
-    )?;
-    let document = serde_json::from_slice(&std::fs::read(&destination)?)?;
+    let directory = root.join("tests/agent-protocol");
+    let provenance: Value =
+        serde_json::from_slice(&std::fs::read(directory.join("http-v1-source.json"))?)?;
+    if provenance["repository"] != "https://dev.azure.com/shengming0923/rss/_git/rss-mdm"
+        || provenance["revision"] != revision.0
+        || provenance["listener"] != "agent"
+    {
+        return Err("HTTP snapshot differs from the locked wire source".into());
+    }
+    let bytes = std::fs::read(directory.join("http-v1.json"))?;
+    if provenance["sha256"] != format!("{:x}", Sha256::digest(&bytes)) {
+        return Err("HTTP snapshot content digest mismatch".into());
+    }
+    let document: Value = serde_json::from_slice(&bytes)?;
+    if document["formatVersion"] != 1
+        || document["schemaDialect"] != "https://json-schema.org/draft/2020-12/schema"
+        || !document["endpoints"]
+            .as_array()
+            .is_some_and(|e| !e.is_empty() && e.iter().all(|e| e["listener"] == "agent"))
+        || !document["schemas"].is_object()
+    {
+        return Err("invalid Agent HTTP snapshot".into());
+    }
     Ok(Contract {
         document,
         validators: Mutex::new(BTreeMap::new()),
@@ -112,8 +94,7 @@ pub fn fixed() -> &'static Contract {
             "1",
         ]))
         .expect("locked Cargo metadata");
-        from_metadata(&serde_json::from_slice(&bytes).unwrap())
-            .expect("exact wire Git HTTP artifact")
+        from_metadata(&serde_json::from_slice(&bytes).unwrap()).expect("pinned Agent HTTP snapshot")
     })
 }
 impl Contract {

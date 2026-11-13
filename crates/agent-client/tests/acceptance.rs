@@ -1959,6 +1959,12 @@ async fn new_device_cannot_accept_the_old_signed_task_in_the_same_tenant() {
         let mut data = second.data.lock().unwrap();
         data.tenant = first.config().tenant;
         data.device = rss_mdm_agent_wire::DeviceId::new_v4();
+        data.trust = support::pki::trust(second.url.as_str(), data.tenant);
+        data.connection_configuration = Some(signed_connections(
+            second.url.origin().ascii_serialization(),
+            data.tenant,
+            1,
+        ));
     }
     let root = Root::new();
     let mut current = second.client(&root, OpenMode::Create);
