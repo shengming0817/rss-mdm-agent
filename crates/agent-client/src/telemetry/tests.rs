@@ -624,3 +624,101 @@ async fn old_spool_is_rejected_without_changing_mode_bytes_or_creating_a_lock() 
         "wal"
     );
 }
+
+#[test]
+fn crash_spool_writer() {
+    let Some(path) = std::env::var_os("RSS_TEST_CRASH_SPOOL") else {
+        return;
+    };
+    let db = rusqlite::Connection::open(path).unwrap();
+    db.execute_batch("PRAGMA cache_size=2; BEGIN IMMEDIATE;")
+        .unwrap();
+    db.execute("UPDATE counters SET body=?1", [vec![b'y'; 2000]])
+        .unwrap();
+    // Deliberately skip Connection::drop/rollback, as a process crash does.
+    std::process::exit(0);
+}
+
+#[tokio::test]
+async fn hot_spool_recovers_current_format_and_preserves_old_format_bytes() {
+    let server = Server::new().await;
+    for (version, foreign_binding, altered_schema) in [
+        (4, false, false),
+        (3, false, false),
+        (4, true, false),
+        (4, false, true),
+    ] {
+        let root = Root::new();
+        let cfg = server.config();
+        drop(super::spool::Spool::open(&root.path, &cfg, Limits::production()).unwrap());
+        let path = root.path.join("telemetry.sqlite");
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.pragma_update(None, "user_version", version).unwrap();
+        for i in 0..200 {
+            db.execute(
+                "INSERT INTO counters VALUES(?1,?2)",
+                rusqlite::params![i.to_string(), vec![b'x'; 2000]],
+            )
+            .unwrap();
+        }
+        if altered_schema {
+            db.execute_batch("ALTER TABLE counters ADD COLUMN unexpected TEXT;")
+                .unwrap();
+        }
+        drop(db);
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "telemetry::tests::crash_spool_writer",
+                "--nocapture",
+            ])
+            .env("RSS_TEST_CRASH_SPOOL", &path)
+            .output()
+            .unwrap();
+        assert!(child.status.success(), "{child:?}");
+        let journal = root.path.join("telemetry.sqlite-journal");
+        let before = std::fs::read(&path).unwrap();
+        let before_journal = std::fs::read(&journal).unwrap();
+        assert_eq!(
+            &before_journal[..8],
+            &[0xd9, 0xd5, 0x05, 0xf9, 0x20, 0xa1, 0x63, 0xd7]
+        );
+        let mut candidate = cfg;
+        if foreign_binding {
+            candidate.tenant = Uuid::new_v4();
+        }
+        let preflight = validate_existing(&root.path, &candidate);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(std::fs::read(&journal).unwrap(), before_journal);
+        if version == 3 {
+            assert_eq!(preflight, Err(Error::Schema));
+            assert!(matches!(
+                super::spool::Spool::open(&root.path, &candidate, Limits::production()),
+                Err(Error::Schema)
+            ));
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+            assert_eq!(std::fs::read(&journal).unwrap(), before_journal);
+            continue;
+        }
+        preflight.unwrap();
+        let reopened = super::spool::Spool::open(&root.path, &candidate, Limits::production());
+        if foreign_binding {
+            assert!(matches!(reopened, Err(Error::Untrusted)));
+        } else if altered_schema {
+            assert!(matches!(reopened, Err(Error::Schema)));
+        } else {
+            drop(reopened.unwrap());
+            validate_existing(&root.path, &candidate).unwrap();
+        }
+        assert!(!journal.exists());
+        let db = rusqlite::Connection::open(&path).unwrap();
+        let restored: u64 = db
+            .query_row(
+                "SELECT count(*) FROM counters WHERE body=?1",
+                [vec![b'x'; 2000]],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(restored, 200, "uncommitted counter values must roll back");
+    }
+}

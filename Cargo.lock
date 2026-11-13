@@ -4177,6 +4177,7 @@ name = "platform-private-storage"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "rusqlite",
  "windows-sys 0.61.2",
 ]
 

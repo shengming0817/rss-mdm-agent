@@ -25,11 +25,17 @@ pub(super) fn open(root: &Path, installation: Uuid, create: bool) -> Result<Stor
         &path,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
-    conn.pragma_update(None, "max_page_count", 16384)?;
+    validate_format(&conn, create)?;
     conn.busy_timeout(std::time::Duration::from_millis(250))?;
-    conn.execute_batch(
-        "PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON; PRAGMA trusted_schema=OFF;",
-    )?;
+    conn.execute_batch("PRAGMA trusted_schema=OFF;")?;
+    if !create {
+        // SQLite's pager owns the exclusive recovery lock. Validate recovered
+        // facts before configuration changes or any factor transaction.
+        // ref: SQLite src/pager.c sqlite3PagerSharedLock.
+        validate_schema(&conn, installation)?;
+    }
+    conn.pragma_update(None, "max_page_count", 16384)?;
+    conn.execute_batch("PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;")?;
     if create {
         conn.execute_batch("PRAGMA journal_mode=DELETE;")?;
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -40,7 +46,17 @@ pub(super) fn open(root: &Path, installation: Uuid, create: bool) -> Result<Stor
         )?;
         tx.commit()?;
         directory.sync()?;
+        validate_schema(&conn, installation)?;
     }
+    check_files(&path)?;
+    Ok(Store {
+        conn,
+        path,
+        _directory: directory,
+    })
+}
+
+fn validate_schema(conn: &Connection, installation: Uuid) -> Result<(), Error> {
     let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     let app: i64 = conn.pragma_query_value(None, "application_id", |r| r.get(0))?;
     let binding: String = conn.query_row("SELECT id FROM installation", [], |r| r.get(0))?;
@@ -58,19 +74,14 @@ pub(super) fn open(root: &Path, installation: Uuid, create: bool) -> Result<Stor
         let rows = query.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
-    if catalog(&conn)? != catalog(&expected)? {
+    if catalog(conn)? != catalog(&expected)? {
         return Err(Error::Invalid);
     }
     let check: String = conn.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
     if check != "ok" {
         return Err(Error::Storage);
     }
-    check_files(&path)?;
-    Ok(Store {
-        conn,
-        path,
-        _directory: directory,
-    })
+    Ok(())
 }
 impl Store {
     pub(super) fn check_files(&self) -> Result<(), Error> {
@@ -99,27 +110,24 @@ pub(super) fn validate_existing(root: &Path, installation: Uuid) -> Result<(), E
     let path = root.join("device-access.sqlite");
     check_files(&path)?;
     let conn = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-    let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-    let app: i64 = conn.pragma_query_value(None, "application_id", |r| r.get(0))?;
-    if version != 3 || app != 1380204865 {
-        return Err(Error::Invalid);
+    validate_format(&conn, false)?;
+    match conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)) {
+        Err(rusqlite::Error::SqliteFailure(e, _))
+            if e.extended_code == rusqlite::ffi::SQLITE_READONLY_ROLLBACK =>
+        {
+            Ok(())
+        }
+        result => {
+            result?;
+            validate_schema(&conn, installation)
+        }
     }
-    let actual: String = conn.query_row("SELECT id FROM installation", [], |r| r.get(0))?;
-    let mode: String = conn.pragma_query_value(None, "journal_mode", |r| r.get(0))?;
-    if actual != installation.to_string() || mode != "delete" {
-        return Err(Error::Invalid);
+}
+
+fn validate_format(conn: &Connection, create: bool) -> Result<(), Error> {
+    match platform_private_storage::sqlite_format(conn).map_err(|_| Error::Invalid)? {
+        None if create => Ok(()),
+        Some((1380204865, 3)) => Ok(()),
+        _ => Err(Error::Invalid),
     }
-    let expected = Connection::open_in_memory()?;
-    expected.execute_batch(SCHEMA)?;
-    fn catalog(c: &Connection) -> Result<Vec<(String, String)>, Error> {
-        Ok(c.prepare(
-            "SELECT name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY name",
-        )?
-        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
-        .collect::<Result<Vec<_>, _>>()?)
-    }
-    if catalog(&conn)? != catalog(&expected)? {
-        return Err(Error::Invalid);
-    }
-    Ok(())
 }

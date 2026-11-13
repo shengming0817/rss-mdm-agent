@@ -114,7 +114,8 @@ pub struct Spool {
     _lease: std::fs::File,
 }
 
-/// Inspect an existing optional spool without locks, writes or recovery.
+/// Inspect an optional spool without writes. Current-format hot journals defer
+/// full validation to the exclusive spool owner, which lets SQLite recover.
 pub fn validate_existing(root: &Path, cfg: &crate::Config) -> Result<(), Error> {
     let path = root.join("telemetry.sqlite");
     match path.symlink_metadata() {
@@ -132,6 +133,31 @@ pub fn validate_existing(root: &Path, cfg: &crate::Config) -> Result<(), Error> 
         }
     }
     let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    if !validate_format(&conn)? {
+        return Ok(());
+    }
+    match conn.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)) {
+        Err(rusqlite::Error::SqliteFailure(e, _))
+            if e.extended_code == rusqlite::ffi::SQLITE_READONLY_ROLLBACK =>
+        {
+            return Ok(());
+        }
+        result => {
+            result?;
+        }
+    }
+    validate_schema(&conn, cfg)
+}
+
+fn validate_format(conn: &Connection) -> Result<bool, Error> {
+    match platform_private_storage::sqlite_format(conn).map_err(|_| Error::Schema)? {
+        None => Ok(false),
+        Some((1381192781, 4)) => Ok(true),
+        _ => Err(Error::Schema),
+    }
+}
+
+fn validate_schema(conn: &Connection, cfg: &crate::Config) -> Result<(), Error> {
     let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
     let app: i64 = conn.pragma_query_value(None, "application_id", |r| r.get(0))?;
     let objects: i64 = conn.query_row("SELECT count(*) FROM sqlite_schema", [], |r| r.get(0))?;
@@ -156,12 +182,16 @@ pub fn validate_existing(root: &Path, cfg: &crate::Config) -> Result<(), Error> 
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
         .collect::<Result<Vec<_>, _>>()?)
     }
-    if catalog(&conn)? != catalog(&expected)? {
+    if catalog(conn)? != catalog(&expected)? {
         return Err(Error::Schema);
     }
     let actual: Vec<u8> = conn.query_row("SELECT binding FROM identity", [], |r| r.get(0))?;
     if actual != encode(&(cfg.service_id, cfg.tenant, cfg.platform, cfg.architecture))? {
         return Err(Error::Untrusted);
+    }
+    let check: String = conn.query_row("PRAGMA quick_check", [], |r| r.get(0))?;
+    if check != "ok" {
+        return Err(Error::Storage);
     }
     Ok(())
 }
@@ -203,10 +233,17 @@ impl Spool {
                 drop(platform_private_storage::open_existing(&side)?);
             }
         }
-        validate_existing(root, cfg)?;
         let conn = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+        validate_format(&conn)?;
         conn.busy_timeout(std::time::Duration::from_millis(50))?;
-        conn.execute_batch("PRAGMA trusted_schema=OFF; PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL; PRAGMA journal_mode=DELETE;")?;
+        conn.execute_batch("PRAGMA trusted_schema=OFF;")?;
+        // The header admits only this format. SQLite takes its own exclusive
+        // recovery lock before any schema/binding query; the spool lease is held.
+        // ref: SQLite src/pager.c sqlite3PagerSharedLock.
+        validate_schema(&conn, cfg)?;
+        conn.execute_batch(
+            "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL; PRAGMA journal_mode=DELETE;",
+        )?;
         let binding = encode(&(cfg.service_id, cfg.tenant, cfg.platform, cfg.architecture))?;
         // A crash before the schema transaction commits leaves a protected blank database.
         // ref: rusqlite src/transaction.rs (schema and identity commit atomically).
@@ -221,15 +258,7 @@ impl Spool {
             native_counters::install(&tx)?;
             tx.execute("INSERT INTO identity VALUES(?1)", [&binding])?;
             tx.commit()?;
-        }
-        let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        let application: i64 = conn.pragma_query_value(None, "application_id", |r| r.get(0))?;
-        if version != 4 || application != 1381192781 {
-            return Err(Error::Schema);
-        }
-        let original: Vec<u8> = conn.query_row("SELECT binding FROM identity", [], |r| r.get(0))?;
-        if original != binding {
-            return Err(Error::Untrusted);
+            validate_schema(&conn, cfg)?;
         }
         conn.pragma_update(None, "max_page_count", limits.pages)?;
         let mut spool = Self {

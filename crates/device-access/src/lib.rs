@@ -229,7 +229,8 @@ impl Store {
     pub fn create(root: &Path, installation: Uuid) -> Result<Self, Error> {
         storage::open(root, installation, true)
     }
-    /// Validate the current offline format before locks, writes or recovery.
+    /// Inspect the current offline format without writes. A hot journal defers
+    /// schema/installation validation to `open`, after SQLite's locked recovery.
     pub fn validate_existing(root: &Path, installation: Uuid) -> Result<(), Error> {
         storage::validate_existing(root, installation)
     }

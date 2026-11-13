@@ -232,3 +232,55 @@ fn sqlite_default_owner_keeps_private_parent_type_and_acl_checks() {
     assert!(storage::validate_sqlite_file(&path).is_err());
     assert!(!validate_sidecars().status.success());
 }
+
+#[test]
+fn sqlite_writer_remains_locked_in_child() {
+    let Some(path) = std::env::var_os("RSS_TEST_LOCKED_SQLITE") else {
+        return;
+    };
+    let db = rusqlite::Connection::open(path).unwrap();
+    db.busy_timeout(std::time::Duration::ZERO).unwrap();
+    assert!(
+        matches!(db.execute_batch("BEGIN IMMEDIATE;"), Err(rusqlite::Error::SqliteFailure(e, _)) if e.code == rusqlite::ErrorCode::DatabaseBusy)
+    );
+}
+
+#[test]
+fn sqlite_format_uses_sqlites_descriptor_and_preserves_another_connections_lock() {
+    let root = Root::new();
+    let path = root.0.join("current.sqlite");
+    storage::write_new(&path, b"").unwrap();
+    let db = rusqlite::Connection::open(&path).unwrap();
+    assert_eq!(storage::sqlite_format(&db).unwrap(), None);
+    db.execute_batch(
+        "PRAGMA application_id=12345; PRAGMA user_version=4; CREATE TABLE t(v); BEGIN IMMEDIATE;",
+    )
+    .unwrap();
+    let reader =
+        rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .unwrap();
+    assert_eq!(storage::sqlite_format(&reader).unwrap(), Some((12345, 4)));
+    drop(reader);
+    let child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "sqlite_writer_remains_locked_in_child",
+            "--nocapture",
+        ])
+        .env("RSS_TEST_LOCKED_SQLITE", &path)
+        .output()
+        .unwrap();
+    assert!(child.status.success(), "{child:?}");
+    db.execute_batch("ROLLBACK; PRAGMA journal_mode=WAL;")
+        .unwrap();
+    assert!(storage::sqlite_format(&db).is_err());
+    drop(db);
+    let malformed = root.0.join("truncated.sqlite");
+    storage::write_new(&malformed, b"SQLite format 3\0").unwrap();
+    let db = rusqlite::Connection::open_with_flags(
+        &malformed,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    assert!(storage::sqlite_format(&db).is_err());
+}
