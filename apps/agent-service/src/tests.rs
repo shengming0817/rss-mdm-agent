@@ -199,8 +199,8 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
     for change in 0..7 {
         let mut changed = payload.clone();
         match change {
-            0 => changed.generation += 1,
-            1 => changed.device_id = "another-device".into(),
+            0 => changed.task_id = uuid::Uuid::new_v4(),
+            1 => changed.device_id = rss_mdm_agent_wire::DeviceId::new_v4(),
             2 => changed.attempt_id = uuid::Uuid::new_v4(),
             3 => changed.content.sha256[0] ^= 1,
             4 => changed.arguments.push("replaced".into()),
@@ -215,7 +215,7 @@ async fn signed_start_compiles_exactly_and_never_creates_a_local_enterprise_appr
         .admit(&frozen, &attempt, host.clock.millis().unwrap())
         .is_err());
     let mut next = receipt.clone();
-    next.generation += 1;
+    next.device_id = rss_mdm_agent_wire::DeviceId::new_v4();
     assert_ne!(
         binding.authority,
         plan::context(server.config().service_id, server.config().tenant, &next)

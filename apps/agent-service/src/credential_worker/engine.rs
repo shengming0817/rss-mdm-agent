@@ -19,9 +19,7 @@ fn save(input: &Input, record: &Record) -> Result<(), Error> {
     state::write(&input.root, &state::name(&record.task, "state"), record)
 }
 fn bound(a: &w::CredentialTaskSpec, b: &w::CredentialTaskSpec) -> bool {
-    a.tenant_id == b.tenant_id
-        && a.device_id == b.device_id
-
+    a.tenant_id == b.tenant_id && a.device_id == b.device_id
 }
 fn account_key(task: &w::CredentialTaskSpec, sid: &str) -> String {
     use sha2::{Digest, Sha256};

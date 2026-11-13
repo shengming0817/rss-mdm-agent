@@ -9,7 +9,7 @@ use std::{
 };
 const SCHEMA: &str = "CREATE TABLE metadata(singleton INTEGER PRIMARY KEY CHECK(singleton=1),binding BLOB NOT NULL,sequence INTEGER NOT NULL,watermark INTEGER NOT NULL);
                     CREATE TABLE state(key TEXT PRIMARY KEY,body BLOB NOT NULL);
-                    CREATE TABLE reports(id TEXT PRIMARY KEY,body BLOB NOT NULL);
+                    CREATE TABLE reports(id TEXT PRIMARY KEY,device TEXT NOT NULL,body BLOB NOT NULL);
                     CREATE TABLE tasks(id TEXT PRIMARY KEY,body BLOB NOT NULL);
                     CREATE TABLE requests(key TEXT PRIMARY KEY,task TEXT NOT NULL,source TEXT,body BLOB NOT NULL,accepted INTEGER NOT NULL DEFAULT 0 CHECK(accepted IN(0,1)));
                     CREATE TABLE cache_refs(task TEXT NOT NULL,name TEXT NOT NULL,PRIMARY KEY(task,name));

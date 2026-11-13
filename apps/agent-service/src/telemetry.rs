@@ -275,13 +275,8 @@ impl Telemetry {
                         )?;
                     }
                 } else {
-                    self.spool.gap_for(
-                        p.device_id,
-                        GapReason::Collection,
-                        1,
-                        at,
-                        at,
-                    )?;
+                    self.spool
+                        .gap_for(p.device_id, GapReason::Collection, 1, at, at)?;
                 }
             }
         }
@@ -293,10 +288,8 @@ impl Telemetry {
             }
         }
         if now >= self.summary_at {
-            self.spool.prune(
-                at / 1_000_000,
-                self.registration.device_id,
-            )?;
+            self.spool
+                .prune(at / 1_000_000, self.registration.device_id)?;
             self.summary =
                 serde_json::to_value(self.spool.summary()?).map_err(|_| Error::Storage)?;
             self.summary_at = now + Duration::from_secs(1);
@@ -408,14 +401,8 @@ impl Telemetry {
                 _ => {
                     if now >= self.send_at && self.environment.observe(self.spool.root()).upload {
                         let at = timestamp()?;
-                        self.spool.freeze_gaps(
-                            self.registration.device_id,
-                            at,
-                        )?;
-                        if let Some(p) = self.spool.pending_gap(
-                            self.registration.device_id,
-                            at,
-                        )? {
+                        self.spool.freeze_gaps(self.registration.device_id, at)?;
+                        if let Some(p) = self.spool.pending_gap(self.registration.device_id, at)? {
                             self.send_at = now
                                 + Duration::from_secs_f64((p.bytes() as f64 / 65536.0).max(0.05));
                             self.spool.attempting_gap(&p, at / 1_000_000)?;

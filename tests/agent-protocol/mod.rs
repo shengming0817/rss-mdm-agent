@@ -204,7 +204,7 @@ pub struct Data {
     pub binding: Option<BindingProfile>,
     pub bootstrap: Option<String>,
     pub tenant: Uuid,
-    pub registration: Uuid,
+    pub device: rss_mdm_agent_wire::DeviceId,
     pub epoch: Uuid,
     pub task: Uuid,
     pub attempt: Uuid,
@@ -295,9 +295,7 @@ impl Data {
             self.signed(TaskPayload::Unmanage(Box::new(UnmanageTaskSpec {
                 wire_version: 1,
                 tenant_id: self.tenant,
-                device_id: "device-1".into(),
-                registration_id: self.registration,
-                generation: 1,
+                device_id: self.device,
                 retirement_id: Uuid::new_v4(),
                 task_id: self.task,
                 attempt_id: self.attempt,
@@ -320,11 +318,9 @@ impl Data {
                 EnrollmentTaskSpec {
                     wire_version: 1,
                     tenant_id: self.tenant,
-                    device_id: "device-1".into(),
+                    device_id: self.device,
                     platform: TaskPlatform::Macos,
                     architecture: TaskArchitecture::Aarch64,
-                    registration_id: self.registration,
-                    generation: 1,
                     task_id: self.task,
                     attempt_id: self.attempt,
                     permit: TaskPermit::Offer,
@@ -391,11 +387,9 @@ impl Data {
             mappings,
             wire_version: COLLECTION_TASK_VERSION,
             tenant_id: self.tenant,
-            device_id: "device-1".into(),
+            device_id: self.device,
             platform: TaskPlatform::Windows,
             architecture: TaskArchitecture::Aarch64,
-            registration_id: self.registration,
-            generation: 1,
             task_id: self.task,
             attempt_id: self.attempt,
             permit: TaskPermit::Offer,
@@ -497,11 +491,9 @@ impl Data {
             execution_target: SoftwareExecutionTarget::Device,
             wire_version: 1,
             tenant_id: self.tenant,
-            device_id: "device-1".into(),
+            device_id: self.device,
             platform: TaskPlatform::Macos,
             architecture: TaskArchitecture::Aarch64,
-            registration_id: self.registration,
-            generation: 1,
             task_id: self.task,
             attempt_id: self.attempt,
             permit: TaskPermit::Offer,
@@ -608,11 +600,9 @@ impl Data {
             execution_context: execution_context(),
             wire_version: 1,
             tenant_id: self.tenant,
-            device_id: "device-1".into(),
+            device_id: self.device,
             platform: TaskPlatform::Macos,
             architecture: TaskArchitecture::Aarch64,
-            registration_id: self.registration,
-            generation: 1,
             task_id: self.task,
             attempt_id: self.attempt,
             permit: TaskPermit::Offer,
@@ -735,7 +725,7 @@ impl Server {
             binding: None,
             bootstrap: None,
             tenant: Uuid::new_v4(),
-            registration: Uuid::new_v4(),
+            device: "11111111-2222-4333-8444-555555555555".parse().unwrap(),
             epoch: Uuid::new_v4(),
             task: Uuid::new_v4(),
             attempt: Uuid::new_v4(),
@@ -1737,14 +1727,16 @@ fn enrollment_response(d: &mut Data, action: &str, value: Value, peer: Option<&[
                 )
                 .unwrap();
                 if d.candidate_rotated {
-                    pki::rotation_chain(
+                    pki::rotation_chain_device(
                         d.tenant,
+                        d.device,
                         csr.info.public_key.to_der().unwrap(),
                         d.candidate_not_after,
                     )
                 } else {
-                    pki::chain_until(
+                    pki::chain_until_device(
                         d.tenant,
+                        d.device,
                         csr.info.public_key.to_der().unwrap(),
                         d.candidate_not_after,
                     )
@@ -1792,7 +1784,7 @@ fn activation_response(d: &mut Data, value: Value, peer: Option<&[u8]>) -> Respo
     }
     let request: enroll::ActivationRequest = serde_json::from_value(value).unwrap();
     assert_eq!(request.issuance_id, d.issuance);
-    let profile: BindingProfile = d.binding.clone().unwrap_or_else(|| serde_json::from_value(json!({"wireVersion":1,"operationId":d.operation,"deviceId":"device-1","registrationId":d.registration,"generation":1,"source":"agent.builtin","epoch":d.epoch,"capabilities":d.profile.as_ref().unwrap().capabilities,"collections":d.collections.clone().unwrap_or_else(collections)})).unwrap());
+    let profile: BindingProfile = d.binding.clone().unwrap_or_else(|| serde_json::from_value(json!({"wireVersion":1,"operationId":d.operation,"deviceId":d.device,"source":"agent.builtin","epoch":d.epoch,"capabilities":d.profile.as_ref().unwrap().capabilities,"collections":d.collections.clone().unwrap_or_else(collections)})).unwrap());
     d.binding = Some(profile.clone());
     let receipt = enroll::ActivationReceipt {
         wire_version: 1,

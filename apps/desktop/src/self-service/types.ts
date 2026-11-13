@@ -192,6 +192,11 @@ export type Id = string;
 export type Digest = string;
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "DeviceId".
+ */
+export type DeviceId = string;
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "NavigationResponse".
  */
 export type NavigationResponse =
@@ -766,9 +771,9 @@ export type BackendTrigger =
  * Device reference, not verified registration evidence.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "DeviceId".
+ * via the `definition` "DeviceId2".
  */
-export type DeviceId = string;
+export type DeviceId2 = string;
 /**
  * Target OS semantics for validation; an enum value is not a platform support claim.
  *
@@ -2629,15 +2634,7 @@ export interface EntryNamespace {
   /**
    * Exact device identity.
    */
-  device: string;
-  /**
-   * Exact registration UUID.
-   */
-  registration: string;
-  /**
-   * Exact registration generation.
-   */
-  generation: number;
+  device: DeviceId;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
@@ -2648,14 +2645,14 @@ export interface Delivery {
   intent: EntryIntent;
 }
 /**
- * One currently authorized script and its Resource-owned parameter schema.
+ * One currently authorized capability and its Resource-owned interface.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "SelfServiceDirectoryItem".
  */
 export interface SelfServiceDirectoryItem {
   /**
-   * Server-owned identity and current callable interface.
+   * Stable capability identity and current callable interface.
    */
   capability: CapabilityDescriptor;
   /**
@@ -2663,7 +2660,7 @@ export interface SelfServiceDirectoryItem {
    */
   policyId: string;
   /**
-   * Current configuration CAS revision.
+   * Informational configuration revision.
    */
   policyRevision: number;
   /**
@@ -2671,15 +2668,15 @@ export interface SelfServiceDirectoryItem {
    */
   policyVersion: string;
   /**
-   * Current qualified subject, rechecked when invoking and before execution.
+   * Qualified subject, rechecked on invocation and execution.
    */
   subject: SelfServiceSubject;
   /**
-   * Normalized presentation and invocation settings.
+   * Presentation and invocation settings.
    */
   selfService: SelfServiceMetadata;
   /**
-   * Closed task kind and the exact invocation interface.
+   * Closed task kind and exact invocation interface.
    */
   task: SelfServiceTask;
 }
@@ -3194,7 +3191,7 @@ export interface OsSessionRef {
   /**
    * Origin device reference; it does not establish registration or target authority.
    */
-  device: DeviceId;
+  device: DeviceId2;
   /**
    * Login account at the origin; never implicitly equated to the product actor.
    */
@@ -3274,7 +3271,7 @@ export interface Target {
   /**
    * Explicit device reference in the containing authority/context; not registration evidence.
    */
-  device: DeviceId;
+  device: DeviceId2;
   /**
    * OS namespace of this reference or target; does not assert platform support.
    */
@@ -3993,15 +3990,7 @@ export interface ActivityTarget {
   /**
    * Authorized endpoint identity, which can differ between paired channels.
    */
-  device: string;
-  /**
-   * Exact registration identity.
-   */
-  registration: string;
-  /**
-   * Exact registration generation.
-   */
-  generation: number;
+  device: DeviceId;
 }
 /**
  * Exact links to the existing business owners; absent links are not inferred.
@@ -5551,40 +5540,40 @@ export interface SelfServiceDirectoryResponse {
   asOf: number;
 }
 /**
- * Selected directory fields; resolve returns the complete required descriptor instead.
+ * One currently authorized capability and its Resource-owned interface.
  *
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "SelfServiceDirectoryProjection".
  */
 export interface SelfServiceDirectoryProjection {
   /**
-   * Selected capability interface.
+   * Stable capability identity and current callable interface.
    */
-  capability?: CapabilityDescriptor | null;
+  capability?: CapabilityDescriptor;
   /**
-   * Selected Policy identity.
+   * Logical Policy identity.
    */
-  policyId?: string | null;
+  policyId?: string;
   /**
-   * Selected informational configuration revision.
+   * Informational configuration revision.
    */
-  policyRevision?: number | null;
+  policyRevision?: number;
   /**
-   * Selected informational material version.
+   * Immutable execution version.
    */
-  policyVersion?: string | null;
+  policyVersion?: string;
   /**
-   * Selected qualified subject.
+   * Qualified subject, rechecked on invocation and execution.
    */
-  subject?: SelfServiceSubject | null;
+  subject?: SelfServiceSubject;
   /**
-   * Selected presentation and invocation settings.
+   * Presentation and invocation settings.
    */
-  selfService?: SelfServiceMetadata | null;
+  selfService?: SelfServiceMetadata;
   /**
-   * Selected operation-specific interface.
+   * Closed task kind and exact invocation interface.
    */
-  task?: SelfServiceTask | null;
+  task?: SelfServiceTask;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema

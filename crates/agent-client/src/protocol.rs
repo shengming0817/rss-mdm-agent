@@ -51,36 +51,7 @@ pub(crate) fn verify_task_binding<'a>(
     context: &TaskVerification<'_>,
 ) -> Result<VerifiedTask<'a>, Error> {
     let p = &signed.payload;
-    let (tenant, device) = match p {
-        TaskPayload::DeviceAccess(v) => (
-            v.tenant_id,
-            v.device_id,
-        ),
-        TaskPayload::Unmanage(v) => (
-            v.tenant_id,
-            v.device_id,
-        ),
-        TaskPayload::Credential(v) => (
-            v.tenant_id,
-            v.device_id,
-        ),
-        TaskPayload::Collection(v) => (
-            v.tenant_id,
-            v.device_id,
-        ),
-        TaskPayload::Script(v) => (
-            v.tenant_id,
-            v.device_id,
-        ),
-        TaskPayload::Enrollment(v) => (
-            v.tenant_id,
-            v.device_id,
-        ),
-        TaskPayload::Software(v) => (
-            v.tenant_id,
-            v.device_id,
-        ),
-    };
+    let (tenant, device) = task_identity(p);
     if signed.key_id != context.key_id
         || context.now < 0
         || p.permit() != context.permit
@@ -109,6 +80,18 @@ pub(crate) fn verify_task_binding<'a>(
         .map_err(|_| Error::Protocol)?;
     Ok(VerifiedTask(p))
 }
+pub(crate) fn task_identity(p: &TaskPayload) -> (Uuid, rss_mdm_agent_wire::DeviceId) {
+    match p {
+        TaskPayload::DeviceAccess(v) => (v.tenant_id, v.device_id),
+        TaskPayload::Unmanage(v) => (v.tenant_id, v.device_id),
+        TaskPayload::Credential(v) => (v.tenant_id, v.device_id),
+        TaskPayload::Collection(v) => (v.tenant_id, v.device_id),
+        TaskPayload::Script(v) => (v.tenant_id, v.device_id),
+        TaskPayload::Enrollment(v) => (v.tenant_id, v.device_id),
+        TaskPayload::Software(v) => (v.tenant_id, v.device_id),
+    }
+}
+
 /// Check the signed plan against its frozen local execution and credential context.
 fn validate_software_admission(spec: &SoftwareTaskSpec) -> Result<(), Error> {
     spec.validate()?;

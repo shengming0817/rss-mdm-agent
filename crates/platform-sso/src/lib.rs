@@ -344,7 +344,7 @@ mod tests {
         let source = Uuid::from_u128(2);
         let context = Context {
             tenant,
-            device_id: Uuid::from_u128(3),
+            device_id: Uuid::from_u128(3).try_into().unwrap(),
             installation: Uuid::from_u128(4),
             origin: "https://mdm.example".into(),
             kind: w::Kind::User,

@@ -34,9 +34,7 @@ impl Fixture {
                 source: rss_mdm_agent_wire::runtime::AccessWindowsAuthority::Local,
                 login: "LOCAL\\test".into(),
                 tenant: Uuid::new_v4(),
-                device: "device".into(),
-                registration: Uuid::new_v4(),
-                registration_generation: 1,
+                device: rss_mdm_agent_wire::DeviceId::new_v4(),
                 binding: Uuid::new_v4(),
                 binding_generation: 1,
                 factor_generation: 1,
@@ -432,15 +430,14 @@ fn native_source_and_enterprise_subject_are_part_of_consumption_identity() {
 }
 
 #[test]
-fn registration_replacement_retires_old_bindings_and_cannot_roll_back() {
+fn device_replacement_retires_old_bindings_and_retirement_cannot_reopen() {
     let f = Fixture::new();
     let (mut store, _, _, operation, facts) = f.setup();
     let original = f.authority.registration();
     let mut next = original.clone();
-    next.id = Uuid::new_v4();
-    next.generation += 1;
+    next.device = rss_mdm_agent_wire::DeviceId::new_v4();
     store.bind_registration(next.clone()).unwrap();
-    assert!(store.bind_registration(original).is_err());
+    // Only the communication owner binds the current ID; old factor authority remains fenced.
     assert!(store.authority(&f.authority.sid).unwrap().is_none());
     assert!(store
         .activate(
@@ -640,4 +637,18 @@ fn changed_join_retires_cloud_factors_durably_but_preserves_local_binding() {
             .unwrap(),
         Decision::Accepted
     );
+}
+
+#[test]
+fn old_offline_format_is_rejected_read_only_without_changing_the_database() {
+    let f = Fixture::new();
+    drop(Store::create(&f.root, f.id).unwrap());
+    let path = f.root.join("device-access.sqlite");
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.pragma_update(None, "user_version", 2).unwrap();
+    drop(db);
+    let before = std::fs::read(&path).unwrap();
+    assert!(Store::validate_existing(&f.root, f.id).is_err());
+    assert!(Store::open(&f.root, f.id).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), before);
 }

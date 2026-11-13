@@ -24,7 +24,7 @@ fn write(
     use std::io::Write;
     let name = format!(
         "{}-{}-{}-{}.{}",
-        task.registration_id, task.generation, task.task_id, task.attempt_id, suffix
+        task.tenant_id, task.device_id, task.task_id, task.attempt_id, suffix
     );
     let dir = platform_private_storage::PrivateDirectory::open(root).unwrap();
     let mut file = dir.create_file(std::path::Path::new(&name)).unwrap();
@@ -49,11 +49,9 @@ async fn settlement(case: u8) {
         let mut task = w::CredentialTaskSpec {
             wire_version: 1,
             tenant_id: data.tenant,
-            device_id: "device-1".into(),
+            device_id: "11111111-2222-4333-8444-555555555555".parse().unwrap(),
             platform: w::TaskPlatform::Windows,
             architecture: w::TaskArchitecture::Aarch64,
-            registration_id: data.registration,
-            generation: 1,
             task_id: data.task,
             attempt_id: data.attempt,
             permit: w::TaskPermit::Offer,
@@ -118,7 +116,9 @@ async fn settlement(case: u8) {
             }],
         }
     };
-    let mut spec = adapted_plan(false, "device-1", &offer).spec().clone();
+    let mut spec = adapted_plan(false, "11111111-2222-4333-8444-555555555555", &offer)
+        .spec()
+        .clone();
     spec.request.target.platform = Platform::Windows;
     spec.constraints = IsolationPolicy::OsIdentity {};
     spec.launch.cwd = r"C:\ProgramData\RSS".into();
@@ -233,7 +233,7 @@ async fn settlement(case: u8) {
         .service_assess(request, &wrong, reference.clone(), &evidence)
         .is_err());
     let mut wrong_task = task.clone();
-    wrong_task.generation += 1;
+    wrong_task.device_id = rss_mdm_agent_wire::DeviceId::new_v4();
     assert!(app
         .service_assess(
             request,

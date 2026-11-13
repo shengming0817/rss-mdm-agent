@@ -43,7 +43,7 @@ fn external_addresses_reject_ambiguous_and_noncanonical_authority() {
 }
 #[test]
 fn enterprise_link_is_bound_and_only_carries_non_authoritative_suggestions() {
-    let uri = "rssmdm://invoke/v1/alias/Repair?instance=17c72b26-774a-492c-9bf4-5e1c47c8501e&tenant=534610c5-1c82-42b1-bc9d-4b834c973cb3&device=device-1&registration=360a2191-9d5f-4fea-9f5c-6ecb02394aad&generation=3&version=v1&revision=4&parameters=%7B%22label%22%3A%22A%20%2B%20B%22%7D";
+    let uri = "rssmdm://invoke/v1/alias/Repair?instance=17c72b26-774a-492c-9bf4-5e1c47c8501e&tenant=534610c5-1c82-42b1-bc9d-4b834c973cb3&device=11111111-2222-4333-8444-555555555555&version=v1&revision=4&parameters=%7B%22label%22%3A%22A%20%2B%20B%22%7D";
     let intent = EntryIntent::parse(uri).unwrap();
     assert_eq!(intent.action, EntryAction::Invoke);
     assert_eq!(intent.parameters["label"], "A + B");
@@ -54,7 +54,8 @@ fn enterprise_link_is_bound_and_only_carries_non_authoritative_suggestions() {
         canonical
     );
     for changed in [
-        uri.replace("generation=3", "generation=0"),
+        format!("{uri}&generation=3"),
+        format!("{uri}&registration=360a2191-9d5f-4fea-9f5c-6ecb02394aad"),
         uri.replace(
             "instance=17c72b26-774a-492c-9bf4-5e1c47c8501e",
             "instance=https%3A%2F%2Fevil.test",
@@ -74,7 +75,7 @@ fn display_names_are_not_exact_tool_selectors() {
 
 #[test]
 fn dots_are_canonical_after_the_native_url_parser() {
-    let query = "device=fixture%20%2B%20%E6%B5%8B%E8%AF%95&generation=3&instance=17c72b26-774a-492c-9bf4-5e1c47c8501e&registration=360a2191-9d5f-4fea-9f5c-6ecb02394aad&tenant=534610c5-1c82-42b1-bc9d-4b834c973cb3";
+    let query = "device=11111111-2222-4333-8444-555555555555&instance=17c72b26-774a-492c-9bf4-5e1c47c8501e&tenant=534610c5-1c82-42b1-bc9d-4b834c973cb3";
     for kind in ["alias", "event"] {
         for name in [".", ".."] {
             let uri = format!("rssmdm://view/v1/{kind}/~{name}?{query}");
@@ -96,4 +97,22 @@ fn dots_are_canonical_after_the_native_url_parser() {
             }
         }
     }
+}
+
+#[test]
+fn enterprise_device_uses_the_public_canonical_nonzero_uuid() {
+    let base = "rssmdm://view/v1/node/tasks.management?instance=fixture&tenant=11111111-2222-4333-8444-555555555555&device=";
+    for value in [
+        "device",
+        "00000000-0000-0000-0000-000000000000",
+        "7F8C2D91-4A63-4F20-9B8E-C1526D0A7349",
+        "11111111222243338444555555555555",
+        "urn:uuid:11111111-2222-4333-8444-555555555555",
+    ] {
+        assert!(
+            EntryIntent::parse(&format!("{base}{value}")).is_err(),
+            "{value}"
+        );
+    }
+    assert!(EntryIntent::parse(&format!("{base}11111111-2222-4333-8444-555555555555")).is_ok());
 }

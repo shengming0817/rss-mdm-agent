@@ -131,8 +131,8 @@ async fn refresh_inspection_reads_live_binding_without_locking_or_creating_state
     let before = std::fs::read(root.path.join("communication.sqlite")).unwrap();
     let registration = agent_client::inspect_binding(&root.path, &cfg).unwrap();
     assert_eq!(
-        registration.registration_id,
-        client.registration().unwrap().registration_id
+        registration.device_id,
+        client.registration().unwrap().device_id
     );
     let mut wrong = cfg.clone();
     wrong.tenant = Uuid::new_v4();
@@ -544,7 +544,7 @@ fn unsupported_database_and_changed_namespace_are_preserved() {
 }
 
 #[tokio::test]
-async fn unknown_communication_schema_preserves_registration_pending_delivery_and_materials() {
+async fn old_communication_schema_preserves_device_pending_delivery_and_materials() {
     use execution_contract::{ActorId, Digest, EventId, RequestId};
     let server = Server::new().await;
     let root = Root::new();
@@ -589,7 +589,7 @@ async fn unknown_communication_schema_preserves_registration_pending_delivery_an
     drop(client);
     let path = root.path.join("communication.sqlite");
     let db = rusqlite::Connection::open(&path).unwrap();
-    db.pragma_update(None, "user_version", 99).unwrap();
+    db.pragma_update(None, "user_version", 4).unwrap();
     drop(db);
     // Snapshot all existing entries; rejection must not initialize a lock or sidecar.
     let entries = || {
@@ -1731,11 +1731,9 @@ async fn retirement_signature_binds_every_target_and_cannot_use_an_offer_as_star
         key_id: "test",
         public_key: cfg.registration_keys.get("test").unwrap(),
         tenant_id: data.tenant,
-        device_id: "device-1",
+        device_id: "11111111-2222-4333-8444-555555555555".parse().unwrap(),
         platform: TaskPlatform::Windows,
         architecture: TaskArchitecture::Aarch64,
-        registration_id: data.registration,
-        generation: 1,
         task_id: data.task,
         attempt_id: data.attempt,
         permit: TaskPermit::Offer,
@@ -1790,11 +1788,9 @@ async fn credential_escrow_lost_ack_replays_ciphertext_after_sqlite_reopen() {
         let mut task = CredentialTaskSpec {
             wire_version: 1,
             tenant_id: data.tenant,
-            device_id: "device-1".into(),
+            device_id: "11111111-2222-4333-8444-555555555555".parse().unwrap(),
             platform: TaskPlatform::Windows,
             architecture: TaskArchitecture::Aarch64,
-            registration_id: data.registration,
-            generation: 1,
             task_id: data.task,
             attempt_id: data.attempt,
             permit: TaskPermit::Offer,
@@ -1884,4 +1880,140 @@ async fn credential_escrow_lost_ack_replays_ciphertext_after_sqlite_reopen() {
         client.escrow_credentials(task, tampered).await,
         Err(Error::Conflict)
     );
+}
+
+#[tokio::test]
+async fn pending_reports_keep_the_original_device_and_frozen_bytes() {
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    let binding = server.register(&mut client).await;
+    let id = client
+        .queue_report(
+            "inventory",
+            ReportBody::Failed {
+                code: FailureCode::CollectionFailed,
+            },
+            1,
+        )
+        .unwrap();
+    let path = root.path.join("communication.sqlite");
+    let db = rusqlite::Connection::open(&path).unwrap();
+    let body: Vec<u8> = db
+        .query_row(
+            "SELECT body FROM reports WHERE id=?1",
+            [id.to_string()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    db.execute(
+        "UPDATE reports SET device=?1 WHERE id=?2",
+        rusqlite::params![
+            rss_mdm_agent_wire::DeviceId::new_v4().to_string(),
+            id.to_string()
+        ],
+    )
+    .unwrap();
+    assert_eq!(client.flush_reports(1).await, Err(Error::Identity));
+    assert!(server.data.lock().unwrap().reports.is_empty());
+    assert_eq!(
+        db.query_row(
+            "SELECT body FROM reports WHERE id=?1",
+            [id.to_string()],
+            |r| r.get::<_, Vec<u8>>(0)
+        )
+        .unwrap(),
+        body
+    );
+    db.execute(
+        "UPDATE reports SET device=?1 WHERE id=?2",
+        rusqlite::params![binding.device_id.to_string(), id.to_string()],
+    )
+    .unwrap();
+    drop(db);
+    drop(client);
+    let mut client = server.client(&root, OpenMode::Existing);
+    assert_eq!(client.flush_reports(1).await, Ok(1));
+    assert_eq!(client.registration().unwrap().device_id, binding.device_id);
+}
+
+#[tokio::test]
+async fn new_device_cannot_accept_the_old_signed_task_in_the_same_tenant() {
+    let first = Server::tls().await;
+    let original_root = Root::new();
+    let mut original = first.client(&original_root, OpenMode::Create);
+    let original_binding = first.register(&mut original).await;
+    let offer = original.claim().await.unwrap().offer.unwrap();
+    let second = Server::tls().await;
+    {
+        let mut data = second.data.lock().unwrap();
+        data.tenant = first.config().tenant;
+        data.device = rss_mdm_agent_wire::DeviceId::new_v4();
+    }
+    let root = Root::new();
+    let mut current = second.client(&root, OpenMode::Create);
+    let binding = second.register(&mut current).await;
+    assert_ne!(binding.device_id, original_binding.device_id);
+    assert_eq!(
+        current.configuration().tenant,
+        original.configuration().tenant
+    );
+    assert!(current.prepare(&offer).await.is_err());
+    let data = second.data.lock().unwrap();
+    assert!(data.content_calls.is_empty());
+    assert!(!data.started);
+}
+
+#[tokio::test]
+async fn retained_foreign_device_result_cannot_be_resent_under_current_credentials() {
+    use execution_contract::{ActorId, Digest, EventId, RequestId};
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let offer = client.claim().await.unwrap().offer.unwrap();
+    let materials = client.prepare(&offer).await.unwrap();
+    client.received(&offer).await.unwrap();
+    let start = client.request_start(&offer, &materials).await.unwrap();
+    let association = client
+        .reserve_association(
+            &start,
+            &RequestId::new("original-request").unwrap(),
+            &Digest::new("ab".repeat(32)).unwrap(),
+            &ActorId::new("original-actor").unwrap(),
+        )
+        .unwrap();
+    let event = EventId::new("original-result").unwrap();
+    let result = client
+        .freeze_result(
+            &association,
+            &event,
+            std::slice::from_ref(&event),
+            TaskEvent::Cancelled,
+        )
+        .unwrap();
+    let foreign = {
+        let data = server.data.lock().unwrap();
+        let mut payload = data.offer.as_ref().unwrap().payload.clone();
+        let TaskPayload::Script(task) = &mut payload else {
+            panic!("script fixture");
+        };
+        task.device_id = rss_mdm_agent_wire::DeviceId::new_v4();
+        data.signed(payload)
+    };
+    let db = rusqlite::Connection::open(root.path.join("communication.sqlite")).unwrap();
+    db.execute(
+        "UPDATE tasks SET body=?1 WHERE id=?2",
+        rusqlite::params![
+            serde_json::to_vec(&foreign).unwrap(),
+            offer.task_id().to_string()
+        ],
+    )
+    .unwrap();
+    assert!(matches!(
+        client.send_result(result).await,
+        Err(Error::Identity)
+    ));
+    assert!(server.data.lock().unwrap().results.is_empty());
+    assert!(client.pending_result(&association).unwrap().is_some());
 }

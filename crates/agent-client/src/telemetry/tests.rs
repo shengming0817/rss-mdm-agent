@@ -80,13 +80,11 @@ async fn signature_identity_expiry_and_retry_after_are_enforced() {
     let mut changed = signed.clone();
     changed.configuration.sample_millis += 1;
     assert!(client.verify_telemetry(changed).is_err());
-    for kind in 0..4 {
+    for kind in 0..2 {
         let mut c = signed.configuration.clone();
         match kind {
             0 => c.tenant_id = Uuid::new_v4(),
-            1 => c.registration_id = Uuid::new_v4(),
-            2 => c.generation += 1,
-            _ => c.device_id = "different".into(),
+            _ => c.device_id = rss_mdm_agent_wire::DeviceId::new_v4(),
         };
         let s = fixture::sign(&server.data.lock().unwrap(), c);
         assert!(client.verify_telemetry(s).is_err());
@@ -123,7 +121,7 @@ async fn quota_eviction_and_registration_fence_preserve_loss_evidence() {
     assert_eq!(spool.summary().unwrap().gaps["capacity"].count, 2);
     spool.freeze(&c).unwrap();
     spool
-        .prune(at / 1_000_000, Uuid::new_v4(), r.generation)
+        .prune(at / 1_000_000, rss_mdm_agent_wire::DeviceId::new_v4())
         .unwrap();
     let summary = spool.summary().unwrap();
     assert_eq!(summary.pending, 0);
@@ -320,36 +318,17 @@ async fn gap_snapshot_survives_reopen_and_lost_receipt_without_consuming_new_los
     // Historical unowned loss remains local and is never inferred to belong to r.
     spool.gap(GapReason::Clock, 99, at, at).unwrap();
     spool
-        .gap_for(
-            r.registration_id,
-            r.generation,
-            GapReason::Capacity,
-            2,
-            at,
-            at,
-        )
+        .gap_for(r.device_id, GapReason::Capacity, 2, at, at)
         .unwrap();
-    spool
-        .freeze_gaps(r.registration_id, r.generation, at)
-        .unwrap();
-    let p = spool
-        .pending_gap(r.registration_id, r.generation, at)
-        .unwrap()
-        .unwrap();
+    spool.freeze_gaps(r.device_id, at).unwrap();
+    let p = spool.pending_gap(r.device_id, at).unwrap().unwrap();
     let bytes = p.body().to_vec();
     let id = p.id();
     let report: w::TelemetryGapReport = decode(&bytes).unwrap();
     assert_eq!(report.gaps.len(), 1);
     assert_eq!(report.gaps[0].count, 2);
     spool
-        .gap_for(
-            r.registration_id,
-            r.generation,
-            GapReason::Capacity,
-            3,
-            at,
-            at + 1,
-        )
+        .gap_for(r.device_id, GapReason::Capacity, 3, at, at + 1)
         .unwrap();
     spool.attempting_gap(&p, at / 1_000_000).unwrap();
     server.data.lock().unwrap().telemetry.lose_response = true;
@@ -358,7 +337,7 @@ async fn gap_snapshot_survives_reopen_and_lost_receipt_without_consuming_new_los
     server.time.set(at / 1_000_000 + 3);
     let mut spool = client.telemetry_spool(Limits::production()).unwrap();
     let p = spool
-        .pending_gap(r.registration_id, r.generation, at + 3_000_000)
+        .pending_gap(r.device_id, at + 3_000_000)
         .unwrap()
         .unwrap();
     assert_eq!(p.id(), id);
@@ -369,15 +348,13 @@ async fn gap_snapshot_survives_reopen_and_lost_receipt_without_consuming_new_los
     wrong.report_id = Uuid::new_v4();
     assert_eq!(spool.acknowledge_gap(&p, &wrong), Err(Error::Protocol));
     assert!(spool
-        .pending_gap(r.registration_id, r.generation, at + 3_000_000)
+        .pending_gap(r.device_id, at + 3_000_000)
         .unwrap()
         .is_some());
     spool.acknowledge_gap(&p, &receipt).unwrap();
-    spool
-        .freeze_gaps(r.registration_id, r.generation, at + 3_000_000)
-        .unwrap();
+    spool.freeze_gaps(r.device_id, at + 3_000_000).unwrap();
     let next = spool
-        .pending_gap(r.registration_id, r.generation, at + 3_000_000)
+        .pending_gap(r.device_id, at + 3_000_000)
         .unwrap()
         .unwrap();
     assert_ne!(next.id(), id);
@@ -408,23 +385,11 @@ async fn gap_retry_is_fixed_bounded_fenced_and_expires_without_recreating_loss()
         GapReason::Configuration,
     ] {
         spool
-            .gap_for(
-                r.registration_id,
-                r.generation,
-                reason,
-                i64::MAX as u64,
-                0,
-                i64::MAX - 1,
-            )
+            .gap_for(r.device_id, reason, i64::MAX as u64, 0, i64::MAX - 1)
             .unwrap();
     }
-    spool
-        .freeze_gaps(r.registration_id, r.generation, at)
-        .unwrap();
-    let p = spool
-        .pending_gap(r.registration_id, r.generation, at)
-        .unwrap()
-        .unwrap();
+    spool.freeze_gaps(r.device_id, at).unwrap();
+    let p = spool.pending_gap(r.device_id, at).unwrap().unwrap();
     assert!(p.bytes() <= w::TELEMETRY_GAP_MAX_BYTES);
     let report: w::TelemetryGapReport = decode(p.body()).unwrap();
     assert_eq!(report.gaps.len(), 10);
@@ -439,13 +404,13 @@ async fn gap_retry_is_fixed_bounded_fenced_and_expires_without_recreating_loss()
     spool.attempting_gap(&p, at / 1_000_000).unwrap();
     spool.retry_gap(&p, at / 1_000_000, f.retry_after).unwrap();
     assert!(spool
-        .pending_gap(r.registration_id, r.generation, at + 89_000_000)
+        .pending_gap(r.device_id, at + 89_000_000)
         .unwrap()
         .is_none());
     server.data.lock().unwrap().telemetry.throttled = false;
     server.time.set(at / 1_000_000 + 90);
     let p = spool
-        .pending_gap(r.registration_id, r.generation, at + 90_000_000)
+        .pending_gap(r.device_id, at + 90_000_000)
         .unwrap()
         .unwrap();
     assert!(client.telemetry_gap_status(&p).await.unwrap().is_none());
@@ -457,13 +422,10 @@ async fn gap_retry_is_fixed_bounded_fenced_and_expires_without_recreating_loss()
         assert_eq!(attempts.len(), 2);
         assert_eq!(attempts[0], attempts[1]);
     }
-    let other = Uuid::new_v4();
-    assert!(spool
-        .pending_gap(other, r.generation, at + 90_000_000)
-        .unwrap()
-        .is_none());
+    let other = rss_mdm_agent_wire::DeviceId::new_v4();
+    assert!(spool.pending_gap(other, at + 90_000_000).unwrap().is_none());
     let mut wrong = r.clone();
-    wrong.generation += 1;
+    wrong.device_id = rss_mdm_agent_wire::DeviceId::new_v4();
     assert!(!p.belongs_to(&wrong));
     let end = at + w::TELEMETRY_GAP_WINDOW_MICROS;
     server.time.set(end / 1_000_000);
@@ -471,43 +433,21 @@ async fn gap_retry_is_fixed_bounded_fenced_and_expires_without_recreating_loss()
         client.telemetry_gap_submit(&p).await.unwrap_err().error,
         Error::Expired
     );
-    spool
-        .freeze_gaps(r.registration_id, r.generation, end)
-        .unwrap();
-    assert!(spool
-        .pending_gap(r.registration_id, r.generation, end)
-        .unwrap()
-        .is_none());
+    spool.freeze_gaps(r.device_id, end).unwrap();
+    assert!(spool.pending_gap(r.device_id, end).unwrap().is_none());
     assert_eq!(
         spool.summary().unwrap().gaps["capacity"].count,
         i64::MAX as u64
     );
     // Permanent rejection does not mint another report or increment local loss.
     spool
-        .gap_for(
-            r.registration_id,
-            r.generation,
-            GapReason::Power,
-            1,
-            end,
-            end,
-        )
+        .gap_for(r.device_id, GapReason::Power, 1, end, end)
         .unwrap();
-    spool
-        .freeze_gaps(r.registration_id, r.generation, end)
-        .unwrap();
-    let p = spool
-        .pending_gap(r.registration_id, r.generation, end)
-        .unwrap()
-        .unwrap();
+    spool.freeze_gaps(r.device_id, end).unwrap();
+    let p = spool.pending_gap(r.device_id, end).unwrap().unwrap();
     spool.reject_gap(&p).unwrap();
-    spool
-        .freeze_gaps(r.registration_id, r.generation, end + 1)
-        .unwrap();
-    assert!(spool
-        .pending_gap(r.registration_id, r.generation, end + 1)
-        .unwrap()
-        .is_none());
+    spool.freeze_gaps(r.device_id, end + 1).unwrap();
+    assert!(spool.pending_gap(r.device_id, end + 1).unwrap().is_none());
 }
 
 #[tokio::test]
@@ -555,54 +495,27 @@ async fn dropped_sample_ownership_and_invalid_gap_input_cannot_poison_pending_re
     let at = server.time.now().unwrap() * 1_000_000;
     let mut spool = client.telemetry_spool(Limits::production()).unwrap();
     spool.append(&c, at, values(1), "boot").unwrap();
-    let other = Uuid::new_v4();
-    spool
-        .prune(at / 1_000_000, other, r.generation + 1)
-        .unwrap();
+    let other = rss_mdm_agent_wire::DeviceId::new_v4();
+    spool.prune(at / 1_000_000, other).unwrap();
     // The rejected old sample is still attributed to its original registration.
-    spool
-        .freeze_gaps(r.registration_id, r.generation, at)
-        .unwrap();
-    let old = spool
-        .pending_gap(r.registration_id, r.generation, at)
-        .unwrap()
-        .unwrap();
+    spool.freeze_gaps(r.device_id, at).unwrap();
+    let old = spool.pending_gap(r.device_id, at).unwrap().unwrap();
     let report: w::TelemetryGapReport = decode(old.body()).unwrap();
     assert_eq!(report.gaps[0].reason, GapReason::Registration);
     assert_eq!(report.gaps[0].count, 1);
-    assert!(spool
-        .pending_gap(other, r.generation + 1, at)
-        .unwrap()
-        .is_none());
+    assert!(spool.pending_gap(other, at).unwrap().is_none());
     for (count, first, last) in [(u64::MAX, 0, 1), (1, -1, 1), (1, 2, 1), (1, 0, i64::MAX)] {
         assert!(spool
-            .gap_for(
-                r.registration_id,
-                r.generation,
-                GapReason::Capacity,
-                count,
-                first,
-                last
-            )
+            .gap_for(r.device_id, GapReason::Capacity, count, first, last)
             .is_err());
     }
     spool.reject_gap(&old).unwrap();
-    spool
-        .freeze_gaps(r.registration_id, r.generation, at)
-        .unwrap();
-    assert!(spool
-        .pending_gap(r.registration_id, r.generation, at)
-        .unwrap()
-        .is_none());
+    spool.freeze_gaps(r.device_id, at).unwrap();
+    assert!(spool.pending_gap(r.device_id, at).unwrap().is_none());
     assert!(!spool.summary().unwrap().gaps.contains_key("capacity"));
-    spool
-        .gap_for(other, r.generation + 1, GapReason::Lease, 1, at, at)
-        .unwrap();
-    spool.freeze_gaps(other, r.generation + 1, at).unwrap();
-    let foreign = spool
-        .pending_gap(other, r.generation + 1, at)
-        .unwrap()
-        .unwrap();
+    spool.gap_for(other, GapReason::Lease, 1, at, at).unwrap();
+    spool.freeze_gaps(other, at).unwrap();
+    let foreign = spool.pending_gap(other, at).unwrap().unwrap();
     assert_eq!(
         client
             .telemetry_gap_submit(&foreign)
@@ -638,18 +551,9 @@ async fn gap_storage_bound_keeps_new_loss_pending_until_a_snapshot_slot_is_relea
     let mut spool = client.telemetry_spool(Limits::production()).unwrap();
     for offset in 0..65 {
         spool
-            .gap_for(
-                r.registration_id,
-                r.generation,
-                GapReason::Capacity,
-                1,
-                at,
-                at,
-            )
+            .gap_for(r.device_id, GapReason::Capacity, 1, at, at)
             .unwrap();
-        spool
-            .freeze_gaps(r.registration_id, r.generation, at + offset)
-            .unwrap();
+        spool.freeze_gaps(r.device_id, at + offset).unwrap();
     }
     // SQLite evidence counts the actual frozen bodies, rather than an in-memory approximation.
     let db = rusqlite::Connection::open(root.path.join("telemetry.sqlite")).unwrap();
@@ -666,10 +570,7 @@ async fn gap_storage_bound_keeps_new_loss_pending_until_a_snapshot_slot_is_relea
         .query_row("SELECT sum(count) FROM gap_pending", [], |row| row.get(0))
         .unwrap();
     assert_eq!(pending, 1);
-    let oldest = spool
-        .pending_gap(r.registration_id, r.generation, at + 100)
-        .unwrap()
-        .unwrap();
+    let oldest = spool.pending_gap(r.device_id, at + 100).unwrap().unwrap();
     spool
         .acknowledge_gap(
             &oldest,
@@ -680,25 +581,46 @@ async fn gap_storage_bound_keeps_new_loss_pending_until_a_snapshot_slot_is_relea
             },
         )
         .unwrap();
-    spool
-        .freeze_gaps(r.registration_id, r.generation, at + 101)
-        .unwrap();
+    spool.freeze_gaps(r.device_id, at + 101).unwrap();
     let pending: u64 = db
         .query_row("SELECT count(*) FROM gap_pending", [], |row| row.get(0))
         .unwrap();
     assert_eq!(pending, 0);
     assert_eq!(spool.summary().unwrap().gaps["capacity"].count, 65);
-    let other = Uuid::new_v4();
-    spool
-        .freeze_gaps(other, r.generation + 1, at + 102)
-        .unwrap();
-    assert!(spool
-        .pending_gap(other, r.generation + 1, at + 102)
-        .unwrap()
-        .is_none());
-    assert!(spool
-        .pending_gap(r.registration_id, r.generation, at + 102)
-        .unwrap()
-        .is_none());
+    let other = rss_mdm_agent_wire::DeviceId::new_v4();
+    spool.freeze_gaps(other, at + 102).unwrap();
+    assert!(spool.pending_gap(other, at + 102).unwrap().is_none());
+    assert!(spool.pending_gap(r.device_id, at + 102).unwrap().is_none());
     assert_eq!(spool.summary().unwrap().gaps["capacity"].count, 65);
+}
+
+#[tokio::test]
+async fn old_spool_is_rejected_without_changing_mode_bytes_or_creating_a_lock() {
+    let server = Server::new().await;
+    let root = Root::new();
+    let client = server.client(&root, OpenMode::Create);
+    let path = root.path.join("telemetry.sqlite");
+    drop(platform_private_storage::create_new(&path).unwrap());
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA application_id=1381192781; PRAGMA user_version=3; CREATE TABLE samples(registration TEXT,generation INTEGER,body BLOB);").unwrap();
+    drop(db);
+    let before = std::fs::read(&path).unwrap();
+    assert_eq!(
+        validate_existing(&root.path, &server.config()),
+        Err(Error::Schema)
+    );
+    assert!(matches!(
+        client.telemetry_spool(Limits::production()),
+        Err(Error::Schema)
+    ));
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert!(!root.path.join("telemetry.lock").exists());
+    let db =
+        rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .unwrap();
+    assert_eq!(
+        db.pragma_query_value(None, "journal_mode", |r| r.get::<_, String>(0))
+            .unwrap(),
+        "wal"
+    );
 }

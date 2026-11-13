@@ -173,7 +173,9 @@ async fn capture_recovery(case: u8) {
         value.row_count = value.rows.len() as u32;
         result.validate_for(&task.plan, time).unwrap();
     }
-    let mut input = adapted_plan(false, "device-1", &offer).spec().clone();
+    let mut input = adapted_plan(false, "11111111-2222-4333-8444-555555555555", &offer)
+        .spec()
+        .clone();
     input.request.target.platform = if macos {
         Platform::Macos
     } else {

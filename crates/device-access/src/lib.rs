@@ -229,11 +229,11 @@ impl Store {
     pub fn create(root: &Path, installation: Uuid) -> Result<Self, Error> {
         storage::open(root, installation, true)
     }
-    /// LogonUI uses Existing exclusively; a lost/corrupt database never resets counters.
     /// Validate the current offline format before locks, writes or recovery.
     pub fn validate_existing(root: &Path, installation: Uuid) -> Result<(), Error> {
         storage::validate_existing(root, installation)
     }
+    /// LogonUI uses Existing exclusively; a lost/corrupt database never resets counters.
     pub fn open(root: &Path, installation: Uuid) -> Result<Self, Error> {
         storage::open(root, installation, false)
     }
@@ -551,6 +551,7 @@ impl Store {
             }
             if !old.revoked
                 && (old.authority.tenant != record.authority.tenant
+                    || old.authority.device != record.authority.device
                     || old.authority.instance != record.authority.instance
                     || old.authority.principal != record.authority.principal
                     || old.authority.source != record.authority.source

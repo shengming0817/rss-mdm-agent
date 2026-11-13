@@ -159,15 +159,11 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             Err(Error::Identity) => return Ok(Status::NotConfigured),
             Err(error) => return Err(error),
         };
-        Ok(
-            if state.device_id
-                == current.device_id
-            {
-                state.status
-            } else {
-                Status::NotConfigured
-            },
-        )
+        Ok(if state.device_id == current.device_id {
+            state.status
+        } else {
+            Status::NotConfigured
+        })
     }
     /// Start a bounded collection check immediately after host startup/configuration replacement.
     /// A frozen pending operation and its transport payload remain unchanged.
@@ -191,11 +187,11 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let mut state = self
             .store
             .get::<State>(KEY)?
-            .unwrap_or_else(|| State::newcurrent.device_id);
+            .unwrap_or_else(|| State::new(current.device_id));
         if state.device_id != current.device_id {
             // A confirmed registration replacement revokes the old uploader. Discard its local
             // carrier, never transplant its operation/configuration into the new authenticated source.
-            state = State::newcurrent.device_id;
+            state = State::new(current.device_id);
             state.save(&self.store)?;
         }
         let now = self.now()?;

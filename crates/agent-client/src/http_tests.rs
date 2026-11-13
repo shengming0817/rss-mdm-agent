@@ -76,8 +76,7 @@ fn frozen_input_is_checked_for_the_endpoint_and_never_reencoded() {
     let ack = task_trust::Acknowledgement {
         operation: uuid::Uuid::new_v4(),
         version: 1,
-        registration: uuid::Uuid::new_v4(),
-        generation: 1,
+        device_id: rss_mdm_agent_wire::DeviceId::new_v4(),
         revision: 1,
         digest: "0".repeat(64),
     };

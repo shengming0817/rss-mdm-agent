@@ -153,8 +153,7 @@ pub(crate) fn validity(
         .decode(encoded)
         .map_err(|_| Error::Untrusted)?;
     let device = String::from_utf8(bytes).map_err(|_| Error::Untrusted)?;
-    if base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&device) != encoded
-    {
+    if base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&device) != encoded {
         return Err(Error::Untrusted);
     }
     let device = rss_mdm_agent_wire::DeviceId::parse(&device).map_err(|_| Error::Untrusted)?;

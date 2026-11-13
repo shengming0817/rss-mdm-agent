@@ -15,9 +15,7 @@ async fn native_partial_observation_replays_exact_request_and_never_freezes_term
         let spec = w::AccessTaskSpec {
             wire_version: 1,
             tenant_id: d.tenant,
-            device_id: "device-1".into(),
-            registration_id: d.registration,
-            generation: 1,
+            device_id: "11111111-2222-4333-8444-555555555555".parse().unwrap(),
             platform: w::TaskPlatform::Windows,
             architecture: w::TaskArchitecture::X86_64,
             task_id: d.task,

@@ -1217,7 +1217,7 @@ mod tests {
             callback_generation: 1,
             context: ::platform_sso::Context {
                 tenant: Uuid::from_u128(1),
-                device_id: Uuid::from_u128(2),
+                device_id: Uuid::from_u128(2).try_into().unwrap(),
                 installation: Uuid::from_u128(3),
                 origin: "https://mdm.example".into(),
                 kind: w::Kind::User,
@@ -1498,7 +1498,7 @@ mod tests {
         current.generated_uid = Some(Uuid::new_v4().to_string());
         assert!(!old.same_owner(&current));
         current = old.context.clone();
-        current.device_id = Uuid::new_v4();
+        current.device_id = rss_mdm_agent_wire::DeviceId::new_v4();
         assert!(!old.same_owner(&current));
         current = old.context.clone();
         current.binding_generation = Some(0);

@@ -747,8 +747,6 @@ mod tests {
         let authority = Authority {
             tenant: client.configuration().tenant,
             device: r.device_id,
-            registration: r.registration_id,
-            registration_generation: r.generation,
             instance: Uuid::new_v4(),
             principal: Uuid::new_v4(),
             binding: Uuid::new_v4(),

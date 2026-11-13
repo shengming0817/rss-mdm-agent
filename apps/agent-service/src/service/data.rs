@@ -174,13 +174,9 @@ impl Core {
             serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)?;
         worker.read.validate()?;
         let remote = match &worker.read.source {
-            crate::collection_worker::ReadSource::Task { task, .. } => {
-                Some(plan::enterprise_binding(
-                    self.data.service_id,
-                    task.tenant_id,
-                    task.device_id,
-                )?)
-            }
+            crate::collection_worker::ReadSource::Task { task, .. } => Some(
+                plan::enterprise_binding(self.data.service_id, task.tenant_id, task.device_id)?,
+            ),
             crate::collection_worker::ReadSource::Periodic {
                 configuration: c, ..
             } => Some(plan::enterprise_binding(
@@ -217,11 +213,7 @@ impl Core {
         {
             let task: wire::TaskSpec =
                 serde_json::from_value(value.clone()).map_err(|_| Error::Protocol)?;
-            let b = plan::enterprise_binding(
-                self.data.service_id,
-                task.tenant_id,
-                task.device_id,
-            )?;
+            let b = plan::enterprise_binding(self.data.service_id, task.tenant_id, task.device_id)?;
             if b.authority != input.spec().request.authority
                 || b.device != input.spec().request.target.device
             {

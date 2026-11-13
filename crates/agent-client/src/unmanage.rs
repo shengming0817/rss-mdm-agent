@@ -203,7 +203,7 @@ fn validate_record(
             key_id: &record.start.key_id,
             public_key: key,
             tenant_id: cfg.tenant,
-            device_id: &binding.device_id,
+            device_id: binding.device_id,
             platform: cfg.platform,
             architecture: cfg.architecture,
             task_id: task.task_id,

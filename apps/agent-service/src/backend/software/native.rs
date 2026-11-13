@@ -958,7 +958,7 @@ mod gc_tests {
         };
         let binding = execution_app::ServiceBinding {
             authority: local::plan().spec().request.authority.clone(),
-            device: DeviceId::new("device-1").unwrap(),
+            device: DeviceId::new("11111111-2222-4333-8444-555555555555").unwrap(),
         };
         let before = inventory_files(&mut root).unwrap();
         assert!(matches!(

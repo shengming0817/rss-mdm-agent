@@ -260,7 +260,7 @@ mod tests {
             NavigationInstance::claim_named(None, move |uri| sender.send(uri).is_ok(), &name)
                 .unwrap()
                 .unwrap();
-        let scope = "device=fixture&generation=3&instance=17c72b26-774a-492c-9bf4-5e1c47c8501e&registration=360a2191-9d5f-4fea-9f5c-6ecb02394aad&tenant=534610c5-1c82-42b1-bc9d-4b834c973cb3";
+        let scope = "device=11111111-2222-4333-8444-555555555555&instance=17c72b26-774a-492c-9bf4-5e1c47c8501e&tenant=534610c5-1c82-42b1-bc9d-4b834c973cb3";
         for uri in [
             "rssmdm://view/v1/node/settings.account".to_owned(),
             format!("rssmdm://view/v1/event/~..?{scope}"),

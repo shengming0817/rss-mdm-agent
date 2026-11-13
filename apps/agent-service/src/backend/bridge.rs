@@ -247,7 +247,7 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
                 wire::ExecutionIdentity::LoggedInUser
             )
         );
-        if p.request.target.device.as_str() != device
+        if p.request.target.device.as_str() != device.to_string()
             || p.request.target.platform != actual_platform
             || !matches_run_as
             || p.budget.total_timeout_ms > timeout
@@ -341,8 +341,9 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
         app: &ExecutionApp<H, R, J>,
     ) -> Result<bool, Error> {
         let binding = client.association(task)?.ok_or(Error::Conflict)?;
-        let device = execution_contract::DeviceId::new(client.registration()?.device_id)
-            .map_err(|_| Error::Identity)?;
+        let device =
+            execution_contract::DeviceId::new(client.registration()?.device_id.to_string())
+                .map_err(|_| Error::Identity)?;
         if !app
             .has_service_execution(binding.request(), &device)
             .map_err(map_app_error)?
@@ -388,8 +389,9 @@ impl<P: OutputPolicy> ExecutionBridge<P> {
     ) -> Result<PendingAbandonment, Error> {
         let offer = client.retained_offer(task)?;
         let request = request_id(&offer)?;
-        let device = execution_contract::DeviceId::new(client.registration()?.device_id)
-            .map_err(|_| Error::Unsupported)?;
+        let device =
+            execution_contract::DeviceId::new(client.registration()?.device_id.to_string())
+                .map_err(|_| Error::Unsupported)?;
         if let Some(binding) = client.association(task)? {
             if binding.task() != task
                 || binding.attempt() != offer.attempt_id()
@@ -1233,9 +1235,7 @@ mod result_tests {
         let task = wire::AccessTaskSpec {
             wire_version: 1,
             tenant_id: id,
-            device_id: "device".into(),
-            registration_id: id,
-            generation: 1,
+            device_id: "11111111-2222-4333-8444-555555555555".parse().unwrap(),
             platform: wire::TaskPlatform::Windows,
             architecture: wire::TaskArchitecture::X86_64,
             task_id: id,

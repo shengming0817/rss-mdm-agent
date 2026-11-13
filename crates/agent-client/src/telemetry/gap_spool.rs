@@ -5,10 +5,8 @@ const MAX_PENDING_REASONS: i64 = 640;
 const MAX_REPORTS: i64 = 64;
 
 pub(super) fn install(c: &Connection) -> Result<(), Error> {
-    let tx = c.unchecked_transaction()?;
-    tx.execute_batch("CREATE TABLE IF NOT EXISTS gap_pending(device TEXT NOT NULL,reason TEXT NOT NULL,count INTEGER NOT NULL,first INTEGER NOT NULL,last INTEGER NOT NULL,PRIMARY KEY(device,reason));
+    c.execute_batch("CREATE TABLE IF NOT EXISTS gap_pending(device TEXT NOT NULL,reason TEXT NOT NULL,count INTEGER NOT NULL,first INTEGER NOT NULL,last INTEGER NOT NULL,PRIMARY KEY(device,reason));
         CREATE TABLE IF NOT EXISTS gap_reports(id TEXT PRIMARY KEY,device TEXT NOT NULL,body BLOB NOT NULL,digest TEXT NOT NULL,expires INTEGER NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,due INTEGER NOT NULL DEFAULT 0);")?;
-    tx.commit()?;
     Ok(())
 }
 pub(super) fn reason_key(reason: GapReason) -> Result<String, Error> {
@@ -26,8 +24,7 @@ pub(super) fn record(
     first: i64,
     last: i64,
 ) -> Result<(), Error> {
-    if last == i64::MAX
-    {
+    if last == i64::MAX {
         return Err(Error::Protocol);
     }
     // Lifetime local evidence is independent of transmission and never cleared by receipt.
@@ -36,7 +33,11 @@ pub(super) fn record(
         return Ok(());
     }
     let key = reason_key(reason)?;
-    let exists:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM gap_pending WHERE device=?1 AND reason=?2)",params![device_id.to_string(),key],|r|r.get(0))?;
+    let exists: bool = c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM gap_pending WHERE device=?1 AND reason=?2)",
+        params![device_id.to_string(), key],
+        |r| r.get(0),
+    )?;
     let rows: i64 = c.query_row("SELECT count(*) FROM gap_pending", [], |r| r.get(0))?;
     // If reserved remote-diagnostic space is exhausted, retain only bounded local evidence.
     if !exists && rows >= MAX_PENDING_REASONS {
@@ -54,9 +55,19 @@ pub(super) fn record_object(
     first: i64,
     last: i64,
 ) -> Result<(), Error> {
-    let owner: String = c.query_row(&format!("SELECT device FROM {table} WHERE id=?1"),[id],|r|r.get(0))?;
-    record(c,rss_mdm_agent_wire::DeviceId::parse(&owner).map_err(|_| Error::Storage)?,reason,count,first,last)
-
+    let owner: String = c.query_row(
+        &format!("SELECT device FROM {table} WHERE id=?1"),
+        [id],
+        |r| r.get(0),
+    )?;
+    record(
+        c,
+        rss_mdm_agent_wire::DeviceId::parse(&owner).map_err(|_| Error::Storage)?,
+        reason,
+        count,
+        first,
+        last,
+    )
 }
 
 /// An immutable report restored from private storage; retries cannot recreate its identity.
@@ -128,7 +139,19 @@ impl Spool {
             tx.commit()?;
             return Ok(());
         }
-        let rows=tx.prepare("SELECT reason,count,first,last FROM gap_pending WHERE device=?1 ORDER BY reason")?.query_map(params![device_id.to_string()],|r|Ok((r.get::<_,String>(0)?,r.get::<_,u64>(1)?,r.get::<_,i64>(2)?,r.get::<_,i64>(3)?)))?.collect::<Result<Vec<_>,_>>()?;
+        let rows = tx
+            .prepare(
+                "SELECT reason,count,first,last FROM gap_pending WHERE device=?1 ORDER BY reason",
+            )?
+            .query_map(params![device_id.to_string()], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, u64>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
         if rows.is_empty() {
             tx.commit()?;
             return Ok(());
@@ -155,7 +178,16 @@ impl Spool {
         // A frozen transport body is not a signing canonicalization domain. Preserve
         // exact i64/u64 values; JCS converts integers through f64 and can round them.
         let body = serde_json::to_vec(&report).map_err(|_| Error::Protocol)?;
-        tx.execute("INSERT INTO gap_reports(id,device,body,digest,expires) VALUES(?1,?2,?3,?4,?5)",params![report.report_id.to_string(),device_id.to_string(),body,hash(&body),created_at+w::TELEMETRY_GAP_WINDOW_MICROS])?;
+        tx.execute(
+            "INSERT INTO gap_reports(id,device,body,digest,expires) VALUES(?1,?2,?3,?4,?5)",
+            params![
+                report.report_id.to_string(),
+                device_id.to_string(),
+                body,
+                hash(&body),
+                created_at + w::TELEMETRY_GAP_WINDOW_MICROS
+            ],
+        )?;
         tx.execute(
             "DELETE FROM gap_pending WHERE device=?1",
             params![device_id.to_string()],
@@ -176,9 +208,7 @@ impl Spool {
             }
             let report: w::TelemetryGapReport = decode(&body)?;
             report.validate()?;
-            if report.report_id.to_string() != id
-                || report.device_id != device_id
-            {
+            if report.report_id.to_string() != id || report.device_id != device_id {
                 return Err(Error::Storage);
             }
             Ok(PendingGap {

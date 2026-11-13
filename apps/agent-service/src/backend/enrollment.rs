@@ -60,7 +60,7 @@ fn compile_bound(
     compared.permit = original.permit;
     compared.expires_at = original.expires_at;
     if compared != **original
-        || payload.device_id != binding.device.as_str()
+        || payload.device_id.to_string() != binding.device.as_str()
         || !materials.files().is_empty()
     {
         return Err(Error::Untrusted);
@@ -290,7 +290,7 @@ mod tests {
         let mut host = local::TestHost::new();
         let binding = ServiceBinding {
             authority: host.template.spec().request.authority.clone(),
-            device: DeviceId::new("device-1").unwrap(),
+            device: DeviceId::new("11111111-2222-4333-8444-555555555555").unwrap(),
         };
         let actor = host.template.spec().request.actor.clone();
         let account = OsAccountRef {

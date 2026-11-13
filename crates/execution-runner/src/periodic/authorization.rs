@@ -149,8 +149,7 @@ fn verify_binding(
         || p.budget.total_output_bytes > u64::from(c.output_bytes)
         || p.budget.max_attempts != 1
         || !matches!(&p.request.authority, Authority::Enterprise { tenant, .. } if tenant.as_str() == c.tenant_id.to_string())
-        || p.request.actor.as_str()
-            != format!("device:{}", c.device_id)
+        || p.request.actor.as_str() != format!("device:{}", c.device_id)
         || p.request.target.device.as_str() != c.device_id.to_string()
         || !matches!(p.request.target.scope, TargetScope::Device {})
         || p.request.delegation.is_some()
@@ -178,9 +177,7 @@ mod tests {
         let c = w::TelemetryConfiguration {
             resource_digest: [0; 32],
             tenant_id: id.parse().unwrap(),
-            device_id: "device-1".into(),
-            registration_id: id.parse().unwrap(),
-            generation: 1,
+            device_id: "11111111-2222-4333-8444-555555555555".parse().unwrap(),
             source_epoch: id.parse().unwrap(),
             issued_at: 100,
             expires_at: 200,
@@ -227,8 +224,8 @@ mod tests {
             tenant: Id::new(id).unwrap(),
             id: Id::new("enterprise").unwrap(),
         };
-        p.request.actor = ActorId::new(format!("registration:{id}:{}", c.generation)).unwrap();
-        p.request.target.device = DeviceId::new(&c.device_id).unwrap();
+        p.request.actor = ActorId::new(format!("device:{}", c.device_id)).unwrap();
+        p.request.target.device = DeviceId::new(c.device_id.to_string()).unwrap();
         p.request.target.scope = TargetScope::Device {};
         p.request.delegation = None;
         p.policy = VersionedRef {
@@ -266,20 +263,12 @@ mod tests {
         (c, p, artifacts)
     }
     #[test]
-    fn periodic_actor_is_bound_to_the_original_registration_generation() {
+    fn periodic_actor_is_bound_to_the_original_device() {
         let (c, mut p, artifacts) = baseline();
-        p.request.actor = ActorId::new(format!(
-            "registration:{}:{}",
-            c.registration_id, c.generation
-        ))
-        .unwrap();
+        p.request.actor = ActorId::new(format!("device:{}", c.device_id)).unwrap();
         assert_eq!(verify_binding(&c, &p, &artifacts, 150000), Ok(()));
-        p.request.actor = ActorId::new(format!(
-            "registration:{}:{}",
-            c.registration_id,
-            c.generation + 1
-        ))
-        .unwrap();
+        p.request.actor =
+            ActorId::new(format!("device:{}", rss_mdm_agent_wire::DeviceId::new_v4())).unwrap();
         assert_eq!(
             verify_binding(&c, &p, &artifacts, 150000),
             Err(Error::Denied)

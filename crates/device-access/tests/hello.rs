@@ -33,9 +33,7 @@ impl Fixture {
             },
             login: "AzureAD\\user".into(),
             tenant,
-            device: "device".into(),
-            registration: Uuid::new_v4(),
-            registration_generation: 1,
+            device: rss_mdm_agent_wire::DeviceId::new_v4(),
             binding: Uuid::new_v4(),
             binding_generation: 1,
             factor_generation: 1,
@@ -44,9 +42,7 @@ impl Fixture {
         let task = w::AccessTaskSpec {
             wire_version: 1,
             tenant_id: tenant,
-            device_id: authority.device.clone(),
-            registration_id: authority.registration,
-            generation: 1,
+            device_id: authority.device,
             platform: w::TaskPlatform::Windows,
             architecture: w::TaskArchitecture::X86_64,
             task_id: Uuid::new_v4(),
@@ -314,8 +310,7 @@ fn retired_registration_can_observe_cleanup_but_never_admit_old_mutations() {
         .is_err());
     let old_task = f.task.clone();
     let old_authority = f.authority.clone();
-    f.authority.registration = Uuid::new_v4();
-    f.authority.registration_generation += 1;
+    f.authority.device = rss_mdm_agent_wire::DeviceId::new_v4();
     s.bind_registration(f.authority.registration()).unwrap();
     let retired = s.hello_records().unwrap().pop().unwrap();
     assert!(retired.retired);
@@ -328,8 +323,7 @@ fn retired_registration_can_observe_cleanup_but_never_admit_old_mutations() {
     assert!(s.hello_cleanup_complete().unwrap());
     f.next();
     f.authority.binding = Uuid::new_v4();
-    f.task.registration_id = f.authority.registration;
-    f.task.generation = f.authority.registration_generation;
+    f.task.device_id = f.authority.device;
     f.task.binding_id = f.authority.binding;
     s.prepare_hello(&f.task, f.authority.clone()).unwrap();
     // A delayed cleanup cannot overwrite the replacement's exact authority.

@@ -412,6 +412,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let Some(pending) = state.pending_observation.as_ref() else {
             return Ok(());
         };
+        if pending.device_id != self.registration()?.device_id {
+            return Err(Error::Identity);
+        }
         self.restore_runtime_transport()?;
         let (status, bytes) = self
             .agent_json_transport(

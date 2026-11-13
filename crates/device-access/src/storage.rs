@@ -12,7 +12,9 @@ pub(super) fn open(root: &Path, installation: Uuid, create: bool) -> Result<Stor
     if installation.is_nil() || !platform_private_storage::is_canonical_path(root)? {
         return Err(Error::Invalid);
     }
-    if !create { validate_existing(root, installation)?; }
+    if !create {
+        validate_existing(root, installation)?;
+    }
     let directory = platform_private_storage::PrivateDirectory::open(root)?;
     let path = root.join("device-access.sqlite");
     if create {
@@ -91,21 +93,33 @@ fn check_files(path: &Path) -> Result<(), Error> {
 }
 
 pub(super) fn validate_existing(root: &Path, installation: Uuid) -> Result<(), Error> {
-    if installation.is_nil() || !platform_private_storage::is_canonical_path(root)? { return Err(Error::Invalid); }
+    if installation.is_nil() || !platform_private_storage::is_canonical_path(root)? {
+        return Err(Error::Invalid);
+    }
     let path = root.join("device-access.sqlite");
     check_files(&path)?;
-    let conn = Connection::open_with_flags(&path,rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-    let version: i64 = conn.pragma_query_value(None,"user_version",|r|r.get(0))?;
-    let app: i64 = conn.pragma_query_value(None,"application_id",|r|r.get(0))?;
-    if version != 3 || app != 1380204865 { return Err(Error::Invalid); }
-    let actual: String = conn.query_row("SELECT id FROM installation",[],|r|r.get(0))?;
-    let mode: String = conn.pragma_query_value(None,"journal_mode",|r|r.get(0))?;
-    if actual != installation.to_string() || mode != "delete" { return Err(Error::Invalid); }
+    let conn = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+    let app: i64 = conn.pragma_query_value(None, "application_id", |r| r.get(0))?;
+    if version != 3 || app != 1380204865 {
+        return Err(Error::Invalid);
+    }
+    let actual: String = conn.query_row("SELECT id FROM installation", [], |r| r.get(0))?;
+    let mode: String = conn.pragma_query_value(None, "journal_mode", |r| r.get(0))?;
+    if actual != installation.to_string() || mode != "delete" {
+        return Err(Error::Invalid);
+    }
     let expected = Connection::open_in_memory()?;
     expected.execute_batch(SCHEMA)?;
-    fn catalog(c: &Connection) -> Result<Vec<(String,String)>,Error> {
-        Ok(c.prepare("SELECT name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY name")?.query_map([],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<Vec<_>,_>>()?)
+    fn catalog(c: &Connection) -> Result<Vec<(String, String)>, Error> {
+        Ok(c.prepare(
+            "SELECT name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY name",
+        )?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<Result<Vec<_>, _>>()?)
     }
-    if catalog(&conn)? != catalog(&expected)? { return Err(Error::Invalid); }
+    if catalog(&conn)? != catalog(&expected)? {
+        return Err(Error::Invalid);
+    }
     Ok(())
 }

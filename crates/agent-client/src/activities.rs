@@ -129,12 +129,10 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             if let Some(fact) = page.items.into_iter().find(|fact| {
                 fact.links.attempt == Some(attempt)
                     && matches!(fact.phase, ActivityPhase::Offered | ActivityPhase::Result)
-                    && fact.target.as_ref().is_some_and(|target| {
-                        target.device == registration.device_id
-                            && target.registration == registration.registration_id
-                            && u64::try_from(target.generation).ok()
-                                == Some(registration.generation)
-                    })
+                    && fact
+                        .target
+                        .as_ref()
+                        .is_some_and(|target| target.device == registration.device_id)
                     && !fact.links.steps.is_empty()
             }) {
                 return Ok(Some(fact));

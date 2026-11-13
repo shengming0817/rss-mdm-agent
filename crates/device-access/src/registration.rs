@@ -23,8 +23,7 @@ impl Authority {
 }
 impl Registration {
     fn validate(&self) -> Result<(), Error> {
-        if self.tenant.is_nil()
-        {
+        if self.tenant.is_nil() {
             return Err(Error::Invalid);
         }
         Ok(())
@@ -112,7 +111,7 @@ impl Store {
             || value.registration
                 != (Registration {
                     tenant: task.tenant_id,
-                    device: task.device_id.clone(),
+                    device: task.device_id,
                 })
         {
             return Err(Error::Changed);
@@ -204,7 +203,7 @@ impl Store {
             || current.registration
                 != (Registration {
                     tenant: task.tenant_id,
-                    device: task.device_id.clone(),
+                    device: task.device_id,
                 })
         {
             return Err(Error::Changed);
@@ -271,8 +270,7 @@ impl Store {
                     Ok(())
                 };
             }
-            if old.registration.tenant != registration.tenant
-            {
+            if old.registration.tenant != registration.tenant {
                 return Err(Error::Changed);
             }
             retire_records(&tx, false)?;

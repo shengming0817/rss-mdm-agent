@@ -271,11 +271,9 @@ impl Data {
             )?,
             ReadSource::Periodic {
                 configuration: c, ..
-            } => crate::backend::plan::enterprise_binding(
-                self.service_id,
-                c.tenant_id,
-                c.device_id,
-            )?,
+            } => {
+                crate::backend::plan::enterprise_binding(self.service_id, c.tenant_id, c.device_id)?
+            }
             _ => return Ok(None),
         };
         Ok(Some(digest(&(&binding.authority, &binding.device))?))

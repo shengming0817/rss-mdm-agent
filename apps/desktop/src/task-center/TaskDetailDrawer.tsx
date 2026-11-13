@@ -327,7 +327,7 @@ export function TaskDetailDrawer({
                   <dt>管理目标</dt>
                   <dd className="rss-reference">
                     {task.facts.value.target
-                      ? `${task.facts.value.target.device} · 注册 ${task.facts.value.target.registration} · 世代 ${task.facts.value.target.generation}`
+                      ? task.facts.value.target.device
                       : "此来源未提供单设备目标"}
                   </dd>
                 </dl>

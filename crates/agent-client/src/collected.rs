@@ -20,9 +20,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let mut profiles: Vec<wire::BindingProfile> =
             self.store.get("execution-profiles")?.unwrap_or_default();
         if let Ok(current) = self.registration() {
-            if !profiles.iter().any(|p| {
-                p.device_id == current.device_id
-            }) {
+            if !profiles.iter().any(|p| p.device_id == current.device_id) {
                 if profiles.len() >= 32 {
                     return Err(Error::Capacity);
                 }
@@ -79,12 +77,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let namespace = format!(
             "{PREFIX}enterprise/{:x}/",
             Sha256::digest(
-                serde_json::to_vec(&(
-                    cfg.service_id,
-                    cfg.tenant,
-                    &registration.device_id,
-                ))
-                .map_err(|_| Error::Protocol)?
+                serde_json::to_vec(&(cfg.service_id, cfg.tenant, &registration.device_id,))
+                    .map_err(|_| Error::Protocol)?
             )
         );
         conn.execute(

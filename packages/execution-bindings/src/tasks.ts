@@ -704,6 +704,11 @@ export type PolicyEventSource =
       runId: string;
     };
 /**
+ * This interface was referenced by `TaskDetail`'s JSON-Schema
+ * via the `definition` "DeviceId2".
+ */
+export type DeviceId2 = string;
+/**
  * Independently observed software state; installer exit is never a value of this type.
  *
  * This interface was referenced by `TaskDetail`'s JSON-Schema
@@ -2017,19 +2022,11 @@ export interface EntryNamespace {
   /**
    * Exact device identity.
    */
-  device: string;
-  /**
-   * Exact registration generation.
-   */
-  generation: number;
+  device: DeviceId2;
   /**
    * Product instance identity, not a server URL.
    */
   instance: string;
-  /**
-   * Exact registration UUID.
-   */
-  registration: string;
   /**
    * Exact tenant UUID.
    */
@@ -2594,15 +2591,7 @@ export interface ActivityTarget {
   /**
    * Authorized endpoint identity, which can differ between paired channels.
    */
-  device: string;
-  /**
-   * Exact registration generation.
-   */
-  generation: number;
-  /**
-   * Exact registration identity.
-   */
-  registration: string;
+  device: DeviceId2;
 }
 /**
  * Original child node identity, qualified by attempt and owner key.

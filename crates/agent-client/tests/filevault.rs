@@ -239,7 +239,7 @@ async fn renewed_device_certificate_replays_the_original_uncommitted_upload() {
 
 #[tokio::test]
 async fn restored_registration_replacement_never_sends_the_old_pending_operation() {
-    for change_registration in [true, false] {
+    {
         let server = Server::tls().await;
         let root = Root::new();
         let mut client = server.client(&root, OpenMode::Create);
@@ -266,11 +266,7 @@ async fn restored_registration_replacement_never_sends_the_old_pending_operation
             .unwrap();
         let mut state: serde_json::Value = serde_json::from_slice(&body).unwrap();
         let runtime = &mut state["active"]["receipt"]["runtime"];
-        if change_registration {
-            runtime["registrationId"] = Uuid::new_v4().to_string().into();
-        } else {
-            runtime["generation"] = 2.into();
-        }
+        runtime["deviceId"] = Uuid::new_v4().to_string().into();
         db.execute(
             "UPDATE state SET body=?1 WHERE key='identity'",
             [serde_json::to_vec(&state).unwrap()],

@@ -2488,7 +2488,7 @@ async fn psso_drain_recovers_expired_trust_without_reopening_business_admission(
     crate::credential_worker::state::write(&root, "device.psso-source", &serde_json::json!({
         "clientId": source, "authentication": "secure_enclave", "callbackGeneration": 1,
         "context": { "tenant": c.service.client.configuration().tenant,
-            "agentRegistration": registration.registration_id, "installation": c.service.core.access.installation,
+            "deviceId": registration.device_id, "installation": c.service.core.access.installation,
             "origin": c.service.client.configuration().origin.origin().ascii_serialization(),
             "kind": "device", "binding": null, "bindingGeneration": null, "generatedUid": null,
             "bindingRevision": 0, "configuration": null },
@@ -6650,9 +6650,10 @@ async fn shared_views_keep_original_registration_and_indirect_batch_members() {
         serde_json::from_value(serde_json::json!({
             "id":id, "source":"execution", "kind":kind, "phase":"accepted",
             "recordedAt":now, "observedAt":now, "origin":"policy",
-            "target":{"device":namespace.device,"registration":namespace.registration,"generation":namespace.generation},
+            "target":{"device":namespace.device},
             "links":links, "auditOutcome":"recorded"
-        })).unwrap()
+        }))
+        .unwrap()
     };
     let page = |items, next_cursor| ManagementActivityPage {
         items,
@@ -6719,15 +6720,13 @@ async fn shared_views_keep_original_registration_and_indirect_batch_members() {
     assert!(continuation.items[0].links.batch.is_none());
     assert_eq!(continuation.items[0].links.task.unwrap().to_string(), task);
     let changed = uuid::Uuid::new_v4().to_string();
-    for index in 0..5 {
+    for index in 0..3 {
         let mut stale = intent.clone();
         let ns = stale.namespace.as_mut().unwrap();
         match index {
             0 => ns.instance = changed.clone(),
             1 => ns.tenant = changed.clone(),
-            2 => ns.device = "another-device".into(),
-            3 => ns.registration = changed.clone(),
-            _ => ns.generation += 1,
+            _ => ns.device = rss_mdm_agent_wire::DeviceId::new_v4(),
         }
         assert!(!matches!(
             c.policy_call(resolve(stale, value.next_cursor.clone()))
@@ -6987,7 +6986,7 @@ async fn entry_policy_rechecks_registration_and_current_definition_before_journa
         .unwrap()
         .is_none());
     intent.version = Some(directory.policy_version.to_string());
-    intent.namespace.as_mut().unwrap().generation += 1;
+    intent.namespace.as_mut().unwrap().device = rss_mdm_agent_wire::DeviceId::new_v4();
     assert!(matches!(
         c.policy_call(Request::Entry {
             input: EntryOperation::Invoke {

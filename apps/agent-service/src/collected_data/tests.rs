@@ -850,9 +850,7 @@ fn enterprise_task<S: agent_client::IdentityProvider, C: agent_client::Clock>(
         mappings,
         wire_version: w::COLLECTION_TASK_VERSION,
         tenant_id: client.configuration().tenant,
-        registration_id: r.registration_id,
         device_id: r.device_id,
-        generation: r.generation,
         platform: read.platform,
         architecture: w::TaskArchitecture::Aarch64,
         task_id: uuid::Uuid::new_v4(),
@@ -941,12 +939,11 @@ async fn frozen_enterprise_projection_is_generic_private_and_isolated_from_local
         .descriptor
         .reference;
     assert_ne!(changed_ref, reference);
-    for context in 0..4 {
+    for context in 0..3 {
         let mut changed = task.clone();
         match context {
-            0 => changed.generation += 1,
-            1 => changed.device_id = "other-device".into(),
-            2 => changed.tenant_id = uuid::Uuid::new_v4(),
+            0 => changed.device_id = rss_mdm_agent_wire::DeviceId::new_v4(),
+            1 => changed.tenant_id = uuid::Uuid::new_v4(),
             _ => changed.resource_digest = [4; 32],
         }
         assert_ne!(

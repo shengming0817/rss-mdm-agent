@@ -132,23 +132,37 @@ pub fn validate_existing(root: &Path, cfg: &crate::Config) -> Result<(), Error> 
         }
     }
     let conn = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-    let version: i64 = conn.pragma_query_value(None,"user_version",|r|r.get(0))?;
-    let app: i64 = conn.pragma_query_value(None,"application_id",|r|r.get(0))?;
-    let objects: i64 = conn.query_row("SELECT count(*) FROM sqlite_schema",[],|r|r.get(0))?;
-    if version == 0 && app == 0 && objects == 0 { return Ok(()); }
-    if version != 4 || app != 1381192781 { return Err(Error::Schema); }
-    let mode: String = conn.pragma_query_value(None,"journal_mode",|r|r.get(0))?;
-    if mode != "delete" { return Err(Error::Schema); }
+    let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+    let app: i64 = conn.pragma_query_value(None, "application_id", |r| r.get(0))?;
+    let objects: i64 = conn.query_row("SELECT count(*) FROM sqlite_schema", [], |r| r.get(0))?;
+    if version == 0 && app == 0 && objects == 0 {
+        return Ok(());
+    }
+    if version != 4 || app != 1381192781 {
+        return Err(Error::Schema);
+    }
+    let mode: String = conn.pragma_query_value(None, "journal_mode", |r| r.get(0))?;
+    if mode != "delete" {
+        return Err(Error::Schema);
+    }
     let expected = Connection::open_in_memory()?;
     expected.execute_batch(SCHEMA)?;
     gap_spool::install(&expected)?;
     native_counters::install(&expected)?;
-    fn catalog(c: &Connection) -> Result<Vec<(String,String)>,Error> {
-        Ok(c.prepare("SELECT name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY name")?.query_map([],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<Vec<_>,_>>()?)
+    fn catalog(c: &Connection) -> Result<Vec<(String, String)>, Error> {
+        Ok(c.prepare(
+            "SELECT name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY name",
+        )?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
+        .collect::<Result<Vec<_>, _>>()?)
     }
-    if catalog(&conn)? != catalog(&expected)? { return Err(Error::Schema); }
-    let actual: Vec<u8> = conn.query_row("SELECT binding FROM identity",[],|r|r.get(0))?;
-    if actual != encode(&(cfg.service_id,cfg.tenant,cfg.platform,cfg.architecture))? { return Err(Error::Untrusted); }
+    if catalog(&conn)? != catalog(&expected)? {
+        return Err(Error::Schema);
+    }
+    let actual: Vec<u8> = conn.query_row("SELECT binding FROM identity", [], |r| r.get(0))?;
+    if actual != encode(&(cfg.service_id, cfg.tenant, cfg.platform, cfg.architecture))? {
+        return Err(Error::Untrusted);
+    }
     Ok(())
 }
 
@@ -203,6 +217,8 @@ impl Spool {
         if version == 0 && application == 0 && objects == 0 {
             let tx = conn.unchecked_transaction()?;
             tx.execute_batch(SCHEMA)?;
+            gap_spool::install(&tx)?;
+            native_counters::install(&tx)?;
             tx.execute("INSERT INTO identity VALUES(?1)", [&binding])?;
             tx.commit()?;
         }
@@ -215,9 +231,6 @@ impl Spool {
         if original != binding {
             return Err(Error::Untrusted);
         }
-        // Add diagnostic tables without altering existing samples, batches or unowned legacy gaps.
-        gap_spool::install(&conn)?;
-        native_counters::install(&conn)?;
         conn.pragma_update(None, "max_page_count", limits.pages)?;
         let mut spool = Self {
             conn,
@@ -501,22 +514,50 @@ impl Spool {
     }
     /// Fair caller-selected oldest/newest batch; only due work is returned.
     pub fn pending(&self, now: i64, newest: bool) -> Result<Option<Pending>, Error> {
-        let order = if newest { "first DESC,id DESC" } else { "first,id" };
+        let order = if newest {
+            "first DESC,id DESC"
+        } else {
+            "first,id"
+        };
         let sql = format!("SELECT id,device,body,digest,attempts,count,first,last FROM batches WHERE due<=?1 ORDER BY {order} LIMIT 1");
-        let row = self.conn.query_row(&sql, [now], |r| Ok((
-            r.get::<_, String>(0)?,r.get::<_, String>(1)?,r.get::<_, Vec<u8>>(2)?,
-            r.get::<_, String>(3)?,r.get::<_, u32>(4)?,r.get::<_, u64>(5)?,
-            r.get::<_, i64>(6)?,r.get::<_, i64>(7)?,
-        ))).optional()?;
+        let row = self
+            .conn
+            .query_row(&sql, [now], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Vec<u8>>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, u32>(4)?,
+                    r.get::<_, u64>(5)?,
+                    r.get::<_, i64>(6)?,
+                    r.get::<_, i64>(7)?,
+                ))
+            })
+            .optional()?;
         row.map(|(id, device, body, digest, attempts, count, first, last)| {
-            if body.len() > self.limits.bytes || hash(&body) != digest { return Err(Error::Storage); }
-            let device_id = rss_mdm_agent_wire::DeviceId::parse(&device).map_err(|_| Error::Storage)?;
-            let upload: w::TelemetryUpload = decode(&body)?;
-            if upload.batch_id.to_string() != id || upload.configuration.configuration.device_id != device_id {
+            if body.len() > self.limits.bytes || hash(&body) != digest {
                 return Err(Error::Storage);
             }
-            Ok(Pending { id: Uuid::parse_str(&id).map_err(|_| Error::Storage)?, device_id, body, attempts, count, first, last })
-        }).transpose()
+            let device_id =
+                rss_mdm_agent_wire::DeviceId::parse(&device).map_err(|_| Error::Storage)?;
+            let upload: w::TelemetryUpload = decode(&body)?;
+            if upload.batch_id.to_string() != id
+                || upload.configuration.configuration.device_id != device_id
+            {
+                return Err(Error::Storage);
+            }
+            Ok(Pending {
+                id: Uuid::parse_str(&id).map_err(|_| Error::Storage)?,
+                device_id,
+                body,
+                attempts,
+                count,
+                first,
+                last,
+            })
+        })
+        .transpose()
     }
     /// Persist the uncertain state before I/O; crashes recover through a status lookup.
     pub fn attempting(&mut self, p: &Pending, now: i64) -> Result<(), Error> {
@@ -550,14 +591,7 @@ impl Spool {
     /// A permanent failure leaves bounded loss evidence rather than blocking the queue.
     pub fn reject(&mut self, p: &Pending, reason: GapReason) -> Result<(), Error> {
         let tx = self.conn.transaction()?;
-        gap_spool::record(
-            &tx,
-            p.device_id,
-            reason,
-            p.count,
-            p.first,
-            p.last,
-        )?;
+        gap_spool::record(&tx, p.device_id, reason, p.count, p.first, p.last)?;
         tx.execute("DELETE FROM batches WHERE id=?1", [p.id.to_string()])?;
         tx.commit()?;
         Ok(())
@@ -573,17 +607,43 @@ impl Spool {
         gap(&self.conn, reason, count, first, last)
     }
     /// Expiry and device fencing never rewrite old samples into a new source.
-    pub fn prune(&mut self, now: i64, device_id: rss_mdm_agent_wire::DeviceId) -> Result<(), Error> {
+    pub fn prune(
+        &mut self,
+        now: i64,
+        device_id: rss_mdm_agent_wire::DeviceId,
+    ) -> Result<(), Error> {
         let tx = self.conn.transaction()?;
         for table in ["samples", "batches"] {
             let (count, first, last) = if table == "samples" {
                 ("count(*)", "min(observed)", "max(observed)")
-            } else { ("sum(count)", "min(first)", "max(last)") };
-            for (predicate, reason) in [("device<>?1", GapReason::Registration), ("expires<=?2", GapReason::Expired)] {
+            } else {
+                ("sum(count)", "min(first)", "max(last)")
+            };
+            for (predicate, reason) in [
+                ("device<>?1", GapReason::Registration),
+                ("expires<=?2", GapReason::Expired),
+            ] {
                 let select = format!("SELECT device,coalesce({count},0),coalesce({first},0),coalesce({last},0) FROM {table} WHERE {predicate} AND ?1 IS NOT NULL AND ?2 IS NOT NULL GROUP BY device");
-                let rows = tx.prepare(&select)?.query_map(params![device_id.to_string(),now], |r| Ok((r.get::<_,String>(0)?,r.get::<_,u64>(1)?,r.get::<_,i64>(2)?,r.get::<_,i64>(3)?)))?.collect::<Result<Vec<_>,_>>()?;
-                for (owner,n,a,b) in rows {
-                    gap_spool::record(&tx, rss_mdm_agent_wire::DeviceId::parse(&owner).map_err(|_| Error::Storage)?, reason,n,a,b)?;
+                let rows = tx
+                    .prepare(&select)?
+                    .query_map(params![device_id.to_string(), now], |r| {
+                        Ok((
+                            r.get::<_, String>(0)?,
+                            r.get::<_, u64>(1)?,
+                            r.get::<_, i64>(2)?,
+                            r.get::<_, i64>(3)?,
+                        ))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+                for (owner, n, a, b) in rows {
+                    gap_spool::record(
+                        &tx,
+                        rss_mdm_agent_wire::DeviceId::parse(&owner).map_err(|_| Error::Storage)?,
+                        reason,
+                        n,
+                        a,
+                        b,
+                    )?;
                 }
                 tx.execute(&format!("DELETE FROM {table} WHERE {predicate} AND ?1 IS NOT NULL AND ?2 IS NOT NULL"),params![device_id.to_string(),now])?;
             }

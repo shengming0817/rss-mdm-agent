@@ -15,8 +15,6 @@ impl<S: IdentityProvider> DeviceService<S> {
             instance: cfg.service_id.to_string(),
             tenant: cfg.tenant.to_string(),
             device: b.device_id,
-            registration: b.registration_id.to_string(),
-            generation: b.generation,
         })
     }
     async fn attach_entry(
@@ -468,11 +466,11 @@ impl<S: IdentityProvider> DeviceService<S> {
         if let TaskFacts::Management(fact) = &detail.facts {
             let namespace = self.entry_namespace().ok_or(Error::Identity)?;
             if let Some((task, attempt)) = fact.links.task.zip(fact.links.attempt) {
-                if !fact.target.as_ref().is_some_and(|target| {
-                    target.device == namespace.device
-                        && target.registration.to_string() == namespace.registration
-                        && u64::try_from(target.generation).ok() == Some(namespace.generation)
-                }) {
+                if !fact
+                    .target
+                    .as_ref()
+                    .is_some_and(|target| target.device == namespace.device)
+                {
                     return Err(Error::Identity);
                 }
                 original_activity = Some(fact.clone());
