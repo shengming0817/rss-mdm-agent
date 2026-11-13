@@ -206,8 +206,6 @@ fn validate_record(
             device_id: &binding.device_id,
             platform: cfg.platform,
             architecture: cfg.architecture,
-            registration_id: binding.registration_id,
-            generation: binding.generation,
             task_id: task.task_id,
             attempt_id: task.attempt_id,
             permit: wire::TaskPermit::Start,

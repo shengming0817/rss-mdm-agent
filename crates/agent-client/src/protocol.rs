@@ -13,15 +13,11 @@ pub struct TaskVerification<'a> {
     /// Locally enrolled tenant.
     pub tenant_id: Uuid,
     /// Locally enrolled device identity.
-    pub device_id: &'a str,
+    pub device_id: rss_mdm_agent_wire::DeviceId,
     /// Actual local operating system.
     pub platform: TaskPlatform,
     /// Actual local processor architecture.
     pub architecture: TaskArchitecture,
-    /// Locally enrolled current registration.
-    pub registration_id: Uuid,
-    /// Locally enrolled generation.
-    pub generation: u64,
     /// Task identity being accepted.
     pub task_id: Uuid,
     /// Attempt identity being accepted.
@@ -55,48 +51,34 @@ pub(crate) fn verify_task_binding<'a>(
     context: &TaskVerification<'_>,
 ) -> Result<VerifiedTask<'a>, Error> {
     let p = &signed.payload;
-    let (tenant, device, registration, generation) = match p {
+    let (tenant, device) = match p {
         TaskPayload::DeviceAccess(v) => (
             v.tenant_id,
-            v.device_id.as_str(),
-            v.registration_id,
-            v.generation,
+            v.device_id,
         ),
         TaskPayload::Unmanage(v) => (
             v.tenant_id,
-            v.device_id.as_str(),
-            v.registration_id,
-            v.generation,
+            v.device_id,
         ),
         TaskPayload::Credential(v) => (
             v.tenant_id,
-            v.device_id.as_str(),
-            v.registration_id,
-            v.generation,
+            v.device_id,
         ),
         TaskPayload::Collection(v) => (
             v.tenant_id,
-            v.device_id.as_str(),
-            v.registration_id,
-            v.generation,
+            v.device_id,
         ),
         TaskPayload::Script(v) => (
             v.tenant_id,
-            v.device_id.as_str(),
-            v.registration_id,
-            v.generation,
+            v.device_id,
         ),
         TaskPayload::Enrollment(v) => (
             v.tenant_id,
-            v.device_id.as_str(),
-            v.registration_id,
-            v.generation,
+            v.device_id,
         ),
         TaskPayload::Software(v) => (
             v.tenant_id,
-            v.device_id.as_str(),
-            v.registration_id,
-            v.generation,
+            v.device_id,
         ),
     };
     if signed.key_id != context.key_id
@@ -106,8 +88,6 @@ pub(crate) fn verify_task_binding<'a>(
         || device != context.device_id
         || p.platform() != context.platform
         || p.architecture() != context.architecture
-        || registration != context.registration_id
-        || generation != context.generation
         || p.task_id() != context.task_id
         || p.attempt_id() != context.attempt_id
         || signed.signature.len() != 86

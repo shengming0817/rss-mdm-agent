@@ -1,4 +1,4 @@
-//! Bounded registration-owned loss snapshots. ref: rusqlite src/transaction.rs.
+//! Bounded device-owned loss snapshots. ref: rusqlite src/transaction.rs.
 use super::*;
 
 const MAX_PENDING_REASONS: i64 = 640;
@@ -6,8 +6,8 @@ const MAX_REPORTS: i64 = 64;
 
 pub(super) fn install(c: &Connection) -> Result<(), Error> {
     let tx = c.unchecked_transaction()?;
-    tx.execute_batch("CREATE TABLE IF NOT EXISTS gap_pending(registration TEXT NOT NULL,generation INTEGER NOT NULL,reason TEXT NOT NULL,count INTEGER NOT NULL,first INTEGER NOT NULL,last INTEGER NOT NULL,PRIMARY KEY(registration,generation,reason));
-        CREATE TABLE IF NOT EXISTS gap_reports(id TEXT PRIMARY KEY,registration TEXT NOT NULL,generation INTEGER NOT NULL,body BLOB NOT NULL,digest TEXT NOT NULL,expires INTEGER NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,due INTEGER NOT NULL DEFAULT 0);")?;
+    tx.execute_batch("CREATE TABLE IF NOT EXISTS gap_pending(device TEXT NOT NULL,reason TEXT NOT NULL,count INTEGER NOT NULL,first INTEGER NOT NULL,last INTEGER NOT NULL,PRIMARY KEY(device,reason));
+        CREATE TABLE IF NOT EXISTS gap_reports(id TEXT PRIMARY KEY,device TEXT NOT NULL,body BLOB NOT NULL,digest TEXT NOT NULL,expires INTEGER NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,due INTEGER NOT NULL DEFAULT 0);")?;
     tx.commit()?;
     Ok(())
 }
@@ -20,14 +20,13 @@ pub(super) fn reason_key(reason: GapReason) -> Result<String, Error> {
 }
 pub(super) fn record(
     c: &Connection,
-    registration: Uuid,
-    generation: u64,
+    device_id: rss_mdm_agent_wire::DeviceId,
     reason: GapReason,
     count: u64,
     first: i64,
     last: i64,
 ) -> Result<(), Error> {
-    if registration.is_nil() || generation == 0 || generation > i64::MAX as u64 || last == i64::MAX
+    if last == i64::MAX
     {
         return Err(Error::Protocol);
     }
@@ -37,13 +36,13 @@ pub(super) fn record(
         return Ok(());
     }
     let key = reason_key(reason)?;
-    let exists:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM gap_pending WHERE registration=?1 AND generation=?2 AND reason=?3)",params![registration.to_string(),generation,key],|r|r.get(0))?;
+    let exists:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM gap_pending WHERE device=?1 AND reason=?2)",params![device_id.to_string(),key],|r|r.get(0))?;
     let rows: i64 = c.query_row("SELECT count(*) FROM gap_pending", [], |r| r.get(0))?;
     // If reserved remote-diagnostic space is exhausted, retain only bounded local evidence.
     if !exists && rows >= MAX_PENDING_REASONS {
         return Ok(());
     }
-    c.execute("INSERT INTO gap_pending VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(registration,generation,reason) DO UPDATE SET count=min(9223372036854775807-gap_pending.count,excluded.count)+gap_pending.count,first=min(gap_pending.first,excluded.first),last=max(gap_pending.last,excluded.last)",params![registration.to_string(),generation,key,count,first,last])?;
+    c.execute("INSERT INTO gap_pending VALUES(?1,?2,?3,?4,?5) ON CONFLICT(device,reason) DO UPDATE SET count=min(9223372036854775807-gap_pending.count,excluded.count)+gap_pending.count,first=min(gap_pending.first,excluded.first),last=max(gap_pending.last,excluded.last)",params![device_id.to_string(),key,count,first,last])?;
     Ok(())
 }
 pub(super) fn record_object(
@@ -55,20 +54,9 @@ pub(super) fn record_object(
     first: i64,
     last: i64,
 ) -> Result<(), Error> {
-    let (owner, generation): (String, u64) = c.query_row(
-        &format!("SELECT registration,generation FROM {table} WHERE id=?1"),
-        [id],
-        |r| Ok((r.get(0)?, r.get(1)?)),
-    )?;
-    record(
-        c,
-        Uuid::parse_str(&owner).map_err(|_| Error::Storage)?,
-        generation,
-        reason,
-        count,
-        first,
-        last,
-    )
+    let owner: String = c.query_row(&format!("SELECT device FROM {table} WHERE id=?1"),[id],|r|r.get(0))?;
+    record(c,rss_mdm_agent_wire::DeviceId::parse(&owner).map_err(|_| Error::Storage)?,reason,count,first,last)
+
 }
 
 /// An immutable report restored from private storage; retries cannot recreate its identity.
@@ -94,55 +82,53 @@ impl PendingGap {
         &self.body
     }
     pub(crate) fn belongs_to(&self, r: &w::BindingProfile) -> bool {
-        self.report.registration_id == r.registration_id && self.report.generation == r.generation
+        self.report.device_id == r.device_id
     }
     pub(crate) fn expires(&self) -> i64 {
         self.report.created_at + w::TELEMETRY_GAP_WINDOW_MICROS
     }
 }
 impl Spool {
-    /// Bind new loss to its original registration at the moment it is recorded.
+    /// Bind new loss to its original device at the moment it is recorded.
     #[allow(
         clippy::too_many_arguments,
-        reason = "original registration and loss interval are recorded atomically"
+        reason = "original device and loss interval are recorded atomically"
     )]
     pub fn gap_for(
         &mut self,
-        registration: Uuid,
-        generation: u64,
+        device_id: rss_mdm_agent_wire::DeviceId,
         reason: GapReason,
         count: u64,
         first: i64,
         last: i64,
     ) -> Result<(), Error> {
         let tx = self.conn.transaction()?;
-        record(&tx, registration, generation, reason, count, first, last)?;
+        record(&tx, device_id, reason, count, first, last)?;
         tx.commit()?;
         Ok(())
     }
     /// Atomically freeze at most ten reasons. New loss never modifies an existing report.
     pub fn freeze_gaps(
         &mut self,
-        registration: Uuid,
-        generation: u64,
+        device_id: rss_mdm_agent_wire::DeviceId,
         created_at: i64,
     ) -> Result<(), Error> {
         let tx = self.conn.transaction()?;
-        // Old identities are terminal locally; never rebind them to the current registration.
+        // Old identities are terminal locally; never rebind them to the current device.
         tx.execute(
-            "DELETE FROM gap_reports WHERE expires<=?1 OR registration<>?2 OR generation<>?3",
-            params![created_at, registration.to_string(), generation],
+            "DELETE FROM gap_reports WHERE expires<=?1 OR device<>?2",
+            params![created_at, device_id.to_string()],
         )?;
         tx.execute(
-            "DELETE FROM gap_pending WHERE registration<>?1 OR generation<>?2",
-            params![registration.to_string(), generation],
+            "DELETE FROM gap_pending WHERE device<>?1",
+            params![device_id.to_string()],
         )?;
         let n: i64 = tx.query_row("SELECT count(*) FROM gap_reports", [], |r| r.get(0))?;
         if n >= MAX_REPORTS {
             tx.commit()?;
             return Ok(());
         }
-        let rows=tx.prepare("SELECT reason,count,first,last FROM gap_pending WHERE registration=?1 AND generation=?2 ORDER BY reason")?.query_map(params![registration.to_string(),generation],|r|Ok((r.get::<_,String>(0)?,r.get::<_,u64>(1)?,r.get::<_,i64>(2)?,r.get::<_,i64>(3)?)))?.collect::<Result<Vec<_>,_>>()?;
+        let rows=tx.prepare("SELECT reason,count,first,last FROM gap_pending WHERE device=?1 ORDER BY reason")?.query_map(params![device_id.to_string()],|r|Ok((r.get::<_,String>(0)?,r.get::<_,u64>(1)?,r.get::<_,i64>(2)?,r.get::<_,i64>(3)?)))?.collect::<Result<Vec<_>,_>>()?;
         if rows.is_empty() {
             tx.commit()?;
             return Ok(());
@@ -161,8 +147,7 @@ impl Spool {
             .collect::<Result<Vec<_>, Error>>()?;
         let report = w::TelemetryGapReport {
             report_id: Uuid::new_v4(),
-            registration_id: registration,
-            generation,
+            device_id,
             created_at,
             gaps,
         };
@@ -170,22 +155,21 @@ impl Spool {
         // A frozen transport body is not a signing canonicalization domain. Preserve
         // exact i64/u64 values; JCS converts integers through f64 and can round them.
         let body = serde_json::to_vec(&report).map_err(|_| Error::Protocol)?;
-        tx.execute("INSERT INTO gap_reports(id,registration,generation,body,digest,expires) VALUES(?1,?2,?3,?4,?5,?6)",params![report.report_id.to_string(),registration.to_string(),generation,body,hash(&body),created_at+w::TELEMETRY_GAP_WINDOW_MICROS])?;
+        tx.execute("INSERT INTO gap_reports(id,device,body,digest,expires) VALUES(?1,?2,?3,?4,?5)",params![report.report_id.to_string(),device_id.to_string(),body,hash(&body),created_at+w::TELEMETRY_GAP_WINDOW_MICROS])?;
         tx.execute(
-            "DELETE FROM gap_pending WHERE registration=?1 AND generation=?2",
-            params![registration.to_string(), generation],
+            "DELETE FROM gap_pending WHERE device=?1",
+            params![device_id.to_string()],
         )?;
         tx.commit()?;
         Ok(())
     }
-    /// Read due work only for the current registration; expiry never renews creation time.
+    /// Read due work only for the current device; expiry never renews creation time.
     pub fn pending_gap(
         &self,
-        registration: Uuid,
-        generation: u64,
+        device_id: rss_mdm_agent_wire::DeviceId,
         now: i64,
     ) -> Result<Option<PendingGap>, Error> {
-        let row=self.conn.query_row("SELECT id,body,digest,attempts FROM gap_reports WHERE registration=?1 AND generation=?2 AND due<=?3 AND expires>?4 ORDER BY rowid LIMIT 1",params![registration.to_string(),generation,now/1_000_000,now],|r|Ok((r.get::<_,String>(0)?,r.get::<_,Vec<u8>>(1)?,r.get::<_,String>(2)?,r.get::<_,u32>(3)?))).optional()?;
+        let row=self.conn.query_row("SELECT id,body,digest,attempts FROM gap_reports WHERE device=?1 AND due<=?2 AND expires>?3 ORDER BY rowid LIMIT 1",params![device_id.to_string(),now/1_000_000,now],|r|Ok((r.get::<_,String>(0)?,r.get::<_,Vec<u8>>(1)?,r.get::<_,String>(2)?,r.get::<_,u32>(3)?))).optional()?;
         row.map(|(id, body, digest, attempts)| {
             if body.len() > w::TELEMETRY_GAP_MAX_BYTES || hash(&body) != digest {
                 return Err(Error::Storage);
@@ -193,8 +177,7 @@ impl Spool {
             let report: w::TelemetryGapReport = decode(&body)?;
             report.validate()?;
             if report.report_id.to_string() != id
-                || report.registration_id != registration
-                || report.generation != generation
+                || report.device_id != device_id
             {
                 return Err(Error::Storage);
             }

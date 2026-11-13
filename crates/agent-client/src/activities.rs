@@ -84,8 +84,6 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         if spec.attempt_id != attempt
             || spec.tenant_id != self.configuration().tenant
             || spec.device_id != registration.device_id
-            || spec.registration_id != registration.registration_id
-            || spec.generation != registration.generation
             || definition_digest
                 .is_some_and(|digest| digest != crate::native_source::hex(&spec.definition_digest))
         {

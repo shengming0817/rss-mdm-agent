@@ -5,6 +5,7 @@ use crate::{client::bounded, store::decode, wire as w, Client, Clock, Error, Ide
 use base64::Engine;
 use uuid::Uuid;
 mod spool;
+pub use spool::validate_existing;
 pub use spool::{GapReason, Limits, Pending, PendingGap, Spool, Summary};
 
 /// A configuration authenticated against this device's acknowledged signing authority.
@@ -54,8 +55,6 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let r = self.registration()?;
         if p.tenant_id != self.store.cfg.tenant
             || p.device_id != r.device_id
-            || p.registration_id != r.registration_id
-            || p.generation != r.generation
             || p.issued_at > now
             || p.expires_at <= now
             || signed.signature.len() != 86

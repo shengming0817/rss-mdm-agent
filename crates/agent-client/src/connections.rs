@@ -38,7 +38,7 @@ struct State {
     origin: String,
     ack: Acknowledgement,
     confirmed: bool,
-    registration: Option<(Uuid, u64)>,
+    device_id: Option<rss_mdm_agent_wire::DeviceId>,
     failure: Option<FailureReport>,
     refresh_at: i64,
     next_drive: i64,
@@ -59,7 +59,7 @@ impl State {
             origin,
             ack,
             confirmed: false,
-            registration: None,
+            device_id: None,
             failure: None,
             refresh_at: 0,
             next_drive: 0,
@@ -78,10 +78,7 @@ impl State {
             || self.refresh_at < 0
             || self.attempts > 6
             || self.ack.origin != self.origin
-            || (self.confirmed && self.registration.is_none())
-            || self
-                .registration
-                .is_some_and(|(id, generation)| id.is_nil() || generation == 0)
+            || (self.confirmed && self.device_id.is_none())
         {
             return Err(Error::Storage);
         }
@@ -277,9 +274,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     async fn drive_connections_inner(&mut self) -> Result<(), Error> {
         let mut state = self.connection_state()?;
         let current = self.registration()?;
-        let binding = (current.registration_id, current.generation);
-        if state.registration != Some(binding) {
-            state.registration = Some(binding);
+        let binding = current.device_id;
+        if state.device_id != Some(binding) {
+            state.device_id = Some(binding);
             state.confirmed = false;
             state.ack.operation_id = Uuid::new_v4();
             self.persist_connections(&state)?;
@@ -330,8 +327,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         // Failure reporting may select a different route. Read the immutable ACK again.
         state = self.connection_state()?;
         if !state.confirmed {
-            if state.registration != Some(binding) {
-                state.registration = Some(binding);
+            if state.device_id != Some(binding) {
+                state.device_id = Some(binding);
                 self.persist_connections(&state)?;
             }
             let (status, bytes) = self

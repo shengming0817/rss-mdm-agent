@@ -21,7 +21,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             self.store.get("execution-profiles")?.unwrap_or_default();
         if let Ok(current) = self.registration() {
             if !profiles.iter().any(|p| {
-                p.registration_id == current.registration_id && p.generation == current.generation
+                p.device_id == current.device_id
             }) {
                 if profiles.len() >= 32 {
                     return Err(Error::Capacity);
@@ -80,9 +80,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             "{PREFIX}enterprise/{:x}/",
             Sha256::digest(
                 serde_json::to_vec(&(
+                    cfg.service_id,
                     cfg.tenant,
-                    registration.registration_id,
-                    registration.generation,
                     &registration.device_id,
                 ))
                 .map_err(|_| Error::Protocol)?
