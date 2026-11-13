@@ -256,19 +256,20 @@ async fn restored_registration_replacement_never_sends_the_old_pending_operation
             .is_err());
         let original = server.data.lock().unwrap().filevault.uploads[0].operation_id;
         drop(client);
-        // Restore a confirmed activation fixture with a different registration binding.
-        // This exercises the existing store/HTTP seam, not a new registration workflow.
+        // Retain a valid current certificate and device binding. The recovered upload
+        // belongs to another device; its frozen request must never be reassigned.
         let db = rusqlite::Connection::open(root.path.join("communication.sqlite")).unwrap();
         let body: Vec<u8> = db
-            .query_row("SELECT body FROM state WHERE key='identity'", [], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "SELECT body FROM state WHERE key='filevault-custody'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         let mut state: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        let runtime = &mut state["active"]["receipt"]["runtime"];
-        runtime["deviceId"] = Uuid::new_v4().to_string().into();
+        state["device_id"] = Uuid::new_v4().to_string().into();
         db.execute(
-            "UPDATE state SET body=?1 WHERE key='identity'",
+            "UPDATE state SET body=?1 WHERE key='filevault-custody'",
             [serde_json::to_vec(&state).unwrap()],
         )
         .unwrap();

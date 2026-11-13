@@ -1747,15 +1747,14 @@ async fn retirement_signature_binds_every_target_and_cannot_use_an_offer_as_star
     assert!(verify_task(&signed, &wrong).is_err());
     for field in [
         "retirementId",
-        "registrationId",
+        "deviceId",
         "taskId",
         "attemptId",
-        "generation",
         "deadline",
         "tenantId",
     ] {
         let mut payload = serde_json::to_value(&signed.payload).unwrap();
-        let changed = if field == "generation" || field == "deadline" {
+        let changed = if field == "deadline" {
             serde_json::json!(999)
         } else {
             serde_json::json!(Uuid::new_v4())
@@ -1775,6 +1774,17 @@ async fn retirement_signature_binds_every_target_and_cannot_use_an_offer_as_star
         } else {
             panic!("fixture must remain structurally valid for {field}");
         }
+    }
+    for (field, value) in [
+        ("registrationId", serde_json::json!(Uuid::new_v4())),
+        ("generation", serde_json::json!(1)),
+    ] {
+        let mut payload = serde_json::to_value(&signed.payload).unwrap();
+        payload["task"][field] = value;
+        assert!(
+            serde_json::from_value::<TaskPayload>(payload).is_err(),
+            "{field}"
+        );
     }
 }
 
