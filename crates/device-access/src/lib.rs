@@ -101,9 +101,7 @@ pub struct Authority {
     pub login: String,
     pub join: String,
     pub tenant: Uuid,
-    pub device: String,
-    pub registration: Uuid,
-    pub registration_generation: u64,
+    pub device: rss_mdm_agent_wire::DeviceId,
     pub binding: Uuid,
     pub binding_generation: i64,
     pub factor_generation: i64,
@@ -126,12 +124,7 @@ impl Authority {
             || self.login.len() > 512
             || self.login.chars().any(char::is_control)
             || self.tenant.is_nil()
-            || self.registration.is_nil()
             || self.binding.is_nil()
-            || self.device.is_empty()
-            || self.device.len() > 256
-            || self.device.chars().any(char::is_control)
-            || self.registration_generation == 0
             || self.binding_generation < 1
             || self.factor_generation < 1
         {
@@ -237,6 +230,10 @@ impl Store {
         storage::open(root, installation, true)
     }
     /// LogonUI uses Existing exclusively; a lost/corrupt database never resets counters.
+    /// Validate the current offline format before locks, writes or recovery.
+    pub fn validate_existing(root: &Path, installation: Uuid) -> Result<(), Error> {
+        storage::validate_existing(root, installation)
+    }
     pub fn open(root: &Path, installation: Uuid) -> Result<Self, Error> {
         storage::open(root, installation, false)
     }
@@ -348,8 +345,6 @@ impl Store {
             || authority.binding_generation != *binding_generation
             || authority.tenant != task.tenant_id
             || authority.device != task.device_id
-            || authority.registration != task.registration_id
-            || authority.registration_generation != task.generation
         {
             return Err(Error::Changed);
         }
@@ -416,8 +411,6 @@ impl Store {
         let a = &record.authority;
         if a.tenant != task.tenant_id
             || a.device != task.device_id
-            || a.registration != task.registration_id
-            || a.registration_generation != task.generation
             || a.binding != *binding
             || a.binding_generation != *binding_generation
         {
@@ -469,8 +462,6 @@ impl Store {
         let a = &record.authority;
         Ok(a.tenant == task.tenant_id
             && a.device == task.device_id
-            && a.registration == task.registration_id
-            && a.registration_generation == task.generation
             && a.binding == *binding
             && a.binding_generation == *binding_generation
             && &record.facts.recovery == receipt
@@ -564,9 +555,6 @@ impl Store {
                     || old.authority.principal != record.authority.principal
                     || old.authority.source != record.authority.source
                     || old.authority.join != record.authority.join
-                    || old.authority.registration != record.authority.registration
-                    || old.authority.registration_generation
-                        != record.authority.registration_generation
                     || old.authority.binding != record.authority.binding
                     || old.authority.binding_generation > record.authority.binding_generation
                     || old.authority.factor_generation >= record.authority.factor_generation

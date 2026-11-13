@@ -117,8 +117,7 @@ async fn native_observation_refresh_settles_original_journal_after_restart_and_a
     let local_binding = ::platform_sso::LocalBinding {
         installation,
         tenant: task.tenant_id,
-        agent_registration: task.registration_id,
-        registration_generation: 1,
+        device_id: task.device_id,
         binding: binding_id,
         binding_generation: 1,
         revision: 1,
@@ -135,7 +134,7 @@ async fn native_observation_refresh_settles_original_journal_after_restart_and_a
         context: ::platform_sso::Context {
             installation,
             tenant: task.tenant_id,
-            agent_registration: task.registration_id,
+            device_id: task.device_id,
             origin: "https://mdm.example".into(),
             kind: w::Kind::User,
             binding: Some(binding_id),

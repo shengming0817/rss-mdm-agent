@@ -83,7 +83,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         let profile = self.client.registration()?;
         let mut context = ::platform_sso::Context {
             tenant: deployment.tenant,
-            agent_registration: profile.registration_id,
+            device_id: profile.device_id,
             installation: self.core.access.installation,
             origin: config.origin.clone(),
             kind,
@@ -579,7 +579,7 @@ fn native_facts_in_session(
     context.configuration = Some(binding.configuration.clone());
     if c.context.installation != binding.installation
         || c.context.tenant != binding.tenant
-        || c.context.agent_registration != binding.agent_registration
+        || c.context.device_id != binding.device_id
         || c.context.generated_uid.as_deref() != Some(binding.generated_uid.as_str())
         || !observation_owner(&c.context, &context)
         || retirement_requested(root, &c)?
@@ -747,7 +747,7 @@ impl<S: IdentityProvider> DeviceService<S> {
         commands: &mut tokio::sync::mpsc::Receiver<Command>,
     ) -> Result<Response, Error> {
         let registration = self.client.registration()?;
-        if coordinate.context.agent_registration != registration.registration_id
+        if coordinate.context.device_id != registration.device_id
             || coordinate.context.tenant != self.client.configuration().tenant
         {
             finish_retirement(&self.core.access.root, coordinate)?;
@@ -863,8 +863,7 @@ pub(crate) fn save_binding(
     if let Some(old) = previous.as_ref() {
         if old.installation != next.installation
             || old.tenant != next.tenant
-            || old.agent_registration != next.agent_registration
-            || old.registration_generation != next.registration_generation
+            || old.device_id != next.device_id
             || old.binding_generation > next.binding_generation
             || old.revision > next.revision
             || (old.revision == next.revision
@@ -931,7 +930,6 @@ pub(crate) fn upgrade_preflight(deployment: &crate::deployment::Deployment) -> R
     if !root.exists() {
         return Ok(());
     }
-    let _lock = state::lock(&root)?;
     for entry in std::fs::read_dir(&root)? {
         let name = entry?
             .file_name()
@@ -1219,7 +1217,7 @@ mod tests {
             callback_generation: 1,
             context: ::platform_sso::Context {
                 tenant: Uuid::from_u128(1),
-                agent_registration: Uuid::from_u128(2),
+                device_id: Uuid::from_u128(2),
                 installation: Uuid::from_u128(3),
                 origin: "https://mdm.example".into(),
                 kind: w::Kind::User,
@@ -1238,8 +1236,7 @@ mod tests {
         ::platform_sso::LocalBinding {
             installation: c.installation,
             tenant: c.tenant,
-            agent_registration: c.agent_registration,
-            registration_generation: 1,
+            device_id: c.device_id,
             binding: c.binding.unwrap(),
             binding_generation: 1,
             revision: 1,
@@ -1501,7 +1498,7 @@ mod tests {
         current.generated_uid = Some(Uuid::new_v4().to_string());
         assert!(!old.same_owner(&current));
         current = old.context.clone();
-        current.agent_registration = Uuid::new_v4();
+        current.device_id = Uuid::new_v4();
         assert!(!old.same_owner(&current));
         current = old.context.clone();
         current.binding_generation = Some(0);
