@@ -8,6 +8,7 @@ use uuid::Uuid;
 pub(super) enum Source {
     Package,
     Administrator,
+    Msi,
     Backend {
         instance: Uuid,
         tenant: Uuid,
@@ -29,6 +30,7 @@ enum Phase {
     RemoveCandidate,
     Restore,
     Restart,
+    CancelStop,
     Applied,
     Rejected,
 }
@@ -41,6 +43,8 @@ struct Record {
     config: PathBuf,
     artifact: String,
     profile_digest: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    input: Option<String>,
     installation: Uuid,
     instance: Uuid,
     tenant: Uuid,
@@ -54,6 +58,34 @@ struct Record {
 }
 
 impl Record {
+    fn compensating(&self) -> bool {
+        matches!(
+            self.phase,
+            Phase::CancelStop
+                | Phase::StopCandidate
+                | Phase::RemoveCandidate
+                | Phase::Restore
+                | Phase::Restart
+        )
+    }
+    fn phase_name(&self) -> &'static str {
+        use Phase::*;
+        match self.phase {
+            Received => "profile-preflight",
+            Stop => "stop-current",
+            Remove => "remove-current",
+            Publish => "publish-candidate",
+            Register => "register-candidate",
+            Desktop => "desktop-entry",
+            StopCandidate => "stop-candidate",
+            RemoveCandidate => "remove-candidate",
+            Restore => "restore-current",
+            Restart => "register-current",
+            CancelStop => "confirm-old-stopped",
+            Applied => "profile-applied",
+            Rejected => "profile-rejected",
+        }
+    }
     fn terminal(&self) -> bool {
         matches!(self.phase, Phase::Applied | Phase::Rejected)
     }
@@ -64,14 +96,15 @@ impl Record {
             Err(self.failure.unwrap_or(Error::Unavailable))
         }
     }
-    fn report(&self) {
+    fn report(&self) -> Result<(), Error> {
         let state = match self.phase {
             Phase::Received => "received",
             Phase::Applied => "applied",
             Phase::Rejected => "rejected",
             _ => "pending",
         };
-        println!("{}", serde_json::json!({"state":state,"application":self}));
+        outcome::details(serde_json::json!({"state":state,"operation":self.operation,
+            "phase":self.phase,"revision":self.revision,"failure":self.failure}))
     }
 }
 
@@ -94,7 +127,8 @@ impl Journal {
             root: config
                 .parent()
                 .ok_or(Error::Configuration)?
-                .join("install-operations"),
+                .join("install-operations")
+                .join("profiles"),
         })
     }
     fn active(&self) -> PathBuf {
@@ -103,18 +137,41 @@ impl Journal {
     fn file(&self, id: Uuid, kind: &str) -> PathBuf {
         self.root.join(format!("{id}.profile-{kind}.json"))
     }
+    fn create(&self) -> Result<(), Error> {
+        platform::public_directory(self.root.parent().ok_or(Error::Storage)?)?;
+        platform_private_storage::directory(&self.root)?;
+        Ok(())
+    }
     fn read(&self, path: &Path) -> Result<Option<Record>, Error> {
-        optional(path)?
-            .map(|b| serde_json::from_slice(&b).map_err(|_| Error::Storage))
-            .transpose()
+        match std::fs::symlink_metadata(path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e.into()),
+            Ok(_) => {
+                let bytes =
+                    platform_private_storage::read(path, installation_security::MAX_FRAME * 4)?;
+                Ok(Some(
+                    serde_json::from_slice(&bytes).map_err(|_| Error::Storage)?,
+                ))
+            }
+        }
     }
     fn save(&self, record: &Record) -> Result<(), Error> {
-        publish(&self.active(), &json(record)?)
+        let staged = self.root.join(format!("{}.tmp", Uuid::new_v4()));
+        platform_private_storage::write_new(&staged, &json(record)?)?;
+        let result = platform_private_storage::replace(&staged, &self.active());
+        if result.is_err() {
+            let _ = std::fs::remove_file(staged);
+        }
+        result?;
+        if record.compensating() {
+            outcome::compensation("running");
+        }
+        outcome::phase(record.phase_name())
     }
     fn archive(&self, record: &Record) -> Result<(), Error> {
-        retain_public(&self.file(record.operation, "result"), &json(record)?)?;
-        std::fs::remove_file(self.active())?;
-        for kind in ["before", "after"] {
+        // Atomically move the terminal checkpoint to immutable per-operation history.
+        platform_private_storage::replace(&self.active(), &self.file(record.operation, "result"))?;
+        for kind in ["before", "after", "stop", "stop-candidate"] {
             match std::fs::remove_file(self.file(record.operation, kind)) {
                 Ok(()) => (),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
@@ -134,6 +191,27 @@ pub(super) fn ensure_idle(config: &Path) -> Result<(), Error> {
     }
 }
 
+#[cfg(windows)]
+pub(super) fn check_msi_rollback(
+    config: &Path,
+    operation: Uuid,
+    finished: bool,
+) -> Result<(), Error> {
+    let j = Journal::new(config)?;
+    if let Some(mut r) = j.read(&j.active())? {
+        if r.operation != operation || r.config != config || r.source != Source::Msi {
+            return Err(Error::Conflict);
+        }
+        if finished {
+            r.phase = Phase::Rejected;
+            r.failure = Some(Error::Unavailable);
+            r.input = None;
+            j.save(&r)?;
+            j.archive(&r)?;
+        }
+    }
+    Ok(())
+}
 pub(super) fn status(config: &Path, id: Uuid) -> Result<bool, Error> {
     let j = Journal::new(config)?;
     let record = match j.read(&j.file(id, "result"))? {
@@ -141,7 +219,10 @@ pub(super) fn status(config: &Path, id: Uuid) -> Result<bool, Error> {
         None => j.read(&j.active())?.filter(|r| r.operation == id),
     };
     if let Some(r) = record {
-        r.report();
+        if r.config != config || r.operation != id {
+            return Err(Error::Identity);
+        }
+        r.report()?;
         Ok(true)
     } else {
         Ok(false)
@@ -149,7 +230,7 @@ pub(super) fn status(config: &Path, id: Uuid) -> Result<bool, Error> {
 }
 
 fn binding(d: &Deployment) -> Result<Option<(Uuid, Uuid)>, Error> {
-    if !d.state_root.join("communication").exists() {
+    if !d.state_root.join("communication").try_exists()? {
         return Ok(None);
     }
     let network = d.network()?;
@@ -160,22 +241,24 @@ fn binding(d: &Deployment) -> Result<Option<(Uuid, Uuid)>, Error> {
 
 pub(super) fn module_status(config: &Path) -> Result<(), Error> {
     if optional(config)?.is_none() {
+        let j = Journal::new(config)?;
+        if let Some(record) = j.read(&j.active())? {
+            record.report()?;
+        }
         return Ok(());
     }
     let deployment = Deployment::metadata(config)?;
     let candidate = Candidate::retained(config, &deployment)?;
     let observed = binding(&deployment);
     let registered = observed.as_ref().ok().map(|value| value.is_some());
-    println!(
-        "{}",
-        serde_json::json!({
-            "available": candidate.assembly,
-            "enabled": { "mdm":deployment.modules.as_ref().is_none_or(|m| m.mdm.enabled()),
-                         "da":deployment.modules.as_ref().is_some_and(|m| m.da.enabled()) },
-            "mdmRegistered": registered,
-            "revision":deployment.modules.as_ref().map(|m| m.revision),
-        })
-    );
+    let j = Journal::new(config)?;
+    let pending = j.read(&j.active())?.map(|r| r.operation);
+    outcome::details(serde_json::json!({
+        "available": candidate.assembly,
+        "enabled": { "mdm":deployment.modules.as_ref().is_none_or(|m| m.mdm.enabled()), "da":deployment.modules.as_ref().is_some_and(|m| m.da.enabled()) },
+        "mdmRegistered":registered,"pendingOperation":pending,
+        "revision":deployment.modules.as_ref().map(|m|m.revision),
+    }))?;
     Ok(())
 }
 fn prepare(
@@ -293,7 +376,50 @@ fn snapshot(path: &Path, digest: &str) -> Result<Vec<u8>, Error> {
         .ok_or(Error::Identity)
 }
 
-fn drive(config: &Path, candidate: &Candidate, j: &Journal, r: &mut Record) -> Result<(), Error> {
+fn stop(deployment: &Deployment, config: &Path, evidence: &Path) -> Result<(), Error> {
+    #[cfg(target_os = "macos")]
+    {
+        platform::stop_for_apply(deployment, config, evidence)
+    }
+    #[cfg(windows)]
+    {
+        let _ = evidence;
+        platform::quiescent(deployment, config)?;
+        platform::stop(true, &deployment.service.path, config)
+    }
+}
+
+fn rollback(r: &mut Record, config: &Path, failure: Error) -> Result<(), Error> {
+    if r.compensating() || r.terminal() {
+        return Ok(());
+    }
+    r.failure = Some(failure);
+    if r.phase == Phase::Received {
+        r.phase = Phase::Rejected;
+        return Ok(());
+    }
+    let active = optional(config)?.as_deref().map(hash);
+    if r.before.is_none() {
+        return Err(failure);
+    }
+    r.phase = if active == r.after
+        && matches!(r.phase, Phase::Publish | Phase::Register | Phase::Desktop)
+    {
+        Phase::StopCandidate
+    } else if active == r.before {
+        Phase::CancelStop
+    } else {
+        return Err(Error::Identity);
+    };
+    Ok(())
+}
+
+fn drive(
+    config: &Path,
+    candidate: Option<&Candidate>,
+    j: &Journal,
+    r: &mut Record,
+) -> Result<(), Error> {
     use Phase::*;
     let next_bytes = snapshot(
         &j.file(r.operation, "after"),
@@ -317,6 +443,7 @@ fn drive(config: &Path, candidate: &Candidate, j: &Journal, r: &mut Record) -> R
     }
 
     let source = r.source.clone();
+    let operation = r.operation;
     drive_steps(
         r,
         old.is_some(),
@@ -324,7 +451,7 @@ fn drive(config: &Path, candidate: &Candidate, j: &Journal, r: &mut Record) -> R
         |step| {
             let pointer = optional(config)?;
             let correct = match step {
-                Stop | Remove | Restart => pointer == previous,
+                Stop | CancelStop | Remove | Restart => pointer == previous,
                 Register | Desktop | StopCandidate | RemoveCandidate => {
                     pointer.as_ref() == Some(&next_bytes)
                 }
@@ -335,20 +462,29 @@ fn drive(config: &Path, candidate: &Candidate, j: &Journal, r: &mut Record) -> R
                 return Err(Error::Identity);
             }
             match step {
-                Stop | Remove | Restart => {
+                Stop | CancelStop | Remove | Restart => {
                     let old = old.as_ref().ok_or(Error::Storage)?;
                     match step {
-                        Stop => {
-                            platform::quiescent(old, config)?;
-                            platform::stop(true, &old.service.path, config)
-                        }
+                        Stop | CancelStop => stop(old, config, &j.file(operation, "stop")),
                         Remove => platform::remove(true, &old.service.path, config),
                         _ => platform::restore_registration(&old.service.path, config),
                     }
                 }
                 Publish => {
                     if let Source::Backend { device, epoch, .. } = source {
-                        if binding(old.as_ref().ok_or(Error::Denied)?)? != Some((device, epoch)) {
+                        let d = old.as_ref().ok_or(Error::Denied)?;
+                        let secrets = crate::DeviceSecrets::open(
+                            &d.state_root.join("secrets"),
+                            &d.namespace()?,
+                        )?;
+                        secrets.verify_storage(&d.state_root)?;
+                        let current = agent_client::validate_identity(
+                            &d.state_root.join("communication"),
+                            &d.network()?,
+                            &secrets,
+                            &SystemClock::new()?,
+                        )?;
+                        if (current.device_id.into_uuid(), current.epoch) != (device, epoch) {
                             return Err(Error::Denied);
                         }
                     }
@@ -356,11 +492,8 @@ fn drive(config: &Path, candidate: &Candidate, j: &Journal, r: &mut Record) -> R
                     publish(config, &next_bytes)
                 }
                 Register => platform::register(true, &next.service.path, config),
-                Desktop => platform::desktop_entry(candidate),
-                StopCandidate => {
-                    platform::quiescent(&next, config)?;
-                    platform::stop(true, &next.service.path, config)
-                }
+                Desktop => platform::desktop_entry(candidate.ok_or(Error::Identity)?),
+                StopCandidate => stop(&next, config, &j.file(operation, "stop-candidate")),
                 RemoveCandidate => platform::remove(true, &next.service.path, config),
                 Restore => publish(config, previous.as_ref().ok_or(Error::Storage)?),
                 _ => Err(Error::Storage),
@@ -381,6 +514,7 @@ fn drive_steps(
         r.phase = match effect(step) {
             Ok(()) => match step {
                 Stop => Remove,
+                CancelStop => Restart,
                 Remove => Publish,
                 Publish => Register,
                 Register => Desktop,
@@ -420,96 +554,88 @@ pub(super) fn run(
     source: Source,
 ) -> Result<(), Error> {
     let j = Journal::new(config)?;
-    platform::public_directory(&j.root)?;
+    j.create()?;
+    let digest = profile.map(hash);
+    let resume =
+        source == Source::Administrator && profile.is_none() && supplied.is_none() && id.is_some();
+    let manifests = config
+        .parent()
+        .ok_or(Error::Configuration)?
+        .join("install-manifests");
+    let supplied_bytes = supplied
+        .map(|p| optional(p)?.ok_or(Error::NotFound))
+        .transpose()?;
+    let supplied_digest = supplied_bytes.as_deref().map(hash);
+    let matches = |r: &Record| {
+        r.config == config
+            && (resume
+                || (r.source == source
+                    && r.profile_digest == digest
+                    && supplied_digest.as_ref().is_none_or(|d| d == &r.artifact)))
+    };
     let mut pending = j.read(&j.active())?;
     if let Some(r) = pending.as_ref().filter(|r| r.terminal()) {
         j.archive(r)?;
         pending = None;
     }
-    let prior = id
-        .map(|id| j.read(&j.file(id, "result")))
-        .transpose()?
-        .flatten();
-    let resume =
-        supplied.is_none() && profile.is_none() && id.is_some() && source == Source::Administrator;
-    if resume {
-        let id = id.ok_or(Error::Configuration)?;
-        if let Some(r) = prior.as_ref() {
-            if r.config != config {
-                return Err(Error::Identity);
+    if let Some(id) = id {
+        if let Some(r) = j.read(&j.file(id, "result"))? {
+            if !matches(&r) {
+                return Err(Error::Conflict);
             }
-            r.report();
+            r.report()?;
             return r.result();
         }
-        let r = pending
-            .as_ref()
-            .filter(|r| r.operation == id && r.config == config)
-            .ok_or(Error::NotFound)?;
-        if matches!(r.source, Source::Backend { .. })
-            || (r.phase == Phase::Received && r.profile_digest.is_some())
-        {
-            return Err(Error::Denied);
-        }
     }
-    let digest = profile.map(hash);
-    if let Some(prior) = prior.as_ref() {
-        if prior.config != config
-            || prior.source != source
-            || prior.profile_digest != digest
-            || supplied.is_some_and(|p| {
-                optional(p)
-                    .ok()
-                    .flatten()
-                    .is_none_or(|b| hash(&b) != prior.artifact)
-            })
-        {
+    let mut record = if let Some(mut r) = pending {
+        if id.is_some_and(|id| id != r.operation) || !matches(&r) {
+            r.report()?;
             return Err(Error::Conflict);
         }
-        prior.report();
-        return prior.result();
-    }
-    let old = optional(config)?
-        .map(|_| Deployment::metadata(config))
-        .transpose()?;
-    let manifests = config
-        .parent()
-        .ok_or(Error::Configuration)?
-        .join("install-manifests");
-    let candidate_path = match supplied {
-        Some(path) => path.to_owned(),
-        None => {
-            if let Some(r) = pending.as_ref().filter(|r| id == Some(r.operation)) {
-                manifests.join(format!("{}.json", r.artifact))
-            } else {
-                let d = old.as_ref().ok_or(Error::Configuration)?;
-                Candidate::retained(config, d)?;
-                manifests.join(format!("{}.json", d.installation_artifact))
-            }
-        }
-    };
-    let (candidate, artifact) = Candidate::load(&candidate_path)?;
-    let matches_request = |r: &Record| {
-        r.config == config
-            && (resume
-                || (r.profile_digest == digest && r.artifact == artifact && r.source == source))
-    };
-    platform::public_directory(&manifests)?;
-    retain_public(
-        &manifests.join(format!("{artifact}.json")),
-        &snapshot(&candidate_path, &artifact)?,
-    )?;
-    let mut r = if let Some(r) = pending {
-        if id.is_some_and(|id| id != r.operation) || !matches_request(&r) {
-            return Err(Error::Conflict);
+        if resume && matches!(r.source, Source::Backend { .. }) {
+            rollback(&mut r, config, Error::Denied)?;
+            j.save(&r)?;
         }
         r
     } else {
+        if resume {
+            return Err(Error::NotFound);
+        }
+        let old = optional(config)?
+            .map(|_| Deployment::metadata(config))
+            .transpose()?;
+        let artifact = match (supplied_bytes, supplied_digest) {
+            (Some(bytes), Some(digest)) => {
+                let candidate: Candidate =
+                    serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
+                candidate.validate_trust()?;
+                platform::public_directory(&manifests)?;
+                retain_public(&manifests.join(format!("{digest}.json")), &bytes)?;
+                digest
+            }
+            _ => {
+                let old = old.as_ref().ok_or(Error::Configuration)?;
+                Candidate::retained(config, old)?;
+                old.installation_artifact.clone()
+            }
+        };
+        let bytes = snapshot(&manifests.join(format!("{artifact}.json")), &artifact)?;
+        let candidate: Candidate =
+            serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
+        // Retain only strictly decoded public profile fields, never an invalid payload.
+        let input = profile.map(|raw| {
+            let text = std::str::from_utf8(raw).map_err(|_| Error::Configuration)?;
+            serde_json::from_str::<profile::Profile>(text).map_err(|_| Error::Configuration)?;
+            Ok::<String, Error>(text.to_owned())
+        });
+        let malformed = input.as_ref().is_some_and(Result::is_err);
         let r = Record {
             operation: id.unwrap_or_else(Uuid::new_v4),
-            source,
             config: config.to_owned(),
+            source,
             artifact,
             profile_digest: digest,
+            input: input.and_then(Result::ok),
             installation: old
                 .as_ref()
                 .map_or_else(Uuid::new_v4, |d| d.installation_id),
@@ -520,32 +646,65 @@ pub(super) fn run(
             revision: None,
             before: None,
             after: None,
-            phase: Phase::Received,
-            failure: None,
+            phase: if malformed {
+                Phase::Rejected
+            } else {
+                Phase::Received
+            },
+            failure: malformed.then_some(Error::Configuration),
         };
         j.save(&r)?;
         r
     };
-    outcome::application(r.operation)?;
-    r.report();
-    let mut rejected = None;
-    if r.phase == Phase::Received {
-        if let Err(e) = prepare(config, &candidate, profile, &j, &mut r) {
-            r.failure = Some(e);
-            r.phase = Phase::Rejected;
-            rejected = Some(e);
+    outcome::application(record.operation)?;
+    record.report()?;
+    let candidate = if record.compensating() || record.terminal() {
+        None
+    } else {
+        let result = Candidate::load(&manifests.join(format!("{}.json", record.artifact)))
+            .and_then(|(c, digest)| {
+                if digest != record.artifact {
+                    return Err(Error::Identity);
+                }
+                if c.format()? == "windows_msix" {
+                    return Err(Error::Unsupported);
+                }
+                Ok(c)
+            });
+        match result {
+            Ok(c) => Some(c),
+            Err(e) => {
+                rollback(&mut record, config, e)?;
+                j.save(&record)?;
+                None
+            }
         }
-        j.save(&r)?;
+    };
+    if record.phase == Phase::Received {
+        let input = record.input.take();
+        if input.as_deref().map(|s| hash(s.as_bytes())) != record.profile_digest {
+            return Err(Error::Storage);
+        }
+        if let Err(e) = prepare(
+            config,
+            candidate.as_ref().ok_or(Error::Storage)?,
+            input.as_deref().map(str::as_bytes),
+            &j,
+            &mut record,
+        ) {
+            record.failure = Some(e);
+            record.phase = Phase::Rejected;
+        }
+        j.save(&record)?;
     }
-    if !r.terminal() {
-        drive(config, &candidate, &j, &mut r)?;
+    if !record.terminal() {
+        drive(config, candidate.as_ref(), &j, &mut record)?;
     }
-    j.archive(&r)?;
-    r.report();
-    if let Some(e) = rejected {
-        return Err(e);
-    }
-    r.result()
+    record.input = None;
+    j.save(&record)?;
+    j.archive(&record)?;
+    record.report()?;
+    record.result()
 }
 
 /// Result of the trusted channel's purpose-specific authorization at the installed
@@ -599,6 +758,7 @@ mod tests {
             config: "/unused".into(),
             artifact: "a".repeat(64),
             profile_digest: None,
+            input: None,
             installation: Uuid::from_u128(12),
             instance: Uuid::from_u128(13),
             tenant: Uuid::from_u128(14),
@@ -610,6 +770,34 @@ mod tests {
             phase,
             failure: None,
         }
+    }
+
+    #[test]
+    fn private_checkpoint_reopens_frozen_input_and_retains_original_result() {
+        let temp = crate::protocol_test_support::Root::new();
+        let journal = Journal {
+            root: temp.path.join("profiles"),
+        };
+        platform_private_storage::directory(&journal.root).unwrap();
+        let mut r = record(Phase::Received);
+        r.input = Some("original profile".into());
+        r.profile_digest = Some(hash(r.input.as_ref().unwrap().as_bytes()));
+        journal.save(&r).unwrap();
+        let recovered = journal.read(&journal.active()).unwrap().unwrap();
+        assert_eq!(recovered.input, r.input);
+        assert_eq!(recovered.profile_digest, r.profile_digest);
+        r.input = None;
+        r.phase = Phase::Rejected;
+        r.failure = Some(Error::Unsupported);
+        journal.save(&r).unwrap();
+        journal.archive(&r).unwrap();
+        assert!(journal.read(&journal.active()).unwrap().is_none());
+        let archived = journal
+            .read(&journal.file(r.operation, "result"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(archived.result(), Err(Error::Unsupported));
+        assert!(archived.input.is_none());
     }
 
     // Exercise the production phase driver across an actual process exit between the effect

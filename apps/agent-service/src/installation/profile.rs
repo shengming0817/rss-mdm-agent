@@ -15,8 +15,11 @@ impl Assembly {
         mdm: true,
         da: false,
     };
-    pub fn current() -> Self {
-        Self::CURRENT
+    pub fn baseline_mdm() -> Self {
+        Self {
+            mdm: true,
+            da: false,
+        }
     }
     fn accepts(self, modules: &Modules) -> Result<(), Error> {
         match (modules.mdm.enabled(), modules.da.enabled()) {
@@ -79,11 +82,7 @@ impl Modules {
         if backend.instance != deployment.service_id
             || backend.tenant != deployment.tenant
             || backend.signing_keys != deployment.signing_keys
-            || !deployment
-                .connections
-                .configuration
-                .origins
-                .contains(&backend.origin)
+            || deployment.connections.configuration.preferred_origin != backend.origin
             || !digest_valid(&backend.ca_sha256)
         {
             return Err(Error::Identity);
@@ -109,11 +108,7 @@ impl Modules {
             if backend.instance != old.service_id
                 || backend.tenant != old.tenant
                 || backend.signing_keys != old.signing_keys
-                || !old
-                    .connections
-                    .configuration
-                    .origins
-                    .contains(&backend.origin)
+                || old.connections.configuration.preferred_origin != backend.origin
                 || old
                     .network()?
                     .ca_pem
@@ -137,11 +132,7 @@ impl Modules {
         if candidate.service_id != backend.instance
             || candidate.tenant != backend.tenant
             || backend.signing_keys != candidate.signing_keys
-            || !candidate
-                .connections
-                .configuration
-                .origins
-                .contains(&backend.origin)
+            || candidate.connections.configuration.preferred_origin != backend.origin
             || candidate
                 .ca_pem
                 .as_ref()

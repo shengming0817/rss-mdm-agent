@@ -645,3 +645,95 @@ mod retirement_tests {
         std::fs::remove_dir(&root).unwrap();
     }
 }
+
+// launchctl can remove a job before its process exits. Retain PID and kernel birth
+// time before bootout so a restarted installer can check that exact process.
+// ref: apple-oss-distributions/xnu bsd/sys/proc_info.h (PROC_PIDTBSDINFO).
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+struct JobProcess {
+    pid: u32,
+    seconds: u64,
+    microseconds: u64,
+}
+
+fn job_process(pid: u32) -> Result<Option<JobProcess>, Error> {
+    let pid = i32::try_from(pid).map_err(|_| Error::Identity)?;
+    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as i32;
+    // SAFETY: proc_pidinfo writes at most the supplied size; read only a complete struct.
+    if unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            size,
+        )
+    } != size
+    {
+        if unsafe { libc::kill(pid, 0) } < 0
+            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+        {
+            return Ok(None);
+        }
+        return Err(Error::Unavailable);
+    }
+    let info = unsafe { info.assume_init() };
+    Ok(Some(JobProcess {
+        pid: info.pbi_pid,
+        seconds: info.pbi_start_tvsec,
+        microseconds: info.pbi_start_tvusec,
+    }))
+}
+pub(super) fn stop_for_apply(d: &Deployment, config: &Path, evidence: &Path) -> Result<(), Error> {
+    let mut processes: Vec<JobProcess> = if evidence.try_exists()? {
+        serde_json::from_slice(
+            &installation_security::read_protected(evidence).map_err(|_| Error::Identity)?,
+        )
+        .map_err(|_| Error::Storage)?
+    } else {
+        vec![]
+    };
+    let mut jobs = vec![(true, endpoint(true)?)];
+    jobs.extend(
+        d.helper_work_roots
+            .keys()
+            .map(|s| (false, format!("gui/{s}/{LABEL}.user"))),
+    );
+    for (system, job) in jobs {
+        if !system {
+            let domain = job.rsplit_once('/').ok_or(Error::Configuration)?.0;
+            let (status, _) = utility(
+                Path::new("/bin/launchctl"),
+                &["print".into(), domain.into()],
+            )?;
+            if status.code() == Some(125) {
+                continue;
+            }
+            if !status.success() {
+                return Err(Error::Unavailable);
+            }
+        }
+        if let Some(pid) = registered(&job)?.filter(|pid| *pid != 0) {
+            read_job(system, &d.service.path, config)?;
+            if let Some(process) = job_process(pid)? {
+                if !processes.contains(&process) {
+                    processes.push(process);
+                }
+            }
+        }
+    }
+    publish(evidence, &json(&processes)?)?;
+    quiescent(d, config)?;
+    stop(true, &d.service.path, config)?;
+    let deadline = Instant::now() + STOP_TIMEOUT;
+    for process in processes {
+        while job_process(process.pid)? == Some(process) {
+            if Instant::now() >= deadline {
+                return Err(Error::Unavailable);
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+    Ok(())
+}

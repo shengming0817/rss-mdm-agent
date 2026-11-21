@@ -46,7 +46,7 @@ pub use windows::worker;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Candidate {
-    #[serde(default = "Assembly::current")]
+    #[serde(default = "Assembly::baseline_mdm")]
     pub assembly: Assembly,
     pub windows_login: Option<Artifact>,
     pub platform_sso: Option<crate::deployment::PlatformSsoConfiguration>,

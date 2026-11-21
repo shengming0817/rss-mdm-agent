@@ -57,7 +57,7 @@ ${components}<Feature Id="Agent" Level="1"><ComponentRef Id="AgentShortcut"/><Co
 <CustomAction Id="SaveAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-save" Execute="deferred" Impersonate="no" Return="check"/>
 <CustomAction Id="RollbackAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-rollback" Execute="rollback" Impersonate="no" Return="check"/>
 <CustomAction Id="CommitAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-commit" Execute="commit" Impersonate="no" Return="check"/>
-<CustomAction Id="ApplyAgent" FileRef="${service}" ExeCommand="--installation apply --candidate &quot;[INSTALLROOT]candidate.json&quot;" Execute="deferred" Impersonate="no" Return="check"/>
+<CustomAction Id="ApplyAgent" FileRef="${service}" ExeCommand="--installation msi-apply --candidate &quot;[INSTALLROOT]candidate.json&quot;" Execute="deferred" Impersonate="no" Return="check"/>
 <CustomAction Id="RemoveAgent" FileRef="${service}" ExeCommand="--installation remove --binary &quot;[#${service}]&quot; --operation &quot;[RSSRETIREMENTTASK]&quot;" Execute="deferred" Impersonate="no" Return="check"/>
 <InstallExecuteSequence>
 <Custom Action="SaveAgent" Before="RollbackAgent" Condition="NOT UPGRADINGPRODUCTCODE"/>

@@ -1096,6 +1096,12 @@ fn reclaim_worker(handle: &Sc, path: &Path) -> Result<bool, Error> {
     // Keep both the native lifetime evidence and any business result for diagnosis.
     Ok(true)
 }
+pub(super) fn worker_operation(id: uuid::Uuid) -> Result<bool, Error> {
+    let path = operation_root()?.join(format!("{id}.json"));
+    Ok(path.try_exists()?
+        || path.with_extension("worker.json").try_exists()?
+        || path.with_extension("result.json").try_exists()?)
+}
 pub(super) fn operation_status(id: uuid::Uuid) -> Result<(), Error> {
     let path = operation_root()?.join(format!("{id}.json"));
     let name = format!("RssExecution-Install-{id}");
