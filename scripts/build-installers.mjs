@@ -412,29 +412,7 @@ if (windows && format === "windows_msi") {
   }
   walk();
   const source = join(output, "installer.wxs");
-  const sessionDll = join(output, "msi-session.dll");
-  run("rustc", [
-    "--edition=2024",
-    "--crate-type=cdylib",
-    "--crate-name",
-    "rss_msi_session",
-    "--target",
-    process.arch === "arm64"
-      ? "aarch64-pc-windows-msvc"
-      : "x86_64-pc-windows-msvc",
-    "-C",
-    "panic=abort",
-    "-C",
-    "opt-level=s",
-    join(root, "scripts/installers/msi-session.rs"),
-    "-o",
-    sessionDll,
-  ]);
-  sign(sessionDll);
-  writeFileSync(
-    source,
-    msiSource({ version, target, id, payload, files, sessionDll }),
-  );
+  writeFileSync(source, msiSource({ version, target, id, payload, files }));
   packagePath = join(output, `rss-mdm-agent-${version}-${target}.msi`);
   run(process.env.RSS_WIX ?? "wix.exe", [
     "build",

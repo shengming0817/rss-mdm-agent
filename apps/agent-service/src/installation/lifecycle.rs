@@ -1,6 +1,6 @@
 use super::*;
 /// Resolved before platform dispatch or installation state is touched.
-pub(super) enum Action {
+enum Action {
     Install,
     Remove,
     RemoveLabRegistration,
@@ -11,18 +11,14 @@ pub(super) enum Action {
     Recover,
     Import,
     ImportConnections,
-    #[cfg(any(windows, test))]
-    MsiSave,
-    #[cfg(any(windows, test))]
-    MsiPrepare,
     #[cfg(windows)]
     MsiApply,
     #[cfg(windows)]
     MsiRemove,
-    #[cfg(any(windows, test))]
+    #[cfg(windows)]
+    MsiSave,
+    #[cfg(windows)]
     MsiRollback,
-    #[cfg(any(windows, test))]
-    MsiCommit,
 }
 impl Action {
     fn parse(value: &str) -> Result<Self, Error> {
@@ -32,13 +28,9 @@ impl Action {
             #[cfg(windows)]
             "msi-apply" => Ok(Self::MsiApply),
             #[cfg(windows)]
-            "msi-prepare" => Ok(Self::MsiPrepare),
-            #[cfg(windows)]
             "msi-save" => Ok(Self::MsiSave),
             #[cfg(windows)]
             "msi-rollback" => Ok(Self::MsiRollback),
-            #[cfg(windows)]
-            "msi-commit" => Ok(Self::MsiCommit),
             "install" => Ok(Self::Install),
             "remove" => Ok(Self::Remove),
             "remove-lab-registration" => Ok(Self::RemoveLabRegistration),
@@ -85,9 +77,6 @@ impl Options {
                 "--grant",
                 "--secret-file",
                 "--operation",
-                "--msi-transaction",
-                "--msi-product",
-                "--msi-version",
             ]
             .contains(&key)
                 || values.insert(key.into(), PathBuf::from(&pair[1])).is_some()
@@ -110,15 +99,6 @@ impl Options {
             return Err(Error::Configuration);
         }
         Ok(path.clone())
-    }
-    #[cfg(any(windows, test))]
-    fn msi_operation(&self) -> Result<uuid::Uuid, Error> {
-        self.values
-            .get("--msi-transaction")
-            .and_then(|value| value.to_str())
-            .and_then(|value| uuid::Uuid::parse_str(value).ok())
-            .filter(|id| !id.is_nil())
-            .ok_or(Error::Configuration)
     }
     fn config(&self) -> Result<PathBuf, Error> {
         if self.values.contains_key("--config") {
@@ -194,92 +174,41 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
     }
     let _lock = installation_lock(&opts.config()?, opts.system()?)?;
     outcome::phase("locked-preflight")?;
-    let can_resume = matches!(action, Action::Apply | Action::Status);
     #[cfg(windows)]
-    let can_resume = can_resume
-        || matches!(
+    if opts.system()?
+        && !matches!(
             action,
-            Action::MsiPrepare
-                | Action::MsiRollback
+            Action::Apply
+                | Action::Status
+                | Action::MsiSave
                 | Action::MsiApply
-                | Action::MsiCommit
                 | Action::MsiRemove
-        );
+                | Action::MsiRollback
+        )
+    {
+        allow_configuration_write(&opts.config()?)?;
+    }
+    let can_resume = matches!(action, Action::Apply | Action::Status);
     if opts.system()? && !can_resume {
         apply::ensure_idle(&opts.config()?)?;
     }
     match action {
         #[cfg(windows)]
-        Action::MsiRemove => {
+        Action::MsiApply | Action::MsiSave | Action::MsiRollback | Action::MsiRemove => {
             let config = opts.config()?;
             if !opts.system()? || config != Deployment::default_path()? {
                 return Err(Error::Denied);
             }
-            let mut transaction = matching_msi(
-                &config.with_extension("msi-rollback"),
-                opts.msi_operation()?,
-            )?;
-            let task = opts
-                .values
-                .get("--operation")
-                .and_then(|s| s.to_str())
-                .and_then(|s| uuid::Uuid::parse_str(s).ok())
-                .ok_or(Error::Denied)?;
-            transaction.removing = true;
-            publish(&config.with_extension("msi-rollback"), &json(&transaction)?)?;
-            unmanage::package_remove(&config, &opts.path("--binary")?, task)?;
-        }
-        #[cfg(windows)]
-        Action::MsiApply => {
-            let config = opts.config()?;
-            if !opts.system()? || config != Deployment::default_path()? {
-                return Err(Error::Denied);
+            if !matches!(action, Action::MsiSave) {
+                require_msi_sequence(&config)?;
             }
-            let transaction = matching_msi(
-                &config.with_extension("msi-rollback"),
-                opts.msi_operation()?,
-            )?;
-            if transaction.removing {
-                return Err(Error::Conflict);
+            if matches!(action, Action::MsiRemove) {
+                return remove_package(&opts);
             }
-            apply::run(
-                &config,
-                Some(&opts.path("--candidate")?),
-                None,
-                Some(transaction.operation),
-                apply::Source::Msi,
-            )?;
-        }
-        #[cfg(any(windows, test))]
-        Action::MsiPrepare | Action::MsiSave | Action::MsiRollback | Action::MsiCommit => {
-            if !opts.system()? || opts.config()? != Deployment::default_path()? {
-                return Err(Error::Identity);
+            if matches!(action, Action::MsiApply) {
+                return apply_msi_package(&opts.path("--candidate")?, &config);
             }
-            #[cfg(windows)]
-            let ticket = if matches!(action, Action::MsiSave) {
-                let product = opts
-                    .values
-                    .get("--msi-product")
-                    .and_then(|x| x.to_str())
-                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
-                    .filter(|id| !id.is_nil())
-                    .ok_or(Error::Configuration)?;
-                let version = opts
-                    .values
-                    .get("--msi-version")
-                    .and_then(|x| x.to_str())
-                    .ok_or(Error::Configuration)?;
-                Some(msi_evidence::Ticket::at_save(
-                    product,
-                    version,
-                    &opts.path("--package-path")?,
-                )?)
-            } else {
-                None
-            };
-            #[cfg(not(windows))]
-            let ticket = None;
-            return msi_transaction(action, &opts.config()?, opts.msi_operation()?, ticket);
+            return msi_transaction(action, &config);
         }
         Action::Install => {
             let binary = opts.path("--binary")?;
@@ -310,21 +239,10 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
             platform::remove(true, &binary, &config)?;
         }
         Action::Remove => {
-            let binary = opts.path("--binary")?;
-            let config = opts.config()?;
             if opts.system()? {
-                let task = opts
-                    .values
-                    .get("--operation")
-                    .and_then(|v| v.to_str())
-                    .ok_or(Error::Denied)?;
-                unmanage::package_remove(
-                    &config,
-                    &binary,
-                    uuid::Uuid::parse_str(task).map_err(|_| Error::Denied)?,
-                )?;
+                remove_package(&opts)?;
             } else {
-                platform::remove(false, &binary, &config)?;
+                platform::remove(false, &opts.path("--binary")?, &opts.config()?)?;
             }
         }
         Action::Uninstall => {
@@ -483,6 +401,19 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
     );
     Ok(())
 }
+fn remove_package(opts: &Options) -> Result<(), Error> {
+    let task = opts
+        .values
+        .get("--operation")
+        .and_then(|v| v.to_str())
+        .ok_or(Error::Denied)?;
+    unmanage::package_remove(
+        &opts.config()?,
+        &opts.path("--binary")?,
+        uuid::Uuid::parse_str(task).map_err(|_| Error::Denied)?,
+    )
+}
+
 // Fixed packages own image/trust metadata; protected administrator deployment
 // owns execution configuration. Reinstalling must not reset pinned interpreters,
 // package managers, local permissions or budgets to the installer's defaults.
@@ -896,163 +827,171 @@ mod tests {
     }
 }
 
-// MSI owns its files. The marker reserves the installation owner between custom actions.
-#[cfg(any(windows, test))]
-#[derive(Serialize, Deserialize)]
-struct MsiSnapshot {
-    engine: msi_evidence::Ticket,
-    operation: uuid::Uuid,
-    before: Option<String>,
-    removing: bool,
-}
-#[cfg(any(windows, test))]
-pub(super) fn ensure_outside_msi(config: &Path) -> Result<(), Error> {
-    reconcile_msi(config, |ticket, removing| ticket.confirmed(removing))
-}
-#[cfg(any(windows, test))]
-pub(super) fn reconcile_msi(
-    config: &Path,
-    observe: impl FnOnce(&msi_evidence::Ticket, bool) -> Result<bool, Error>,
-) -> Result<(), Error> {
-    if config.with_extension("msi-rollback").try_exists()? {
-        return Err(Error::Conflict);
-    }
-    let finalizing = config.with_extension("msi-finalizing");
-    if finalizing.try_exists()? {
-        let tx = msi_snapshot(&finalizing)?;
-        if !observe(&tx.engine, tx.removing)? {
-            return Err(Error::Conflict);
-        }
-        platform::replace(&finalizing, &config.with_extension("msi-confirmed"))?;
-    }
-    settle_confirmed_msi(config)
-}
-#[cfg(any(windows, test))]
-pub(super) fn msi_applied(config: &Path, operation: uuid::Uuid) -> Result<bool, Error> {
-    for (ext, recorded) in [("msi-finalizing", false), ("msi-confirmed", true)] {
-        let path = config.with_extension(ext);
-        if !path.try_exists()? {
-            continue;
-        }
-        match msi_snapshot(&path) {
-            Ok(tx) if tx.operation == operation => {
-                return Ok(recorded || tx.engine.confirmed(tx.removing).unwrap_or(false));
-            }
-            Err(_) if !path.try_exists()? => continue,
-            Err(e) => return Err(e),
-            _ => (),
-        }
-    }
-    Ok(false)
-}
-#[cfg(any(windows, test))]
-fn msi_snapshot(path: &Path) -> Result<MsiSnapshot, Error> {
-    let bytes = installation_security::read_protected(path).map_err(|_| Error::Identity)?;
-    serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)
-}
-#[cfg(any(windows, test))]
-fn settle_confirmed_msi(config: &Path) -> Result<(), Error> {
-    let marker = config.with_extension("msi-confirmed");
-    if !marker.try_exists()? {
-        return Ok(());
-    }
-    let tx = msi_snapshot(&marker)?;
-    if !tx.removing {
-        apply::finish_msi(config, tx.operation, true)?;
-    }
-    std::fs::remove_file(marker)?;
-    let _ = std::fs::remove_file(config.with_extension(format!("{}.msi-before", tx.operation)));
-    Ok(())
-}
-#[cfg(any(windows, test))]
-fn matching_msi(path: &Path, operation: uuid::Uuid) -> Result<MsiSnapshot, Error> {
-    let tx = msi_snapshot(path)?;
-    if tx.operation == operation {
-        Ok(tx)
+#[cfg(windows)]
+fn apply_msi_package(candidate_path: &Path, config: &Path) -> Result<(), Error> {
+    outcome::phase("candidate-preflight")?;
+    let candidate_bytes =
+        installation_security::read_protected(candidate_path).map_err(|_| Error::Identity)?;
+    let candidate: Candidate =
+        serde_json::from_slice(&candidate_bytes).map_err(|_| Error::Configuration)?;
+    candidate.validate()?;
+    let artifact = hash(&candidate_bytes);
+    let active = config.try_exists()?;
+    let inactive = apply::inactive_deployment(config)?;
+    let old = if active {
+        Some(Deployment::metadata(config)?)
+    } else if inactive.try_exists()? {
+        Some(Deployment::metadata(&inactive)?)
     } else {
-        Err(Error::Conflict)
-    }
-}
-#[cfg(any(windows, test))]
-pub(super) fn msi_transaction(
-    action: Action,
-    config: &Path,
-    operation: uuid::Uuid,
-    engine: Option<msi_evidence::Ticket>,
-) -> Result<(), Error> {
-    let marker = config.with_extension("msi-rollback");
-    let finalizing = config.with_extension("msi-finalizing");
-    let confirmed = config.with_extension("msi-confirmed");
-    if matches!(action, Action::MsiPrepare) {
-        // A later install cannot attest success for an earlier sequence.
-        return ensure_outside_msi(config);
-    }
-    if matches!(action, Action::MsiSave) {
-        let before = if config.try_exists()? {
-            Deployment::metadata(config)?;
-            let bytes =
-                installation_security::read_protected(config).map_err(|_| Error::Identity)?;
-            retain_public(
-                &config.with_extension(format!("{operation}.msi-before")),
-                &bytes,
-            )?;
-            Some(hash(&bytes))
-        } else {
-            None
-        };
-        let snapshot = MsiSnapshot {
-            engine: engine.ok_or(Error::Configuration)?,
-            operation,
-            before,
-            removing: false,
-        };
-        return publish_new(&marker, &json(&snapshot)?);
-    }
-    if matches!(action, Action::MsiCommit) {
-        if !marker.try_exists()? {
-            matching_msi(&finalizing, operation)?;
-            return Ok(());
-        }
-        let tx = matching_msi(&marker, operation)?;
-        if !tx.removing {
-            apply::msi_awaiting(config, operation)?;
-        }
-        // The hook retains all rollback evidence. SYSTEM reconciles actual engine
-        // completion on status or the next maintenance entry.
-        return platform::replace(&marker, &finalizing);
-    }
-    let marker = if marker.try_exists()? {
-        marker
-    } else if finalizing.try_exists()? {
-        finalizing
-    } else if confirmed.try_exists()? {
-        confirmed
-    } else {
-        return Ok(());
+        None
     };
-    let transaction = matching_msi(&marker, operation)?;
-    let prior = config.with_extension(format!("{}.msi-before", transaction.operation));
-    if transaction.removing {
-        let before = installation_security::read_protected(&prior).map_err(|_| Error::Identity)?;
-        if Some(hash(&before)) != transaction.before {
+    if candidate.format()? != "windows_msi" {
+        return Err(Error::Unsupported);
+    }
+    let profile = match &old {
+        Some(d) => LocalAccess::from_deployment(d),
+        None => initial_profile()?,
+    };
+    platform::public_directory(config.parent().ok_or(Error::Configuration)?)?;
+    let manifests = config
+        .parent()
+        .ok_or(Error::Configuration)?
+        .join("install-manifests");
+    platform::public_directory(&manifests)?;
+    retain_public(
+        &manifests.join(format!("{artifact}.json")),
+        &candidate_bytes,
+    )?;
+    let mut next = candidate.deployment(artifact, profile, config, old.as_ref())?;
+    if let Some(old) = &old {
+        next.modules = old.modules.clone();
+        if let Some(modules) = &next.modules {
+            modules.validate(&candidate)?;
+        }
+        inherit(old, &mut next)?;
+        if let Some(ca) = &old.ca_file {
+            if installation_security::read_protected(ca).map_err(|_| Error::Identity)?
+                != candidate.ca_pem.as_ref().ok_or(Error::Identity)?.as_bytes()
+            {
+                return Err(Error::Identity);
+            }
+        }
+    }
+    let staged = config.with_extension(format!("candidate-{}", uuid::Uuid::new_v4()));
+    write_new(&staged, &json(&next)?)?;
+    let result = (|| {
+        if let Some(old) = old.as_ref().filter(|_| active) {
+            return refresh(&old.service.path, config, &next.service.path, &staged);
+        }
+        if old.is_none() && next.state_root.try_exists()? {
             return Err(Error::Identity);
         }
-        let old: Deployment = serde_json::from_slice(&before).map_err(|_| Error::Configuration)?;
-        if config.try_exists()? {
-            let current =
-                installation_security::read_protected(config).map_err(|_| Error::Identity)?;
-            if current != before {
+        // Existing trust files are never overwritten, including failed or retired installations.
+        outcome::phase("publish-trust")?;
+        if let Some(ca) = &next.ca_file {
+            retain_public(
+                ca,
+                candidate
+                    .ca_pem
+                    .as_ref()
+                    .ok_or(Error::Configuration)?
+                    .as_bytes(),
+            )?;
+        }
+        Deployment::load(&staged)?;
+        if old.is_some() {
+            preflight_candidate_state(&next, &staged)?;
+        }
+        outcome::phase("publish-configuration")?;
+        crate::local_permissions::initialize(&next.execution.local_permissions)?;
+        publish_new(config, &json(&next)?)?;
+        outcome::phase("register-candidate")?;
+        platform::register(true, &next.service.path, config)
+    })();
+    let _ = std::fs::remove_file(staged);
+    result?;
+    if inactive.try_exists()? {
+        std::fs::remove_file(inactive)?;
+    }
+    Ok(())
+}
+
+// Save and Rollback run in the native execute script under separate invocations. Only
+// exclude overlapping writes while Installer is executing; its rollback bytes belong
+// to Installer and are never read or discarded by profile maintenance.
+#[cfg(windows)]
+pub(super) fn allow_configuration_write(config: &Path) -> Result<(), Error> {
+    if config == Deployment::default_path()?
+        && config.with_extension("msi-rollback").try_exists()?
+        && platform::msi_executing()?
+    {
+        return Err(Error::Conflict);
+    }
+    Ok(())
+}
+#[cfg(windows)]
+fn require_msi_sequence(config: &Path) -> Result<(), Error> {
+    if config != Deployment::default_path()?
+        || !config.with_extension("msi-rollback").try_exists()?
+        || !platform::msi_executing()?
+    {
+        return Err(Error::Conflict);
+    }
+    Ok(())
+}
+// MSI owns file rollback; the installation owner owns service/configuration compensation.
+#[cfg(windows)]
+fn msi_transaction(action: Action, config: &Path) -> Result<(), Error> {
+    let snapshot = config.with_extension("msi-rollback");
+    match action {
+        Action::MsiSave => {
+            if !platform::msi_executing()? {
                 return Err(Error::Conflict);
             }
-        } else {
-            publish(config, &before)?;
+            let old = match std::fs::symlink_metadata(config) {
+                Ok(_) => Some(Deployment::metadata(config)?),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => return Err(error.into()),
+            };
+            publish(&snapshot, &json(&old)?)?;
         }
-        platform::restore_registration(&old.service.path, config)?;
-    } else {
-        apply::finish_msi(config, transaction.operation, false)?;
+        Action::MsiRollback => {
+            let bytes = match installation_security::read_protected(&snapshot) {
+                Ok(bytes) => bytes,
+                Err(_) if !snapshot.exists() => return Ok(()),
+                Err(_) => return Err(Error::Identity),
+            };
+            let old: Option<Deployment> =
+                serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
+            let current = match std::fs::symlink_metadata(config) {
+                Ok(_) => Some(Deployment::metadata(config)?),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => return Err(error.into()),
+            };
+            if let Some(old) = old {
+                old.service
+                    .verify(&old.service.path)
+                    .map_err(|_| Error::Identity)?;
+                validate_native_artifact(&old.service)?;
+                if let Some(current) = current {
+                    preserved(&old, &current)?;
+                    platform::quiescent(&current, config)?;
+                    platform::remove(true, &current.service.path, config)?;
+                }
+                publish(config, &json(&old)?)?;
+                platform::restore_registration(&old.service.path, config)?;
+            } else if let Some(current) = current {
+                platform::quiescent(&current, config)?;
+                platform::remove(true, &current.service.path, config)?;
+                let inactive = apply::inactive_deployment(config)?;
+                let profiles = inactive.parent().ok_or(Error::Configuration)?;
+                platform::public_directory(profiles.parent().ok_or(Error::Configuration)?)?;
+                platform_private_storage::directory(profiles)?;
+                platform::replace(config, &inactive)?;
+            }
+            std::fs::remove_file(snapshot)?;
+        }
+        _ => return Err(Error::Configuration),
     }
-    std::fs::remove_file(marker)?;
-    // The decision is durable. A leftover snapshot has no authority over future operations.
-    let _ = std::fs::remove_file(prior);
     Ok(())
 }

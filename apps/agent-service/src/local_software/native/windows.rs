@@ -62,14 +62,6 @@ fn property(
         _ => Err(Error::Unavailable),
     }
 }
-pub(crate) fn machine_msi_version(product: uuid::Uuid) -> Result<Option<String>, Error> {
-    property(
-        &format!("{{{}}}", product.hyphenated()).to_ascii_uppercase(),
-        None,
-        4,
-        "VersionString",
-    )
-}
 fn flag(product: &str, subject: Option<&str>, view: u32, name: &str) -> Result<u32, Error> {
     let path = wide(&format!(
         "{}SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{}",

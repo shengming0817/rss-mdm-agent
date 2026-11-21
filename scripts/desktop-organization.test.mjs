@@ -287,7 +287,6 @@ test("real Agent generator CLI preserves user-readable public inputs under restr
 test("managed package formats use explicit machine service owners and escaped fixed inputs", async () => {
   const { msiSource, msixManifest } = await import("./windows-packages.mjs");
   const msi = msiSource({
-    sessionDll: "C:/build&sign/msi-session.dll",
     version: "1.2.3",
     target: "windows-amd64",
     id: "fixed-id",
@@ -319,33 +318,12 @@ test("managed package formats use explicit machine service owners and escaped fi
 
   assert.ok(msi.includes('Execute="deferred" Impersonate="no"'));
   assert.ok(msi.includes("C:/build&amp;sign/payload"));
-  assert.ok(
-    msi.includes(
-      "--installation msi-apply --msi-transaction &quot;[RssInstallationOperation]&quot; --candidate",
-    ),
-  );
+  assert.ok(msi.includes("--installation msi-apply --candidate"));
+  assert.ok(msi.includes("--installation msi-remove --binary"));
+  assert.ok(msi.includes('<Custom Action="SaveAgent" Before="RollbackAgent"'));
+  assert.ok(!msi.includes("CommitAgent"));
   assert.ok(msi.includes('Execute="rollback"'));
-  assert.ok(!msi.includes("ConfirmAgent"));
-  assert.ok(
-    msi.includes('<Custom Action="BeginAgent" Before="InstallInitialize"'),
-  );
-  assert.ok(msi.includes('DllEntry="RssBeginInstallation"'));
-  assert.ok(
-    msi.includes(
-      "--msi-product &quot;[ProductCode]&quot; --msi-version &quot;[ProductVersion]&quot; --package-path &quot;[OriginalDatabase]&quot;",
-    ),
-  );
   assert.ok(msi.includes("--installation msi-rollback"));
-  assert.ok(
-    msi.includes(
-      "--installation msi-remove --msi-transaction &quot;[RssInstallationOperation]&quot; --binary",
-    ),
-  );
-  assert.ok(
-    msi.includes('<Custom Action="PrepareAgent" Before="RollbackAgent"'),
-  );
-  assert.ok(msi.includes('<Custom Action="RollbackAgent" Before="SaveAgent"'));
-  assert.ok(msi.includes('Condition="NOT RollbackDisabled"'));
   assert.ok(msi.includes('Schedule="afterInstallExecute"'));
   assert.ok(
     msi.includes(

@@ -3,8 +3,6 @@
 mod apply;
 pub use apply::{apply_authorized_profile, AuthorizedProfile};
 mod lifecycle;
-#[cfg(any(windows, test))]
-mod msi_evidence;
 mod profile;
 pub use profile::{Assembly, Modules};
 mod unmanage;
@@ -81,6 +79,23 @@ pub struct LocalAccess {
     pub subjects: Vec<String>,
     pub helper_work_roots: BTreeMap<String, PathBuf>,
 }
+impl LocalAccess {
+    fn validate(&self) -> Result<(), Error> {
+        if self.subjects.len() > 64
+            || self
+                .subjects
+                .iter()
+                .any(|s| s.is_empty() || matches!(s.as_str(), "0" | "S-1-5-18"))
+            || self
+                .helper_work_roots
+                .iter()
+                .any(|(s, p)| !self.subjects.contains(s) || !p.is_absolute())
+        {
+            return Err(Error::Configuration);
+        }
+        Ok(())
+    }
+}
 pub fn digest_valid(value: &str) -> bool {
     value.len() == 64
         && value
@@ -122,13 +137,6 @@ impl Candidate {
             return Err(Error::Identity);
         }
         Ok(candidate)
-    }
-    fn load(path: &Path) -> Result<(Self, String), Error> {
-        let bytes =
-            installation_security::read_protected(path).map_err(|_| Error::Configuration)?;
-        let candidate: Self = serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
-        candidate.validate()?;
-        Ok((candidate, hash(&bytes)))
     }
     fn validate_trust(&self) -> Result<(), Error> {
         use base64::Engine;
@@ -257,23 +265,10 @@ impl Candidate {
         artifact: String,
         profile: LocalAccess,
         config: &Path,
+        old: Option<&Deployment>,
     ) -> Result<Deployment, Error> {
         let base = config.parent().ok_or(Error::Configuration)?;
-        if profile.subjects.len() > 64
-            || profile
-                .subjects
-                .iter()
-                .any(|s| s.is_empty() || matches!(s.as_str(), "0" | "S-1-5-18"))
-            || profile
-                .helper_work_roots
-                .iter()
-                .any(|(s, p)| !profile.subjects.contains(s) || !p.is_absolute())
-        {
-            return Err(Error::Configuration);
-        }
-        let mut interpreters = vec![];
-        let mut managers = vec![];
-        platform::execution_resources(&mut interpreters, &mut managers)?;
+        profile.validate()?;
         let clients = execution_ipc::host::PeerPolicy {
             images: vec![self.desktop.clone(), self.cli.clone()],
             subjects: profile.subjects.clone(),
@@ -304,17 +299,25 @@ impl Candidate {
                 subjects: profile.subjects,
                 interactive: true,
             },
-            execution: ExecutionConfig {
-                #[cfg(test)]
-                worker_image_fixture: None,
-                local_permissions: crate::local_permissions::Config {
-                    policy_file: base.join("local-permissions.json"),
-                },
-                work_root: base.join("work"),
-                material_root: base.join("materials"),
-                interpreters,
-                managers,
-                processes: 8,
+            execution: match old {
+                Some(old) => old.execution.clone(),
+                None => {
+                    let mut interpreters = vec![];
+                    let mut managers = vec![];
+                    platform::execution_resources(&mut interpreters, &mut managers)?;
+                    ExecutionConfig {
+                        #[cfg(test)]
+                        worker_image_fixture: None,
+                        local_permissions: crate::local_permissions::Config {
+                            policy_file: base.join("local-permissions.json"),
+                        },
+                        work_root: base.join("work"),
+                        material_root: base.join("materials"),
+                        interpreters,
+                        managers,
+                        processes: 8,
+                    }
+                }
             },
             helper_work_roots: profile.helper_work_roots,
         })

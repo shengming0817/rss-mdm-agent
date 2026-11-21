@@ -8,7 +8,6 @@ use uuid::Uuid;
 pub(super) enum Source {
     Package,
     Administrator,
-    Msi,
     Backend {
         instance: Uuid,
         tenant: Uuid,
@@ -26,7 +25,7 @@ pub(super) enum Phase {
     Publish,
     Register,
     Desktop,
-    AwaitCommit,
+    PublishRevision,
     RestoreDesktop,
     StopCandidate,
     RemoveCandidate,
@@ -90,7 +89,7 @@ impl Record {
             Publish => "publish-candidate",
             Register => "register-candidate",
             Desktop => "desktop-entry",
-            AwaitCommit => "await-msi-commit",
+            PublishRevision => "publish-profile-revision",
             RestoreDesktop => "restore-desktop",
             StopCandidate => "stop-candidate",
             RemoveCandidate => "remove-candidate",
@@ -110,22 +109,6 @@ impl Record {
         } else {
             Err(self.failure.unwrap_or(Error::Unavailable))
         }
-    }
-    fn observed(self) -> Result<Self, Error> {
-        #[cfg(windows)]
-        if self.phase == Phase::AwaitCommit {
-            if lifecycle::msi_applied(&self.config, self.operation)? {
-                return Ok(Self {
-                    phase: Phase::Applied,
-                    ..self
-                });
-            }
-            let j = Journal::new(&self.config)?;
-            if let Some(terminal) = j.read(&j.file(self.operation, "result"))? {
-                return Ok(terminal);
-            }
-        }
-        Ok(self)
     }
     fn report(&self) -> Result<(), Error> {
         let state = match self.phase {
@@ -262,9 +245,10 @@ impl Journal {
     }
 }
 
+pub(super) fn inactive_deployment(config: &Path) -> Result<PathBuf, Error> {
+    Ok(Journal::new(config)?.recovery_identity())
+}
 pub(super) fn ensure_idle(config: &Path) -> Result<(), Error> {
-    #[cfg(windows)]
-    lifecycle::ensure_outside_msi(config)?;
     let j = Journal::new(config)?;
     if j.read(&j.active())?.is_some_and(|r| !r.terminal()) {
         Err(Error::Conflict)
@@ -273,57 +257,6 @@ pub(super) fn ensure_idle(config: &Path) -> Result<(), Error> {
     }
 }
 
-#[cfg(any(windows, test))]
-pub(super) fn msi_awaiting(config: &Path, operation: Uuid) -> Result<(), Error> {
-    let j = Journal::new(config)?;
-    let r = j.read(&j.active())?.ok_or(Error::NotFound)?;
-    if r.source == Source::Msi
-        && r.operation == operation
-        && r.config == config
-        && r.phase == Phase::AwaitCommit
-    {
-        Ok(())
-    } else {
-        Err(Error::Conflict)
-    }
-}
-#[cfg(any(windows, test))]
-pub(super) fn finish_msi(config: &Path, operation: Uuid, commit: bool) -> Result<(), Error> {
-    let j = Journal::new(config)?;
-    let Some(mut r) = j.read(&j.active())? else {
-        return match j.read(&j.file(operation, "result"))? {
-            Some(r)
-                if r.source == Source::Msi
-                    && r.config == config
-                    && (r.phase == Phase::Applied) == commit =>
-            {
-                Ok(())
-            }
-            None if !commit => Ok(()),
-            _ => Err(Error::Conflict),
-        };
-    };
-    if r.operation != operation || r.config != config || r.source != Source::Msi {
-        return Err(Error::Conflict);
-    }
-    if commit {
-        if !matches!(r.phase, Phase::AwaitCommit | Phase::Applied) {
-            return Err(Error::Conflict);
-        }
-        r.phase = Phase::Applied;
-    } else {
-        if r.phase == Phase::Applied {
-            return Err(Error::Conflict);
-        }
-        rollback(&mut r, config, Error::Unavailable)?;
-        j.save(&r)?;
-        if !r.terminal() {
-            drive(config, None, &j, &mut r)?;
-        }
-    }
-    j.save(&r)?;
-    j.archive(&r)
-}
 pub(super) fn status(config: &Path, id: Uuid) -> Result<bool, Error> {
     let j = Journal::new(config)?;
     let record = match j.read(&j.active())?.filter(|r| r.operation == id) {
@@ -334,7 +267,7 @@ pub(super) fn status(config: &Path, id: Uuid) -> Result<bool, Error> {
         if r.config != config || r.operation != id {
             return Err(Error::Identity);
         }
-        r.observed()?.report()?;
+        r.report()?;
         Ok(true)
     } else {
         Ok(false)
@@ -375,8 +308,6 @@ pub(super) fn module_status(config: &Path) -> Result<(), Error> {
     let j = Journal::new(config)?;
     let pending = j
         .read(&j.active())?
-        .map(Record::observed)
-        .transpose()?
         .filter(|r| !r.terminal())
         .map(|r| r.operation);
     outcome::details(serde_json::json!({
@@ -422,7 +353,7 @@ fn prepare(
 ) -> Result<(), Error> {
     let original = optional(config)?;
     let active = original.is_some();
-    let recovery = j.recovery_identity();
+    let recovery = inactive_deployment(config)?;
     let old = if active {
         Some(Deployment::metadata(config)?)
     } else if recovery.try_exists()? {
@@ -459,7 +390,7 @@ fn prepare(
                 }
                 p.modules.authorize_update(d)?;
             }
-            let (a, m) = p.resolve(candidate, old.as_ref())?;
+            let (a, m) = p.resolve(old.as_ref())?;
             (a, Some(m))
         }
         None => match &old {
@@ -471,15 +402,33 @@ fn prepare(
         m.validate(candidate)?;
         r.revision = Some(m.revision);
     }
-    platform::preflight_desktop_entry(candidate)?;
+    let package = r.source == Source::Package;
+    if package {
+        platform::preflight_desktop_entry(candidate)?;
+    }
     let staged = j.file(r.operation, "after");
     let target = j.plan(r.operation, || {
-        let mut next = candidate.deployment(r.artifact.clone(), access, config)?;
-        next.installation_id = r.installation;
+        let mut next = if package {
+            let mut next =
+                candidate.deployment(r.artifact.clone(), access, config, old.as_ref())?;
+            next.installation_id = r.installation;
+            if let Some(old) = &old {
+                lifecycle::inherit(old, &mut next)?;
+            }
+            next
+        } else {
+            let mut next = old
+                .as_ref()
+                .filter(|_| active)
+                .ok_or(Error::NotFound)?
+                .clone();
+            access.validate()?;
+            next.registration_clients.subjects = access.subjects.clone();
+            next.clients.subjects = access.subjects;
+            next.helper_work_roots = access.helper_work_roots;
+            next
+        };
         next.modules = modules.clone();
-        if let Some(old) = &old {
-            lifecycle::inherit(old, &mut next)?;
-        }
         match (&old, &original) {
             (Some(old), Some(bytes)) if json(old)? == json(&next)? => Ok(bytes.clone()),
             _ => json(&next),
@@ -508,14 +457,29 @@ fn prepare(
     } else if next.state_root.try_exists()? {
         return Err(Error::Identity);
     }
-    retain_public(&j.file(r.operation, "desktop"), &json(candidate)?)?;
+    if package {
+        retain_public(&j.file(r.operation, "desktop"), &json(candidate)?)?;
+    }
     if let Some(before) = original {
         retain_public(&j.file(r.operation, "before"), &before)?;
         r.before = Some(hash(&before));
     }
     r.after = Some(hash(&target));
     if let Some(old) = old.as_ref().filter(|_| active) {
-        lifecycle::preflight_refresh(old, config, &next, &staged)?;
+        if !package && same_runtime(old, &next) {
+            r.phase = Phase::PublishRevision;
+            return Ok(());
+        }
+        if package {
+            lifecycle::preflight_refresh(old, config, &next, &staged)?;
+        } else {
+            Deployment::load(&staged)?;
+        }
+        r.phase = if r.before == r.after {
+            Phase::Register
+        } else {
+            Phase::Stop
+        };
     } else {
         if let Some(ca) = &next.ca_file {
             retain_public(
@@ -531,16 +495,24 @@ fn prepare(
         if old.is_some() {
             lifecycle::preflight_candidate_state(&next, &staged)?;
         }
+        r.phase = Phase::Publish;
     }
-    // A byte-equivalent effective deployment needs only native registration readback/repair.
-    r.phase = if r.before == r.after {
-        Phase::Register
-    } else if active {
-        Phase::Stop
-    } else {
-        Phase::Publish
-    };
     Ok(())
+}
+
+// Both selections have been validated against this exact installed candidate. On a
+// baseline installation without explicit modules, the package already runs MDM alone.
+fn same_runtime(old: &Deployment, next: &Deployment) -> bool {
+    let same_modules = match (&old.modules, &next.modules) {
+        (Some(a), Some(b)) => a.mdm == b.mdm && a.da == b.da,
+        (None, Some(b)) => b.mdm.enabled() && !b.da.enabled(),
+        (None, None) => true,
+        (Some(_), None) => false,
+    };
+    same_modules
+        && old.clients.subjects == next.clients.subjects
+        && old.registration_clients.subjects == next.registration_clients.subjects
+        && old.helper_work_roots == next.helper_work_roots
 }
 
 fn snapshot(path: &Path, digest: &str) -> Result<Vec<u8>, Error> {
@@ -557,6 +529,18 @@ fn rollback(r: &mut Record, config: &Path, failure: Error) -> Result<(), Error> 
     if r.compensating() || r.terminal() {
         return Ok(());
     }
+    if r.phase == Phase::PublishRevision {
+        let pointer = optional(config)?.as_deref().map(hash);
+        if pointer == r.after && r.before != r.after {
+            r.phase = Phase::Applied;
+        } else if pointer == r.before {
+            r.fail(failure);
+            r.phase = Phase::Rejected;
+        } else {
+            return Err(Error::Conflict);
+        }
+        return Ok(());
+    }
     r.fail(failure);
     if r.phase == Phase::Received {
         r.phase = Phase::Rejected;
@@ -564,10 +548,8 @@ fn rollback(r: &mut Record, config: &Path, failure: Error) -> Result<(), Error> 
     }
     let active = optional(config)?.as_deref().map(hash);
     r.phase = if active == r.after
-        && matches!(
-            r.phase,
-            Phase::Publish | Phase::Register | Phase::Desktop | Phase::AwaitCommit
-        ) {
+        && matches!(r.phase, Phase::Publish | Phase::Register | Phase::Desktop)
+    {
         Phase::StopCandidate
     } else if active == r.before {
         if r.before.is_some() {
@@ -610,6 +592,24 @@ fn drive(
     }
 
     let operation = r.operation;
+    if r.phase == PublishRevision {
+        let pointer = optional(config)?;
+        if pointer == previous {
+            if let Err(error) = verify_backend(&r.source, old.as_ref()) {
+                r.fail(error);
+                r.phase = Rejected;
+                return j.save(r);
+            }
+            if pointer.as_ref() != Some(&next_bytes) {
+                publish(config, &next_bytes)?;
+            }
+        } else if pointer.as_ref() != Some(&next_bytes) {
+            return Err(Error::Conflict);
+        }
+        r.phase = Applied;
+        return j.save(r);
+    }
+    let package = r.source == Source::Package;
     drive_steps(
         r,
         old.is_some(),
@@ -653,7 +653,9 @@ fn drive(
                     }
                 }
                 Publish => {
-                    crate::local_permissions::initialize(&next.execution.local_permissions)?;
+                    if package {
+                        crate::local_permissions::initialize(&next.execution.local_permissions)?;
+                    }
                     publish(config, &next_bytes)
                 }
                 Register => platform::register(true, &next.service.path, config),
@@ -692,7 +694,8 @@ fn drive_steps(
     mut effect: impl FnMut(Phase) -> Result<(), Error>,
 ) -> Result<(), Error> {
     use Phase::*;
-    while !r.terminal() && r.phase != AwaitCommit {
+    let package = r.source == Source::Package;
+    while !r.terminal() {
         authorize(r)?;
         if r.terminal() {
             break;
@@ -700,19 +703,18 @@ fn drive_steps(
         let step = r.phase;
         r.phase = match effect(step) {
             Ok(()) => match step {
-                Stop => Remove,
+                Stop if package => Remove,
+                Stop => Publish,
                 CancelStop => Restart,
                 Remove => Publish,
                 Publish => Register,
-                Register => Desktop,
-                Desktop if r.source == Source::Msi => AwaitCommit,
-                Desktop => Applied,
-                StopCandidate => RemoveCandidate,
+                Register if package => Desktop,
+                Register | Desktop => Applied,
+                StopCandidate if package => RemoveCandidate,
+                StopCandidate => Restore,
                 RemoveCandidate => Restore,
                 Restore if upgrading => Restart,
-                Restore | Restart if matches!(r.failure_phase, Some(Desktop | AwaitCommit)) => {
-                    RestoreDesktop
-                }
+                Restore | Restart if matches!(r.failure_phase, Some(Desktop)) => RestoreDesktop,
                 Restore | Restart | RestoreDesktop => Rejected,
                 _ => return Err(Error::Storage),
             },
@@ -754,9 +756,7 @@ pub(super) fn run(
     source: Source,
 ) -> Result<(), Error> {
     #[cfg(windows)]
-    if source != Source::Msi {
-        lifecycle::ensure_outside_msi(config)?;
-    }
+    lifecycle::allow_configuration_write(config)?;
     let j = Journal::new(config)?;
     j.create()?;
     let digest = profile.map(hash);
@@ -872,16 +872,24 @@ pub(super) fn run(
     let candidate = if record.compensating() || record.terminal() {
         None
     } else {
-        let result = Candidate::load(&manifests.join(format!("{}.json", record.artifact)))
-            .and_then(|(c, digest)| {
-                if digest != record.artifact {
-                    return Err(Error::Identity);
-                }
-                if c.format()? == "windows_msix" {
+        let result = (|| {
+            let path = manifests.join(format!("{}.json", record.artifact));
+            let bytes = snapshot(&path, &record.artifact)?;
+            let candidate: Candidate =
+                serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
+            if record.source == Source::Package {
+                candidate.validate()?;
+                if candidate.format()? == "windows_msi" {
                     return Err(Error::Unsupported);
                 }
-                Ok(c)
-            });
+            } else {
+                candidate.validate_trust()?;
+            }
+            if candidate.format()? == "windows_msix" {
+                return Err(Error::Unsupported);
+            }
+            Ok(candidate)
+        })();
         match result {
             Ok(c) => Some(c),
             Err(e) => {
@@ -909,7 +917,7 @@ pub(super) fn run(
         record.initial_access = None;
         j.save(&record)?;
     }
-    if !record.terminal() && record.phase != Phase::AwaitCommit {
+    if !record.terminal() {
         if let Err(error) = drive(config, candidate.as_ref(), &j, &mut record) {
             // Only publication has ambiguous success. Resolve from its durable pointer.
             if record.phase != Phase::Publish {
@@ -921,9 +929,6 @@ pub(super) fn run(
                 drive(config, None, &j, &mut record)?;
             }
         }
-    }
-    if record.phase == Phase::AwaitCommit {
-        return record.report();
     }
     record.input = None;
     j.save(&record)?;
@@ -979,7 +984,7 @@ mod tests {
     fn record(phase: Phase) -> Record {
         Record {
             operation: Uuid::from_u128(11),
-            source: Source::Administrator,
+            source: Source::Package,
             config: "/unused".into(),
             artifact: "a".repeat(64),
             profile_digest: None,
@@ -1026,6 +1031,141 @@ mod tests {
             .unwrap();
         assert_eq!(archived.result(), Err(Error::Unsupported));
         assert!(archived.input.is_none());
+    }
+
+    #[test]
+    fn installed_runtime_change_only_stops_publishes_and_starts() {
+        use Phase::*;
+        let mut r = record(Stop);
+        r.source = Source::Administrator;
+        let mut steps = Vec::new();
+        drive_steps(
+            &mut r,
+            true,
+            |_| Ok(()),
+            |_| Ok(()),
+            |step| {
+                steps.push(step);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(r.phase, Applied);
+        assert_eq!(steps, [Stop, Publish, Register]);
+
+        r.phase = Stop;
+        steps.clear();
+        drive_steps(
+            &mut r,
+            true,
+            |_| Ok(()),
+            |_| Ok(()),
+            |step| {
+                steps.push(step);
+                if step == Register {
+                    Err(Error::Unavailable)
+                } else {
+                    Ok(())
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(r.phase, Rejected);
+        assert_eq!(
+            steps,
+            [Stop, Publish, Register, StopCandidate, Restore, Restart]
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires root and a root-owned TMPDIR for the real profile CLI"]
+    fn revision_only_cli_preserves_installed_deployment_and_replays_its_result() {
+        let root = crate::protocol_test_support::Root::new();
+        let candidate = super::super::tests::candidate(&root);
+        let config = root.path.join("deployment.json");
+        let mut old = crate::deployment::tests::deployment();
+        old.state_root = root.path.join("state");
+        old.execution.material_root = root.path.join("materials");
+        old.tenant = candidate.tenant;
+        old.signing_keys = candidate.signing_keys.clone();
+        old.service = candidate.service.clone();
+        old.cli = Some(execution_ipc::entry::CliPolicy {
+            image: candidate.cli.clone(),
+            machine_actions: vec![],
+        });
+        let ca = root.path.join("ca.pem");
+        let pem = candidate.ca_pem.as_ref().unwrap().as_bytes();
+        publish(&ca, pem).unwrap();
+        old.ca_file = Some(ca);
+        let manifest = json(&candidate).unwrap();
+        old.installation_artifact = hash(&manifest);
+        let manifests = root.path.join("install-manifests");
+        platform::public_directory(&manifests).unwrap();
+        publish(
+            &manifests.join(format!("{}.json", old.installation_artifact)),
+            &manifest,
+        )
+        .unwrap();
+        let module = profile::Module::Enabled {
+            backend: profile::Backend {
+                instance: old.service_id,
+                tenant: old.tenant,
+                origin: candidate.connections.configuration.preferred_origin.clone(),
+                ca_sha256: hash(pem),
+                signing_keys: old.signing_keys.clone(),
+            },
+        };
+        old.modules = Some(Modules {
+            revision: 7,
+            mdm: module,
+            da: profile::Module::Disabled,
+        });
+        publish(&config, &json(&old).unwrap()).unwrap();
+        let mut expected = old.clone();
+        expected.modules.as_mut().unwrap().revision = 8;
+        let path = root.path.join("profile");
+        let profile = serde_json::json!({"modules":expected.modules,"subjects":old.clients.subjects,"helper_work_roots":old.helper_work_roots});
+        publish(&path, &json(&profile).unwrap()).unwrap();
+        let id = Uuid::new_v4();
+        let args = |id: Uuid| {
+            vec![
+                "apply".into(),
+                "--config".into(),
+                config.clone().into(),
+                "--profile".into(),
+                path.clone().into(),
+                "--operation".into(),
+                id.to_string().into(),
+            ]
+        };
+        // No images, service registration or desktop resources exist in this isolated deployment.
+        // The real CLI must persist revision 8 and return the original result on replay.
+        lifecycle::run(&args(id)).unwrap();
+        lifecycle::run(&args(id)).unwrap();
+        let j = Journal::new(&config).unwrap();
+        assert_eq!(
+            j.read(&j.file(id, "result")).unwrap().unwrap().phase,
+            Phase::Applied
+        );
+        assert_eq!(
+            optional(&config).unwrap().unwrap(),
+            json(&expected).unwrap()
+        );
+        let mut invalid = profile;
+        invalid["modules"]["revision"] = 9.into();
+        invalid["modules"]["da"] = invalid["modules"]["mdm"].clone();
+        publish(&path, &json(&invalid).unwrap()).unwrap();
+        let bad = Uuid::new_v4();
+        assert_eq!(lifecycle::run(&args(bad)), Err(Error::Unsupported));
+        assert_eq!(
+            j.read(&j.file(bad, "result")).unwrap().unwrap().phase,
+            Phase::Rejected
+        );
+        assert_eq!(
+            optional(&config).unwrap().unwrap(),
+            json(&expected).unwrap()
+        );
     }
 
     #[test]
@@ -1154,115 +1294,6 @@ mod tests {
                 RestoreDesktop,
                 RestoreDesktop
             ]
-        );
-    }
-
-    #[test]
-    fn msi_receipt_stays_pending_until_outer_commit_and_commit_is_idempotent() {
-        let temp = crate::protocol_test_support::Root::new();
-        let config = temp.path.join("deployment.json");
-        let j = Journal::new(&config).unwrap();
-        std::fs::create_dir(j.root.parent().unwrap()).unwrap();
-        platform_private_storage::directory(&j.root).unwrap();
-        let mut r = record(Phase::Desktop);
-        r.config = config.clone();
-        r.source = Source::Msi;
-        drive_steps(&mut r, true, |_| Ok(()), |r| j.save(r), |_| Ok(())).unwrap();
-        assert_eq!(r.phase, Phase::AwaitCommit);
-        assert!(j.read(&j.file(r.operation, "result")).unwrap().is_none());
-        assert!(status(&config, r.operation).unwrap());
-        msi_awaiting(&config, r.operation).unwrap();
-        assert!(msi_awaiting(&config, Uuid::new_v4()).is_err());
-        finish_msi(&config, r.operation, true).unwrap();
-        finish_msi(&config, r.operation, true).unwrap();
-        assert!(status(&config, r.operation).unwrap());
-        assert_eq!(
-            j.read(&j.file(r.operation, "result"))
-                .unwrap()
-                .unwrap()
-                .phase,
-            Phase::Applied
-        );
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    #[ignore = "requires root and a root-owned TMPDIR to validate the real installation filesystem"]
-    fn msi_commit_keeps_rollback_evidence_when_archiving_fails_and_save_is_recoverable() {
-        use super::super::msi_evidence::tests::{observed, ticket};
-        use lifecycle::Action::*;
-        let msi_transaction = |action, config: &Path, id| {
-            let engine = matches!(action, MsiSave).then(ticket);
-            lifecycle::msi_transaction(action, config, id, engine)
-        };
-        let tmp = crate::protocol_test_support::Root::new();
-        let config = tmp.path.join("deployment.json");
-        let pending = config.with_extension("msi-rollback");
-        let finalizing = config.with_extension("msi-finalizing");
-        let confirmed = config.with_extension("msi-confirmed");
-        let first = Uuid::new_v4();
-        msi_transaction(MsiPrepare, &config, first).unwrap();
-        msi_transaction(MsiSave, &config, first).unwrap();
-        msi_transaction(MsiRollback, &config, first).unwrap();
-        assert!(!pending.exists());
-
-        let mut r = record(Phase::AwaitCommit);
-        r.config = config.clone();
-        r.source = Source::Msi;
-        msi_transaction(MsiSave, &config, r.operation).unwrap();
-        let j = Journal::new(&config).unwrap();
-        j.create().unwrap();
-        j.save(&r).unwrap();
-        let result = j.file(r.operation, "result");
-        std::fs::create_dir(&result).unwrap();
-        msi_transaction(MsiCommit, &config, r.operation).unwrap();
-        // Simulate engine exit before successful InstallFinalize. Neither a later prepare,
-        // an unrelated confirmation, nor the absence of any running installer can settle it.
-        let next = Uuid::new_v4();
-        assert!(msi_transaction(MsiPrepare, &config, next).is_err());
-        assert!(lifecycle::reconcile_msi(&config, |t, r| observed(t, r, false)).is_err());
-        assert!(msi_transaction(MsiRollback, &config, next).is_err());
-        assert!(!lifecycle::msi_applied(&config, r.operation).unwrap());
-        assert!(finalizing.exists());
-        assert_eq!(
-            j.read(&j.active()).unwrap().unwrap().phase,
-            Phase::AwaitCommit
-        );
-
-        assert!(lifecycle::reconcile_msi(&config, |t, r| observed(t, r, true)).is_err());
-        assert!(lifecycle::msi_applied(&config, r.operation).unwrap());
-        // Failed history archival occurs only after confirmed success and retains the proof.
-        assert!(msi_transaction(MsiPrepare, &config, next).is_err());
-        assert!(confirmed.exists());
-        std::fs::remove_dir(result).unwrap();
-        msi_transaction(MsiPrepare, &config, next).unwrap();
-        assert!(!confirmed.exists());
-        assert_eq!(
-            j.read(&j.file(r.operation, "result"))
-                .unwrap()
-                .unwrap()
-                .phase,
-            Phase::Applied
-        );
-
-        // If the engine instead runs rollback, its matching transaction can reject the
-        // operation and release the marker even after the commit hook was invoked.
-        let rolled_back = Uuid::new_v4();
-        msi_transaction(MsiSave, &config, rolled_back).unwrap();
-        r.operation = rolled_back;
-        r.phase = Phase::AwaitCommit;
-        r.after = Some(hash(b"candidate"));
-        r.before = None;
-        j.save(&r).unwrap();
-        msi_transaction(MsiCommit, &config, rolled_back).unwrap();
-        msi_transaction(MsiRollback, &config, rolled_back).unwrap();
-        assert!(!finalizing.exists());
-        assert_eq!(
-            j.read(&j.file(rolled_back, "result"))
-                .unwrap()
-                .unwrap()
-                .phase,
-            Phase::Rejected
         );
     }
 

@@ -145,12 +145,7 @@ impl Modules {
 }
 
 impl Profile {
-    pub(super) fn resolve(
-        self,
-        candidate: &Candidate,
-        old: Option<&Deployment>,
-    ) -> Result<(LocalAccess, Modules), Error> {
-        self.modules.validate(candidate)?;
+    pub(super) fn resolve(self, old: Option<&Deployment>) -> Result<(LocalAccess, Modules), Error> {
         if let Some((old, previous)) = old.and_then(|d| d.modules.as_ref().map(|m| (d, m))) {
             if self.modules.revision < previous.revision
                 || self.modules.revision == previous.revision

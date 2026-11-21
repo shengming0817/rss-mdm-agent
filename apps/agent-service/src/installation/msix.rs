@@ -56,6 +56,7 @@ pub fn initialize() -> Result<Deployment, Error> {
     candidate.validate()?;
     let config = Deployment::default_path()?;
     let _lock = super::lifecycle::installation_lock(&config, true)?;
+    super::lifecycle::allow_configuration_write(&config)?;
     super::apply::ensure_idle(&config)?;
     let old = match std::fs::symlink_metadata(&config) {
         Ok(_) => Some(Deployment::metadata(&config)?),
@@ -74,7 +75,7 @@ pub fn initialize() -> Result<Deployment, Error> {
         .join("install-manifests");
     platform::public_directory(&manifests)?;
     retain_public(&manifests.join(format!("{digest}.json")), &bytes)?;
-    let mut next = candidate.deployment(digest, profile, &config)?;
+    let mut next = candidate.deployment(digest, profile, &config, old.as_ref())?;
     if let Some(old) = old {
         next.modules = old.modules.clone();
         if let Some(modules) = &next.modules {
