@@ -65,6 +65,8 @@ Windows EXE 接受 `/S /PROFILE=绝对路径`。macOS PKG 从 `/Library/Applicat
 
 受控卸载移除本安装服务和程序，按本安装凭据创建记录清理精确 Keychain/CNG/DPAPI 引用；首次初始化持有完整目录标记，旧安装缺少此标记时不能证明历史轮换凭据全部清理，删除已知引用后持久记录不完整证明并上报 Unknown，不永久重试，不自动回填或扩大为全机扫描；升级替换仍保留 installation ID、凭据和原任务。完成清理后删除本安装运行状态、执行材料和 work 目录，重新安装必须经新的注册授权，不继承旧任务。卸载先在 payload 外保留固定摘要的恢复程序及受保护 `install-operations/<任务 UUID>.retirement-work.json` 交接，逐阶段记录停止、程序移除、凭据清理、状态清理和载体最终回收；恢复不依赖已经删除的通信库或程序目录。恢复持有安装锁并核对当前安装身份，不能清理后来复用同一路径的新安装。launchd/SCM 对未完成的同一任务重试；阻塞的桌面应用退出后可继续。主体清理完成后先持久记录，再回收恢复载体；两者有独立完成判据，主体终态落盘后的恢复仍会回收载体。macOS 最终回收由固定参数的系统 shell launchd job 完成，Windows 先持久注册独立 SYSTEM 计划任务（注册与启动触发、固定周期重试），使用系统工具确认精确 SCM worker 已消失后再删除载体 EXE，最后删除自身任务；固定批处理定义与 JSON 一起保留为受保护审计；回收或回执未确认仍保留 Unknown。OS 历史日志、交接与受保护 `install-operations/<任务 UUID>.retirement.json` 安装结果保留。结果通过删除凭据前保留的内存传输提交，不复制长期凭据；响应丢失仍是未确认。当前固定安装 owner 仅对 macOS PKG、Windows NSIS 广告远程退管能力；MSI 缺少固定产品身份的远程包管理器接线，不广告该能力，已有授权的 MSI Remove 仍进入同一清理 owner；MSIX 的 Package Manager 卸载不冒充该安装 owner，保留不支持状态。Windows 独立回收任务接纳后报告 Unknown，交接成功不等于已经删除；真实平台效果由独立 T3 核实。
 
+Windows MSI 为每次执行序列生成独立 UUID。提交钩子执行后，操作保持待确认；同一序列在 `InstallFinalize` 成功返回后写入确认，或在引擎回滚时按原 UUID 恢复。引擎中断、确认回调未送达或 UUID 不符时，状态查询返回未决并保留补偿快照。后续安装遇到这类未决事务会返回冲突。
+
 Windows 安装操作返回 UUID 和不含输入内容的阶段回执。等待超时表示结果未知，worker 可能仍在运行；使用 `--installation operation-status --operation <UUID>` 核实，确认进程退出后回收该 worker。回执保留失败阶段、闭合错误、可得的原生退出码和补偿结果；超时后不要据命令退出自行删除正在使用的程序。
 
 需要在开发 Mac 重复验证全新安装时，使用 `sudo python3 scripts/service/reinstall-macos-sit.py --package /absolute/agent.pkg --sha256 <发布包摘要> --tenant <SIT租户UUID>`。加 `--plan` 可先查看清理范围。脚本校验已安装的开发包与目标租户，停止本产品进程，删除该安装名下的设备 Keychain 条目、本地注册和桌面状态，再调用系统安装器安装校验过的 PKG；不归档，不删除其他应用凭据或服务端记录。清理后按首次注册流程生成新设备身份，不能把它记录为原身份升级验证。

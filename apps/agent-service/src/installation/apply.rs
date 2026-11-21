@@ -1193,43 +1193,71 @@ mod tests {
         let tmp = crate::protocol_test_support::Root::new();
         let config = tmp.path.join("deployment.json");
         let pending = config.with_extension("msi-rollback");
-        let committed = config.with_extension("msi-committed");
-        msi_transaction(MsiPrepare, &config).unwrap();
-        msi_transaction(MsiSave, &config).unwrap();
-        // The rollback action was scheduled before the first new marker was written.
-        msi_transaction(MsiRollback, &config).unwrap();
+        let finalizing = config.with_extension("msi-finalizing");
+        let confirmed = config.with_extension("msi-confirmed");
+        let first = Uuid::new_v4();
+        msi_transaction(MsiPrepare, &config, first).unwrap();
+        msi_transaction(MsiSave, &config, first).unwrap();
+        msi_transaction(MsiRollback, &config, first).unwrap();
         assert!(!pending.exists());
-        msi_transaction(MsiSave, &config).unwrap();
-        let tx: serde_json::Value =
-            serde_json::from_slice(&installation_security::read_protected(&pending).unwrap())
-                .unwrap();
+
         let mut r = record(Phase::AwaitCommit);
-        r.operation = serde_json::from_value(tx["operation"].clone()).unwrap();
         r.config = config.clone();
         r.source = Source::Msi;
+        msi_transaction(MsiSave, &config, r.operation).unwrap();
         let j = Journal::new(&config).unwrap();
         j.create().unwrap();
         j.save(&r).unwrap();
         let result = j.file(r.operation, "result");
         std::fs::create_dir(&result).unwrap();
-        msi_transaction(MsiCommit, &config).unwrap();
-        assert!(committed.exists());
+        msi_transaction(MsiCommit, &config, r.operation).unwrap();
+        // Simulate engine exit before successful InstallFinalize. Neither a later prepare,
+        // an unrelated confirmation, nor the absence of any running installer can settle it.
+        let next = Uuid::new_v4();
+        assert!(msi_transaction(MsiPrepare, &config, next).is_err());
+        assert!(msi_transaction(MsiConfirm, &config, next).is_err());
+        assert!(msi_transaction(MsiRollback, &config, next).is_err());
+        assert!(!lifecycle::msi_applied(&config, r.operation).unwrap());
+        assert!(finalizing.exists());
         assert_eq!(
             j.read(&j.active()).unwrap().unwrap().phase,
             Phase::AwaitCommit
         );
-        // Archiving is deferred until the engine exits. A failure retains this decision for retry.
-        assert!(msi_transaction(MsiPrepare, &config).is_err());
-        assert!(committed.exists());
+
+        msi_transaction(MsiConfirm, &config, r.operation).unwrap();
+        assert!(lifecycle::msi_applied(&config, r.operation).unwrap());
+        // Failed history archival occurs only after confirmed success and retains the proof.
+        assert!(msi_transaction(MsiPrepare, &config, next).is_err());
+        assert!(confirmed.exists());
         std::fs::remove_dir(result).unwrap();
-        msi_transaction(MsiPrepare, &config).unwrap();
-        assert!(!committed.exists());
+        msi_transaction(MsiPrepare, &config, next).unwrap();
+        assert!(!confirmed.exists());
         assert_eq!(
             j.read(&j.file(r.operation, "result"))
                 .unwrap()
                 .unwrap()
                 .phase,
             Phase::Applied
+        );
+
+        // If the engine instead runs rollback, its matching transaction can reject the
+        // operation and release the marker even after the commit hook was invoked.
+        let rolled_back = Uuid::new_v4();
+        msi_transaction(MsiSave, &config, rolled_back).unwrap();
+        r.operation = rolled_back;
+        r.phase = Phase::AwaitCommit;
+        r.after = Some(hash(b"candidate"));
+        r.before = None;
+        j.save(&r).unwrap();
+        msi_transaction(MsiCommit, &config, rolled_back).unwrap();
+        msi_transaction(MsiRollback, &config, rolled_back).unwrap();
+        assert!(!finalizing.exists());
+        assert_eq!(
+            j.read(&j.file(rolled_back, "result"))
+                .unwrap()
+                .unwrap()
+                .phase,
+            Phase::Rejected
         );
     }
 

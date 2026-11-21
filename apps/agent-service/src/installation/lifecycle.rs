@@ -23,6 +23,8 @@ pub(super) enum Action {
     MsiRollback,
     #[cfg(any(windows, test))]
     MsiCommit,
+    #[cfg(any(windows, test))]
+    MsiConfirm,
 }
 impl Action {
     fn parse(value: &str) -> Result<Self, Error> {
@@ -37,6 +39,8 @@ impl Action {
             "msi-save" => Ok(Self::MsiSave),
             #[cfg(windows)]
             "msi-rollback" => Ok(Self::MsiRollback),
+            #[cfg(windows)]
+            "msi-confirm" => Ok(Self::MsiConfirm),
             #[cfg(windows)]
             "msi-commit" => Ok(Self::MsiCommit),
             "install" => Ok(Self::Install),
@@ -85,6 +89,7 @@ impl Options {
                 "--grant",
                 "--secret-file",
                 "--operation",
+                "--msi-transaction",
             ]
             .contains(&key)
                 || values.insert(key.into(), PathBuf::from(&pair[1])).is_some()
@@ -107,6 +112,15 @@ impl Options {
             return Err(Error::Configuration);
         }
         Ok(path.clone())
+    }
+    #[cfg(any(windows, test))]
+    fn msi_operation(&self) -> Result<uuid::Uuid, Error> {
+        self.values
+            .get("--msi-transaction")
+            .and_then(|value| value.to_str())
+            .and_then(|value| uuid::Uuid::parse_str(value).ok())
+            .filter(|id| !id.is_nil())
+            .ok_or(Error::Configuration)
     }
     fn config(&self) -> Result<PathBuf, Error> {
         if self.values.contains_key("--config") {
@@ -190,6 +204,7 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
             Action::MsiPrepare
                 | Action::MsiRollback
                 | Action::MsiApply
+                | Action::MsiConfirm
                 | Action::MsiCommit
                 | Action::MsiRemove
         );
@@ -203,7 +218,10 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
             if !opts.system()? || config != Deployment::default_path()? {
                 return Err(Error::Denied);
             }
-            let mut transaction = msi_snapshot(&config.with_extension("msi-rollback"))?;
+            let mut transaction = matching_msi(
+                &config.with_extension("msi-rollback"),
+                opts.msi_operation()?,
+            )?;
             let task = opts
                 .values
                 .get("--operation")
@@ -220,7 +238,10 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
             if !opts.system()? || config != Deployment::default_path()? {
                 return Err(Error::Denied);
             }
-            let transaction = msi_snapshot(&config.with_extension("msi-rollback"))?;
+            let transaction = matching_msi(
+                &config.with_extension("msi-rollback"),
+                opts.msi_operation()?,
+            )?;
             if transaction.removing {
                 return Err(Error::Conflict);
             }
@@ -233,11 +254,15 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
             )?;
         }
         #[cfg(any(windows, test))]
-        Action::MsiPrepare | Action::MsiSave | Action::MsiRollback | Action::MsiCommit => {
+        Action::MsiPrepare
+        | Action::MsiSave
+        | Action::MsiRollback
+        | Action::MsiCommit
+        | Action::MsiConfirm => {
             if !opts.system()? || opts.config()? != Deployment::default_path()? {
                 return Err(Error::Identity);
             }
-            return msi_transaction(action, &opts.config()?);
+            return msi_transaction(action, &opts.config()?, opts.msi_operation()?);
         }
         Action::Install => {
             let binary = opts.path("--binary")?;
@@ -862,28 +887,24 @@ struct MsiSnapshot {
     before: Option<String>,
     removing: bool,
 }
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 pub(super) fn ensure_outside_msi(config: &Path) -> Result<(), Error> {
-    if config.with_extension("msi-rollback").try_exists()? {
+    if config.with_extension("msi-rollback").try_exists()?
+        || config.with_extension("msi-finalizing").try_exists()?
+    {
         return Err(Error::Conflict);
     }
-    if config.with_extension("msi-committed").try_exists()? {
-        if platform::msi_executing()? {
-            return Err(Error::Conflict);
-        }
-        settle_committed_msi(config)?;
-    }
-    Ok(())
+    settle_confirmed_msi(config)
 }
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 pub(super) fn msi_applied(config: &Path, operation: uuid::Uuid) -> Result<bool, Error> {
-    let committed = config.with_extension("msi-committed");
-    if !committed.try_exists()? || platform::msi_executing()? {
+    let confirmed = config.with_extension("msi-confirmed");
+    if !confirmed.try_exists()? {
         return Ok(false);
     }
-    match msi_snapshot(&committed) {
+    match msi_snapshot(&confirmed) {
         Ok(tx) => Ok(tx.operation == operation),
-        Err(_) if !committed.try_exists()? => Ok(false),
+        Err(_) if !confirmed.try_exists()? => Ok(false),
         Err(e) => Err(e),
     }
 }
@@ -893,8 +914,8 @@ fn msi_snapshot(path: &Path) -> Result<MsiSnapshot, Error> {
     serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)
 }
 #[cfg(any(windows, test))]
-fn settle_committed_msi(config: &Path) -> Result<(), Error> {
-    let marker = config.with_extension("msi-committed");
+fn settle_confirmed_msi(config: &Path) -> Result<(), Error> {
+    let marker = config.with_extension("msi-confirmed");
     if !marker.try_exists()? {
         return Ok(());
     }
@@ -907,19 +928,28 @@ fn settle_committed_msi(config: &Path) -> Result<(), Error> {
     Ok(())
 }
 #[cfg(any(windows, test))]
-pub(super) fn msi_transaction(action: Action, config: &Path) -> Result<(), Error> {
+fn matching_msi(path: &Path, operation: uuid::Uuid) -> Result<MsiSnapshot, Error> {
+    let tx = msi_snapshot(path)?;
+    if tx.operation == operation {
+        Ok(tx)
+    } else {
+        Err(Error::Conflict)
+    }
+}
+#[cfg(any(windows, test))]
+pub(super) fn msi_transaction(
+    action: Action,
+    config: &Path,
+    operation: uuid::Uuid,
+) -> Result<(), Error> {
     let marker = config.with_extension("msi-rollback");
-    let committed = config.with_extension("msi-committed");
+    let finalizing = config.with_extension("msi-finalizing");
+    let confirmed = config.with_extension("msi-confirmed");
     if matches!(action, Action::MsiPrepare) {
-        // MSI serializes execute sequences. Clear only a previous committed transaction
-        // before this sequence schedules its own rollback action or creates a marker.
-        if marker.try_exists()? {
-            return Err(Error::Conflict);
-        }
-        return settle_committed_msi(config);
+        // A later install cannot attest success for an earlier sequence.
+        return ensure_outside_msi(config);
     }
     if matches!(action, Action::MsiSave) {
-        let operation = uuid::Uuid::new_v4();
         let before = if config.try_exists()? {
             Deployment::metadata(config)?;
             let bytes =
@@ -939,30 +969,34 @@ pub(super) fn msi_transaction(action: Action, config: &Path) -> Result<(), Error
         };
         return publish_new(&marker, &json(&snapshot)?);
     }
-    if matches!(action, Action::MsiCommit) {
-        if !marker.try_exists()? {
-            return if committed.try_exists()? {
-                Ok(())
-            } else {
-                Err(Error::NotFound)
-            };
+    if matches!(action, Action::MsiCommit | Action::MsiConfirm) {
+        // Commit actions are inside InstallFinalize. Only this same session's synchronous
+        // callback sequenced after InstallFinalize supplies positive completion evidence.
+        let (from, to) = if matches!(action, Action::MsiCommit) {
+            (&marker, &finalizing)
+        } else {
+            (&finalizing, &confirmed)
+        };
+        if !from.try_exists()? {
+            matching_msi(to, operation)?;
+            return Ok(());
         }
-        let tx = msi_snapshot(&marker)?;
+        let tx = matching_msi(from, operation)?;
         if !tx.removing {
-            apply::msi_awaiting(config, tx.operation)?;
+            apply::msi_awaiting(config, operation)?;
         }
-        // The hook has one final atomic write and no subsequent cleanup or reporting.
-        // An outer rollback can still find this marker and every compensating snapshot.
-        return platform::replace(&marker, &committed);
+        return platform::replace(from, to);
     }
     let marker = if marker.try_exists()? {
         marker
-    } else if committed.try_exists()? {
-        committed
+    } else if finalizing.try_exists()? {
+        finalizing
+    } else if confirmed.try_exists()? {
+        confirmed
     } else {
         return Ok(());
     };
-    let transaction = msi_snapshot(&marker)?;
+    let transaction = matching_msi(&marker, operation)?;
     let prior = config.with_extension(format!("{}.msi-before", transaction.operation));
     if transaction.removing {
         let before = installation_security::read_protected(&prior).map_err(|_| Error::Identity)?;

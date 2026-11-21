@@ -9,7 +9,7 @@ const xml = (value) =>
     .replaceAll(">", "&gt;");
 const key = (path) =>
   `f${createHash("sha256").update(path).digest("hex").slice(0, 24)}`;
-export function msiSource({ version, target, id, payload, files }) {
+export function msiSource({ version, target, id, payload, files, sessionDll }) {
   if (!/^\d+\.\d+\.\d+$/.test(version))
     throw Error("MSI requires a three-part product version");
   const service = key("rss-execution-service.exe");
@@ -53,15 +53,20 @@ export function msiSource({ version, target, id, payload, files }) {
 <RegistryValue Name="URL Protocol" Type="string" Value=""/>
 <RegistryKey Key="shell\\open\\command"><RegistryValue Type="string" Value="&quot;[#${key("rss-mdm-desktop.exe")}]&quot; &quot;%1&quot;"/></RegistryKey>
 </RegistryKey></Component>
+<Binary Id="MsiSession" SourceFile="${xml(sessionDll)}"/>
+<CustomAction Id="BeginAgent" BinaryRef="MsiSession" DllEntry="RssBeginInstallation" Execute="immediate" Return="check"/>
 <Binary Id="InstallationOwner" SourceFile="${xml(`${payload}/rss-execution-service.exe`)}"/>
 ${components}<Feature Id="Agent" Level="1"><ComponentRef Id="AgentShortcut"/><ComponentRef Id="AgentProtocol"/>${files.map((file) => `<ComponentRef Id="c${key(file)}"/>`).join("")}</Feature>
-<CustomAction Id="PrepareAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-prepare" Execute="deferred" Impersonate="no" Return="check"/>
-<CustomAction Id="SaveAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-save" Execute="deferred" Impersonate="no" Return="check"/>
-<CustomAction Id="RollbackAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-rollback" Execute="rollback" Impersonate="no" Return="check"/>
-<CustomAction Id="CommitAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-commit" Execute="commit" Impersonate="no" Return="check"/>
-<CustomAction Id="ApplyAgent" FileRef="${service}" ExeCommand="--installation msi-apply --candidate &quot;[INSTALLROOT]candidate.json&quot;" Execute="deferred" Impersonate="no" Return="check"/>
-<CustomAction Id="RemoveAgent" FileRef="${service}" ExeCommand="--installation msi-remove --binary &quot;[#${service}]&quot; --operation &quot;[RSSRETIREMENTTASK]&quot;" Execute="deferred" Impersonate="no" Return="check"/>
+<CustomAction Id="PrepareAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-prepare --msi-transaction &quot;[RssInstallationOperation]&quot;" Execute="deferred" Impersonate="no" Return="check"/>
+<CustomAction Id="SaveAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-save --msi-transaction &quot;[RssInstallationOperation]&quot;" Execute="deferred" Impersonate="no" Return="check"/>
+<CustomAction Id="RollbackAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-rollback --msi-transaction &quot;[RssInstallationOperation]&quot;" Execute="rollback" Impersonate="no" Return="check"/>
+<CustomAction Id="CommitAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-commit --msi-transaction &quot;[RssInstallationOperation]&quot;" Execute="commit" Impersonate="no" Return="check"/>
+<CustomAction Id="ApplyAgent" FileRef="${service}" ExeCommand="--installation msi-apply --msi-transaction &quot;[RssInstallationOperation]&quot; --candidate &quot;[INSTALLROOT]candidate.json&quot;" Execute="deferred" Impersonate="no" Return="check"/>
+<CustomAction Id="RemoveAgent" FileRef="${service}" ExeCommand="--installation msi-remove --msi-transaction &quot;[RssInstallationOperation]&quot; --binary &quot;[#${service}]&quot; --operation &quot;[RSSRETIREMENTTASK]&quot;" Execute="deferred" Impersonate="no" Return="check"/>
+<CustomAction Id="ConfirmAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-confirm --msi-transaction &quot;[RssInstallationOperation]&quot;" Execute="immediate" Return="ignore"/>
 <InstallExecuteSequence>
+<Custom Action="BeginAgent" Before="InstallInitialize" Condition="NOT UPGRADINGPRODUCTCODE"/>
+<Custom Action="ConfirmAgent" After="InstallFinalize" Condition="NOT UPGRADINGPRODUCTCODE"/>
 <Custom Action="PrepareAgent" Before="RollbackAgent" Condition="NOT UPGRADINGPRODUCTCODE"/>
 <Custom Action="RollbackAgent" Before="SaveAgent" Condition="NOT UPGRADINGPRODUCTCODE"/>
 <Custom Action="SaveAgent" Before="RemoveAgent" Condition="NOT UPGRADINGPRODUCTCODE"/>
