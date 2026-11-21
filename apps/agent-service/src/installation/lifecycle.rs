@@ -479,6 +479,13 @@ pub(super) fn preflight_candidate_state(
     crate::access_component::preflight(next)?;
     Ok(())
 }
+// Package callbacks may exit between issuing STOP and observing process exit.
+pub(super) fn stop_for_maintenance(deployment: &Deployment, config: &Path) -> Result<(), Error> {
+    let evidence = config.with_extension("service-stop");
+    platform::stop_for_apply(deployment, config, &evidence)?;
+    std::fs::remove_file(evidence)?;
+    Ok(())
+}
 fn refresh(
     current: &Path,
     config: &Path,
@@ -493,21 +500,17 @@ fn refresh(
     }
     preflight_refresh(&old, config, &next, next_config)?;
     outcome::phase("refresh-quiescence")?;
-    platform::quiescent(&old, config)?;
     transition(|action| {
         outcome::phase(action.phase())?;
         match action {
-            Step::StopCurrent => platform::stop(true, current, config),
+            Step::StopCurrent => stop_for_maintenance(&old, config),
             Step::RemoveCurrent => platform::remove(true, current, config),
             Step::PublishCandidate => {
                 crate::local_permissions::initialize(&next.execution.local_permissions)?;
                 publish(config, &json(&next)?)
             }
             Step::RegisterCandidate => platform::register(true, candidate, config),
-            Step::StopCandidate => {
-                platform::quiescent(&next, config)?;
-                platform::stop(true, candidate, config)
-            }
+            Step::StopCandidate => stop_for_maintenance(&next, config),
             Step::RemoveCandidate => platform::remove(true, candidate, config),
             Step::RestoreCurrent => publish(config, &json(&old)?),
             Step::RegisterCurrent => platform::restore_registration(current, config),
@@ -968,21 +971,25 @@ fn msi_transaction(action: Action, config: &Path) -> Result<(), Error> {
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
                 Err(error) => return Err(error.into()),
             };
-            if let Some(old) = old {
+            if let Some(old) = &old {
                 old.service
                     .verify(&old.service.path)
                     .map_err(|_| Error::Identity)?;
                 validate_native_artifact(&old.service)?;
-                if let Some(current) = current {
-                    preserved(&old, &current)?;
-                    platform::quiescent(&current, config)?;
-                    platform::remove(true, &current.service.path, config)?;
+                if let Some(current) = &current {
+                    preserved(old, current)?;
                 }
+            }
+            if let Some(d) = current.as_ref().or(old.as_ref()) {
+                stop_for_maintenance(d, config)?;
+            }
+            if let Some(current) = &current {
+                platform::remove(true, &current.service.path, config)?;
+            }
+            if let Some(old) = old {
                 publish(config, &json(&old)?)?;
                 platform::restore_registration(&old.service.path, config)?;
-            } else if let Some(current) = current {
-                platform::quiescent(&current, config)?;
-                platform::remove(true, &current.service.path, config)?;
+            } else if current.is_some() {
                 let inactive = apply::inactive_deployment(config)?;
                 let profiles = inactive.parent().ok_or(Error::Configuration)?;
                 platform::public_directory(profiles.parent().ok_or(Error::Configuration)?)?;

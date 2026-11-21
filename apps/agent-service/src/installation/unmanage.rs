@@ -278,9 +278,8 @@ fn execute(task: uuid::Uuid, package_entry: bool) -> Result<(), Error> {
         }
         outcome::phase("retirement-quiescence")?;
         // A blocked desktop is a retryable precondition, not a completed worker.
-        platform::quiescent(d, &config)?;
         outcome::phase("retirement-stop")?;
-        platform::stop(true, &d.service.path, &config)?;
+        lifecycle::stop_for_maintenance(d, &config)?;
         advance(&mut r, Phase::Stopped)?;
     }
     // Transport may be unavailable after a crash following key deletion. Cleanup never

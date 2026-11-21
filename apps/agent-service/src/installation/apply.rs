@@ -470,11 +470,7 @@ fn prepare(
             r.phase = Phase::PublishRevision;
             return Ok(());
         }
-        if package {
-            lifecycle::preflight_refresh(old, config, &next, &staged)?;
-        } else {
-            Deployment::load(&staged)?;
-        }
+        lifecycle::preflight_refresh(old, config, &next, &staged)?;
         r.phase = if r.before == r.after {
             Phase::Register
         } else {
@@ -1078,11 +1074,10 @@ mod tests {
     }
 
     #[cfg(target_os = "macos")]
-    #[test]
-    #[ignore = "requires root and a root-owned TMPDIR for the real profile CLI"]
-    fn revision_only_cli_preserves_installed_deployment_and_replays_its_result() {
-        let root = crate::protocol_test_support::Root::new();
-        let candidate = super::super::tests::candidate(&root);
+    fn installed_fixture(
+        root: &crate::protocol_test_support::Root,
+        candidate: &Candidate,
+    ) -> (PathBuf, Deployment) {
         let config = root.path.join("deployment.json");
         let mut old = crate::deployment::tests::deployment();
         old.state_root = root.path.join("state");
@@ -1094,11 +1089,13 @@ mod tests {
             image: candidate.cli.clone(),
             machine_actions: vec![],
         });
+        old.clients.images = vec![candidate.desktop.clone(), candidate.cli.clone()];
+        old.registration_clients.images = vec![candidate.desktop.clone()];
         let ca = root.path.join("ca.pem");
         let pem = candidate.ca_pem.as_ref().unwrap().as_bytes();
         publish(&ca, pem).unwrap();
         old.ca_file = Some(ca);
-        let manifest = json(&candidate).unwrap();
+        let manifest = json(candidate).unwrap();
         old.installation_artifact = hash(&manifest);
         let manifests = root.path.join("install-manifests");
         platform::public_directory(&manifests).unwrap();
@@ -1122,6 +1119,16 @@ mod tests {
             da: profile::Module::Disabled,
         });
         publish(&config, &json(&old).unwrap()).unwrap();
+        (config, old)
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires root and a root-owned TMPDIR for the real profile CLI"]
+    fn revision_only_cli_preserves_installed_deployment_and_replays_its_result() {
+        let root = crate::protocol_test_support::Root::new();
+        let candidate = super::super::tests::candidate(&root);
+        let (config, old) = installed_fixture(&root, &candidate);
         let mut expected = old.clone();
         expected.modules.as_mut().unwrap().revision = 8;
         let path = root.path.join("profile");
@@ -1166,6 +1173,89 @@ mod tests {
             optional(&config).unwrap().unwrap(),
             json(&expected).unwrap()
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    #[ignore = "requires root, a root-owned TMPDIR and RSS_TEST_INSTALLATION_SERVICE pointing to the native service"]
+    async fn damaged_execution_state_rejects_runtime_profile_before_stop() {
+        use crate::protocol_test_support::{Root, Secrets};
+        let root = Root::new();
+        let mut candidate = super::super::tests::candidate(&root);
+        let source = PathBuf::from(
+            std::env::var_os("RSS_TEST_INSTALLATION_SERVICE").expect("native service binary"),
+        );
+        let signature = Command::new("/usr/bin/codesign")
+            .args(["-d", "--verbose=4"])
+            .arg(&source)
+            .output()
+            .unwrap();
+        assert!(signature.status.success());
+        let signature = String::from_utf8(signature.stderr).unwrap();
+        let cdhash = signature
+            .lines()
+            .find_map(|s| s.strip_prefix("CDHash="))
+            .unwrap();
+        let digest = hash(&std::fs::read(&source).unwrap());
+        for image in [
+            &mut candidate.service,
+            &mut candidate.desktop,
+            &mut candidate.cli,
+        ] {
+            std::fs::copy(&source, &image.path).unwrap();
+            image.sha256 = digest.clone();
+            image.cdhash = Some(cdhash.to_owned());
+        }
+        let (config, old) = installed_fixture(&root, &candidate);
+        Deployment::load(&config).unwrap();
+        platform_private_storage::directory(&old.state_root).unwrap();
+        let namespace = old.namespace().unwrap();
+        platform_private_storage::write_new(
+            &old.state_root.join("identity-binding"),
+            namespace.as_bytes(),
+        )
+        .unwrap();
+        let comm = old.state_root.join("communication");
+        platform_private_storage::directory(&comm).unwrap();
+        drop(
+            agent_client::Client::open(
+                &comm,
+                old.network().unwrap(),
+                agent_client::OpenMode::Create,
+                Secrets::new(),
+                SystemClock::new().unwrap(),
+            )
+            .unwrap(),
+        );
+        old.preflight().unwrap();
+        platform_private_storage::write_new(
+            &old.state_root.join("execution-initialized"),
+            namespace.as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(old.preflight(), Err(Error::Storage));
+        let mut modules = old.modules.clone().unwrap();
+        modules.revision += 1;
+        let profile =
+            serde_json::json!({"modules": modules, "subjects": ["501"], "helper_work_roots": {}});
+        let op = Uuid::new_v4();
+        let _lock = lifecycle::installation_lock(&config, true).unwrap();
+        assert!(run(
+            &config,
+            None,
+            Some(&json(&profile).unwrap()),
+            Some(op),
+            Source::Administrator
+        )
+        .is_err());
+        let j = Journal::new(&config).unwrap();
+        let result = j.read(&j.file(op, "result")).unwrap().unwrap();
+        assert_eq!(
+            (result.phase, result.failure_phase),
+            (Phase::Rejected, Some(Phase::Received))
+        );
+        assert_eq!(optional(&config).unwrap().unwrap(), json(&old).unwrap());
+        assert!(!old.state_root.join("execution.sqlite").exists());
     }
 
     #[test]

@@ -302,9 +302,14 @@ pub(super) fn stop_for_apply(d: &Deployment, config: &Path, evidence: &Path) -> 
     publish(evidence, &json(&processes)?)?;
     quiescent(d, config)?;
     stop(true, &d.service.path, config)?;
+    wait_for_recorded_processes(processes, 20_000)
+}
+fn wait_for_recorded_processes(processes: Vec<(u32, u64)>, timeout_ms: u32) -> Result<(), Error> {
     for (pid, started) in processes {
         if let Some((h, current)) = process_instance(pid)? {
-            if current == started && unsafe { WaitForSingleObject(h.0, 20_000) } != WAIT_OBJECT_0 {
+            if current == started
+                && unsafe { WaitForSingleObject(h.0, timeout_ms) } != WAIT_OBJECT_0
+            {
                 return Err(Error::Unavailable);
             }
         }
@@ -1748,4 +1753,23 @@ pub(super) fn finish_unmanage(deployment: &Deployment, task: uuid::Uuid) -> Resu
     // reboot deletion can destroy the program before the SCM registration is gone.
     unsafe { scheduled.Run(&VARIANT::default()) }.map_err(|_| Error::Unavailable)?;
     Ok(false)
+}
+
+#[cfg(test)]
+mod stop_tests {
+    use super::*;
+
+    #[test]
+    fn stopped_scm_without_a_pid_still_waits_for_the_recorded_instance() {
+        let pid = std::process::id();
+        let (_, started) = process_instance(pid).unwrap().unwrap();
+        let bytes = serde_json::to_vec(&[(pid, started)]).unwrap();
+        // A later callback receives no PID from SCM. It still has the original
+        // persisted instance and cannot replace its registration while it lives.
+        assert_eq!(
+            wait_for_recorded_processes(serde_json::from_slice(&bytes).unwrap(), 0),
+            Err(Error::Unavailable)
+        );
+        assert!(wait_for_recorded_processes(vec![(pid, started.wrapping_sub(1))], 0).is_ok());
+    }
 }
