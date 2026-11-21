@@ -1189,7 +1189,12 @@ mod tests {
     #[test]
     #[ignore = "requires root and a root-owned TMPDIR to validate the real installation filesystem"]
     fn msi_commit_keeps_rollback_evidence_when_archiving_fails_and_save_is_recoverable() {
-        use lifecycle::{msi_transaction, Action::*};
+        use super::super::msi_evidence::tests::{observed, ticket};
+        use lifecycle::Action::*;
+        let msi_transaction = |action, config: &Path, id| {
+            let engine = matches!(action, MsiSave).then(ticket);
+            lifecycle::msi_transaction(action, config, id, engine)
+        };
         let tmp = crate::protocol_test_support::Root::new();
         let config = tmp.path.join("deployment.json");
         let pending = config.with_extension("msi-rollback");
@@ -1215,7 +1220,7 @@ mod tests {
         // an unrelated confirmation, nor the absence of any running installer can settle it.
         let next = Uuid::new_v4();
         assert!(msi_transaction(MsiPrepare, &config, next).is_err());
-        assert!(msi_transaction(MsiConfirm, &config, next).is_err());
+        assert!(lifecycle::reconcile_msi(&config, |t, r| observed(t, r, false)).is_err());
         assert!(msi_transaction(MsiRollback, &config, next).is_err());
         assert!(!lifecycle::msi_applied(&config, r.operation).unwrap());
         assert!(finalizing.exists());
@@ -1224,7 +1229,7 @@ mod tests {
             Phase::AwaitCommit
         );
 
-        msi_transaction(MsiConfirm, &config, r.operation).unwrap();
+        assert!(lifecycle::reconcile_msi(&config, |t, r| observed(t, r, true)).is_err());
         assert!(lifecycle::msi_applied(&config, r.operation).unwrap());
         // Failed history archival occurs only after confirmed success and retains the proof.
         assert!(msi_transaction(MsiPrepare, &config, next).is_err());

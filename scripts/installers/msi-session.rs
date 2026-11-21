@@ -1,5 +1,5 @@
 //! Immediate Windows Installer custom action. Give this execute sequence its own operation
-//! identifier before scheduling the deferred actions and the post-InstallFinalize receipt.
+//! identifier before scheduling the deferred actions and observing the native result.
 //! ref: Microsoft msiquery.h (MsiSetPropertyW), combaseapi.h (CoCreateGuid, StringFromGUID2).
 #[repr(C)]
 #[derive(Default)]

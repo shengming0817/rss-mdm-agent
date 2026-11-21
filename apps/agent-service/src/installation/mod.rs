@@ -3,6 +3,8 @@
 mod apply;
 pub use apply::{apply_authorized_profile, AuthorizedProfile};
 mod lifecycle;
+#[cfg(any(windows, test))]
+mod msi_evidence;
 mod profile;
 pub use profile::{Assembly, Modules};
 mod unmanage;

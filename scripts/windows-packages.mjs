@@ -58,15 +58,13 @@ export function msiSource({ version, target, id, payload, files, sessionDll }) {
 <Binary Id="InstallationOwner" SourceFile="${xml(`${payload}/rss-execution-service.exe`)}"/>
 ${components}<Feature Id="Agent" Level="1"><ComponentRef Id="AgentShortcut"/><ComponentRef Id="AgentProtocol"/>${files.map((file) => `<ComponentRef Id="c${key(file)}"/>`).join("")}</Feature>
 <CustomAction Id="PrepareAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-prepare --msi-transaction &quot;[RssInstallationOperation]&quot;" Execute="deferred" Impersonate="no" Return="check"/>
-<CustomAction Id="SaveAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-save --msi-transaction &quot;[RssInstallationOperation]&quot;" Execute="deferred" Impersonate="no" Return="check"/>
+<CustomAction Id="SaveAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-save --msi-transaction &quot;[RssInstallationOperation]&quot; --msi-product &quot;[ProductCode]&quot; --msi-version &quot;[ProductVersion]&quot; --package-path &quot;[OriginalDatabase]&quot;" Execute="deferred" Impersonate="no" Return="check"/>
 <CustomAction Id="RollbackAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-rollback --msi-transaction &quot;[RssInstallationOperation]&quot;" Execute="rollback" Impersonate="no" Return="check"/>
 <CustomAction Id="CommitAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-commit --msi-transaction &quot;[RssInstallationOperation]&quot;" Execute="commit" Impersonate="no" Return="check"/>
 <CustomAction Id="ApplyAgent" FileRef="${service}" ExeCommand="--installation msi-apply --msi-transaction &quot;[RssInstallationOperation]&quot; --candidate &quot;[INSTALLROOT]candidate.json&quot;" Execute="deferred" Impersonate="no" Return="check"/>
 <CustomAction Id="RemoveAgent" FileRef="${service}" ExeCommand="--installation msi-remove --msi-transaction &quot;[RssInstallationOperation]&quot; --binary &quot;[#${service}]&quot; --operation &quot;[RSSRETIREMENTTASK]&quot;" Execute="deferred" Impersonate="no" Return="check"/>
-<CustomAction Id="ConfirmAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-confirm --msi-transaction &quot;[RssInstallationOperation]&quot;" Execute="immediate" Return="ignore"/>
 <InstallExecuteSequence>
 <Custom Action="BeginAgent" Before="InstallInitialize" Condition="NOT UPGRADINGPRODUCTCODE"/>
-<Custom Action="ConfirmAgent" After="InstallFinalize" Condition="NOT UPGRADINGPRODUCTCODE"/>
 <Custom Action="PrepareAgent" Before="RollbackAgent" Condition="NOT UPGRADINGPRODUCTCODE"/>
 <Custom Action="RollbackAgent" Before="SaveAgent" Condition="NOT UPGRADINGPRODUCTCODE"/>
 <Custom Action="SaveAgent" Before="RemoveAgent" Condition="NOT UPGRADINGPRODUCTCODE"/>

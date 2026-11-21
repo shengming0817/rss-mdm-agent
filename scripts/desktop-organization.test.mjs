@@ -325,16 +325,14 @@ test("managed package formats use explicit machine service owners and escaped fi
     ),
   );
   assert.ok(msi.includes('Execute="rollback"'));
-  assert.ok(
-    msi.includes('<Custom Action="ConfirmAgent" After="InstallFinalize"'),
-  );
+  assert.ok(!msi.includes("ConfirmAgent"));
   assert.ok(
     msi.includes('<Custom Action="BeginAgent" Before="InstallInitialize"'),
   );
   assert.ok(msi.includes('DllEntry="RssBeginInstallation"'));
   assert.ok(
     msi.includes(
-      "--installation msi-confirm --msi-transaction &quot;[RssInstallationOperation]&quot;",
+      "--msi-product &quot;[ProductCode]&quot; --msi-version &quot;[ProductVersion]&quot; --package-path &quot;[OriginalDatabase]&quot;",
     ),
   );
   assert.ok(msi.includes("--installation msi-rollback"));
