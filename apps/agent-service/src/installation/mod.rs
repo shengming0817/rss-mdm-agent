@@ -1,6 +1,8 @@
 //! One installation owner; packages and lab harnesses only invoke this boundary.
 //! ref: tauri tauri-cli-v2.11.2 crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi.
 mod lifecycle;
+mod profile;
+pub use profile::{Assembly, Modules};
 mod unmanage;
 pub(crate) use unmanage::{launch as launch_unmanage, supported as unmanage_supported};
 #[cfg(windows)]
@@ -42,6 +44,8 @@ pub use windows::worker;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Candidate {
+    #[serde(default)]
+    pub assembly: Assembly,
     pub windows_login: Option<Artifact>,
     pub platform_sso: Option<crate::deployment::PlatformSsoConfiguration>,
     pub version: u8,
@@ -69,7 +73,7 @@ pub enum SigningMode {
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Profile {
+pub struct LocalAccess {
     pub subjects: Vec<String>,
     pub helper_work_roots: BTreeMap<String, PathBuf>,
 }
@@ -246,7 +250,7 @@ impl Candidate {
     fn deployment(
         &self,
         artifact: String,
-        profile: Profile,
+        profile: LocalAccess,
         config: &Path,
     ) -> Result<Deployment, Error> {
         let base = config.parent().ok_or(Error::Configuration)?;
@@ -271,6 +275,7 @@ impl Candidate {
             interactive: true,
         };
         Ok(Deployment {
+            modules: None,
             cli: Some(execution_ipc::entry::CliPolicy {
                 image: self.cli.clone(),
                 machine_actions: vec![],

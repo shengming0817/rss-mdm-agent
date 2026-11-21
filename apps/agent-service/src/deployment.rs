@@ -23,6 +23,9 @@ pub struct PlatformSsoConfiguration {
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Deployment {
+    /// Absence selects the fixed package MDM configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modules: Option<crate::installation::Modules>,
     /// Actual installed CLI; absence means no CLI image is trusted.
     pub cli: Option<execution_ipc::entry::CliPolicy>,
     /// Optional installed macOS PSSO component. Absence means not installed, never a compatibility fallback.
@@ -809,6 +812,7 @@ pub(crate) mod tests {
             cdhash: None,
         };
         Deployment {
+            modules: None,
             cli: None,
             platform_sso: None,
             service_id: crate::protocol_test_support::SERVICE_ID,

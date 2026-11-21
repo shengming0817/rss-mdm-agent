@@ -233,6 +233,11 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
             if !opts.system()? {
                 return Err(Error::Configuration);
             }
+            let old = Deployment::metadata(&opts.config()?)?;
+            let next = Deployment::metadata(&opts.path("--candidate-config")?)?;
+            if old.modules != next.modules {
+                return Err(Error::Conflict);
+            }
             refresh(
                 &opts.path("--binary")?,
                 &opts.config()?,
@@ -597,10 +602,10 @@ mod configuration_restart_tests {
     }
 }
 
-pub(super) fn initial_profile() -> Result<Profile, Error> {
+pub(super) fn initial_profile() -> Result<LocalAccess, Error> {
     if execution_ipc::host::active_user_subject().is_err() {
         // No interactive subject gains IPC access merely because a machine is being enrolled.
-        return Ok(Profile {
+        return Ok(LocalAccess {
             subjects: vec![],
             helper_work_roots: BTreeMap::new(),
         });
@@ -615,19 +620,22 @@ fn apply(candidate_path: &Path, profile: Option<&PathBuf>, config: &Path) -> Res
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(e.into()),
     };
-    let profile = match profile {
-        Some(path) => serde_json::from_slice::<Profile>(
-            &installation_security::read_protected(path).map_err(|_| Error::Configuration)?,
-        )
-        .map_err(|_| Error::Configuration)?,
+    let (profile, modules) = match profile {
+        Some(path) => {
+            let profile: profile::Profile = serde_json::from_slice(
+                &installation_security::read_protected(path).map_err(|_| Error::Identity)?,
+            ).map_err(|_| Error::Configuration)?;
+            let (access, modules) = profile.resolve(&candidate, old.as_ref())?;
+            (access, Some(modules))
+        }
         None => match &old {
-            Some(d) => Profile {
-                subjects: d.clients.subjects.clone(),
-                helper_work_roots: d.helper_work_roots.clone(),
-            },
-            None => initial_profile()?,
+            Some(d) => (LocalAccess::from_deployment(d), d.modules.clone()),
+            None => (initial_profile()?, None),
         },
     };
+    if let Some(modules) = &modules {
+        modules.validate(&candidate)?;
+    }
     platform::preflight_desktop_entry(&candidate)?;
     platform::public_directory(config.parent().ok_or(Error::Configuration)?)?;
     let manifests = config
@@ -645,6 +653,7 @@ fn apply(candidate_path: &Path, profile: Option<&PathBuf>, config: &Path) -> Res
         &candidate_bytes,
     )?;
     let mut next = candidate.deployment(artifact, profile, config)?;
+    next.modules = modules;
     if let Some(old) = old {
         inherit(&old, &mut next)?;
         if let Some(ca) = &old.ca_file {

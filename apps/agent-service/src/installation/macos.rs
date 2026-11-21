@@ -364,7 +364,7 @@ pub(super) fn quiescent(old: &Deployment, config: &Path) -> Result<(), Error> {
     }
     Ok(())
 }
-pub(super) fn interactive_profile() -> Result<Profile, Error> {
+pub(super) fn interactive_profile() -> Result<LocalAccess, Error> {
     let subject = execution_ipc::host::active_user_subject().map_err(crate::error::app_error)?;
     let uid: libc::uid_t = subject.parse().map_err(|_| Error::Identity)?;
     let mut entry = std::mem::MaybeUninit::<libc::passwd>::uninit();
@@ -388,7 +388,7 @@ pub(super) fn interactive_profile() -> Result<Profile, Error> {
             .to_str()
             .map_err(|_| Error::Identity)?,
     );
-    Ok(Profile {
+    Ok(LocalAccess {
         subjects: vec![subject.clone()],
         helper_work_roots: BTreeMap::from([(
             subject,

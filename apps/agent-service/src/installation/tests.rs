@@ -9,6 +9,7 @@ fn candidate_requires_current_format_and_valid_identity() {
     };
     let target = Target::current().unwrap();
     let candidate = Candidate {
+        assembly: Assembly::Mdm,
         cli: Artifact {
             path: root.path.join("rssmdm"),
             sha256: "d".repeat(64),

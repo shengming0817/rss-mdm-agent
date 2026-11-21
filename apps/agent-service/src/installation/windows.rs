@@ -326,7 +326,7 @@ pub(super) fn replace(staged: &Path, target: &Path) -> Result<(), Error> {
     }
     Ok(())
 }
-pub(super) fn interactive_profile() -> Result<Profile, Error> {
+pub(super) fn interactive_profile() -> Result<LocalAccess, Error> {
     use windows_sys::Win32::System::Registry::*;
     let (subject, _) =
         execution_ipc::host::active_user_session().map_err(crate::error::app_error)?;
@@ -354,7 +354,7 @@ pub(super) fn interactive_profile() -> Result<Profile, Error> {
     if home.contains('%') || !Path::new(&home).is_absolute() {
         return Err(Error::Configuration);
     }
-    Ok(Profile {
+    Ok(LocalAccess {
         subjects: vec![subject.clone()],
         helper_work_roots: BTreeMap::from([(
             subject,
