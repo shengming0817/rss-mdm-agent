@@ -78,7 +78,7 @@ impl Ticket {
             || event.system.record == 0
             || event.system.time.value.is_empty()
             || (Uuid::parse_str(&target).ok() != Some(product)
-                && !package.to_str().is_some_and(|p| p.to_lowercase() == target))
+                && package.to_str().is_none_or(|p| p.to_lowercase() != target))
         {
             return Err(Error::Unavailable);
         }
