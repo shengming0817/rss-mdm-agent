@@ -381,6 +381,35 @@ pub(super) fn public_directory(path: &Path) -> Result<(), Error> {
     }
     installation_security::protected(path).map_err(|_| Error::Identity)
 }
+/// Use Windows Installer's execute mutex only when our own commit marker is present.
+/// A commit action can still be followed by an engine rollback until this sequence exits.
+pub(super) fn msi_executing() -> Result<bool, Error> {
+    let mutex = unsafe {
+        OpenMutexW(
+            SYNCHRONIZE | MUTEX_MODIFY_STATE,
+            0,
+            wide(r"Global\_MSIExecute").as_ptr(),
+        )
+    };
+    if mutex.is_null() {
+        return if unsafe { GetLastError() } == ERROR_FILE_NOT_FOUND {
+            Ok(false)
+        } else {
+            Err(Error::Unavailable)
+        };
+    }
+    let mutex = Handle(mutex);
+    match unsafe { WaitForSingleObject(mutex.0, 0) } {
+        WAIT_TIMEOUT => Ok(true),
+        WAIT_OBJECT_0 | WAIT_ABANDONED => {
+            if unsafe { ReleaseMutex(mutex.0) } == 0 {
+                return Err(Error::Unavailable);
+            }
+            Ok(false)
+        }
+        _ => Err(Error::Unavailable),
+    }
+}
 pub(super) fn replace(staged: &Path, target: &Path) -> Result<(), Error> {
     if unsafe {
         MoveFileExW(

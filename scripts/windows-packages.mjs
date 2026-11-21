@@ -55,14 +55,16 @@ export function msiSource({ version, target, id, payload, files }) {
 </RegistryKey></Component>
 <Binary Id="InstallationOwner" SourceFile="${xml(`${payload}/rss-execution-service.exe`)}"/>
 ${components}<Feature Id="Agent" Level="1"><ComponentRef Id="AgentShortcut"/><ComponentRef Id="AgentProtocol"/>${files.map((file) => `<ComponentRef Id="c${key(file)}"/>`).join("")}</Feature>
+<CustomAction Id="PrepareAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-prepare" Execute="deferred" Impersonate="no" Return="check"/>
 <CustomAction Id="SaveAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-save" Execute="deferred" Impersonate="no" Return="check"/>
 <CustomAction Id="RollbackAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-rollback" Execute="rollback" Impersonate="no" Return="check"/>
 <CustomAction Id="CommitAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-commit" Execute="commit" Impersonate="no" Return="check"/>
 <CustomAction Id="ApplyAgent" FileRef="${service}" ExeCommand="--installation msi-apply --candidate &quot;[INSTALLROOT]candidate.json&quot;" Execute="deferred" Impersonate="no" Return="check"/>
 <CustomAction Id="RemoveAgent" FileRef="${service}" ExeCommand="--installation msi-remove --binary &quot;[#${service}]&quot; --operation &quot;[RSSRETIREMENTTASK]&quot;" Execute="deferred" Impersonate="no" Return="check"/>
 <InstallExecuteSequence>
-<Custom Action="SaveAgent" Before="RollbackAgent" Condition="NOT UPGRADINGPRODUCTCODE"/>
-<Custom Action="RollbackAgent" Before="RemoveAgent" Condition="NOT UPGRADINGPRODUCTCODE"/>
+<Custom Action="PrepareAgent" Before="RollbackAgent" Condition="NOT UPGRADINGPRODUCTCODE"/>
+<Custom Action="RollbackAgent" Before="SaveAgent" Condition="NOT UPGRADINGPRODUCTCODE"/>
+<Custom Action="SaveAgent" Before="RemoveAgent" Condition="NOT UPGRADINGPRODUCTCODE"/>
 <Custom Action="RemoveAgent" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE"/>
 <Custom Action="ApplyAgent" After="InstallFiles" Condition="NOT REMOVE=&quot;ALL&quot;"/>
 <Custom Action="CommitAgent" After="ApplyAgent" Condition="NOT UPGRADINGPRODUCTCODE"/>

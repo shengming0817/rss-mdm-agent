@@ -111,6 +111,22 @@ impl Record {
             Err(self.failure.unwrap_or(Error::Unavailable))
         }
     }
+    fn observed(self) -> Result<Self, Error> {
+        #[cfg(windows)]
+        if self.phase == Phase::AwaitCommit {
+            if lifecycle::msi_applied(&self.config, self.operation)? {
+                return Ok(Self {
+                    phase: Phase::Applied,
+                    ..self
+                });
+            }
+            let j = Journal::new(&self.config)?;
+            if let Some(terminal) = j.read(&j.file(self.operation, "result"))? {
+                return Ok(terminal);
+            }
+        }
+        Ok(self)
+    }
     fn report(&self) -> Result<(), Error> {
         let state = match self.phase {
             Phase::Received => "received",
@@ -168,6 +184,32 @@ impl Journal {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e.into()),
         }
+    }
+    // Once published, this operation's complete deployment plan is authoritative, including
+    // probed interpreters and package managers. Revalidate its artifacts on every preflight.
+    fn plan(
+        &self,
+        id: Uuid,
+        build: impl FnOnce() -> Result<Vec<u8>, Error>,
+    ) -> Result<Vec<u8>, Error> {
+        let path = self.file(id, "after");
+        match platform_private_storage::read(&path, installation_security::MAX_FRAME) {
+            Ok(bytes) => return Ok(bytes),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+            Err(e) => return Err(e.into()),
+        }
+        let bytes = build()?;
+        if bytes.len() > installation_security::MAX_FRAME {
+            return Err(Error::Capacity);
+        }
+        let tmp = self.root.join(format!("{}.tmp", Uuid::new_v4()));
+        platform_private_storage::write_new(&tmp, &bytes)?;
+        let result = platform_private_storage::publish_new(&tmp, &path);
+        if result.is_err() {
+            let _ = std::fs::remove_file(tmp);
+        }
+        result?;
+        Ok(bytes)
     }
     fn initial_access(
         &self,
@@ -232,6 +274,20 @@ pub(super) fn ensure_idle(config: &Path) -> Result<(), Error> {
 }
 
 #[cfg(any(windows, test))]
+pub(super) fn msi_awaiting(config: &Path, operation: Uuid) -> Result<(), Error> {
+    let j = Journal::new(config)?;
+    let r = j.read(&j.active())?.ok_or(Error::NotFound)?;
+    if r.source == Source::Msi
+        && r.operation == operation
+        && r.config == config
+        && r.phase == Phase::AwaitCommit
+    {
+        Ok(())
+    } else {
+        Err(Error::Conflict)
+    }
+}
+#[cfg(any(windows, test))]
 pub(super) fn finish_msi(config: &Path, operation: Uuid, commit: bool) -> Result<(), Error> {
     let j = Journal::new(config)?;
     let Some(mut r) = j.read(&j.active())? else {
@@ -278,7 +334,7 @@ pub(super) fn status(config: &Path, id: Uuid) -> Result<bool, Error> {
         if r.config != config || r.operation != id {
             return Err(Error::Identity);
         }
-        r.report()?;
+        r.observed()?.report()?;
         Ok(true)
     } else {
         Ok(false)
@@ -317,7 +373,12 @@ pub(super) fn module_status(config: &Path) -> Result<(), Error> {
     let observed = binding(&deployment);
     let registered = observed.as_ref().ok().map(|value| value.is_some());
     let j = Journal::new(config)?;
-    let pending = j.read(&j.active())?.map(|r| r.operation);
+    let pending = j
+        .read(&j.active())?
+        .map(Record::observed)
+        .transpose()?
+        .filter(|r| !r.terminal())
+        .map(|r| r.operation);
     outcome::details(serde_json::json!({
         "available": available,
         "enabled": { "mdm":deployment.modules.as_ref().is_none_or(|m| m.mdm.enabled()), "da":deployment.modules.as_ref().is_some_and(|m| m.da.enabled()) },
@@ -411,11 +472,28 @@ fn prepare(
         r.revision = Some(m.revision);
     }
     platform::preflight_desktop_entry(candidate)?;
-    let mut next = candidate.deployment(r.artifact.clone(), access, config)?;
-    next.installation_id = r.installation;
-    next.modules = modules;
+    let staged = j.file(r.operation, "after");
+    let target = j.plan(r.operation, || {
+        let mut next = candidate.deployment(r.artifact.clone(), access, config)?;
+        next.installation_id = r.installation;
+        next.modules = modules.clone();
+        if let Some(old) = &old {
+            lifecycle::inherit(old, &mut next)?;
+        }
+        match (&old, &original) {
+            (Some(old), Some(bytes)) if json(old)? == json(&next)? => Ok(bytes.clone()),
+            _ => json(&next),
+        }
+    })?;
+    let next = Deployment::metadata(&staged)?;
+    if next.installation_id != r.installation
+        || next.installation_artifact != r.artifact
+        || next.modules != modules
+    {
+        return Err(Error::Identity);
+    }
     if let Some(old) = &old {
-        lifecycle::inherit(old, &mut next)?;
+        lifecycle::preserved(old, &next)?;
         if let Some(ca) = &old.ca_file {
             if installation_security::read_protected(ca).map_err(|_| Error::Identity)?
                 != candidate
@@ -427,15 +505,9 @@ fn prepare(
                 return Err(Error::Identity);
             }
         }
-    } else if std::fs::symlink_metadata(&next.state_root).is_ok() {
+    } else if next.state_root.try_exists()? {
         return Err(Error::Identity);
     }
-    let target = match (&old, &original) {
-        (Some(old), Some(bytes)) if json(old)? == json(&next)? => bytes.clone(),
-        _ => json(&next)?,
-    };
-    let staged = j.file(r.operation, "after");
-    retain_public(&staged, &target)?;
     retain_public(&j.file(r.operation, "desktop"), &json(candidate)?)?;
     if let Some(before) = original {
         retain_public(&j.file(r.operation, "before"), &before)?;
@@ -456,6 +528,9 @@ fn prepare(
             )?;
         }
         Deployment::load(&staged)?;
+        if old.is_some() {
+            lifecycle::preflight_candidate_state(&next, &staged)?;
+        }
     }
     // A byte-equivalent effective deployment needs only native registration readback/repair.
     r.phase = if r.before == r.after {
@@ -558,8 +633,8 @@ fn drive(
         |step| {
             let pointer = optional(config)?;
             let correct = match step {
-                Stop | CancelStop | Remove | Restart => pointer == previous,
-                Register | Desktop | StopCandidate | RemoveCandidate | RestoreDesktop => {
+                Stop | CancelStop | Remove | Restart | RestoreDesktop => pointer == previous,
+                Register | Desktop | StopCandidate | RemoveCandidate => {
                     pointer.as_ref() == Some(&next_bytes)
                 }
                 Publish | Restore => pointer == previous || pointer.as_ref() == Some(&next_bytes),
@@ -633,17 +708,12 @@ fn drive_steps(
                 Desktop if r.source == Source::Msi => AwaitCommit,
                 Desktop => Applied,
                 StopCandidate => RemoveCandidate,
-                RemoveCandidate => {
-                    if matches!(r.failure_phase, Some(Desktop | AwaitCommit)) {
-                        RestoreDesktop
-                    } else {
-                        Restore
-                    }
-                }
-                RestoreDesktop => Restore,
+                RemoveCandidate => Restore,
                 Restore if upgrading => Restart,
-                Restore => Rejected,
-                Restart => Rejected,
+                Restore | Restart if matches!(r.failure_phase, Some(Desktop | AwaitCommit)) => {
+                    RestoreDesktop
+                }
+                Restore | Restart | RestoreDesktop => Rejected,
                 _ => return Err(Error::Storage),
             },
             Err(e) => {
@@ -1007,6 +1077,7 @@ mod tests {
                 Phase::Desktop,
                 Phase::StopCandidate,
                 Phase::RemoveCandidate,
+                Phase::Restore,
                 Phase::RestoreDesktop
             ]
         );
@@ -1018,6 +1089,72 @@ mod tests {
         assert_eq!(r.phase, Phase::Rejected);
         assert_eq!(r.compensation_error, None);
         assert_eq!(r.result(), Err(Error::Identity));
+    }
+
+    #[test]
+    fn preflight_reopens_the_entire_first_plan_without_probing_resources_again() {
+        let tmp = crate::protocol_test_support::Root::new();
+        let j = Journal {
+            root: tmp.path.join("profiles"),
+        };
+        platform_private_storage::directory(&j.root).unwrap();
+        let operation = Uuid::new_v4();
+        let initial = j
+            .plan(operation, || Ok(b"original interpreter image".to_vec()))
+            .unwrap();
+        let reopened = Journal {
+            root: j.root.clone(),
+        };
+        assert_eq!(
+            reopened
+                .plan(operation, || panic!(
+                    "must not probe a replacement interpreter"
+                ))
+                .unwrap(),
+            initial
+        );
+    }
+
+    #[test]
+    fn broken_desktop_restoration_leaves_the_original_service_running() {
+        use Phase::*;
+        let mut r = record(Desktop);
+        let mut service_running = false;
+        let mut steps = Vec::new();
+        for _ in 0..2 {
+            let result = drive_steps(
+                &mut r,
+                true,
+                |_| Ok(()),
+                |_| Ok(()),
+                |p| {
+                    steps.push(p);
+                    match p {
+                        Desktop | RestoreDesktop => Err(Error::Unavailable),
+                        Restart => {
+                            service_running = true;
+                            Ok(())
+                        }
+                        _ => Ok(()),
+                    }
+                },
+            );
+            assert_eq!(result, Err(Error::Unavailable));
+            assert!(service_running);
+            assert_eq!(r.phase, RestoreDesktop);
+        }
+        assert_eq!(
+            steps,
+            [
+                Desktop,
+                StopCandidate,
+                RemoveCandidate,
+                Restore,
+                Restart,
+                RestoreDesktop,
+                RestoreDesktop
+            ]
+        );
     }
 
     #[test]
@@ -1034,9 +1171,59 @@ mod tests {
         assert_eq!(r.phase, Phase::AwaitCommit);
         assert!(j.read(&j.file(r.operation, "result")).unwrap().is_none());
         assert!(status(&config, r.operation).unwrap());
+        msi_awaiting(&config, r.operation).unwrap();
+        assert!(msi_awaiting(&config, Uuid::new_v4()).is_err());
         finish_msi(&config, r.operation, true).unwrap();
         finish_msi(&config, r.operation, true).unwrap();
         assert!(status(&config, r.operation).unwrap());
+        assert_eq!(
+            j.read(&j.file(r.operation, "result"))
+                .unwrap()
+                .unwrap()
+                .phase,
+            Phase::Applied
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "requires root and a root-owned TMPDIR to validate the real installation filesystem"]
+    fn msi_commit_keeps_rollback_evidence_when_archiving_fails_and_save_is_recoverable() {
+        use lifecycle::{msi_transaction, Action::*};
+        let tmp = crate::protocol_test_support::Root::new();
+        let config = tmp.path.join("deployment.json");
+        let pending = config.with_extension("msi-rollback");
+        let committed = config.with_extension("msi-committed");
+        msi_transaction(MsiPrepare, &config).unwrap();
+        msi_transaction(MsiSave, &config).unwrap();
+        // The rollback action was scheduled before the first new marker was written.
+        msi_transaction(MsiRollback, &config).unwrap();
+        assert!(!pending.exists());
+        msi_transaction(MsiSave, &config).unwrap();
+        let tx: serde_json::Value =
+            serde_json::from_slice(&installation_security::read_protected(&pending).unwrap())
+                .unwrap();
+        let mut r = record(Phase::AwaitCommit);
+        r.operation = serde_json::from_value(tx["operation"].clone()).unwrap();
+        r.config = config.clone();
+        r.source = Source::Msi;
+        let j = Journal::new(&config).unwrap();
+        j.create().unwrap();
+        j.save(&r).unwrap();
+        let result = j.file(r.operation, "result");
+        std::fs::create_dir(&result).unwrap();
+        msi_transaction(MsiCommit, &config).unwrap();
+        assert!(committed.exists());
+        assert_eq!(
+            j.read(&j.active()).unwrap().unwrap().phase,
+            Phase::AwaitCommit
+        );
+        // Archiving is deferred until the engine exits. A failure retains this decision for retry.
+        assert!(msi_transaction(MsiPrepare, &config).is_err());
+        assert!(committed.exists());
+        std::fs::remove_dir(result).unwrap();
+        msi_transaction(MsiPrepare, &config).unwrap();
+        assert!(!committed.exists());
         assert_eq!(
             j.read(&j.file(r.operation, "result"))
                 .unwrap()

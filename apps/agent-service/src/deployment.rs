@@ -773,6 +773,26 @@ pub(crate) mod tests {
         }
     }
     #[test]
+    fn a_retained_first_install_binding_without_communication_storage_fails_preflight() {
+        let tmp = crate::protocol_test_support::Root::new();
+        let mut d = deployment();
+        d.state_root = tmp.path.join("state");
+        assert!(d.preflight().is_ok());
+        platform_private_storage::directory(&d.state_root).unwrap();
+        let identity = d.namespace().unwrap();
+        platform_private_storage::write_new(
+            &d.state_root.join("identity-binding"),
+            identity.as_bytes(),
+        )
+        .unwrap();
+        assert!(d.preflight().is_err());
+        assert!(!d.state_root.join("communication").exists());
+        assert_eq!(
+            platform_private_storage::read(&d.state_root.join("identity-binding"), 128).unwrap(),
+            identity.as_bytes()
+        );
+    }
+    #[test]
     fn refresh_requires_existing_installation_bound_access_storage() {
         let root = std::env::temp_dir()
             .canonicalize()
