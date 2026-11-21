@@ -183,8 +183,13 @@ pub fn inspect_binding(root: &Path, cfg: &Config) -> Result<wire::BindingProfile
     inspect_optional_binding(root, cfg)?.ok_or(Error::Identity)
 }
 /// The same read-only inspection, distinguishing an unregistered installation from a damaged store.
-pub fn inspect_optional_binding(root: &Path, cfg: &Config) -> Result<Option<wire::BindingProfile>, Error> {
-    Ok(read_identity(root, cfg)?.active.map(|active| active.receipt.runtime))
+pub fn inspect_optional_binding(
+    root: &Path,
+    cfg: &Config,
+) -> Result<Option<wire::BindingProfile>, Error> {
+    Ok(read_identity(root, cfg)?
+        .active
+        .map(|active| active.receipt.runtime))
 }
 /// Validate the current runtime identity without locks, writes, recovery or key creation.
 /// Historical binding inspection remains independent for local journal recovery.

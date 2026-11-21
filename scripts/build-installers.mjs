@@ -363,7 +363,7 @@ function image(path) {
   return result;
 }
 const candidate = {
-  assembly: "mdm",
+  assembly: { mdm: true, da: false },
   windows_login: windowsLogin ? image(windowsLogin) : null,
   platform_sso: psso
     ? {

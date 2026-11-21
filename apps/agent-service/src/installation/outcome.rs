@@ -6,6 +6,8 @@ use std::cell::RefCell;
 pub(super) struct Report {
     pub version: u8,
     pub process_id: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub application_operation: Option<uuid::Uuid>,
     pub terminal: bool,
     pub state: String,
     pub phase: String,
@@ -16,7 +18,7 @@ pub(super) struct Report {
 }
 thread_local! {
     static REPORT: RefCell<Report> = RefCell::new(Report {
-        version: 1, process_id: std::process::id(), terminal: false, state: "running".into(), phase: "preflight".into(),
+        version: 1, application_operation: None, process_id: std::process::id(), terminal: false, state: "running".into(), phase: "preflight".into(),
         failure_phase: None, error: None, native_exit_code: None,
         compensation: "not-required".into(),
     });
@@ -26,6 +28,12 @@ pub(super) fn snapshot() -> Report {
 }
 pub(super) fn phase(name: &'static str) -> Result<(), Error> {
     REPORT.with(|value| value.borrow_mut().phase = name.into());
+    #[cfg(windows)]
+    super::windows::record(&snapshot())?;
+    Ok(())
+}
+pub(super) fn application(id: uuid::Uuid) -> Result<(), Error> {
+    REPORT.with(|value| value.borrow_mut().application_operation = Some(id));
     #[cfg(windows)]
     super::windows::record(&snapshot())?;
     Ok(())

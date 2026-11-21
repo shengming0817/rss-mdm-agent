@@ -1,6 +1,7 @@
 //! Administrator-owned installation artifacts and native path protection. No service or protocol.
 use serde::{Deserialize, Serialize};
-const MAX_FRAME: usize = 65536;
+/// Maximum size of protected installation metadata.
+pub const MAX_FRAME: usize = 65536;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]

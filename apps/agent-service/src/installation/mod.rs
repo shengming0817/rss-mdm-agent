@@ -1,6 +1,7 @@
 //! One installation owner; packages and lab harnesses only invoke this boundary.
 //! ref: tauri tauri-cli-v2.11.2 crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi.
 mod apply;
+pub use apply::{apply_authorized_profile, AuthorizedProfile};
 mod lifecycle;
 mod profile;
 pub use profile::{Assembly, Modules};
@@ -45,7 +46,7 @@ pub use windows::worker;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Candidate {
-    #[serde(default)]
+    #[serde(default = "Assembly::current")]
     pub assembly: Assembly,
     pub windows_login: Option<Artifact>,
     pub platform_sso: Option<crate::deployment::PlatformSsoConfiguration>,
@@ -142,7 +143,8 @@ impl Candidate {
             })
             .collect::<Result<_, Error>>()?;
         agent_client::verify_connections(&self.connections, self.service_id, self.tenant, &keys)?;
-        if self.version != 2
+        if self.assembly != Assembly::CURRENT
+            || self.version != 2
             || self.target != Target::current().map_err(|_| Error::Unsupported)?
             || !self.root.is_absolute()
             || self.tenant.is_nil()

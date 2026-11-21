@@ -71,6 +71,7 @@ impl Deployment {
     /// Assemble the machine owner. Registration is driven only by explicit IPC or retained operations.
     pub fn assemble(self) -> Result<Box<dyn execution_ipc::host::Handler>, Error> {
         self.require_service()?;
+        self.require_mdm_assembly()?;
         match self.preflight() {
             Ok(()) => Ok(Box::new(crate::registration::RegistrationOwner::new(self)?)),
             Err(error) => {
@@ -106,7 +107,14 @@ impl Deployment {
         {
             return Err(Error::Configuration);
         }
+        value.require_mdm_assembly()?;
         Ok(value)
+    }
+    pub(crate) fn require_mdm_assembly(&self) -> Result<(), Error> {
+        if let Some(modules) = &self.modules {
+            modules.require_mdm_assembly(self)?;
+        }
+        Ok(())
     }
     pub fn load(path: &Path) -> Result<Self, Error> {
         let value = Self::metadata(path)?;
@@ -195,7 +203,7 @@ impl Deployment {
         )
         .map_err(crate::error::app_error)
     }
-    fn require_service(&self) -> Result<(), Error> {
+    pub(crate) fn require_service(&self) -> Result<(), Error> {
         if !self
             .server_policy()
             .subjects
@@ -233,6 +241,14 @@ impl Deployment {
                 ))
             })
             .collect::<Result<_, Error>>()?;
+        let ca_pem = self
+            .ca_file
+            .as_ref()
+            .map(|p| installation_security::read_protected(p).map_err(|_| Error::Configuration))
+            .transpose()?;
+        if let Some(modules) = &self.modules {
+            modules.verify_ca(ca_pem.as_deref())?;
+        }
         Ok(Config {
             service_id: self.service_id,
             connections: self.connections.clone(),
@@ -258,11 +274,7 @@ impl Deployment {
             architecture,
             registration_keys: keys,
             transport: Transport::Https,
-            ca_pem: self
-                .ca_file
-                .as_ref()
-                .map(|p| installation_security::read_protected(p).map_err(|_| Error::Configuration))
-                .transpose()?,
+            ca_pem,
             limits: Limits {
                 pending_reports: 128,
                 pending_tasks: 128,

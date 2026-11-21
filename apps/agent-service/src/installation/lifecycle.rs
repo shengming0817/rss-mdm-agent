@@ -233,6 +233,9 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
         }
         Action::Status => {
             platform::status(opts.system()?)?;
+            if opts.system()? {
+                apply::module_status(&opts.config()?)?;
+            }
         }
         Action::Refresh => {
             if !opts.system()? {
@@ -254,19 +257,44 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
             if !opts.system()? {
                 return Err(Error::Identity);
             }
-            let candidate = opts.values.get("--candidate").map(|_| opts.path("--candidate")).transpose()?;
-            let profile = opts.values.get("--profile").map(|_| {
-                installation_security::read_protected(&opts.path("--profile")?).map_err(|_| Error::Identity)
-            }).transpose()?;
-            let operation = opts.values.get("--operation").map(|p| {
-                p.to_str().and_then(|s| uuid::Uuid::parse_str(s).ok()).filter(|id| !id.is_nil())
-                    .ok_or(Error::Configuration)
-            }).transpose()?;
+            let candidate = opts
+                .values
+                .get("--candidate")
+                .map(|_| opts.path("--candidate"))
+                .transpose()?;
+            let profile = opts
+                .values
+                .get("--profile")
+                .map(|_| {
+                    installation_security::read_protected(&opts.path("--profile")?)
+                        .map_err(|_| Error::Identity)
+                })
+                .transpose()?;
+            let operation = opts
+                .values
+                .get("--operation")
+                .map(|p| {
+                    p.to_str()
+                        .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                        .filter(|id| !id.is_nil())
+                        .ok_or(Error::Configuration)
+                })
+                .transpose()?;
             if candidate.is_none() && profile.is_none() && operation.is_none() {
                 return Err(Error::Configuration);
             }
-            let source = if candidate.is_some() { apply::Source::Package } else { apply::Source::Administrator };
-            apply::run(&opts.config()?, candidate.as_deref(), profile.as_deref(), operation, source)?;
+            let source = if candidate.is_some() {
+                apply::Source::Package
+            } else {
+                apply::Source::Administrator
+            };
+            apply::run(
+                &opts.config()?,
+                candidate.as_deref(),
+                profile.as_deref(),
+                operation,
+                source,
+            )?;
             if let Some(package) = opts.values.get("--package-path") {
                 // Installation succeeds independently of registration. Invalid material is reported,
                 // never trusted or silently replaced with another identity.
@@ -386,7 +414,12 @@ fn persistent(binary: &Path, config: &Path) -> Result<(), Error> {
     )
     .map(|_| ())
 }
-pub(super) fn preflight_refresh(old: &Deployment, config: &Path, next: &Deployment, next_config: &Path) -> Result<(), Error> {
+pub(super) fn preflight_refresh(
+    old: &Deployment,
+    config: &Path,
+    next: &Deployment,
+    next_config: &Path,
+) -> Result<(), Error> {
     Deployment::load(next_config)?;
     preserved(old, next)?;
     #[cfg(target_os = "macos")]

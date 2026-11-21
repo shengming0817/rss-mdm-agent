@@ -45,6 +45,7 @@ fn load(task: uuid::Uuid) -> Result<Recovery, Error> {
     Ok(record)
 }
 fn validate(r: &Recovery, task: uuid::Uuid) -> Result<(), Error> {
+    r.deployment.require_mdm_assembly()?;
     if r.version != 1 {
         return Err(Error::Configuration);
     }
@@ -80,6 +81,7 @@ pub(crate) fn supported(d: &Deployment) -> bool {
         .is_ok_and(|f| matches!(f.as_str(), "macos_pkg" | "windows_exe"))
 }
 fn prepare(d: &Deployment, permit: &UnmanagePermit, package_managed: bool) -> Result<(), Error> {
+    d.require_mdm_assembly()?;
     if path(permit.task().task_id)?.exists() {
         let old = load(permit.task().task_id)?;
         if old.deployment.installation_id != d.installation_id
@@ -247,6 +249,7 @@ fn execute(task: uuid::Uuid, package_entry: bool) -> Result<(), Error> {
     match std::fs::symlink_metadata(&config) {
         Ok(_) => {
             let current = Deployment::metadata(&config)?;
+            current.require_mdm_assembly()?;
             lifecycle::preserved(&r.deployment, &current)?;
             if current.service.path != r.deployment.service.path
                 || current.installation_artifact != r.deployment.installation_artifact
