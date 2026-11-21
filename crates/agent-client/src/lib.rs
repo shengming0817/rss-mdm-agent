@@ -56,7 +56,7 @@ pub use config::*;
 pub use content::{ContentFile, Materials};
 /// Generated values for the backend-owned HTTP API.
 use rss_mdm_agent_wire::runtime as wire;
-pub use store::{inspect_binding, validate_existing, validate_identity, validate_stored_identity};
+pub use store::{inspect_binding, inspect_optional_binding, validate_existing, validate_identity, validate_stored_identity};
 /// Closed errors, without secrets, response bodies or backend paths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {

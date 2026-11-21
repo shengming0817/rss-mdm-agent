@@ -132,9 +132,11 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
             .get("--operation")
             .and_then(|p| p.to_str())
             .ok_or(Error::Configuration)?;
-        return platform::operation_status(
-            uuid::Uuid::parse_str(id).map_err(|_| Error::Configuration)?,
-        );
+        let id = uuid::Uuid::parse_str(id).map_err(|_| Error::Configuration)?;
+        if apply::status(&opts.config()?, id)? {
+            return Ok(());
+        }
+        return platform::operation_status(id);
     }
     if action == "validate-trust" {
         let bytes = installation_security::read_external(
@@ -158,6 +160,9 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
     }
     let _lock = installation_lock(&opts.config()?, opts.system()?)?;
     outcome::phase("locked-preflight")?;
+    if !matches!(action, Action::Apply | Action::Status) {
+        apply::ensure_idle(&opts.config()?)?;
+    }
     match action {
         #[cfg(windows)]
         Action::MsiSave | Action::MsiRollback | Action::MsiCommit => {
@@ -249,11 +254,19 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
             if !opts.system()? {
                 return Err(Error::Identity);
             }
-            apply(
-                &opts.path("--candidate")?,
-                opts.values.get("--profile"),
-                &opts.config()?,
-            )?;
+            let candidate = opts.values.get("--candidate").map(|_| opts.path("--candidate")).transpose()?;
+            let profile = opts.values.get("--profile").map(|_| {
+                installation_security::read_protected(&opts.path("--profile")?).map_err(|_| Error::Identity)
+            }).transpose()?;
+            let operation = opts.values.get("--operation").map(|p| {
+                p.to_str().and_then(|s| uuid::Uuid::parse_str(s).ok()).filter(|id| !id.is_nil())
+                    .ok_or(Error::Configuration)
+            }).transpose()?;
+            if candidate.is_none() && profile.is_none() && operation.is_none() {
+                return Err(Error::Configuration);
+            }
+            let source = if candidate.is_some() { apply::Source::Package } else { apply::Source::Administrator };
+            apply::run(&opts.config()?, candidate.as_deref(), profile.as_deref(), operation, source)?;
             if let Some(package) = opts.values.get("--package-path") {
                 // Installation succeeds independently of registration. Invalid material is reported,
                 // never trusted or silently replaced with another identity.
@@ -373,6 +386,19 @@ fn persistent(binary: &Path, config: &Path) -> Result<(), Error> {
     )
     .map(|_| ())
 }
+pub(super) fn preflight_refresh(old: &Deployment, config: &Path, next: &Deployment, next_config: &Path) -> Result<(), Error> {
+    Deployment::load(next_config)?;
+    preserved(old, next)?;
+    #[cfg(target_os = "macos")]
+    crate::service::platform_sso::upgrade_preflight(old)?;
+    if old.service.path.exists() {
+        Deployment::load_persistent(config)?;
+    }
+    persistent(&next.service.path, next_config)?;
+    #[cfg(windows)]
+    crate::access_component::preflight(next)?;
+    Ok(())
+}
 fn refresh(
     current: &Path,
     config: &Path,
@@ -381,19 +407,11 @@ fn refresh(
 ) -> Result<(), Error> {
     let old = Deployment::metadata(config)?;
     outcome::phase("refresh-preflight")?;
-    let next = Deployment::load(next_config)?;
+    let next = Deployment::metadata(next_config)?;
     if old.service.path != current || next.service.path != candidate {
         return Err(Error::Identity);
     }
-    preserved(&old, &next)?;
-    #[cfg(target_os = "macos")]
-    crate::service::platform_sso::upgrade_preflight(&old)?;
-    if current.exists() {
-        Deployment::load_persistent(config)?;
-    }
-    persistent(candidate, next_config)?;
-    #[cfg(windows)]
-    crate::access_component::preflight(&next)?;
+    preflight_refresh(&old, config, &next, next_config)?;
     outcome::phase("refresh-quiescence")?;
     platform::quiescent(&old, config)?;
     transition(|action| {
@@ -612,90 +630,6 @@ pub(super) fn initial_profile() -> Result<LocalAccess, Error> {
     }
     platform::interactive_profile()
 }
-fn apply(candidate_path: &Path, profile: Option<&PathBuf>, config: &Path) -> Result<(), Error> {
-    outcome::phase("candidate-preflight")?;
-    let (candidate, artifact) = Candidate::load(candidate_path)?;
-    let old = match std::fs::symlink_metadata(config) {
-        Ok(_) => Some(Deployment::metadata(config)?),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => return Err(e.into()),
-    };
-    let (profile, modules) = match profile {
-        Some(path) => {
-            let profile: profile::Profile = serde_json::from_slice(
-                &installation_security::read_protected(path).map_err(|_| Error::Identity)?,
-            ).map_err(|_| Error::Configuration)?;
-            let (access, modules) = profile.resolve(&candidate, old.as_ref())?;
-            (access, Some(modules))
-        }
-        None => match &old {
-            Some(d) => (LocalAccess::from_deployment(d), d.modules.clone()),
-            None => (initial_profile()?, None),
-        },
-    };
-    if let Some(modules) = &modules {
-        modules.validate(&candidate)?;
-    }
-    platform::preflight_desktop_entry(&candidate)?;
-    platform::public_directory(config.parent().ok_or(Error::Configuration)?)?;
-    let manifests = config
-        .parent()
-        .ok_or(Error::Configuration)?
-        .join("install-manifests");
-    platform::public_directory(&manifests)?;
-    let candidate_bytes =
-        installation_security::read_protected(candidate_path).map_err(|_| Error::Identity)?;
-    if hash(&candidate_bytes) != artifact {
-        return Err(Error::Identity);
-    }
-    retain_public(
-        &manifests.join(format!("{artifact}.json")),
-        &candidate_bytes,
-    )?;
-    let mut next = candidate.deployment(artifact, profile, config)?;
-    next.modules = modules;
-    if let Some(old) = old {
-        inherit(&old, &mut next)?;
-        if let Some(ca) = &old.ca_file {
-            if installation_security::read_protected(ca).map_err(|_| Error::Identity)?
-                != candidate.ca_pem.as_ref().ok_or(Error::Identity)?.as_bytes()
-            {
-                return Err(Error::Identity);
-            }
-        }
-        let staged = config.with_extension(format!("candidate-{}", uuid::Uuid::new_v4()));
-        write_new(&staged, &json(&next)?)?;
-        let result = refresh(&old.service.path, config, &next.service.path, &staged);
-        let _ = std::fs::remove_file(staged);
-        result?;
-    } else {
-        if std::fs::symlink_metadata(&next.state_root).is_ok() {
-            return Err(Error::Identity);
-        }
-        // Existing trust files are never overwritten, including failed or retired installations.
-        outcome::phase("publish-trust")?;
-        if let Some(ca) = &next.ca_file {
-            retain_public(
-                ca,
-                candidate
-                    .ca_pem
-                    .as_ref()
-                    .ok_or(Error::Configuration)?
-                    .as_bytes(),
-            )?;
-        }
-        outcome::phase("publish-configuration")?;
-        crate::local_permissions::initialize(&next.execution.local_permissions)?;
-        publish_new(config, &json(&next)?)?;
-        Deployment::load(config)?;
-        outcome::phase("register-candidate")?;
-        platform::register(true, &next.service.path, config)?;
-    }
-    outcome::phase("desktop-entry")?;
-    platform::desktop_entry(&candidate)?;
-    Ok(())
-}
-
 pub(super) fn installation_lock(config: &Path, system: bool) -> Result<std::fs::File, Error> {
     let root = config.parent().ok_or(Error::Configuration)?;
     if system {

@@ -1,5 +1,6 @@
 //! One installation owner; packages and lab harnesses only invoke this boundary.
 //! ref: tauri tauri-cli-v2.11.2 crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi.
+mod apply;
 mod lifecycle;
 mod profile;
 pub use profile::{Assembly, Modules};

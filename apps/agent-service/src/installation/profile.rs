@@ -50,6 +50,22 @@ pub(super) struct Profile {
 }
 
 impl Modules {
+    pub(super) fn authorize_update(&self, old: &Deployment) -> Result<(), Error> {
+        // Remote changes can select only backends already enrolled by the administrator.
+        // The signed connections seed belongs to MDM and cannot authorize a DA backend.
+        if self.da.enabled() && !old.modules.as_ref().is_some_and(|m| m.da == self.da) {
+            return Err(Error::Denied);
+        }
+        if let Module::Enabled { backend } = &self.mdm {
+            if backend.instance != old.service_id || backend.tenant != old.tenant
+                || backend.signing_keys != old.signing_keys
+                || !old.connections.configuration.origins.contains(&backend.origin)
+                || old.network()?.ca_pem.as_ref().is_none_or(|ca| hash(ca) != backend.ca_sha256)
+            { return Err(Error::Denied); }
+        }
+        Ok(())
+    }
+
     pub(super) fn validate(&self, candidate: &Candidate) -> Result<(), Error> {
         if self.revision == 0 || !(self.mdm.enabled() || self.da.enabled()) {
             return Err(Error::Configuration);

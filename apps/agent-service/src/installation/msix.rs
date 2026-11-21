@@ -56,6 +56,7 @@ pub fn initialize() -> Result<Deployment, Error> {
     candidate.validate()?;
     let config = Deployment::default_path()?;
     let _lock = super::lifecycle::installation_lock(&config, true)?;
+    super::apply::ensure_idle(&config)?;
     let old = match std::fs::symlink_metadata(&config) {
         Ok(_) => Some(Deployment::metadata(&config)?),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
