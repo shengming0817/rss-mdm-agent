@@ -88,7 +88,7 @@ fn candidate_requires_current_format_and_valid_identity() {
     let decoded: Candidate = serde_json::from_value(psso.clone()).unwrap();
     // Installer metadata and artifact checks are independent of the optional
     // PSSO runtime's exact OS version; non-Mac payloads cannot claim this role.
-    if target == Target::MacosArm64 {
+    if candidate.target == Target::MacosArm64 {
         assert_eq!(decoded.validate_trust(), Ok(()));
         assert_eq!(decoded.validate(), Err(Error::Identity));
         psso["platform_sso"]["origin"] = "http://console.example.org".into();
