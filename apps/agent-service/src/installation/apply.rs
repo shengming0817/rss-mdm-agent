@@ -19,13 +19,15 @@ pub(super) enum Source {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum Phase {
+pub(super) enum Phase {
     Received,
     Stop,
     Remove,
     Publish,
     Register,
     Desktop,
+    AwaitCommit,
+    RestoreDesktop,
     StopCandidate,
     RemoveCandidate,
     Restore,
@@ -45,6 +47,8 @@ struct Record {
     profile_digest: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     input: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    initial_access: Option<LocalAccess>,
     installation: Uuid,
     instance: Uuid,
     tenant: Uuid,
@@ -55,6 +59,8 @@ struct Record {
     after: Option<String>,
     phase: Phase,
     failure: Option<Error>,
+    failure_phase: Option<Phase>,
+    compensation_error: Option<Error>,
 }
 
 impl Record {
@@ -66,7 +72,14 @@ impl Record {
                 | Phase::RemoveCandidate
                 | Phase::Restore
                 | Phase::Restart
+                | Phase::RestoreDesktop
         )
+    }
+    fn fail(&mut self, error: Error) {
+        if self.failure.is_none() {
+            self.failure = Some(error);
+            self.failure_phase = Some(self.phase);
+        }
     }
     fn phase_name(&self) -> &'static str {
         use Phase::*;
@@ -77,6 +90,8 @@ impl Record {
             Publish => "publish-candidate",
             Register => "register-candidate",
             Desktop => "desktop-entry",
+            AwaitCommit => "await-msi-commit",
+            RestoreDesktop => "restore-desktop",
             StopCandidate => "stop-candidate",
             RemoveCandidate => "remove-candidate",
             Restore => "restore-current",
@@ -104,7 +119,7 @@ impl Record {
             _ => "pending",
         };
         outcome::details(serde_json::json!({"state":state,"operation":self.operation,
-            "phase":self.phase,"revision":self.revision,"failure":self.failure}))
+            "phase":self.phase,"revision":self.revision,"failure":self.failure, "failurePhase":self.failure_phase, "compensationError":self.compensation_error}))
     }
 }
 
@@ -131,6 +146,9 @@ impl Journal {
                 .join("profiles"),
         })
     }
+    fn recovery_identity(&self) -> PathBuf {
+        self.root.join("inactive-deployment.json")
+    }
     fn active(&self) -> PathBuf {
         self.root.join("profile-active.json")
     }
@@ -143,17 +161,26 @@ impl Journal {
         Ok(())
     }
     fn read(&self, path: &Path) -> Result<Option<Record>, Error> {
-        match std::fs::symlink_metadata(path) {
+        match platform_private_storage::read(path, installation_security::MAX_FRAME * 4) {
+            Ok(bytes) => Ok(Some(
+                serde_json::from_slice(&bytes).map_err(|_| Error::Storage)?,
+            )),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e.into()),
-            Ok(_) => {
-                let bytes =
-                    platform_private_storage::read(path, installation_security::MAX_FRAME * 4)?;
-                Ok(Some(
-                    serde_json::from_slice(&bytes).map_err(|_| Error::Storage)?,
-                ))
-            }
         }
+    }
+    fn initial_access(
+        &self,
+        record: &mut Record,
+        discover: impl FnOnce() -> Result<LocalAccess, Error>,
+    ) -> Result<LocalAccess, Error> {
+        if let Some(access) = &record.initial_access {
+            return Ok(access.clone());
+        }
+        let access = discover()?;
+        record.initial_access = Some(access.clone());
+        self.save(record)?;
+        Ok(access)
     }
     fn save(&self, record: &Record) -> Result<(), Error> {
         let staged = self.root.join(format!("{}.tmp", Uuid::new_v4()));
@@ -163,7 +190,15 @@ impl Journal {
             let _ = std::fs::remove_file(staged);
         }
         result?;
-        if record.compensating() {
+        if let (Some(step), Some(error)) = (record.failure_phase, record.failure) {
+            outcome::profile_failure(step, error);
+        }
+        if record.phase == Phase::Rejected
+            && record.failure_phase != Some(Phase::Received)
+            && record.after.is_some()
+        {
+            outcome::compensation("completed");
+        } else if record.compensating() {
             outcome::compensation("running");
         }
         outcome::phase(record.phase_name())
@@ -171,7 +206,10 @@ impl Journal {
     fn archive(&self, record: &Record) -> Result<(), Error> {
         // Atomically move the terminal checkpoint to immutable per-operation history.
         platform_private_storage::replace(&self.active(), &self.file(record.operation, "result"))?;
-        for kind in ["before", "after", "stop", "stop-candidate"] {
+        if record.phase == Phase::Applied && self.recovery_identity().try_exists()? {
+            std::fs::remove_file(self.recovery_identity())?;
+        }
+        for kind in ["before", "after", "desktop", "stop", "stop-candidate"] {
             match std::fs::remove_file(self.file(record.operation, kind)) {
                 Ok(()) => (),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
@@ -183,6 +221,8 @@ impl Journal {
 }
 
 pub(super) fn ensure_idle(config: &Path) -> Result<(), Error> {
+    #[cfg(windows)]
+    lifecycle::ensure_outside_msi(config)?;
     let j = Journal::new(config)?;
     if j.read(&j.active())?.is_some_and(|r| !r.terminal()) {
         Err(Error::Conflict)
@@ -191,32 +231,48 @@ pub(super) fn ensure_idle(config: &Path) -> Result<(), Error> {
     }
 }
 
-#[cfg(windows)]
-pub(super) fn check_msi_rollback(
-    config: &Path,
-    operation: Uuid,
-    finished: bool,
-) -> Result<(), Error> {
+#[cfg(any(windows, test))]
+pub(super) fn finish_msi(config: &Path, operation: Uuid, commit: bool) -> Result<(), Error> {
     let j = Journal::new(config)?;
-    if let Some(mut r) = j.read(&j.active())? {
-        if r.operation != operation || r.config != config || r.source != Source::Msi {
+    let Some(mut r) = j.read(&j.active())? else {
+        return match j.read(&j.file(operation, "result"))? {
+            Some(r)
+                if r.source == Source::Msi
+                    && r.config == config
+                    && (r.phase == Phase::Applied) == commit =>
+            {
+                Ok(())
+            }
+            None if !commit => Ok(()),
+            _ => Err(Error::Conflict),
+        };
+    };
+    if r.operation != operation || r.config != config || r.source != Source::Msi {
+        return Err(Error::Conflict);
+    }
+    if commit {
+        if !matches!(r.phase, Phase::AwaitCommit | Phase::Applied) {
             return Err(Error::Conflict);
         }
-        if finished {
-            r.phase = Phase::Rejected;
-            r.failure = Some(Error::Unavailable);
-            r.input = None;
-            j.save(&r)?;
-            j.archive(&r)?;
+        r.phase = Phase::Applied;
+    } else {
+        if r.phase == Phase::Applied {
+            return Err(Error::Conflict);
+        }
+        rollback(&mut r, config, Error::Unavailable)?;
+        j.save(&r)?;
+        if !r.terminal() {
+            drive(config, None, &j, &mut r)?;
         }
     }
-    Ok(())
+    j.save(&r)?;
+    j.archive(&r)
 }
 pub(super) fn status(config: &Path, id: Uuid) -> Result<bool, Error> {
     let j = Journal::new(config)?;
-    let record = match j.read(&j.file(id, "result"))? {
+    let record = match j.read(&j.active())?.filter(|r| r.operation == id) {
         Some(record) => Some(record),
-        None => j.read(&j.active())?.filter(|r| r.operation == id),
+        None => j.read(&j.file(id, "result"))?,
     };
     if let Some(r) = record {
         if r.config != config || r.operation != id {
@@ -248,17 +304,52 @@ pub(super) fn module_status(config: &Path) -> Result<(), Error> {
         return Ok(());
     }
     let deployment = Deployment::metadata(config)?;
-    let candidate = Candidate::retained(config, &deployment)?;
+    let manifest = config
+        .parent()
+        .ok_or(Error::Configuration)?
+        .join("install-manifests")
+        .join(format!("{}.json", deployment.installation_artifact));
+    let available = if config != Deployment::default_path()? && !manifest.try_exists()? {
+        None
+    } else {
+        Some(Candidate::retained(config, &deployment)?.assembly)
+    };
     let observed = binding(&deployment);
     let registered = observed.as_ref().ok().map(|value| value.is_some());
     let j = Journal::new(config)?;
     let pending = j.read(&j.active())?.map(|r| r.operation);
     outcome::details(serde_json::json!({
-        "available": candidate.assembly,
+        "available": available,
         "enabled": { "mdm":deployment.modules.as_ref().is_none_or(|m| m.mdm.enabled()), "da":deployment.modules.as_ref().is_some_and(|m| m.da.enabled()) },
         "mdmRegistered":registered,"pendingOperation":pending,
         "revision":deployment.modules.as_ref().map(|m|m.revision),
     }))?;
+    Ok(())
+}
+fn verify_backend(source: &Source, old: Option<&Deployment>) -> Result<(), Error> {
+    if let Source::Backend {
+        instance,
+        tenant,
+        device,
+        epoch,
+    } = source
+    {
+        let d = old.ok_or(Error::Denied)?;
+        if (*instance, *tenant) != (d.service_id, d.tenant) {
+            return Err(Error::Denied);
+        }
+        let secrets = crate::DeviceSecrets::open(&d.state_root.join("secrets"), &d.namespace()?)?;
+        secrets.verify_storage(&d.state_root)?;
+        let current = agent_client::validate_identity(
+            &d.state_root.join("communication"),
+            &d.network()?,
+            &secrets,
+            &SystemClock::new()?,
+        )?;
+        if (current.device_id.into_uuid(), current.epoch) != (*device, *epoch) {
+            return Err(Error::Denied);
+        }
+    }
     Ok(())
 }
 fn prepare(
@@ -269,16 +360,22 @@ fn prepare(
     r: &mut Record,
 ) -> Result<(), Error> {
     let original = optional(config)?;
-    let old = original
-        .as_ref()
-        .map(|_| Deployment::metadata(config))
-        .transpose()?;
+    let active = original.is_some();
+    let recovery = j.recovery_identity();
+    let old = if active {
+        Some(Deployment::metadata(config)?)
+    } else if recovery.try_exists()? {
+        Some(Deployment::metadata(&recovery)?)
+    } else {
+        None
+    };
     if let Some(old) = &old {
         if old.installation_id != r.installation {
             return Err(Error::Identity);
         }
         (r.device, r.epoch) = binding(old)?.unzip();
     }
+    verify_backend(&r.source, old.as_ref())?;
     let (access, modules) = match bytes {
         Some(bytes) => {
             let p: profile::Profile =
@@ -306,7 +403,7 @@ fn prepare(
         }
         None => match &old {
             Some(d) => (LocalAccess::from_deployment(d), d.modules.clone()),
-            None => (lifecycle::initial_profile()?, None),
+            None => (j.initial_access(r, lifecycle::initial_profile)?, None),
         },
     };
     if let Some(m) = &modules {
@@ -339,12 +436,13 @@ fn prepare(
     };
     let staged = j.file(r.operation, "after");
     retain_public(&staged, &target)?;
+    retain_public(&j.file(r.operation, "desktop"), &json(candidate)?)?;
     if let Some(before) = original {
         retain_public(&j.file(r.operation, "before"), &before)?;
         r.before = Some(hash(&before));
     }
     r.after = Some(hash(&target));
-    if let Some(old) = &old {
+    if let Some(old) = old.as_ref().filter(|_| active) {
         lifecycle::preflight_refresh(old, config, &next, &staged)?;
     } else {
         if let Some(ca) = &next.ca_file {
@@ -362,7 +460,7 @@ fn prepare(
     // A byte-equivalent effective deployment needs only native registration readback/repair.
     r.phase = if r.before == r.after {
         Phase::Register
-    } else if old.is_some() {
+    } else if active {
         Phase::Stop
     } else {
         Phase::Publish
@@ -377,37 +475,31 @@ fn snapshot(path: &Path, digest: &str) -> Result<Vec<u8>, Error> {
 }
 
 fn stop(deployment: &Deployment, config: &Path, evidence: &Path) -> Result<(), Error> {
-    #[cfg(target_os = "macos")]
-    {
-        platform::stop_for_apply(deployment, config, evidence)
-    }
-    #[cfg(windows)]
-    {
-        let _ = evidence;
-        platform::quiescent(deployment, config)?;
-        platform::stop(true, &deployment.service.path, config)
-    }
+    platform::stop_for_apply(deployment, config, evidence)
 }
 
 fn rollback(r: &mut Record, config: &Path, failure: Error) -> Result<(), Error> {
     if r.compensating() || r.terminal() {
         return Ok(());
     }
-    r.failure = Some(failure);
+    r.fail(failure);
     if r.phase == Phase::Received {
         r.phase = Phase::Rejected;
         return Ok(());
     }
     let active = optional(config)?.as_deref().map(hash);
-    if r.before.is_none() {
-        return Err(failure);
-    }
     r.phase = if active == r.after
-        && matches!(r.phase, Phase::Publish | Phase::Register | Phase::Desktop)
-    {
+        && matches!(
+            r.phase,
+            Phase::Publish | Phase::Register | Phase::Desktop | Phase::AwaitCommit
+        ) {
         Phase::StopCandidate
     } else if active == r.before {
-        Phase::CancelStop
+        if r.before.is_some() {
+            Phase::CancelStop
+        } else {
+            Phase::Rejected
+        }
     } else {
         return Err(Error::Identity);
     };
@@ -442,17 +534,32 @@ fn drive(
         return Err(Error::Identity);
     }
 
-    let source = r.source.clone();
     let operation = r.operation;
     drive_steps(
         r,
         old.is_some(),
+        |r| {
+            if !r.compensating() {
+                if let Err(error) = verify_backend(&r.source, old.as_ref()) {
+                    if (r.phase == Stop && !j.file(operation, "stop").try_exists()?)
+                        || (r.phase == Register && r.before == r.after)
+                    {
+                        r.fail(error);
+                        r.phase = Rejected;
+                    } else {
+                        rollback(r, config, error)?;
+                    }
+                    j.save(r)?;
+                }
+            }
+            Ok(())
+        },
         |r| j.save(r),
         |step| {
             let pointer = optional(config)?;
             let correct = match step {
                 Stop | CancelStop | Remove | Restart => pointer == previous,
-                Register | Desktop | StopCandidate | RemoveCandidate => {
+                Register | Desktop | StopCandidate | RemoveCandidate | RestoreDesktop => {
                     pointer.as_ref() == Some(&next_bytes)
                 }
                 Publish | Restore => pointer == previous || pointer.as_ref() == Some(&next_bytes),
@@ -471,23 +578,6 @@ fn drive(
                     }
                 }
                 Publish => {
-                    if let Source::Backend { device, epoch, .. } = source {
-                        let d = old.as_ref().ok_or(Error::Denied)?;
-                        let secrets = crate::DeviceSecrets::open(
-                            &d.state_root.join("secrets"),
-                            &d.namespace()?,
-                        )?;
-                        secrets.verify_storage(&d.state_root)?;
-                        let current = agent_client::validate_identity(
-                            &d.state_root.join("communication"),
-                            &d.network()?,
-                            &secrets,
-                            &SystemClock::new()?,
-                        )?;
-                        if (current.device_id.into_uuid(), current.epoch) != (device, epoch) {
-                            return Err(Error::Denied);
-                        }
-                    }
                     crate::local_permissions::initialize(&next.execution.local_permissions)?;
                     publish(config, &next_bytes)
                 }
@@ -495,7 +585,24 @@ fn drive(
                 Desktop => platform::desktop_entry(candidate.ok_or(Error::Identity)?),
                 StopCandidate => stop(&next, config, &j.file(operation, "stop-candidate")),
                 RemoveCandidate => platform::remove(true, &next.service.path, config),
-                Restore => publish(config, previous.as_ref().ok_or(Error::Storage)?),
+                RestoreDesktop => {
+                    let bytes = optional(&j.file(operation, "desktop"))?.ok_or(Error::Storage)?;
+                    let new: Candidate =
+                        serde_json::from_slice(&bytes).map_err(|_| Error::Identity)?;
+                    let old = old
+                        .as_ref()
+                        .map(|d| Candidate::retained(config, d))
+                        .transpose()?;
+                    platform::restore_desktop_entry(&new, old.as_ref())
+                }
+                Restore => match &previous {
+                    Some(bytes) => publish(config, bytes),
+                    None if pointer.is_some() => platform::replace(config, &j.recovery_identity()),
+                    None => {
+                        snapshot(&j.recovery_identity(), &hash(&next_bytes))?;
+                        Ok(())
+                    }
+                },
                 _ => Err(Error::Storage),
             }
         },
@@ -505,11 +612,16 @@ fn drive(
 fn drive_steps(
     r: &mut Record,
     upgrading: bool,
+    mut authorize: impl FnMut(&mut Record) -> Result<(), Error>,
     mut checkpoint: impl FnMut(&Record) -> Result<(), Error>,
     mut effect: impl FnMut(Phase) -> Result<(), Error>,
 ) -> Result<(), Error> {
     use Phase::*;
-    while !r.terminal() {
+    while !r.terminal() && r.phase != AwaitCommit {
+        authorize(r)?;
+        if r.terminal() {
+            break;
+        }
         let step = r.phase;
         r.phase = match effect(step) {
             Ok(()) => match step {
@@ -518,19 +630,39 @@ fn drive_steps(
                 Remove => Publish,
                 Publish => Register,
                 Register => Desktop,
+                Desktop if r.source == Source::Msi => AwaitCommit,
                 Desktop => Applied,
                 StopCandidate => RemoveCandidate,
-                RemoveCandidate => Restore,
-                Restore => Restart,
+                RemoveCandidate => {
+                    if matches!(r.failure_phase, Some(Desktop | AwaitCommit)) {
+                        RestoreDesktop
+                    } else {
+                        Restore
+                    }
+                }
+                RestoreDesktop => Restore,
+                Restore if upgrading => Restart,
+                Restore => Rejected,
                 Restart => Rejected,
                 _ => return Err(Error::Storage),
             },
             Err(e) => {
-                r.failure = Some(e);
+                if r.compensating() {
+                    r.compensation_error = Some(e);
+                    checkpoint(r)?;
+                    return Err(e);
+                }
+                r.fail(e);
                 match (step, upgrading) {
+                    (Stop, true) => CancelStop,
+                    (Publish, false) => {
+                        // Publication can return an error after making the new pointer visible.
+                        checkpoint(r)?;
+                        return Err(e);
+                    }
                     (Remove, true) => Restart,
                     (Publish, true) => Restore,
-                    (Register, true) => StopCandidate,
+                    (Register | Desktop, _) => StopCandidate,
                     _ => {
                         checkpoint(r)?;
                         return Err(e);
@@ -538,9 +670,7 @@ fn drive_steps(
                 }
             }
         };
-        if r.phase == Applied {
-            r.failure = None;
-        }
+        r.compensation_error = None;
         checkpoint(r)?;
     }
     Ok(())
@@ -553,6 +683,10 @@ pub(super) fn run(
     id: Option<Uuid>,
     source: Source,
 ) -> Result<(), Error> {
+    #[cfg(windows)]
+    if source != Source::Msi {
+        lifecycle::ensure_outside_msi(config)?;
+    }
     let j = Journal::new(config)?;
     j.create()?;
     let digest = profile.map(hash);
@@ -601,9 +735,13 @@ pub(super) fn run(
         if resume {
             return Err(Error::NotFound);
         }
-        let old = optional(config)?
-            .map(|_| Deployment::metadata(config))
-            .transpose()?;
+        let old = if optional(config)?.is_some() {
+            Some(Deployment::metadata(config)?)
+        } else if j.recovery_identity().try_exists()? {
+            Some(Deployment::metadata(&j.recovery_identity())?)
+        } else {
+            None
+        };
         let artifact = match (supplied_bytes, supplied_digest) {
             (Some(bytes), Some(digest)) => {
                 let candidate: Candidate =
@@ -636,6 +774,7 @@ pub(super) fn run(
             artifact,
             profile_digest: digest,
             input: input.and_then(Result::ok),
+            initial_access: None,
             installation: old
                 .as_ref()
                 .map_or_else(Uuid::new_v4, |d| d.installation_id),
@@ -652,6 +791,8 @@ pub(super) fn run(
                 Phase::Received
             },
             failure: malformed.then_some(Error::Configuration),
+            failure_phase: malformed.then_some(Phase::Received),
+            compensation_error: None,
         };
         j.save(&r)?;
         r
@@ -692,13 +833,27 @@ pub(super) fn run(
             &j,
             &mut record,
         ) {
-            record.failure = Some(e);
+            record.fail(e);
             record.phase = Phase::Rejected;
         }
+        record.initial_access = None;
         j.save(&record)?;
     }
-    if !record.terminal() {
-        drive(config, candidate.as_ref(), &j, &mut record)?;
+    if !record.terminal() && record.phase != Phase::AwaitCommit {
+        if let Err(error) = drive(config, candidate.as_ref(), &j, &mut record) {
+            // Only publication has ambiguous success. Resolve from its durable pointer.
+            if record.phase != Phase::Publish {
+                return Err(error);
+            }
+            rollback(&mut record, config, error)?;
+            j.save(&record)?;
+            if !record.terminal() {
+                drive(config, None, &j, &mut record)?;
+            }
+        }
+    }
+    if record.phase == Phase::AwaitCommit {
+        return record.report();
     }
     record.input = None;
     j.save(&record)?;
@@ -759,6 +914,7 @@ mod tests {
             artifact: "a".repeat(64),
             profile_digest: None,
             input: None,
+            initial_access: None,
             installation: Uuid::from_u128(12),
             instance: Uuid::from_u128(13),
             tenant: Uuid::from_u128(14),
@@ -769,6 +925,8 @@ mod tests {
             after: None,
             phase,
             failure: None,
+            failure_phase: None,
+            compensation_error: None,
         }
     }
 
@@ -800,6 +958,94 @@ mod tests {
         assert!(archived.input.is_none());
     }
 
+    #[test]
+    fn first_install_reopens_the_original_login_selection_before_preflight_replays() {
+        let temp = crate::protocol_test_support::Root::new();
+        let journal = Journal {
+            root: temp.path.join("profiles"),
+        };
+        platform_private_storage::directory(&journal.root).unwrap();
+        let mut r = record(Phase::Received);
+        let access = LocalAccess {
+            subjects: vec!["501".into()],
+            helper_work_roots: BTreeMap::new(),
+        };
+        journal
+            .initial_access(&mut r, || Ok(access.clone()))
+            .unwrap();
+        let mut reopened = journal.read(&journal.active()).unwrap().unwrap();
+        assert_eq!(
+            journal
+                .initial_access(&mut reopened, || panic!("unexpected login discovery"))
+                .unwrap()
+                .subjects,
+            access.subjects
+        );
+    }
+
+    #[test]
+    fn first_install_reverses_partial_desktop_and_keeps_original_error() {
+        let mut r = record(Phase::Desktop);
+        let mut seen = Vec::new();
+        let result = drive_steps(
+            &mut r,
+            false,
+            |_| Ok(()),
+            |_| Ok(()),
+            |phase| {
+                seen.push(phase);
+                match phase {
+                    Phase::Desktop => Err(Error::Identity),
+                    Phase::RestoreDesktop => Err(Error::Unavailable),
+                    _ => Ok(()),
+                }
+            },
+        );
+        assert_eq!(
+            seen,
+            [
+                Phase::Desktop,
+                Phase::StopCandidate,
+                Phase::RemoveCandidate,
+                Phase::RestoreDesktop
+            ]
+        );
+        assert_eq!(result, Err(Error::Unavailable));
+        assert_eq!(r.failure, Some(Error::Identity));
+        assert_eq!(r.failure_phase, Some(Phase::Desktop));
+        assert_eq!(r.compensation_error, Some(Error::Unavailable));
+        drive_steps(&mut r, false, |_| Ok(()), |_| Ok(()), |_| Ok(())).unwrap();
+        assert_eq!(r.phase, Phase::Rejected);
+        assert_eq!(r.compensation_error, None);
+        assert_eq!(r.result(), Err(Error::Identity));
+    }
+
+    #[test]
+    fn msi_receipt_stays_pending_until_outer_commit_and_commit_is_idempotent() {
+        let temp = crate::protocol_test_support::Root::new();
+        let config = temp.path.join("deployment.json");
+        let j = Journal::new(&config).unwrap();
+        std::fs::create_dir(j.root.parent().unwrap()).unwrap();
+        platform_private_storage::directory(&j.root).unwrap();
+        let mut r = record(Phase::Desktop);
+        r.config = config.clone();
+        r.source = Source::Msi;
+        drive_steps(&mut r, true, |_| Ok(()), |r| j.save(r), |_| Ok(())).unwrap();
+        assert_eq!(r.phase, Phase::AwaitCommit);
+        assert!(j.read(&j.file(r.operation, "result")).unwrap().is_none());
+        assert!(status(&config, r.operation).unwrap());
+        finish_msi(&config, r.operation, true).unwrap();
+        finish_msi(&config, r.operation, true).unwrap();
+        assert!(status(&config, r.operation).unwrap());
+        assert_eq!(
+            j.read(&j.file(r.operation, "result"))
+                .unwrap()
+                .unwrap()
+                .phase,
+            Phase::Applied
+        );
+    }
+
     // Exercise the production phase driver across an actual process exit between the effect
     // and its checkpoint. The file represents OS readback; no machine service is replaced.
     #[test]
@@ -814,6 +1060,7 @@ mod tests {
         drive_steps(
             &mut r,
             true,
+            |_| Ok(()),
             |r| {
                 std::fs::write(&state, json(r)?)?;
                 Ok(())
@@ -873,6 +1120,7 @@ mod tests {
                 &mut r,
                 true,
                 |_| Ok(()),
+                |_| Ok(()),
                 |step| {
                     seen.push(step);
                     Err(Error::Unavailable)
@@ -885,6 +1133,7 @@ mod tests {
         drive_steps(
             &mut r,
             true,
+            |_| Ok(()),
             |_| Ok(()),
             |step| {
                 seen.push(step);

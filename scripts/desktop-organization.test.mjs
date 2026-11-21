@@ -321,6 +321,8 @@ test("managed package formats use explicit machine service owners and escaped fi
   assert.ok(msi.includes("--installation msi-apply --candidate"));
   assert.ok(msi.includes('Execute="rollback"'));
   assert.ok(msi.includes("--installation msi-rollback"));
+  assert.ok(msi.includes("--installation msi-remove --binary"));
+  assert.ok(msi.includes('Condition="NOT RollbackDisabled"'));
   assert.ok(msi.includes('Schedule="afterInstallExecute"'));
   assert.ok(
     msi.includes(

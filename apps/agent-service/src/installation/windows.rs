@@ -141,7 +141,10 @@ fn wait_stopped(handle: &Sc) -> Result<(), Error> {
     } else {
         None
     };
-    if before.dwCurrentState != SERVICE_STOPPED {
+    if !matches!(
+        before.dwCurrentState,
+        SERVICE_STOPPED | SERVICE_STOP_PENDING
+    ) {
         let mut receipt = SERVICE_STATUS::default();
         if unsafe { ControlService(handle.0, SERVICE_CONTROL_STOP, &mut receipt) } == 0
             && unsafe { GetLastError() } != ERROR_SERVICE_NOT_ACTIVE
@@ -240,6 +243,71 @@ fn register_verified(binary: &Path, config: &Path, deployment: &Deployment) -> R
     let active = execution_ipc::host::active_user_session().ok().map(|v| v.0);
     for subject in deployment.helper_work_roots.keys() {
         task_register(subject, binary, config, active.as_ref() == Some(subject))?;
+    }
+    Ok(())
+}
+// SCM's PID is unavailable once STOPPED is reported. Persist its creation time before
+// sending STOP so a replacement worker can still wait for the exact process.
+fn process_instance(pid: u32) -> Result<Option<(Handle, u64)>, Error> {
+    let h = unsafe { OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if h.is_null() {
+        return if unsafe { GetLastError() } == ERROR_INVALID_PARAMETER {
+            Ok(None)
+        } else {
+            Err(Error::Unavailable)
+        };
+    }
+    let h = Handle(h);
+    let (mut created, mut exited, mut kernel, mut user) = (
+        FILETIME::default(),
+        FILETIME::default(),
+        FILETIME::default(),
+        FILETIME::default(),
+    );
+    if unsafe { GetProcessTimes(h.0, &mut created, &mut exited, &mut kernel, &mut user) } == 0 {
+        return Err(Error::Unavailable);
+    }
+    Ok(Some((
+        h,
+        (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime),
+    )))
+}
+
+pub(super) fn stop_for_apply(d: &Deployment, config: &Path, evidence: &Path) -> Result<(), Error> {
+    let mut processes: Vec<(u32, u64)> = if evidence.try_exists()? {
+        serde_json::from_slice(
+            &installation_security::read_protected(evidence).map_err(|_| Error::Identity)?,
+        )
+        .map_err(|_| Error::Storage)?
+    } else {
+        Vec::new()
+    };
+    if let Some(handle) = service(NAME)? {
+        owned(&handle, &d.service.path, config)?;
+        let status = state(&handle)?;
+        match status.dwCurrentState {
+            SERVICE_STOPPED => (),
+            SERVICE_RUNNING | SERVICE_PAUSED | SERVICE_PAUSE_PENDING | SERVICE_CONTINUE_PENDING => {
+                let (_, created) =
+                    process_instance(status.dwProcessId)?.ok_or(Error::Unavailable)?;
+                let identity = (status.dwProcessId, created);
+                if !processes.contains(&identity) {
+                    processes.push(identity);
+                }
+            }
+            SERVICE_STOP_PENDING if !processes.is_empty() => (),
+            _ => return Err(Error::Unavailable),
+        }
+    }
+    publish(evidence, &json(&processes)?)?;
+    quiescent(d, config)?;
+    stop(true, &d.service.path, config)?;
+    for (pid, started) in processes {
+        if let Some((h, current)) = process_instance(pid)? {
+            if current == started && unsafe { WaitForSingleObject(h.0, 20_000) } != WAIT_OBJECT_0 {
+                return Err(Error::Unavailable);
+            }
+        }
     }
     Ok(())
 }
@@ -1435,23 +1503,24 @@ impl Drop for ComApartment {
     }
 }
 
-pub(super) fn uninstall_payload(candidate: &Candidate) -> Result<(), Error> {
+pub(super) fn restore_desktop_entry(
+    candidate: &Candidate,
+    old: Option<&Candidate>,
+) -> Result<(), Error> {
+    if candidate.format()? != "windows_exe" {
+        return Ok(());
+    }
+    if let Some(old) = old.filter(|old| old.format().is_ok_and(|format| format == "windows_exe")) {
+        return desktop_entry(old);
+    }
+    remove_desktop_entry(candidate)
+}
+
+fn remove_desktop_entry(candidate: &Candidate) -> Result<(), Error> {
     use windows_sys::Win32::System::Registry::*;
     preflight_entry(candidate, true)?;
     if candidate.format()? == "windows_exe" {
         protocol_remove(candidate)?;
-    }
-    if let Some(image) = registry_value("ServiceImage")? {
-        if Path::new(&image) != candidate.service.path {
-            return Err(Error::Identity);
-        }
-    }
-    let retired = retire_payload(candidate)?;
-    if WORKER.get().is_some_and(|(_, p)| {
-        p.with_extension("exe") == std::env::current_exe().unwrap_or_default()
-    }) && retired.exists()
-    {
-        std::fs::remove_dir_all(retired)?;
     }
     let path = shortcut()?;
     if path.exists() {
@@ -1467,6 +1536,18 @@ pub(super) fn uninstall_payload(candidate: &Candidate) -> Result<(), Error> {
     };
     if status != 0 && status != ERROR_FILE_NOT_FOUND {
         return Err(Error::Unavailable);
+    }
+    Ok(())
+}
+
+pub(super) fn uninstall_payload(candidate: &Candidate) -> Result<(), Error> {
+    remove_desktop_entry(candidate)?;
+    let retired = retire_payload(candidate)?;
+    if WORKER.get().is_some_and(|(_, p)| {
+        p.with_extension("exe") == std::env::current_exe().unwrap_or_default()
+    }) && retired.exists()
+    {
+        std::fs::remove_dir_all(retired)?;
     }
     Ok(())
 }

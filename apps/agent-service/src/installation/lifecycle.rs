@@ -16,6 +16,8 @@ enum Action {
     #[cfg(windows)]
     MsiApply,
     #[cfg(windows)]
+    MsiRemove,
+    #[cfg(windows)]
     MsiRollback,
     #[cfg(windows)]
     MsiCommit,
@@ -23,6 +25,8 @@ enum Action {
 impl Action {
     fn parse(value: &str) -> Result<Self, Error> {
         match value {
+            #[cfg(windows)]
+            "msi-remove" => Ok(Self::MsiRemove),
             #[cfg(windows)]
             "msi-apply" => Ok(Self::MsiApply),
             #[cfg(windows)]
@@ -176,11 +180,32 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
     outcome::phase("locked-preflight")?;
     let can_resume = matches!(action, Action::Apply | Action::Status);
     #[cfg(windows)]
-    let can_resume = can_resume || matches!(action, Action::MsiRollback | Action::MsiApply);
-    if !can_resume {
+    let can_resume = can_resume
+        || matches!(
+            action,
+            Action::MsiRollback | Action::MsiApply | Action::MsiCommit | Action::MsiRemove
+        );
+    if opts.system()? && !can_resume {
         apply::ensure_idle(&opts.config()?)?;
     }
     match action {
+        #[cfg(windows)]
+        Action::MsiRemove => {
+            let config = opts.config()?;
+            if !opts.system()? || config != Deployment::default_path()? {
+                return Err(Error::Denied);
+            }
+            let mut transaction = msi_snapshot(&config)?;
+            let task = opts
+                .values
+                .get("--operation")
+                .and_then(|s| s.to_str())
+                .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                .ok_or(Error::Denied)?;
+            transaction.removing = true;
+            publish(&config.with_extension("msi-rollback"), &json(&transaction)?)?;
+            unmanage::package_remove(&config, &opts.path("--binary")?, task)?;
+        }
         #[cfg(windows)]
         Action::MsiApply => {
             let config = opts.config()?;
@@ -188,6 +213,9 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
                 return Err(Error::Denied);
             }
             let transaction = msi_snapshot(&config)?;
+            if transaction.removing {
+                return Err(Error::Conflict);
+            }
             apply::run(
                 &config,
                 Some(&opts.path("--candidate")?),
@@ -812,12 +840,21 @@ mod tests {
     }
 }
 
-// MSI owns file rollback; the installation owner owns service/configuration compensation.
+// MSI owns its files. The marker reserves the installation owner between custom actions.
 #[cfg(windows)]
 #[derive(Serialize, Deserialize)]
 struct MsiSnapshot {
     operation: uuid::Uuid,
     before: Option<String>,
+    removing: bool,
+}
+#[cfg(windows)]
+pub(super) fn ensure_outside_msi(config: &Path) -> Result<(), Error> {
+    if config.with_extension("msi-rollback").try_exists()? {
+        Err(Error::Conflict)
+    } else {
+        Ok(())
+    }
 }
 #[cfg(windows)]
 fn msi_snapshot(config: &Path) -> Result<MsiSnapshot, Error> {
@@ -827,86 +864,59 @@ fn msi_snapshot(config: &Path) -> Result<MsiSnapshot, Error> {
 }
 #[cfg(windows)]
 fn msi_transaction(action: Action, config: &Path) -> Result<(), Error> {
-    let snapshot = config.with_extension("msi-rollback");
-    match action {
-        Action::MsiSave => {
-            let operation = uuid::Uuid::new_v4();
-            let before = if config.try_exists()? {
-                let bytes =
-                    installation_security::read_protected(config).map_err(|_| Error::Identity)?;
-                Deployment::metadata(config)?;
-                retain_public(
-                    &config.with_extension(format!("{operation}.msi-before")),
-                    &bytes,
-                )?;
-                Some(hash(&bytes))
-            } else {
-                None
-            };
-            publish_new(&snapshot, &json(&MsiSnapshot { operation, before })?)?;
-        }
-        Action::MsiRollback => {
-            if !snapshot.try_exists()? {
-                return Ok(());
-            }
-            let transaction = msi_snapshot(config)?;
-            apply::check_msi_rollback(config, transaction.operation, false)?;
-            let prior = config.with_extension(format!("{}.msi-before", transaction.operation));
-            let bytes = transaction
-                .before
-                .as_ref()
-                .map(|digest| {
-                    let bytes = installation_security::read_protected(&prior)
-                        .map_err(|_| Error::Identity)?;
-                    if hash(&bytes) != *digest {
-                        return Err(Error::Identity);
-                    }
-                    Ok(bytes)
-                })
-                .transpose()?;
-            let old = bytes
-                .as_ref()
-                .map(|b| serde_json::from_slice::<Deployment>(b).map_err(|_| Error::Storage))
-                .transpose()?;
-            let current = match std::fs::symlink_metadata(config) {
-                Ok(_) => Some(Deployment::metadata(config)?),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-                Err(error) => return Err(error.into()),
-            };
-            if let Some(old) = old {
-                old.service
-                    .verify(&old.service.path)
-                    .map_err(|_| Error::Identity)?;
-                validate_native_artifact(&old.service)?;
-                if let Some(current) = current {
-                    preserved(&old, &current)?;
-                    platform::quiescent(&current, config)?;
-                    platform::remove(true, &current.service.path, config)?;
-                }
-                publish(config, bytes.as_deref().ok_or(Error::Storage)?)?;
-                platform::restore_registration(&old.service.path, config)?;
-            } else if let Some(current) = current {
-                platform::quiescent(&current, config)?;
-                platform::remove(true, &current.service.path, config)?;
-                // Preserve initialized identity/journal and metadata for the next explicit install.
-            }
-            apply::check_msi_rollback(config, transaction.operation, true)?;
-            std::fs::remove_file(snapshot)?;
-            if prior.try_exists()? {
-                std::fs::remove_file(prior)?;
-            }
-        }
-        Action::MsiCommit => {
-            if snapshot.exists() {
-                let transaction = msi_snapshot(config)?;
-                let prior = config.with_extension(format!("{}.msi-before", transaction.operation));
-                if prior.try_exists()? {
-                    std::fs::remove_file(prior)?;
-                }
-                std::fs::remove_file(snapshot)?;
-            }
-        }
-        _ => return Err(Error::Configuration),
+    let marker = config.with_extension("msi-rollback");
+    if matches!(action, Action::MsiSave) {
+        let operation = uuid::Uuid::new_v4();
+        let before = if config.try_exists()? {
+            Deployment::metadata(config)?;
+            let bytes =
+                installation_security::read_protected(config).map_err(|_| Error::Identity)?;
+            retain_public(
+                &config.with_extension(format!("{operation}.msi-before")),
+                &bytes,
+            )?;
+            Some(hash(&bytes))
+        } else {
+            None
+        };
+        let snapshot = MsiSnapshot {
+            operation,
+            before,
+            removing: false,
+        };
+        return publish_new(&marker, &json(&snapshot)?);
     }
+    if !marker.try_exists()? {
+        return Ok(());
+    }
+    let transaction = msi_snapshot(config)?;
+    let prior = config.with_extension(format!("{}.msi-before", transaction.operation));
+    let commit = matches!(action, Action::MsiCommit);
+    if transaction.removing {
+        if !commit {
+            let before =
+                installation_security::read_protected(&prior).map_err(|_| Error::Identity)?;
+            if Some(hash(&before)) != transaction.before {
+                return Err(Error::Identity);
+            }
+            let old: Deployment =
+                serde_json::from_slice(&before).map_err(|_| Error::Configuration)?;
+            if config.try_exists()? {
+                let current =
+                    installation_security::read_protected(config).map_err(|_| Error::Identity)?;
+                if current != before {
+                    return Err(Error::Conflict);
+                }
+            } else {
+                publish(config, &before)?;
+            }
+            platform::restore_registration(&old.service.path, config)?;
+        }
+    } else {
+        apply::finish_msi(config, transaction.operation, commit)?;
+    }
+    std::fs::remove_file(marker)?;
+    // The decision is durable. A leftover snapshot has no authority over future operations.
+    let _ = std::fs::remove_file(prior);
     Ok(())
 }

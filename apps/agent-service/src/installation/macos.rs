@@ -149,7 +149,7 @@ fn write_job(system: bool, binary: &Path, config: &Path) -> Result<(), Error> {
     plist::Value::Dictionary(dict)
         .to_writer_xml(&mut bytes)
         .map_err(|_| Error::Configuration)?;
-    write_new(&path, &bytes)
+    publish_new(&path, &bytes)
 }
 fn job(system: bool, binary: &Path, config: &Path) -> plist::Dictionary {
     let mut dict = plist::Dictionary::new();
@@ -450,6 +450,31 @@ pub(super) fn desktop_entry(candidate: &Candidate) -> Result<(), Error> {
     }
     result?;
     launch_services(app, false)
+}
+pub(super) fn restore_desktop_entry(
+    candidate: &Candidate,
+    old: Option<&Candidate>,
+) -> Result<(), Error> {
+    preflight_desktop_entry(candidate)?;
+    let alias = Path::new("/Applications/RSS MDM Agent.app");
+    let app = candidate
+        .desktop
+        .path
+        .ancestors()
+        .find(|p| p.extension().is_some_and(|e| e == "app"))
+        .ok_or(Error::Configuration)?;
+    if old.is_none_or(|o| o.desktop.path != candidate.desktop.path) && app.try_exists()? {
+        launch_services(app, true)?;
+    }
+    if let Some(old) = old {
+        return desktop_entry(old);
+    }
+    match std::fs::read_link(alias) {
+        Ok(target) if target == app => Ok(std::fs::remove_file(alias)?),
+        Ok(_) => Err(Error::Identity),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.into()),
+    }
 }
 fn launch_services(app: &Path, unregister: bool) -> Result<(), Error> {
     let (status,_)=utility(Path::new("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"),&[if unregister{"-u"}else{"-f"}.into(),app.as_os_str().to_owned()])?;

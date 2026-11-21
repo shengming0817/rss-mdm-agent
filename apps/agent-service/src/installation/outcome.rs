@@ -50,6 +50,15 @@ pub(super) fn details(value: serde_json::Value) -> Result<(), Error> {
 pub(super) fn native_failure(code: Option<i32>) {
     REPORT.with(|value| value.borrow_mut().native_exit_code = code);
 }
+pub(super) fn profile_failure(phase: super::apply::Phase, error: Error) {
+    REPORT.with(|value| {
+        let mut value = value.borrow_mut();
+        value.failure_phase = serde_json::to_value(phase)
+            .ok()
+            .and_then(|v| v.as_str().map(str::to_owned));
+        value.error = Some(format!("{error:?}"));
+    });
+}
 pub(super) fn failed(error: Error) {
     REPORT.with(|value| {
         let mut value = value.borrow_mut();
