@@ -1196,13 +1196,16 @@ mod tests {
             .lines()
             .find_map(|s| s.strip_prefix("CDHash="))
             .unwrap();
-        let digest = hash(&std::fs::read(&source).unwrap());
+        use std::os::unix::fs::PermissionsExt;
+        let executable = std::fs::read(&source).unwrap();
+        let digest = hash(&executable);
         for image in [
             &mut candidate.service,
             &mut candidate.desktop,
             &mut candidate.cli,
         ] {
-            std::fs::copy(&source, &image.path).unwrap();
+            std::fs::write(&image.path, &executable).unwrap();
+            std::fs::set_permissions(&image.path, std::fs::Permissions::from_mode(0o755)).unwrap();
             image.sha256 = digest.clone();
             image.cdhash = Some(cdhash.to_owned());
         }
