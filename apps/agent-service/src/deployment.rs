@@ -773,6 +773,7 @@ pub(crate) mod tests {
         }
     }
     #[test]
+    #[ignore = "requires a protected system-owned state directory and parent"]
     fn a_retained_first_install_binding_without_communication_storage_fails_preflight() {
         let tmp = crate::protocol_test_support::Root::new();
         let mut d = deployment();
