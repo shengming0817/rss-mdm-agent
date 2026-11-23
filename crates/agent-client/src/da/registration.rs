@@ -139,12 +139,17 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         })
     }
     /// Hand the CSR-bound request to an administrator through protected local storage.
-    pub fn prepare(&self, operation: Uuid) -> Result<wire::GrantRequest, Error> {
+    pub fn prepare<T>(
+        &self,
+        operation: Uuid,
+        export: impl FnOnce(wire::GrantRequest) -> Result<T, Error>,
+    ) -> Result<T, Error> {
         let expected = self.active()?.map(|active| active.receipt.device);
         let mut p = self.begin(operation, expected)?;
+        let exported = export(self.request(&mut p)?)?;
         p.administrator = true;
         self.save(&p)?;
-        self.request(&mut p)
+        Ok(exported)
     }
     /// Attach the exact administrator grant to its locally prepared CSR.
     pub fn import(&self, grant: wire::Grant) -> Result<(), Error> {

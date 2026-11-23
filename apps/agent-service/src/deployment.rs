@@ -198,6 +198,7 @@ impl Deployment {
     }
     /// Construct only the current configured login's mechanism; this never opens device storage.
     pub fn user_helper(&self) -> Result<execution_runner::helper::Helper, Error> {
+        self.mdm()?;
         self.service
             .verify(&std::env::current_exe()?)
             .map_err(|_| Error::Identity)?;

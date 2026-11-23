@@ -343,8 +343,8 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
     let mut consumer = Consumer(None);
     let first = open();
     let id = Uuid::new_v4();
-    let req = first.prepare(id).unwrap();
-    assert_eq!(req.csr, first.prepare(id).unwrap().csr);
+    let req = first.prepare(id, Ok).unwrap();
+    assert_eq!(req.csr, first.prepare(id, Ok).unwrap().csr);
     let grant = wire::Grant {
         operation_id: id,
         grant_id: Uuid::new_v4(),
@@ -358,7 +358,10 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
     drop(first);
     time.set(2_000_000_002);
     let second = open();
-    assert_eq!(second.prepare(Uuid::new_v4()).err(), Some(Error::Conflict));
+    assert_eq!(
+        second.prepare(Uuid::new_v4(), Ok).err(),
+        Some(Error::Conflict)
+    );
     assert!(second.drive(&mut consumer).await.is_err());
     drop(second);
     let client = open();
@@ -410,7 +413,11 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         .unwrap();
     assert_eq!(rows, 2);
     state.lock().unwrap().expire_after_issue = true;
-    client.start_renewal().unwrap();
+    let pending = client.start_renewal().unwrap();
+    assert_eq!(
+        client.prepare(pending, |_| Err::<(), _>(Error::Storage)),
+        Err(Error::Storage)
+    );
     client.drive(&mut consumer).await.unwrap();
     assert!(client.pending().unwrap().is_some() && state.lock().unwrap().candidate.is_some());
     client.drive(&mut consumer).await.unwrap();
@@ -444,7 +451,7 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         .effective_digest
         .is_none());
     let op = Uuid::new_v4();
-    let recovery = client.prepare(op).unwrap();
+    let recovery = client.prepare(op, Ok).unwrap();
     let grant = wire::Grant {
         operation_id: op,
         device: renewed.receipt.device,
@@ -455,7 +462,7 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
     wrong.device = rss_mdm_agent_wire::DeviceId::new_v4();
     assert_eq!(client.import(wrong), Err(Error::Identity));
     client.import(grant).unwrap();
-    assert_eq!(recovery.csr, client.prepare(op).unwrap().csr);
+    assert_eq!(recovery.csr, client.prepare(op, Ok).unwrap().csr);
 }
 
 #[test]
@@ -477,7 +484,7 @@ fn expired_unsubmitted_grant_allows_new_authorization_without_reusing_its_key() 
         time.clone(),
     )
     .unwrap();
-    let original = client.prepare(Uuid::new_v4()).unwrap();
+    let original = client.prepare(Uuid::new_v4(), Ok).unwrap();
     let expired = wire::Grant {
         grant_id: Uuid::new_v4(),
         operation_id: original.operation_id,
@@ -486,8 +493,8 @@ fn expired_unsubmitted_grant_allows_new_authorization_without_reusing_its_key() 
     };
     assert_eq!(client.import(expired), Err(Error::Expired));
     client.release_settled().unwrap();
-    assert!(client.prepare(original.operation_id).is_err());
-    let next = client.prepare(Uuid::new_v4()).unwrap();
+    assert!(client.prepare(original.operation_id, Ok).is_err());
+    let next = client.prepare(Uuid::new_v4(), Ok).unwrap();
     let valid = wire::Grant {
         grant_id: Uuid::new_v4(),
         operation_id: next.operation_id,
@@ -496,7 +503,7 @@ fn expired_unsubmitted_grant_allows_new_authorization_without_reusing_its_key() 
     };
     client.import(valid).unwrap();
     time.set(2_000_000_010);
-    let fresh = client.prepare(Uuid::new_v4()).unwrap();
+    let fresh = client.prepare(Uuid::new_v4(), Ok).unwrap();
     assert_ne!(fresh.csr, next.csr);
 }
 #[test]

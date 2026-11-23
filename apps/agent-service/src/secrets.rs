@@ -74,7 +74,7 @@ mod tests {
         };
         let original = uuid::Uuid::new_v4();
         let client = open();
-        let grant_request = client.prepare(original).unwrap();
+        let grant_request = client.prepare(original, Ok).unwrap();
         let publish = |name: &str, bytes: &[u8]| {
             let tmp = io.join(format!("{name}.staged"));
             files::write_new(&tmp, bytes).unwrap();

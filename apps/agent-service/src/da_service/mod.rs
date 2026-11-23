@@ -89,20 +89,22 @@ fn open(d: &Deployment) -> Result<da::Client<DeviceSecrets, SystemClock>, Error>
 
 pub(crate) fn prepare(d: &Deployment, operation: Uuid, file: &Path) -> Result<(), Error> {
     d.require_service()?;
-    let request = open(d)?.prepare(operation)?;
-    let bytes = zeroize::Zeroizing::new(serde_json::to_vec(&request).map_err(|_| Error::Protocol)?);
-    match platform_private_storage::write_new(file, &bytes) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            let old = zeroize::Zeroizing::new(platform_private_storage::read(file, 65536)?);
-            if *old == *bytes {
-                Ok(())
-            } else {
-                Err(Error::Conflict)
+    open(d)?.prepare(operation, |request| {
+        let bytes =
+            zeroize::Zeroizing::new(serde_json::to_vec(&request).map_err(|_| Error::Protocol)?);
+        match platform_private_storage::write_new(file, &bytes) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                let old = zeroize::Zeroizing::new(platform_private_storage::read(file, 65536)?);
+                if *old == *bytes {
+                    Ok(())
+                } else {
+                    Err(Error::Conflict)
+                }
             }
+            Err(e) => Err(e.into()),
         }
-        Err(e) => Err(e.into()),
-    }
+    })
 }
 pub(crate) fn import(d: &Deployment, file: &Path) -> Result<(), Error> {
     d.require_service()?;

@@ -310,9 +310,16 @@ pub(super) fn remove(system: bool, binary: &Path, config: &Path) -> Result<(), E
         read_job(system, binary, config)?;
         std::fs::remove_file(path)?;
     }
-    if system && plist_path(false).exists() {
+    if system {
+        remove_helper_job(binary, config)?;
+    }
+    Ok(())
+}
+fn remove_helper_job(binary: &Path, config: &Path) -> Result<(), Error> {
+    let path = plist_path(false);
+    if path.try_exists()? {
         read_job(false, binary, config)?;
-        std::fs::remove_file(plist_path(false))?;
+        std::fs::remove_file(path)?;
     }
     Ok(())
 }
@@ -761,5 +768,6 @@ pub(super) fn stop_for_apply(d: &Deployment, config: &Path, evidence: &Path) -> 
             std::thread::sleep(Duration::from_millis(50));
         }
     }
-    Ok(())
+    // The next deployment recreates this global login job only if MDM is enabled.
+    remove_helper_job(&d.service.path, config)
 }
