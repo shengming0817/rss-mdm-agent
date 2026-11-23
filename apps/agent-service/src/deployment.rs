@@ -23,9 +23,7 @@ pub struct PlatformSsoConfiguration {
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Deployment {
-    /// Absence selects the fixed package MDM configuration.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub modules: Option<crate::installation::Modules>,
+    pub modules: crate::installation::Modules,
     /// Actual installed CLI; absence means no CLI image is trusted.
     pub cli: Option<execution_ipc::entry::CliPolicy>,
     /// Optional installed macOS PSSO component. Absence means not installed, never a compatibility fallback.
@@ -33,11 +31,6 @@ pub struct Deployment {
     pub software_read_grants: Vec<agent_client::SoftwareReadGrant>,
     pub version: u32,
     pub ipc_version: u8,
-    pub service_id: uuid::Uuid,
-    pub connections: rss_mdm_agent_wire::connections::SignedConfiguration,
-    pub tenant: uuid::Uuid,
-    pub signing_keys: BTreeMap<String, String>,
-    pub ca_file: Option<PathBuf>,
     pub installation_id: uuid::Uuid,
     /// SHA256 of the fixed, public installation candidate manifest.
     pub installation_artifact: String,
@@ -71,7 +64,9 @@ impl Deployment {
     /// Assemble the machine owner. Registration is driven only by explicit IPC or retained operations.
     pub fn assemble(self) -> Result<Box<dyn execution_ipc::host::Handler>, Error> {
         self.require_service()?;
-        self.require_mdm_assembly()?;
+        crate::da_service::assemble(self)
+    }
+    pub(crate) fn mdm_owner(self) -> Result<Box<dyn execution_ipc::host::Handler>, Error> {
         match self.preflight() {
             Ok(()) => Ok(Box::new(crate::registration::RegistrationOwner::new(self)?)),
             Err(error) => {
@@ -107,14 +102,23 @@ impl Deployment {
         {
             return Err(Error::Configuration);
         }
-        value.require_mdm_assembly()?;
+        value
+            .modules
+            .validate_for(crate::installation::Assembly::CURRENT)?;
         Ok(value)
     }
     pub(crate) fn require_mdm_assembly(&self) -> Result<(), Error> {
-        if let Some(modules) = &self.modules {
-            modules.require_mdm_assembly(self)?;
-        }
-        Ok(())
+        self.mdm().map(|_| ())
+    }
+    pub(crate) fn mdm(&self) -> Result<&crate::installation::MdmBackend, Error> {
+        self.modules.mdm.backend()
+    }
+    pub(crate) fn da_root(&self) -> Result<PathBuf, Error> {
+        Ok(self
+            .state_root
+            .parent()
+            .ok_or(Error::Configuration)?
+            .join("device-access-channel"))
     }
     pub fn load(path: &Path) -> Result<Self, Error> {
         let value = Self::metadata(path)?;
@@ -159,7 +163,9 @@ impl Deployment {
         {
             crate::installation::validate_native_artifact(image)?;
         }
-        value.network()?.validate()?;
+        if value.modules.mdm.enabled() {
+            value.network()?.validate()?;
+        }
         Ok(value)
     }
     /// Retained state validation must survive removal of an old desktop payload.
@@ -170,7 +176,9 @@ impl Deployment {
             .verify(&value.service.path)
             .map_err(|_| Error::Identity)?;
         crate::installation::validate_native_artifact(&value.service)?;
-        value.network()?.validate()?;
+        if value.modules.mdm.enabled() {
+            value.network()?.validate()?;
+        }
         Ok(value)
     }
     pub fn server_policy(&self) -> PeerPolicy {
@@ -229,7 +237,8 @@ impl Deployment {
                 installation_security::Target::WindowsArm64
                 | installation_security::Target::MacosArm64 => wire::TaskArchitecture::Aarch64,
             };
-        let keys = self
+        let mdm = self.mdm()?;
+        let keys = mdm
             .signing_keys
             .iter()
             .map(|(k, v)| {
@@ -241,17 +250,10 @@ impl Deployment {
                 ))
             })
             .collect::<Result<_, Error>>()?;
-        let ca_pem = self
-            .ca_file
-            .as_ref()
-            .map(|p| installation_security::read_protected(p).map_err(|_| Error::Configuration))
-            .transpose()?;
-        if let Some(modules) = &self.modules {
-            modules.verify_ca(ca_pem.as_deref())?;
-        }
+        let ca_pem = Some(mdm.ca_pem.as_bytes().to_vec());
         Ok(Config {
-            service_id: self.service_id,
-            connections: self.connections.clone(),
+            service_id: self.mdm()?.instance,
+            connections: self.mdm()?.connections.clone(),
             software_read_grants: self.software_read_grants.clone(),
             execution_context: wire::SoftwareExecutionContext {
                 revision: 1,
@@ -267,9 +269,9 @@ impl Deployment {
                 msix_sideload: crate::software_worker::sideload_allowed()?,
                 msix_unsigned: cfg!(windows) && crate::os_version::current()? >= [10, 0, 19041, 0],
             },
-            origin: url::Url::parse(&self.connections.configuration.preferred_origin)
+            origin: url::Url::parse(&self.mdm()?.connections.configuration.preferred_origin)
                 .map_err(|_| Error::Configuration)?,
-            tenant: self.tenant,
+            tenant: self.mdm()?.tenant,
             platform,
             architecture,
             registration_keys: keys,
@@ -293,13 +295,20 @@ impl Deployment {
         Ok(format!(
             "{:x}",
             Sha256::digest(
-                serde_json::to_vec(&(self.service_id, self.tenant, self.installation_id))
-                    .map_err(|_| Error::Configuration)?
+                serde_json::to_vec(&(
+                    self.mdm()?.instance,
+                    self.mdm()?.tenant,
+                    self.installation_id
+                ))
+                .map_err(|_| Error::Configuration)?
             )
         ))
     }
     /// Check every existing database before any secret, directory, lock or material initialization.
     pub(crate) fn preflight(&self) -> Result<(), Error> {
+        if !self.modules.mdm.enabled() {
+            return Ok(());
+        }
         let network = self.network()?;
         let root = &self.state_root;
         if never_initialized(root)? {
@@ -314,7 +323,7 @@ impl Deployment {
         agent_client::telemetry::validate_existing(&root.join("communication"), &network)?;
         let access = crate::access_worker::root(&self.execution);
         match access.join("device-access.sqlite").symlink_metadata() {
-            Ok(_) => device_access::Store::validate_existing(&access, self.service_id)
+            Ok(_) => device_access::Store::validate_existing(&access, self.mdm()?.instance)
                 .map_err(|_| Error::Schema)?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
             Err(e) => return Err(e.into()),
@@ -327,8 +336,8 @@ impl Deployment {
         }
         if root.join("execution.sqlite").exists() {
             let (context, _) = crate::local_execution::binding(
-                self.service_id,
-                self.tenant,
+                self.mdm()?.instance,
+                self.mdm()?.tenant,
                 self.installation_id,
             )?;
             execution_sqlite::Store::validate_existing(
@@ -457,9 +466,10 @@ impl Deployment {
     /// Read-only refresh preflight while the current service remains running.
     /// No identity initialization, journal recovery or secret import is allowed here.
     pub fn validate_persistent(&self) -> Result<(), Error> {
+        crate::da_service::preflight(self)?;
         self.require_service()?;
         self.preflight()?;
-        if never_initialized(&self.state_root)? {
+        if !self.modules.mdm.enabled() || never_initialized(&self.state_root)? {
             return Ok(());
         }
         let namespace = self.namespace()?;
@@ -477,7 +487,7 @@ impl Deployment {
             // identity when the otherwise equivalent origin omits the trailing slash.
             platform_private_storage::validate(&self.execution.work_root)?;
             #[cfg(windows)]
-            validate_access_storage(&self.execution, self.service_id)?;
+            validate_access_storage(&self.execution, self.mdm()?.instance)?;
         }
         Ok(())
     }
@@ -742,8 +752,8 @@ pub(crate) mod tests {
         let current = serde_json::json!({
             "version": execution_ipc::host::DEPLOYMENT_VERSION,
             "ipc_version": execution_ipc::host::IPC_VERSION,
-            "service_id":crate::protocol_test_support::SERVICE_ID, "connections":crate::protocol_test_support::signed_connections("https://agent.example.org".into(), uuid::Uuid::from_u128(2), 1), "tenant":uuid::Uuid::from_u128(2),
-            "software_read_grants":[], "signing_keys":{}, "ca_file":root.path.join("https-ca.pem"),
+            "modules": crate::installation::tests::mdm_defaults(),
+            "software_read_grants":[],
             "installation_id":uuid::Uuid::new_v4(), "installation_artifact":"a".repeat(64),
             "registration_clients":peer.clone(), "clients":peer, "service":image,
             "state_root":root.path.join("state"), "helper_work_roots":{},
@@ -803,14 +813,17 @@ pub(crate) mod tests {
         let mut deployment = deployment();
         deployment.execution.material_root = root.clone();
         let offline = crate::access_worker::root(&deployment.execution);
-        assert!(validate_access_storage(&deployment.execution, deployment.service_id).is_err());
+        assert!(
+            validate_access_storage(&deployment.execution, deployment.mdm().unwrap().instance)
+                .is_err()
+        );
         assert!(
             !offline.exists(),
             "preflight must not initialize missing state"
         );
         platform_private_storage::directory(&offline).unwrap();
-        device_access::Store::create(&offline, deployment.service_id).unwrap();
-        validate_access_storage(&deployment.execution, deployment.service_id).unwrap();
+        device_access::Store::create(&offline, deployment.mdm().unwrap().instance).unwrap();
+        validate_access_storage(&deployment.execution, deployment.mdm().unwrap().instance).unwrap();
         assert!(validate_access_storage(&deployment.execution, uuid::Uuid::new_v4()).is_err());
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -845,21 +858,12 @@ pub(crate) mod tests {
             cdhash: None,
         };
         Deployment {
-            modules: None,
+            modules: crate::installation::tests::mdm_defaults(),
             cli: None,
             platform_sso: None,
-            service_id: crate::protocol_test_support::SERVICE_ID,
-            connections: crate::protocol_test_support::signed_connections(
-                "https://agent.example.org".into(),
-                uuid::Uuid::from_u128(2),
-                1,
-            ),
             software_read_grants: vec![],
             version: execution_ipc::host::DEPLOYMENT_VERSION,
             ipc_version: execution_ipc::host::IPC_VERSION,
-            tenant: uuid::Uuid::new_v4(),
-            signing_keys: Default::default(),
-            ca_file: None,
             installation_artifact: "a".repeat(64),
             installation_id: uuid::Uuid::new_v4(),
             registration_clients: PeerPolicy {

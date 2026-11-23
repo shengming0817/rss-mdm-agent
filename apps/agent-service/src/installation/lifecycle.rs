@@ -11,6 +11,9 @@ enum Action {
     Recover,
     Import,
     ImportConnections,
+    DaPrepare,
+    DaImport,
+    DaRenew,
     #[cfg(windows)]
     MsiApply,
     #[cfg(windows)]
@@ -40,6 +43,9 @@ impl Action {
             "apply" => Ok(Self::Apply),
             "recover" => Ok(Self::Recover),
             "import" => Ok(Self::Import),
+            "da-prepare" => Ok(Self::DaPrepare),
+            "da-import" => Ok(Self::DaImport),
+            "da-renew" => Ok(Self::DaRenew),
             "import-connections" => Ok(Self::ImportConnections),
             _ => Err(Error::Configuration),
         }
@@ -336,6 +342,25 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
                 }
             }
         }
+        Action::DaPrepare | Action::DaImport | Action::DaRenew => {
+            if !opts.system()? {
+                return Err(Error::Denied);
+            }
+            let d = Deployment::load(&opts.config()?)?;
+            match action {
+                Action::DaPrepare => {
+                    let operation = opts
+                        .values
+                        .get("--operation")
+                        .and_then(|p| p.to_str())
+                        .and_then(|v| uuid::Uuid::parse_str(v).ok())
+                        .ok_or(Error::Configuration)?;
+                    crate::da_service::prepare(&d, operation, &opts.path("--grant")?)
+                }
+                Action::DaImport => crate::da_service::import(&d, &opts.path("--grant")?),
+                _ => crate::da_service::renew(&d),
+            }?;
+        }
         Action::Recover => {
             if !opts.system()? {
                 return Err(Error::Identity);
@@ -418,6 +443,7 @@ fn remove_package(opts: &Options) -> Result<(), Error> {
 // owns execution configuration. Reinstalling must not reset pinned interpreters,
 // package managers, local permissions or budgets to the installer's defaults.
 pub(super) fn inherit(old: &Deployment, next: &mut Deployment) -> Result<(), Error> {
+    next.modules = old.modules.clone();
     next.installation_id = old.installation_id;
     next.software_read_grants = old.software_read_grants.clone();
     if let (Some(previous), Some(next_cli)) = (&old.cli, &mut next.cli) {
@@ -429,16 +455,19 @@ pub(super) fn inherit(old: &Deployment, next: &mut Deployment) -> Result<(), Err
 }
 
 pub(super) fn preserved(old: &Deployment, next: &Deployment) -> Result<(), Error> {
-    if old.service_id != next.service_id
-        || old.signing_keys != next.signing_keys
-        || old.software_read_grants != next.software_read_grants
-        || old.tenant != next.tenant
+    if let (Ok(a), Ok(b)) = (old.mdm(), next.mdm()) {
+        if (a.instance, a.tenant, &a.ca_pem, &a.signing_keys)
+            != (b.instance, b.tenant, &b.ca_pem, &b.signing_keys)
+        {
+            return Err(Error::Identity);
+        }
+    }
+    if old.software_read_grants != next.software_read_grants
         || old.installation_id != next.installation_id
         || old.state_root != next.state_root
         || old.helper_work_roots != next.helper_work_roots
         || old.execution.work_root != next.execution.work_root
         || old.execution.material_root != next.execution.material_root
-        || old.ca_file != next.ca_file
     {
         return Err(Error::Identity);
     }
@@ -464,7 +493,9 @@ pub(super) fn preflight_refresh(
     Deployment::load(next_config)?;
     preserved(old, next)?;
     #[cfg(target_os = "macos")]
-    crate::service::platform_sso::upgrade_preflight(old)?;
+    if old.modules.mdm.enabled() {
+        crate::service::platform_sso::upgrade_preflight(old)?;
+    }
     if old.service.path.exists() {
         Deployment::load_persistent(config)?;
     }
@@ -476,7 +507,9 @@ pub(super) fn preflight_candidate_state(
 ) -> Result<(), Error> {
     persistent(&next.service.path, next_config)?;
     #[cfg(windows)]
-    crate::access_component::preflight(next)?;
+    if next.modules.mdm.enabled() {
+        crate::access_component::preflight(next)?;
+    }
     Ok(())
 }
 // Package callbacks may exit between issuing STOP and observing process exit.
@@ -868,17 +901,8 @@ fn apply_msi_package(candidate_path: &Path, config: &Path) -> Result<(), Error> 
     let mut next = candidate.deployment(artifact, profile, config, old.as_ref())?;
     if let Some(old) = &old {
         next.modules = old.modules.clone();
-        if let Some(modules) = &next.modules {
-            modules.validate(&candidate)?;
-        }
+        next.modules.validate_for(candidate.assembly)?;
         inherit(old, &mut next)?;
-        if let Some(ca) = &old.ca_file {
-            if installation_security::read_protected(ca).map_err(|_| Error::Identity)?
-                != candidate.ca_pem.as_ref().ok_or(Error::Identity)?.as_bytes()
-            {
-                return Err(Error::Identity);
-            }
-        }
     }
     let staged = config.with_extension(format!("candidate-{}", uuid::Uuid::new_v4()));
     write_new(&staged, &json(&next)?)?;
@@ -891,16 +915,6 @@ fn apply_msi_package(candidate_path: &Path, config: &Path) -> Result<(), Error> 
         }
         // Existing trust files are never overwritten, including failed or retired installations.
         outcome::phase("publish-trust")?;
-        if let Some(ca) = &next.ca_file {
-            retain_public(
-                ca,
-                candidate
-                    .ca_pem
-                    .as_ref()
-                    .ok_or(Error::Configuration)?
-                    .as_bytes(),
-            )?;
-        }
         Deployment::load(&staged)?;
         if old.is_some() {
             preflight_candidate_state(&next, &staged)?;

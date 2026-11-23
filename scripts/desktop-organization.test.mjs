@@ -113,28 +113,29 @@ test("desktop and Agent consume the same env CA without embedding paths or priva
   const template = {
     version: DEPLOYMENT_VERSION,
     ipc_version: IPC_VERSION,
-    signing_keys: { key: "public" },
+    modules: {
+      revision: 1,
+      mdm: { state: "enabled", backend: { signing_keys: { key: "public" } } },
+      da: { state: "disabled" },
+    },
     state_root: "/state",
-    ca_file: "/old",
   };
   const installedCa = join(root, "installed-ca.pem");
   const agent = agentOrganizationConfiguration(root, template, installedCa);
-  assert.equal(agent.ca, desktop.ca_pem);
-  assert.equal(agent.config.ca_file, installedCa);
+  assert.equal(agent.modules.mdm.backend.ca_pem, desktop.ca_pem);
   assert.equal(
-    agent.config.connections.configuration.preferredOrigin,
+    agent.modules.mdm.backend.connections.configuration.preferredOrigin,
     "https://agent.fixture.test",
   );
-  assert.equal(agent.config.origin, undefined);
-  assert.equal(agent.config.tenant, desktop.tenant);
-  assert.deepEqual(agent.config.signing_keys, template.signing_keys);
-  assert.equal(template.ca_file, "/old");
+  assert.equal(agent.origin, undefined);
+  assert.equal(agent.modules.mdm.backend.tenant, desktop.tenant);
+  assert.deepEqual(
+    agent.modules.mdm.backend.signing_keys,
+    template.modules.mdm.backend.signing_keys,
+  );
+  assert.equal(template.modules.mdm.backend.ca_pem, undefined);
   assert.equal(environment.RSS_MDM_CA_FILE, undefined);
   assert.ok(!environment[organizationBuildInput].includes(ca));
-  assert.throws(
-    () => agentOrganizationConfiguration(root, template),
-    /ca-output/,
-  );
   configure(key);
   assert.throws(() => desktopBuildEnvironment(root), /public certificate/);
   configure("relative.pem");
@@ -161,11 +162,18 @@ test("Agent generator passes the signed file unchanged and refuses unsigned orig
   const template = {
     version: DEPLOYMENT_VERSION,
     ipc_version: IPC_VERSION,
-    service_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    modules: {
+      revision: 1,
+      mdm: {
+        state: "enabled",
+        backend: { instance: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" },
+      },
+      da: { state: "disabled" },
+    },
   };
   assert.deepEqual(
-    agentOrganizationConfiguration(root, template, join(root, "ca.pem")).config
-      .connections,
+    agentOrganizationConfiguration(root, template, join(root, "ca.pem")).modules
+      .mdm.backend.connections,
     JSON.parse(readFileSync(file)),
   );
   assert.throws(
@@ -243,6 +251,11 @@ test("real Agent generator CLI preserves user-readable public inputs under restr
       version: DEPLOYMENT_VERSION,
       ipc_version: IPC_VERSION,
       state_root: "/state",
+      modules: {
+        revision: 1,
+        mdm: { state: "enabled", backend: {} },
+        da: { state: "disabled" },
+      },
     }),
   );
   let entry = join(root, "scripts", "agent-organization.mjs");
@@ -256,7 +269,7 @@ test("real Agent generator CLI preserves user-readable public inputs under restr
   try {
     execFileSync(
       process.execPath,
-      [entry, "--config", template, "--output", output, "--ca-output", ca],
+      [entry, "--config", template, "--output", output],
       { stdio: "ignore" },
     );
     writeFileSync(
@@ -274,13 +287,12 @@ test("real Agent generator CLI preserves user-readable public inputs under restr
     if (previousUmask !== undefined) process.umask(previousUmask);
   }
   const config = JSON.parse(readFileSync(output, "utf8"));
-  assert.equal(config.ca_file, ca);
+  assert.match(config.modules.mdm.backend.ca_pem, /BEGIN CERTIFICATE/);
   assert.equal(existsSync(withoutCa), false);
   assert.equal(config.state_root, "/state");
-  assert.match(readFileSync(ca, "utf8"), /BEGIN CERTIFICATE/);
+  assert.equal(existsSync(ca), false);
   if (process.platform !== "win32") {
     assert.equal(statSync(output).mode & 0o777, 0o644);
-    assert.equal(statSync(ca).mode & 0o777, 0o644);
   }
 });
 

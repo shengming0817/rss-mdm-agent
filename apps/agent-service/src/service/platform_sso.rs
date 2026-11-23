@@ -78,11 +78,11 @@ impl<S: IdentityProvider> DeviceService<S> {
         let deployment = self.installation.as_ref().ok_or(Error::Configuration)?;
         let config = deployment.platform_sso.as_ref().ok_or(Error::Unsupported)?;
         if require_enabled {
-            enabled(&self.core.access.root, deployment.service_id)?;
+            enabled(&self.core.access.root, deployment.mdm()?.instance)?;
         }
         let profile = self.client.registration()?;
         let mut context = ::platform_sso::Context {
-            tenant: deployment.tenant,
+            tenant: deployment.mdm()?.tenant,
             device_id: profile.device_id,
             installation: self.core.access.installation,
             origin: config.origin.clone(),
@@ -109,7 +109,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             if (require_enabled && !binding.enabled)
                 || !binding.matches_identity(
                     context.installation,
-                    deployment.tenant,
+                    deployment.mdm()?.tenant,
                     &profile,
                     &account,
                 )
@@ -967,7 +967,7 @@ pub(crate) fn uninstall_preflight(deployment: &crate::deployment::Deployment) ->
         &root,
         "platform-sso.disabled",
         &Disabled {
-            installation: deployment.service_id,
+            installation: deployment.mdm()?.instance,
         },
     )?;
     for entry in std::fs::read_dir(&root)? {
@@ -1039,8 +1039,8 @@ pub(crate) fn component(
         }
         let coordinate: Coordinate = state::read_optional(&root, &name)?.ok_or(Error::Storage)?;
         if coordinate.file(if in_flight { "registering" } else { "source" })? != name
-            || coordinate.context.installation != deployment.service_id
-            || coordinate.context.tenant != deployment.tenant
+            || coordinate.context.installation != deployment.mdm()?.instance
+            || coordinate.context.tenant != deployment.mdm()?.tenant
         {
             return Err(Error::Identity);
         }
@@ -1062,7 +1062,7 @@ pub(crate) fn component(
             &root,
             "platform-sso.disabled",
             &Disabled {
-                installation: deployment.service_id,
+                installation: deployment.mdm()?.instance,
             },
         )?;
     }
@@ -1099,7 +1099,7 @@ pub(crate) fn component(
             }
         }
     }
-    let disabled = match enabled(&root, deployment.service_id) {
+    let disabled = match enabled(&root, deployment.mdm()?.instance) {
         Ok(()) => false,
         Err(Error::Denied) => true,
         Err(e) => return Err(e),

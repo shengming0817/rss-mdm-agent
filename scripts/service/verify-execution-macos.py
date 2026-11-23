@@ -801,8 +801,8 @@ def root_refresh_security(root, binary, config, installer_source, phase):
             elif name in ['hash','cdhash']:
                 changed['service']['sha256' if name=='hash' else 'cdhash']='0'*(64 if name=='hash' else 40)
             elif name in ['version','ipc_version']: changed[name]=255
-            elif name=='tenant': changed['tenant']=str(uuid.uuid4())
-            elif name=='service_id': changed['service_id']=str(uuid.uuid4())
+            elif name=='tenant': changed['modules']['mdm']['backend']['tenant']=str(uuid.uuid4())
+            elif name=='service_id': changed['modules']['mdm']['backend']['instance']=str(uuid.uuid4())
             elif name=='state_root': changed['state_root']=str(root/'other-state')
             elif name in ['marker','journal','communication','communication_format','secret']:
                 # This registration owns only the isolated experiment copy. Prevent its
@@ -1560,8 +1560,8 @@ def main():
         installer.chmod(0o600)
         system_installer_source = installer_source
         shutil.copyfile(lab / 'tls.pem', inputs / 'tls.pem')
-        deployment = dict(**service_versions(), service_id=info['serviceId'], connections=info['connections'], tenant=info['tenant'],
-                          software_read_grants=[], signing_keys={'test': info['key']}, ca_file=str(protected / 'ca.pem'),
+        deployment = dict(**service_versions(), modules=dict(revision=1, mdm=dict(state='enabled',backend=dict(instance=info['serviceId'],tenant=info['tenant'],connections=info['connections'],signing_keys={'test':info['key']},ca_pem=info['caPem'])), da=dict(state='disabled')),
+                          software_read_grants=[],
                           installation_id=str(uuid.uuid4()), installation_artifact=hashlib.sha256(args.binary.read_bytes()).hexdigest(),
                           state_root=str(protected / 'state'),
                           helper_work_roots={str(os.geteuid()): str(helper_root)},
@@ -1598,9 +1598,9 @@ config['execution']['interpreters']=[dict(profile='posix_sh',image=artifact('/bi
 config['execution']['managers']=[dict(executor='package_installer',image=artifact('/usr/sbin/installer'))]
 (root/'ca.pem').write_bytes(%r); os.chmod(root/'ca.pem',0o644)
 grant=json.loads(%r)
-candidate=dict(version=2,format='macos_pkg',product_version='controlled',target='macos-arm64',
+candidate=dict(version=3,assembly=dict(mdm=True,da=True),defaults=config['modules'],format='macos_pkg',product_version='controlled',target='macos-arm64',
     root=str(root),service=config['service'],desktop=artifact(desktop),cli=artifact(cli),runtime_root=str(root/'runtime'),runtime_sha256='0'*64,
-    service_id=config['service_id'],connections=config['connections'],tenant=config['tenant'],signing_keys=config['signing_keys'],ca_pem=%r,signing_mode='development')
+    signing_mode='development')
 manifest=(json.dumps(candidate,sort_keys=True)+'\\n').encode();(root/'candidate.json').write_bytes(manifest);os.chmod(root/'candidate.json',0o644)
 config['installation_artifact']=hashlib.sha256(manifest).hexdigest()
 (root/'grant.json').write_text(json.dumps(grant)); os.chmod(root/'grant.json',0o600)
@@ -1608,7 +1608,7 @@ path=root/'execution.json';path.write_text(json.dumps(config));os.chmod(path,0o6
 subprocess.run([str(binary),'--installation','import','--config',str(path),'--configuration',str(root/'grant.json')],text=True,check=True)
 subprocess.run(%r,check=True)
 instrument_service_diagnostics(root,binary,path)
-''' % (str(protected), str(args.binary.resolve()), hashlib.sha256(args.binary.read_bytes()).hexdigest(), str(args.cli.resolve()), hashlib.sha256(args.cli.read_bytes()).hexdigest(), str(desktop_source), hashlib.sha256(desktop_source.read_bytes()).hexdigest(), deployment, str(os.geteuid()), str(os.geteuid()), (lab / 'tls.pem').read_bytes(), json.dumps(grant), info['caPem'], frozen_installer(system_installer_source, ['install','--scope','system','--binary',str(binary),'--config',str(config)])))
+''' % (str(protected), str(args.binary.resolve()), hashlib.sha256(args.binary.read_bytes()).hexdigest(), str(args.cli.resolve()), hashlib.sha256(args.cli.read_bytes()).hexdigest(), str(desktop_source), hashlib.sha256(desktop_source.read_bytes()).hexdigest(), deployment, str(os.geteuid()), str(os.geteuid()), (lab / 'tls.pem').read_bytes(), json.dumps(grant), frozen_installer(system_installer_source, ['install','--scope','system','--binary',str(binary),'--config',str(config)])))
         if args.desktop:
             # Extend this same installation owner, retaining its protected binary/config checks.
             contents = setup.read_text()

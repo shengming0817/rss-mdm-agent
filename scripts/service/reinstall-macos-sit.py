@@ -123,12 +123,15 @@ def main():
     if hashlib.sha256(args.package.read_bytes()).hexdigest() != args.sha256:
         raise RuntimeError('Package digest mismatch; nothing was changed')
     config = json.loads((BASE / 'execution.json').read_text())
-    if config['tenant'] != args.tenant or Path(config['state_root']) != BASE / 'state':
+    if config['modules']['da']['state'] != 'disabled' or (BASE / 'device-access-channel').exists():
+        raise RuntimeError('This MDM installation reset cannot remove DA materials')
+    mdm = config['modules']['mdm']['backend']
+    if mdm['tenant'] != args.tenant or Path(config['state_root']) != BASE / 'state':
         raise RuntimeError('Installed tenant or local state root does not match this SIT reset')
     manifest = json.loads((Path(config['service']['path']).parent / 'candidate.json').read_text())
     if manifest['signing_mode'] != 'development':
         raise RuntimeError('This script only resets a development installation')
-    namespace = hashlib.sha256(json.dumps([config['service_id'], config['tenant'], config['installation_id']],
+    namespace = hashlib.sha256(json.dumps([mdm['instance'], mdm['tenant'], config['installation_id']],
                                           separators=(',', ':')).encode()).hexdigest()
     secrets = BASE / 'state/secrets'
     if (secrets / 'credential-owner').read_text() != namespace:
@@ -201,7 +204,7 @@ def main():
     run(['/usr/sbin/pkgutil', '--forget', 'com.rss-mdm.agent'], missing=True)
     run(['/usr/sbin/installer', '-pkg', args.package, '-target', '/'])
     fresh = json.loads((BASE / 'execution.json').read_text())
-    if fresh['tenant'] != args.tenant or fresh['installation_id'] == config['installation_id']:
+    if fresh['modules']['mdm']['backend']['tenant'] != args.tenant or fresh['installation_id'] == config['installation_id']:
         raise RuntimeError('The installed package did not create the expected fresh SIT installation')
     status = run([fresh['service']['path'], '--installation', 'status']).stdout.strip()
     print(json.dumps({'freshInstallation': True, 'installationId': fresh['installation_id'],

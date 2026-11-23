@@ -49,8 +49,6 @@ struct Record {
     #[serde(skip_serializing_if = "Option::is_none")]
     initial_access: Option<LocalAccess>,
     installation: Uuid,
-    instance: Uuid,
-    tenant: Uuid,
     device: Option<Uuid>,
     epoch: Option<Uuid>,
     revision: Option<u64>,
@@ -275,7 +273,7 @@ pub(super) fn status(config: &Path, id: Uuid) -> Result<bool, Error> {
 }
 
 fn binding(d: &Deployment) -> Result<Option<(Uuid, Uuid)>, Error> {
-    if !d.state_root.join("communication").try_exists()? {
+    if !d.modules.mdm.enabled() || !d.state_root.join("communication").try_exists()? {
         return Ok(None);
     }
     let network = d.network()?;
@@ -312,9 +310,9 @@ pub(super) fn module_status(config: &Path) -> Result<(), Error> {
         .map(|r| r.operation);
     outcome::details(serde_json::json!({
         "available": available,
-        "enabled": { "mdm":deployment.modules.as_ref().is_none_or(|m| m.mdm.enabled()), "da":deployment.modules.as_ref().is_some_and(|m| m.da.enabled()) },
-        "mdmRegistered":registered,"pendingOperation":pending,
-        "revision":deployment.modules.as_ref().map(|m|m.revision),
+        "enabled": { "mdm":deployment.modules.mdm.enabled(), "da":deployment.modules.da.enabled() },
+        "mdmRegistered":registered,"da":crate::da_service::status(&deployment)?,"pendingOperation":pending,
+        "revision":deployment.modules.revision,
     }))?;
     Ok(())
 }
@@ -327,7 +325,7 @@ fn verify_backend(source: &Source, old: Option<&Deployment>) -> Result<(), Error
     } = source
     {
         let d = old.ok_or(Error::Denied)?;
-        if (*instance, *tenant) != (d.service_id, d.tenant) {
+        if (*instance, *tenant) != (d.mdm()?.instance, d.mdm()?.tenant) {
             return Err(Error::Denied);
         }
         let secrets = crate::DeviceSecrets::open(&d.state_root.join("secrets"), &d.namespace()?)?;
@@ -382,7 +380,7 @@ fn prepare(
             {
                 let d = old.as_ref().ok_or(Error::Denied)?;
                 if (*instance, *tenant, Some(*device), Some(*epoch))
-                    != (d.service_id, d.tenant, r.device, r.epoch)
+                    != (d.mdm()?.instance, d.mdm()?.tenant, r.device, r.epoch)
                     || p.subjects != d.clients.subjects
                     || p.helper_work_roots != d.helper_work_roots
                 {
@@ -391,17 +389,18 @@ fn prepare(
                 p.modules.authorize_update(d)?;
             }
             let (a, m) = p.resolve(old.as_ref())?;
-            (a, Some(m))
+            (a, m)
         }
         None => match &old {
             Some(d) => (LocalAccess::from_deployment(d), d.modules.clone()),
-            None => (j.initial_access(r, lifecycle::initial_profile)?, None),
+            None => (
+                j.initial_access(r, lifecycle::initial_profile)?,
+                candidate.defaults.clone(),
+            ),
         },
     };
-    if let Some(m) = &modules {
-        m.validate(candidate)?;
-        r.revision = Some(m.revision);
-    }
+    modules.validate_for(candidate.assembly)?;
+    r.revision = Some(modules.revision);
     let package = r.source == Source::Package;
     if package {
         platform::preflight_desktop_entry(candidate)?;
@@ -443,17 +442,6 @@ fn prepare(
     }
     if let Some(old) = &old {
         lifecycle::preserved(old, &next)?;
-        if let Some(ca) = &old.ca_file {
-            if installation_security::read_protected(ca).map_err(|_| Error::Identity)?
-                != candidate
-                    .ca_pem
-                    .as_deref()
-                    .ok_or(Error::Identity)?
-                    .as_bytes()
-            {
-                return Err(Error::Identity);
-            }
-        }
     } else if next.state_root.try_exists()? {
         return Err(Error::Identity);
     }
@@ -477,16 +465,6 @@ fn prepare(
             Phase::Stop
         };
     } else {
-        if let Some(ca) = &next.ca_file {
-            retain_public(
-                ca,
-                candidate
-                    .ca_pem
-                    .as_deref()
-                    .ok_or(Error::Identity)?
-                    .as_bytes(),
-            )?;
-        }
         Deployment::load(&staged)?;
         if old.is_some() {
             lifecycle::preflight_candidate_state(&next, &staged)?;
@@ -496,16 +474,9 @@ fn prepare(
     Ok(())
 }
 
-// Both selections have been validated against this exact installed candidate. On a
-// baseline installation without explicit modules, the package already runs MDM alone.
 fn same_runtime(old: &Deployment, next: &Deployment) -> bool {
-    let same_modules = match (&old.modules, &next.modules) {
-        (Some(a), Some(b)) => a.mdm == b.mdm && a.da == b.da,
-        (None, Some(b)) => b.mdm.enabled() && !b.da.enabled(),
-        (None, None) => true,
-        (Some(_), None) => false,
-    };
-    same_modules
+    old.modules.mdm == next.modules.mdm
+        && old.modules.da == next.modules.da
         && old.clients.subjects == next.clients.subjects
         && old.registration_clients.subjects == next.registration_clients.subjects
         && old.helper_work_roots == next.helper_work_roots
@@ -823,9 +794,6 @@ pub(super) fn run(
                 old.installation_artifact.clone()
             }
         };
-        let bytes = snapshot(&manifests.join(format!("{artifact}.json")), &artifact)?;
-        let candidate: Candidate =
-            serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
         // Retain only strictly decoded public profile fields, never an invalid payload.
         let input = profile.map(|raw| {
             let text = std::str::from_utf8(raw).map_err(|_| Error::Configuration)?;
@@ -844,8 +812,6 @@ pub(super) fn run(
             installation: old
                 .as_ref()
                 .map_or_else(Uuid::new_v4, |d| d.installation_id),
-            instance: candidate.service_id,
-            tenant: candidate.tenant,
             device: None,
             epoch: None,
             revision: None,
@@ -987,8 +953,6 @@ mod tests {
             input: None,
             initial_access: None,
             installation: Uuid::from_u128(12),
-            instance: Uuid::from_u128(13),
-            tenant: Uuid::from_u128(14),
             device: None,
             epoch: None,
             revision: Some(1),
@@ -1082,8 +1046,8 @@ mod tests {
         let mut old = crate::deployment::tests::deployment();
         old.state_root = root.path.join("state");
         old.execution.material_root = root.path.join("materials");
-        old.tenant = candidate.tenant;
-        old.signing_keys = candidate.signing_keys.clone();
+        old.modules = candidate.defaults.clone();
+        old.modules.revision = 7;
         old.service = candidate.service.clone();
         old.cli = Some(execution_ipc::entry::CliPolicy {
             image: candidate.cli.clone(),
@@ -1091,10 +1055,6 @@ mod tests {
         });
         old.clients.images = vec![candidate.desktop.clone(), candidate.cli.clone()];
         old.registration_clients.images = vec![candidate.desktop.clone()];
-        let ca = root.path.join("ca.pem");
-        let pem = candidate.ca_pem.as_ref().unwrap().as_bytes();
-        publish(&ca, pem).unwrap();
-        old.ca_file = Some(ca);
         let manifest = json(candidate).unwrap();
         old.installation_artifact = hash(&manifest);
         let manifests = root.path.join("install-manifests");
@@ -1104,20 +1064,6 @@ mod tests {
             &manifest,
         )
         .unwrap();
-        let module = profile::Module::Enabled {
-            backend: profile::Backend {
-                instance: old.service_id,
-                tenant: old.tenant,
-                origin: candidate.connections.configuration.preferred_origin.clone(),
-                ca_sha256: hash(pem),
-                signing_keys: old.signing_keys.clone(),
-            },
-        };
-        old.modules = Some(Modules {
-            revision: 7,
-            mdm: module,
-            da: profile::Module::Disabled,
-        });
         publish(&config, &json(&old).unwrap()).unwrap();
         (config, old)
     }
@@ -1130,7 +1076,7 @@ mod tests {
         let candidate = super::super::tests::candidate(&root);
         let (config, old) = installed_fixture(&root, &candidate);
         let mut expected = old.clone();
-        expected.modules.as_mut().unwrap().revision = 8;
+        expected.modules.revision = 8;
         let path = root.path.join("profile");
         let profile = serde_json::json!({"modules":expected.modules,"subjects":old.clients.subjects,"helper_work_roots":old.helper_work_roots});
         publish(&path, &json(&profile).unwrap()).unwrap();
@@ -1237,7 +1183,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(old.preflight(), Err(Error::Storage));
-        let mut modules = old.modules.clone().unwrap();
+        let mut modules = old.modules.clone();
         modules.revision += 1;
         let profile =
             serde_json::json!({"modules": modules, "subjects": ["501"], "helper_work_roots": {}});

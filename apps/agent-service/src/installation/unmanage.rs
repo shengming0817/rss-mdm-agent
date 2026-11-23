@@ -75,6 +75,14 @@ fn validate(r: &Recovery, task: uuid::Uuid) -> Result<(), Error> {
     Ok(())
 }
 pub(crate) fn supported(d: &Deployment) -> bool {
+    if !d.modules.mdm.enabled()
+        || d.modules.da.enabled()
+        || d.da_root()
+            .and_then(|root| Ok(root.try_exists()?))
+            .unwrap_or(true)
+    {
+        return false;
+    }
     Deployment::default_path()
         .and_then(|p| Candidate::retained(&p, d))
         .and_then(|c| c.format())
@@ -90,6 +98,9 @@ fn prepare(d: &Deployment, permit: &UnmanagePermit, package_managed: bool) -> Re
             return Err(Error::Conflict);
         }
         return Ok(());
+    }
+    if d.modules.da.enabled() || d.da_root()?.try_exists()? {
+        return Err(Error::Denied);
     }
     if !package_managed && !supported(d) {
         return Err(Error::Unsupported);
@@ -268,7 +279,7 @@ fn execute(task: uuid::Uuid, package_entry: bool) -> Result<(), Error> {
             let root = crate::access_worker::root(&d.execution);
             // Preserve the service and durable fences while user/directory cleanup is pending.
             if root.exists()
-                && !device_access::Store::open(&root, d.service_id)
+                && !device_access::Store::open(&root, d.mdm()?.instance)
                     .map_err(|_| Error::Identity)?
                     .hello_cleanup_complete()
                     .map_err(|_| Error::Identity)?

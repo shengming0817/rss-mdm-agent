@@ -35,6 +35,98 @@ mod tests {
             let _ = std::fs::remove_dir_all(&self.root);
         }
     }
+    /// The deployment harness supplies a fresh DA listener and performs the administrator's
+    /// authenticated grant exchange. Only disposable keychain material is used on this Mac.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires a deployed standalone DA and its administrator grant exchange"]
+    async fn standalone_da_interop_with_platform_key() {
+        use crate::da_service::policy::Machine;
+        use agent_client::da::{Backend, Client};
+        let io = PathBuf::from(
+            std::env::var_os("RSS_DA_INTEROP_ROOT").expect("isolated exchange directory"),
+        );
+        files::validate(&io).unwrap();
+        let backend: Backend =
+            serde_json::from_slice(&files::read(&io.join("backend.json"), 65536).unwrap()).unwrap();
+        let root = crate::protocol_test_support::Root::new();
+        let isolated = Isolated {
+            root: root.path.clone(),
+            path: root.path.join("standalone.keychain"),
+        };
+        let keychain = Keychain::create_file(&isolated.path, "isolated-test-password").unwrap();
+        let namespace = crate::installation::hash(uuid::Uuid::new_v4().as_bytes());
+        let installation = uuid::Uuid::new_v4();
+        let journal = root.path.join("da");
+        let open = || {
+            Client::open(
+                &journal,
+                backend.clone(),
+                installation,
+                crate::DeviceSecrets(SecretStore {
+                    root: root.path.clone(),
+                    namespace: namespace.clone(),
+                    keychain: keychain.clone(),
+                    access: Mutex::new(()),
+                }),
+                crate::SystemClock::new().unwrap(),
+            )
+            .unwrap()
+        };
+        let original = uuid::Uuid::new_v4();
+        let client = open();
+        let grant_request = client.prepare(original).unwrap();
+        let publish = |name: &str, bytes: &[u8]| {
+            let tmp = io.join(format!("{name}.staged"));
+            files::write_new(&tmp, bytes).unwrap();
+            files::publish_new(&tmp, &io.join(name)).unwrap();
+        };
+        publish(
+            "request.json",
+            &zeroize::Zeroizing::new(serde_json::to_vec(&grant_request).unwrap()),
+        );
+        drop(client);
+        tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            while !io.join("grant.json").exists() {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let client = open();
+        client
+            .import(
+                serde_json::from_slice(&files::read(&io.join("grant.json"), 65536).unwrap())
+                    .unwrap(),
+            )
+            .unwrap();
+        let mut consumer = Machine::observe(journal.clone()).await;
+        client.drive(&mut consumer).await.unwrap();
+        let first = agent_client::da::inspect(&journal, &backend, installation)
+            .unwrap()
+            .unwrap();
+        assert!(
+            first.effective_digest.is_some()
+                && first.application_sequence >= 3
+                && first.status_sequence >= 1
+        );
+        client.start_renewal().unwrap();
+        drop(client);
+        open().drive(&mut consumer).await.unwrap();
+        let second = agent_client::da::inspect(&journal, &backend, installation)
+            .unwrap()
+            .unwrap();
+        let a = first.registration.as_ref().unwrap();
+        let b = second.registration.as_ref().unwrap();
+        assert_eq!(a.device, b.device);
+        assert_ne!(a.credential, b.credential);
+        publish(
+            "agent-result.json",
+            &serde_json::to_vec_pretty(&serde_json::json!({"first":first,"renewed":second}))
+                .unwrap(),
+        );
+        drop(keychain);
+        drop(isolated);
+    }
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn native_key_completes_real_mtls_and_reopens_original_binding() {
         let _budget = crate::scenario_budget::enter();

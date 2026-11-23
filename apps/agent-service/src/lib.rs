@@ -6,6 +6,7 @@ mod collected_data;
 mod collection_environment;
 mod collection_projection;
 pub mod collection_worker;
+mod da_service;
 pub mod deployment;
 mod device_overview;
 pub mod enrollment_worker;

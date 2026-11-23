@@ -8,7 +8,8 @@
 
 `pnpm build:installer --organization /absolute/public-organization.json` 在当前原生平台构建 macOS arm64 PKG 或 Windows amd64 / arm64 的 perMachine NSIS EXE，不套用 MSI。macOS 构建命令通过 `python3 scripts/build-run.py -- pnpm build:installer ...` 复用本地 Cargo 槽位；Windows 使用 `pnpm exec node scripts/build-installers.mjs ...`。Windows 构建进程、Rust 工具链和 Node 必须为目标原生架构，不接受仿真进程或混合 PE。目标设备须预装 machine-wide WebView2；安装器缺失时明确拒绝。当前机器有匹配架构、受保护的 PowerShell 7 时才登记该解释器与相关能力。
 
-组织输入使用当前格式的 `service_id`（后端安装 instance_id）、`tenant`、`connections`（后端下载的完整签名 Agent 连接配置）、`label`、`signing_keys`（安装时独立保护的注册/配置验签公钥）与必填 `ca_pem`（HTTPS bootstrap CA）。打包器把连接文件交给生产 Rust 校验器验签和核对身份，不在 Node 重写 wire 验证器。设备 CA/CRL 经已授权 Agent HTTPS 入口获取；任务公钥由已认证设备通道提供，独立于安装公钥。桌面登录和会话仍使用根 `.env` 的 `RSS_MDM_ORIGIN`、租户与可选 `RSS_MDM_CA_FILE`，通过登录会话中的稳定实例与租户核对机器身份，地址变化不授权披露网站 Cookie。Agent bootstrap CA 不用于网站，签名地址更新不扩大 CA 或软件源凭据权限。输入不允许 grant、secret、账号目录或私钥。包内固定生产服务、桌面、Node、AI Host、worker 和资源；安装文件与 `package-manifest.json` 位于忽略的 `.local-ci-runs/installers/`。上传后端仅需要实际安装文件；本地资源清单用于部署与代码身份完整性。
+候选清单使用 v3，部署使用 v8。组织输入的 `modules` 明确给出首装默认选择，结构与下面 profile 的 `modules` 相同。启用 MDM 时，`modules.mdm.backend` 包含 `instance`、`tenant`、完整的签名 `connections`、`signing_keys` 和 HTTPS 公共 `ca_pem`。仅 DA 打包使用 DA 设备 listener 和公共 CA；可选 `desktop` 提供单独的浏览器 origin、租户、显示名与 HTTPS CA。设备注册秘密单独移交。
+
 
 开发与生产包均不强制发布者证书或公证：macOS 默认 ad-hoc，可使用自签名或 Apple Development；Windows 未提供签名材料时生成未签名包。`--release` 只标记包模式，不提高证书准入要求；该模式仍用于阻止 SIT 重置入口清理 release 安装。macOS 签名身份依次读取 `RSS_MACOS_APP_SIGNING_IDENTITY`、`RSS_MACOS_DEVELOPMENT_SIGNING_IDENTITY`，均缺失时使用 ad-hoc；`RSS_MACOS_INSTALLER_SIGNING_IDENTITY` 和已有的 `RSS_MACOS_NOTARY_PROFILE` Keychain 引用分别显式启用安装包签名、公证与 stapling。Windows 提供 `RSS_WINDOWS_SIGNING_THUMBPRINT` 才执行签名，可用 `RSS_SIGNTOOL` 指定工具。显式选择的签名或公证操作失败仍报错，构建不接收证书密码。固定路径、SHA-256/CDHash 和实际进程身份继续校验；系统加载、MDM、entitlement 和设备安全策略的实际接纳须独立取证。
 
@@ -35,31 +36,32 @@
 
 安装成功与认证 readiness 分开核实，使用获准的普通用户运行已安装桌面的 `--service-probe`。共享注册文件仍由管理员负责保管和清理，安装器不删除它。
 
-无 profile 的初装使用包内 MDM 配置，从当前登录会话发现桌面主体和 helper 路径；无人登录时允许空主体集。升级省略整个 profile 会继承当前选择、注册和本地状态。显式 profile 必须声明两个模块和正整数 revision。以前仅含 `subjects`、`helper_work_roots` 的输入会被拒绝；请在下次安装前更新该文件，或移走它以继承当前部署。
-
-Windows EXE 接受 `/S /PROFILE=绝对路径`。macOS PKG 从 `/Library/Application Support/RSS MDM Agent/install-profile.json` 读取。文件及所在路径需要管理员保护。以下示例中，MDM 的实例、租户、签名连接文件的 preferred_origin 和验签公钥取自固定候选，`ca_sha256` 是候选 `ca_pem` 原始 UTF-8 字节的 SHA-256（含原换行）。
+无 profile 的初装使用包内显式选择，升级省略 profile 会继承当前模块。Windows EXE 接受 `/PROFILE=绝对路径`，macOS PKG 从管理员保护的 `/Library/Application Support/RSS MDM Agent/install-profile.json` 读取。以下为仅 DA 部署；替换示例中的公开坐标与 PEM。旧格式在切换前拒绝，升级前用原候选完成未决操作。
 
 ```json
 {
   "modules": {
     "revision": 1,
-    "mdm": {
+    "mdm": { "state": "disabled" },
+    "da": {
       "state": "enabled",
       "backend": {
-        "instance": "<service_id>", "tenant": "<tenant>",
-        "origin": "https://agent.example.org",
-        "ca_sha256": "<64 位小写十六进制摘要>",
-        "signing_keys": { "<key-id>": "<候选公钥>" }
+        "instance": "<DA 服务实例 UUID>",
+        "tenant": "<DA 租户 UUID>",
+        "origin": "https://da-device.example.org",
+        "ca_pem": "<设备 HTTPS listener 的公共 CA PEM>"
       }
-    },
-    "da": { "state": "disabled" }
+    }
   },
   "subjects": [],
   "helper_work_roots": {}
 }
 ```
 
-安装后修改同一格式并递增 revision，通过已安装的服务镜像执行 `--installation apply --profile <绝对路径> --operation <UUID>`。首次调用前选定 UUID，可在输出丢失后使用 `--installation operation-status --operation <UUID>` 查询原结果。配置相同的重试使用原参数；输入已持久保存，也可执行 `--installation apply --operation <UUID>` 继续本地操作。后端来源失去授权时，同一管理员命令只恢复原部署。MSIX 升级由系统包管理器接管，手工 apply 会明确拒绝。Windows SCM worker 回执的 `application_operation` 指向配置操作。`--installation status` 分别报告包内通道、启用选择和已观测的 MDM 注册；认证 readiness 沿用桌面服务探针。当前候选提供 MDM 通道，启用独立 DA 会在切换前返回 Unsupported。停用和授权退管是不同操作，部署 profile 不承载退管许可、注册秘密或 DA 签名策略。
+安装后修改同一格式并递增 revision，通过已安装的服务镜像执行 `--installation apply --profile <绝对路径> --operation <UUID>`。首次调用前选定 UUID，可在输出丢失后使用 `--installation operation-status --operation <UUID>` 查询原结果。配置相同的重试使用原参数；输入已持久保存，也可执行 `--installation apply --operation <UUID>` 继续本地操作。后端来源失去授权时，同一管理员命令只恢复原部署。MSIX 升级由系统包管理器接管，手工 apply 会明确拒绝。Windows SCM worker 回执的 `application_operation` 指向配置操作。`--installation status` 分别报告包内通道、启用选择和已观测的 MDM 注册；认证 readiness 沿用桌面服务探针。服务按已启用模块驱动各自的注册。停用保留凭据和状态。整机卸载需要相应授权。
+
+DA 首次注册由管理员执行已安装服务镜像的 `--installation da-prepare --operation <UUID> --grant <私有新文件绝对路径>`。文件包含原操作、CSR 和一次性授权秘密，目录仅允许服务账户与管理员访问。通过 DA 管理会话向租户的 `/api/v1/tenants/{tenant}/da/grants` 提交文件，将原 grant 回执保存到管理员保护的文件，执行 `--installation da-import --grant <回执绝对路径>`。服务接续签发和 mTLS 激活。提前续证使用 `--installation da-renew`。使用 `--installation status` 查询 DA 注册、未决操作、报告序号和上次错误。签发结果未知时通过 DA 管理端恢复原签发操作；保存原 grant、密钥及操作 ID。配置收到和本机应用分开上报，实际登录与账号效果以平台验收为准。
+
 
 设备退管由服务端普通 Policy `unmanage_device` 发起。Agent 验证绑定当前租户、注册、设备和任务的签名 Start，持久接受后关闭新执行准入，读取 journal 的真实静止证明，再将卸载交给独立安装 worker。离线、证书故障和 MDM Profile 消失不构成卸载授权。产品 `uninstall` 和 system `remove` 入口必须携带 `--operation <已接受任务 UUID>`；仅传 UUID 不授予权限，缺少原 Start 或排空证明均拒绝。Windows NSIS 可传 `/RETIREMENT=<任务 UUID>`，MSI 对应 `RSSRETIREMENTTASK`；普通系统卸载入口不会隐式申请退管。
 
@@ -75,15 +77,15 @@ Windows 安装操作返回 UUID 和不含输入内容的阶段回执。等待超
 
 构建 `cargo build --release -p agent-service --bin rss-execution-service`。生产服务与 user helper 使用同一二进制；原 execution-runner 二进制装配已删除。系统服务独占凭据和执行 journal，helper 不初始化业务数据库。
 
-由管理员准备受保护的部署 JSON：macOS 默认 `/Library/Application Support/RSS MDM Agent/execution.json`，Windows 为 ProgramData 下同一产品目录的 `execution.json`。格式由 `apps/agent-service/src/deployment.rs` 持有，使用当前格式显式配置 version、ipc_version、service_id、签名 connections、tenant、signing_keys、installation_id、installation_artifact、ca_file（受保护的 HTTPS bootstrap CA）、registration_clients 桌面程序/用户 pin、state_root、service 产物 pin、clients OS 主体/程序 pin、execution 的 work_root/material_root/interpreters/managers/processes，必填 software_read_grants（不使用源凭据时为 []），以及每个已登记用户的 helper_work_roots。解释器和包管理器使用完整路径和固定摘要，不使用 PATH 查找。material_root 与 state_root 分离。
+由管理员准备受保护的部署 JSON：macOS 默认 `/Library/Application Support/RSS MDM Agent/execution.json`，Windows 为 ProgramData 下同一产品目录的 `execution.json`。格式由 `apps/agent-service/src/deployment.rs` 持有，使用当前格式显式配置 version、ipc_version、modules（每个启用模块的服务坐标与公开信任）、installation_id、installation_artifact、registration_clients 桌面程序/用户 pin、state_root、service 产物 pin、clients OS 主体/程序 pin、execution 的 work_root/material_root/interpreters/managers/processes，必填 software_read_grants（不使用源凭据时为 []），以及每个已登记用户的 helper_work_roots。解释器和包管理器使用完整路径和固定摘要，不使用 PATH 查找。material_root 与 state_root 分离。
 
-桌面使用根 `.env` 的可选 `RSS_MDM_CA_FILE`；后台 Agent 必须配置独立的 `RSS_AGENT_CA_FILE`，指向部署方明确提供的单个 HTTPS bootstrap CA 公共证书。桌面构建嵌入其公共证书，Agent 的 `execution.json.ca_file` 由 Agent 输入生成。生成新安装配置时先准备包含程序 pins、工作目录、注册身份等完整字段的模板，然后执行：
+桌面使用根 `.env` 的可选 `RSS_MDM_CA_FILE`；后台 Agent 必须配置独立的 `RSS_AGENT_CA_FILE`，指向部署方明确提供的单个 HTTPS bootstrap CA 公共证书。桌面构建嵌入其公共证书，Agent 的 `execution.json.modules.mdm.backend.ca_pem` 由 Agent 输入生成。生成新安装配置时先准备包含程序 pins、工作目录、注册身份等完整字段的模板，然后执行：
 
 ```sh
-node scripts/agent-organization.mjs --config /private/execution-template.json --output /private/execution.json --ca-output /private/organization-ca.pem
+node scripts/agent-organization.mjs --config /private/execution-template.json --output /private/execution.json
 ```
 
-`--ca-output` 是 CA 在设备上的最终绝对路径，生成器写入同一公共证书并记录该路径；Agent 必须提供该参数。输出配置与 CA 为 0644（公开信息），安装后的父目录须允许用户 helper 遍历、文件由管理员持有且普通用户不可写；凭据和状态目录保持原有保护。输出文件必须不存在，不覆盖既有部署；保持模板的其它字段，仅替换组织地址、租户和 CA。按原安装要求将配置与证书置于管理员保护的最终路径，再进行首次注册。部署不同设备时使用目标设备对应的绝对路径。现有设备不要通过生成新身份或重新注册来更新 CA；沿用原身份，按受控刷新流程发布新配置。更新 CA 后桌面重新构建、Agent 重新加载；HTTPS bootstrap 配置不改系统信任；设备 CA 和 CRL 由 Agent PKI owner 在私有通信存储中应用，不安装系统全局根。CA 私钥不分发，任务签名公钥与组织 HTTPS CA 分开管理。
+生成器把公共 PEM 写入新部署文档的 MDM 模块。保持输出与父目录的管理员保护。
 
 首次注册使用上文的 Agent 内企业登录或完整签名配置。机器请求、CSR、公钥引用与签发/激活操作由系统服务持久保存；重试使用原操作。人工换证仍保持原 Registration、存储位置和 journal。初始化遇到不支持的数据库或缺失的原状态时保留原文件并拒绝，不通过清库或换目录绕过未决任务。
 

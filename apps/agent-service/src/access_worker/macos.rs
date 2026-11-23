@@ -258,7 +258,7 @@ fn apply(input: &Input) -> Result<Effect, Error> {
     }
     let deployment =
         crate::deployment::Deployment::metadata(&crate::deployment::Deployment::default_path()?)?;
-    if deployment.service_id != input.installation
+    if deployment.mdm()?.instance != input.installation
         || crate::access_worker::root(&deployment.execution) != input.root
     {
         return Err(Error::Identity);
