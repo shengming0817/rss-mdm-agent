@@ -25,7 +25,10 @@ import {
   buildPlatformSso,
   containerEntitlements,
 } from "./build-platform-sso.mjs";
-import { organizationConfiguration } from "./desktop-organization.mjs";
+import {
+  organizationConfiguration,
+  publicCa,
+} from "./desktop-organization.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const args = process.argv.slice(2);
 const input = args.indexOf("--organization");
@@ -78,6 +81,8 @@ const defaults = organization.modules;
 const desktopConfiguration =
   organization.desktop ??
   (defaults.mdm?.state === "enabled" ? organizationConfiguration(root) : null);
+if (desktopConfiguration?.ca_pem !== undefined)
+  desktopConfiguration.ca_pem = publicCa(desktopConfiguration.ca_pem);
 if (
   desktopConfiguration &&
   defaults.mdm?.state === "enabled" &&

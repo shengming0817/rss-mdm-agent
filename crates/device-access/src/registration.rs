@@ -296,6 +296,46 @@ impl Store {
         tx.commit()?;
         Ok(())
     }
+    /// Read back the current DA device's configured account classes from the offline provider's
+    /// live admission records. A machine with no matching bindings cannot confirm application.
+    pub fn confirms_rss_policy(
+        &self,
+        tenant: Uuid,
+        device: rss_mdm_agent_wire::DeviceId,
+        enabled: bool,
+        classes: &[rss_mdm_agent_wire::runtime::AccessWindowsKind],
+    ) -> Result<bool, Error> {
+        self.check_files()?;
+        let Some(registration) = current(&self.conn)? else {
+            return Ok(false);
+        };
+        if registration.retired || registration.registration != (Registration { tenant, device }) {
+            return Ok(false);
+        }
+        let sids = self
+            .conn
+            .prepare("SELECT sid FROM bindings LIMIT 1025")?
+            .query_map([], |r| r.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        if sids.len() > 1024 {
+            return Err(Error::Storage);
+        }
+        let mut observed = std::collections::BTreeSet::new();
+        for sid in sids {
+            let record = load(&self.conn, &sid)?.ok_or(Error::Storage)?;
+            if record.authority.registration() != registration.registration {
+                continue;
+            }
+            let kind = record.authority.source.kind();
+            if self.enabled(&sid)? != (enabled && classes.contains(&kind)) {
+                return Ok(false);
+            }
+            if classes.contains(&kind) {
+                observed.insert(kind);
+            }
+        }
+        Ok(classes.iter().all(|class| observed.contains(class)))
+    }
     /// Returns only an active, current binding; callers still recheck during factor consumption.
     pub fn authority(&self, sid: &str) -> Result<Option<Authority>, Error> {
         self.check_files()?;

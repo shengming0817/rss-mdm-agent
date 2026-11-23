@@ -18,7 +18,7 @@ Schema 描述结构，不能替代动态预算、可信主体验证或 provider 
 
 来源和改写边界见[执行契约来源](../reference/contracts-extraction.md)与[AI Runtime 来源](../reference/ai-runtime.md)。
 
-Agent HTTP API 直接消费固定 Git rev 的 `rss-mdm-agent-wire`。DTO、静态约束、签名字节和摘要由协议包唯一维护；本仓私有 HTTP 调用声明关联这些类型、method/path、成功状态和媒体类型，不生成或复制后端 DTO/schema，也不执行运行时 JSON Schema 校验。升级时修改 workspace 依赖的完整 rev、更新 Cargo.lock，核验固定编码向量及受影响通信/执行接缝。企业设备身份直接使用协议包的非零规范 UUID `DeviceId`；一次新注册由服务端分配新 ID，精确重试、续证和凭据恢复保留原 ID。旧注册身份组合及旧字符串设备格式在启动预检中拒绝，不迁移、清库、自动重新注册或替换 journal。查看链接使用 instance/tenant/device 坐标，旧 registration/generation 参数明确拒绝。依赖检查核对 Cargo 来源与本仓 Agent HTTP 快照的完整源码 rev、内容摘要。后端不再提交完整 HTTP JSON，也不提供 Git 提取/来源回执接口。升级时准备与 wire rev 完全一致的干净独立后端 checkout，显式运行 `python3 scripts/update-agent-http-contract.py <checkout>`：仅此升级入口按需导出完整 HTTP，保存 Agent listener 及其原 schema 的投影和来源信息到测试输入。生成前后核对源码未改变；摘要校验内容，源码来源由这次实际生成过程确认。常规安装、生成和 CI 不访问或构建后端，只消费本仓固定输入。协议测试用快照核对调用声明和实际请求/响应，包括 200/null、204 空响应与下载语义；有意畸形响应属于显式故障注入。快照与 pin 不匹配时失败，不追随浮动分支或降级校验。
+更新固定 wire revision 和 Cargo.lock 后，从匹配 revision 的服务端发布 PR 下载消费合同 ZIP。运行 `python3 scripts/update-agent-http-contract.py <消费合同ZIP路径>`。导入器核对 ZIP 清单的仓库、完整 revision 与两个 HTTP 制品摘要，然后将 Agent 和 DA 设备 listener 及引用的 schema 投影到本仓测试输入。常规构建和 CI 离线使用快照。[当前固定消费合同（PR 1699）](https://dev.azure.com/shengming0923/rss/_apis/git/repositories/rss-mdm/pullRequests/1699/attachments/rss-mdm-3225-9661978a70e516f1f94f7895b87a305d6db55f74.zip?api-version=7.1)
 
 私库读取使用系统 Git credential helper 或受保护构建凭据；可通过 `CARGO_NET_GIT_FETCH_WITH_CLI=true` 使用 Git helper，不在 manifest 或日志中写凭据。`node scripts/check-agent-dependencies.mjs` 核对完整依赖闭包，常规 `make ci` 已包含该检查。Agent 继续拥有验签、身份绑定、防重放、本机权限与预算；网络解码成功不授予本机执行权限。
 

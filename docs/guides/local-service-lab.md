@@ -36,7 +36,7 @@
 
 安装成功与认证 readiness 分开核实，使用获准的普通用户运行已安装桌面的 `--service-probe`。共享注册文件仍由管理员负责保管和清理，安装器不删除它。
 
-无 profile 的初装使用包内显式选择，升级省略 profile 会继承当前模块。Windows EXE 接受 `/PROFILE=绝对路径`，macOS PKG 从管理员保护的 `/Library/Application Support/RSS MDM Agent/install-profile.json` 读取。以下为仅 DA 部署；替换示例中的公开坐标与 PEM。旧格式在切换前拒绝，升级前用原候选完成未决操作。
+无 profile 的初装使用包内显式选择，升级省略 profile 会继承当前模块。Windows EXE 接受 `/PROFILE=绝对路径`，macOS PKG 从管理员保护的 `/Library/Application Support/RSS MDM Agent/install-profile.json` 读取。以下为仅 DA 部署；替换示例中的公开坐标与 PEM。首次安装和安装后维护共用这份格式。
 
 ```json
 {

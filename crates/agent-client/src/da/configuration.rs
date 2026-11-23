@@ -18,15 +18,23 @@ pub struct ManagedSource {
     /// Original signed bytes; provenance alone never grants signing authority.
     pub envelope: wire::SignedConfiguration,
 }
+/// Selected DA settings and the exact native identities whose readback can confirm them.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Selection {
+    /// Device identity authenticated on the DA listener.
+    pub identity: wire::ReportIdentity,
+    /// Resolved client settings; backend authorization fields retain their original values.
+    pub settings: AccessConfiguration,
+    /// Platform expectations from the source that supplied the selected Mac settings.
+    pub native: wire::NativeExpectation,
+}
 /// Machine policy publication and readback supplied by the installed module.
 pub trait PolicyConsumer {
     /// Read the complete protected machine source before evaluating a backend candidate.
     fn managed_snapshot(&self) -> ManagedSnapshot;
     /// Publish or withdraw effective client settings and independently read the active selection.
-    fn apply(
-        &mut self,
-        settings: Option<&AccessConfiguration>,
-    ) -> Result<Option<AccessConfiguration>, Error>;
+    fn apply(&mut self, settings: Option<&Selection>)
+        -> Result<Option<AccessConfiguration>, Error>;
     /// Independent observations of binding and factor readiness.
     fn health(&self) -> (wire::Health, wire::Health);
 }
@@ -78,9 +86,23 @@ struct Current {
     publication: Option<serde_json::Value>,
     artifact: Option<wire::SignedConfiguration>,
 }
+#[derive(Serialize, Deserialize)]
+struct AppliedProof {
+    until: i64,
+    sources: BTreeSet<String>,
+    effective: Selection,
+}
+
+fn fingerprints(snapshot: &ManagedSnapshot) -> Result<BTreeSet<String>, Error> {
+    snapshot
+        .sources
+        .iter()
+        .map(|source| Ok(crate::store::hash(&crate::store::encode(&source.envelope)?)))
+        .collect()
+}
 type Locks = BTreeMap<Uuid, BTreeSet<ConfigurationField>>;
 
-impl<S: IdentityProvider, C: Clock> Client<S, C> {
+impl<S: Credentials, C: Clock> Client<S, C> {
     async fn install_trust(
         &self,
         http: &reqwest::Client,
@@ -168,13 +190,16 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             self.call::<h::DaPkiAck>(http, None, Some(&ack)).await?;
             write(&self.journal.db, "pki-confirmed", &ack.operation)?;
         }
-        self.flush(http).await?;
         let trust = self.install_trust(http, &id).await?;
         let value = self.call::<h::DaConfiguration>(http, None, None).await?;
         let current: Current = serde_json::from_value(value).map_err(|_| Error::Protocol)?;
-        let result = self
-            .configure(http, &id, &trust, current, snapshot, consumer)
-            .await;
+        let result = self.configure(&id, &trust, current, snapshot, consumer);
+        if matches!(
+            result,
+            Err(Error::Untrusted | Error::Conflict | Error::Protocol | Error::Identity)
+        ) {
+            self.withdraw(consumer)?;
+        }
         let now = self.now()?;
         let last = read::<i64>(&self.journal.db, "status-at")?.unwrap_or(0);
         let (binding, factor) = consumer.health();
@@ -202,7 +227,6 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             };
             event.validate()?;
             self.queue("status", sequence, &event)?;
-            self.flush(http).await?;
             write(&self.journal.db, "status-at", &now)?;
             write(&self.journal.db, "status-failed", &result.is_err())?;
         }
@@ -215,62 +239,78 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             .ok_or(Error::Capacity)
     }
     fn queue(&self, kind: &str, sequence: i64, report: &impl Serialize) -> Result<(), Error> {
-        let t = self.journal.db.unchecked_transaction()?;
-        let pending = format!("{kind}-pending");
-        if read::<serde_json::Value>(&t, &pending)?.is_some() {
-            return Err(Error::Conflict);
-        }
-        write(&t, &pending, report)?;
-        write(&t, &format!("{kind}-sequence"), &sequence)?;
-        t.commit()?;
+        let tx = self.journal.db.unchecked_transaction()?;
+        Self::enqueue(&tx, kind, sequence, report)?;
+        tx.commit()?;
         Ok(())
     }
-    async fn flush(&self, http: &reqwest::Client) -> Result<(), Error> {
+    fn enqueue(
+        tx: &rusqlite::Connection,
+        kind: &str,
+        sequence: i64,
+        report: &impl Serialize,
+    ) -> Result<(), Error> {
+        let pending: i64 = tx.query_row(
+            "SELECT count(*) FROM reports WHERE body IS NOT NULL AND error IS NULL",
+            [],
+            |r| r.get(0),
+        )?;
+        if pending >= 256 {
+            return Err(Error::Capacity);
+        }
+        let body = crate::store::encode(report)?;
+        let value: serde_json::Value = crate::store::decode(&body)?;
+        tx.execute(
+            "INSERT INTO reports(kind,sequence,body,operation) VALUES(?1,?2,?3,?4)",
+            rusqlite::params![kind, sequence, body, value["operationId"].as_str()],
+        )?;
+        write(tx, &format!("{kind}-sequence"), &sequence)?;
+        Ok(())
+    }
+    pub(super) async fn flush(&self, http: &reqwest::Client) -> Result<(), Error> {
+        use rusqlite::OptionalExtension;
         for kind in ["application", "status"] {
-            let key = format!("{kind}-pending");
-            let Some(report) = read::<serde_json::Value>(&self.journal.db, &key)? else {
-                continue;
-            };
-            let receipt = if kind == "application" {
-                self.call::<h::DaApplication>(
-                    http,
-                    None,
-                    Some(&serde_json::from_value(report.clone()).map_err(|_| Error::Storage)?),
-                )
-                .await?
-            } else {
-                self.call::<h::DaStatus>(
-                    http,
-                    None,
-                    Some(&serde_json::from_value(report.clone()).map_err(|_| Error::Storage)?),
-                )
-                .await?
-            };
-            let sequence = report["sequence"].as_i64().ok_or(Error::Storage)?;
-            if receipt["sequence"].as_i64() != Some(sequence)
-                || receipt["evidence"] != "reported"
-                || receipt["receivedAt"].as_i64().is_none_or(|v| v <= 0)
-            {
-                return Err(Error::Protocol);
+            for _ in 0..16 {
+                let pending:Option<(i64,Vec<u8>)>=self.journal.db.query_row("SELECT sequence,body FROM reports WHERE kind=?1 AND body IS NOT NULL AND error IS NULL ORDER BY sequence LIMIT 1",[kind],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+                let Some((sequence, body)) = pending else {
+                    break;
+                };
+                let result = if kind == "application" {
+                    self.call::<h::DaApplication>(http, None, Some(&crate::store::decode(&body)?))
+                        .await
+                } else {
+                    self.call::<h::DaStatus>(http, None, Some(&crate::store::decode(&body)?))
+                        .await
+                };
+                let receipt = match result {
+                    Ok(v) => v,
+                    Err(Error::Conflict) => {
+                        self.journal.db.execute(
+                            "UPDATE reports SET error='conflict' WHERE kind=?1 AND sequence=?2",
+                            rusqlite::params![kind, sequence],
+                        )?;
+                        continue;
+                    }
+                    Err(e) => return Err(e),
+                };
+                if receipt.as_object().is_none_or(|object| object.len() != 3)
+                    || receipt["sequence"].as_i64() != Some(sequence)
+                    || receipt["evidence"] != "reported"
+                    || receipt["receivedAt"].as_i64().is_none_or(|v| v <= 0)
+                {
+                    return Err(Error::Protocol);
+                }
+                // Preserve the exact receipt but release the full payload after acceptance.
+                self.journal.db.execute(
+                    "UPDATE reports SET body=NULL,receipt=?1 WHERE kind=?2 AND sequence=?3",
+                    rusqlite::params![crate::store::encode(&receipt)?, kind, sequence],
+                )?;
             }
-            let tx = self.journal.db.unchecked_transaction()?;
-            tx.execute(
-                "INSERT INTO receipts VALUES(?1,?2,?3,?4)",
-                rusqlite::params![
-                    kind,
-                    sequence,
-                    crate::store::encode(&report)?,
-                    crate::store::encode(&receipt)?
-                ],
-            )?;
-            tx.execute("DELETE FROM state WHERE name=?1", [&key])?;
-            tx.commit()?;
         }
         Ok(())
     }
-    async fn application(
+    fn application(
         &self,
-        http: &reqwest::Client,
         id: &wire::ReportIdentity,
         doc: &wire::Configuration,
         envelope: &wire::SignedConfiguration,
@@ -306,19 +346,35 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             };
             event.validate()?;
             let tx = self.journal.db.unchecked_transaction()?;
-            if read::<serde_json::Value>(&tx, "application-pending")?.is_some() {
-                return Err(Error::Conflict);
-            }
-            write(&tx, "application-pending", &event)?;
-            write(&tx, "application-sequence", &sequence)?;
+            Self::enqueue(&tx, "application", sequence, &event)?;
             write(&tx, lastkey, &discriminator)?;
             tx.commit()?;
         }
-        self.flush(http).await
+        Ok(())
     }
-    async fn configure(
+    pub(super) fn check_local(
         &self,
-        http: &reqwest::Client,
+        snapshot: &ManagedSnapshot,
+        consumer: &mut impl PolicyConsumer,
+    ) -> Result<(), Error> {
+        let Some(proof) =
+            read::<Option<AppliedProof>>(&self.journal.db, "applied-proof")?.flatten()
+        else {
+            return Ok(());
+        };
+        if !matches!(snapshot.state, SourceState::Missing | SourceState::Present)
+            || fingerprints(snapshot)? != proof.sources
+            || self.now()? >= proof.until
+            || !consumer
+                .apply(Some(&proof.effective))
+                .is_ok_and(|v| v.as_ref() == Some(&proof.effective.settings))
+        {
+            self.withdraw(consumer)?;
+        }
+        Ok(())
+    }
+    fn configure(
+        &self,
         id: &wire::ReportIdentity,
         trust: &wire::ConfigurationTrust,
         current: Current,
@@ -356,15 +412,47 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         };
         let mut sources = vec![backend_source];
         self.application(
-            http,
             id,
             &doc,
             &envelope,
             ApplicationState::Received,
             &sources,
             None,
-        )
-        .await?;
+        )?;
+        let source_ids = fingerprints(&snapshot)?;
+        let mut native = doc.native.clone();
+        let authorized: BTreeSet<ConfigurationField> =
+            serde_json::from_value(publication["managedFields"].clone())
+                .map_err(|_| Error::Protocol)?;
+        for source in &snapshot.sources {
+            let managed = source.envelope.decode()?;
+            if managed.managed_fields.contains(&ConfigurationField::Mac)
+                && (managed.id != doc.id || authorized.contains(&ConfigurationField::Mac))
+            {
+                native = managed.native;
+            }
+        }
+        let mut until = doc.expires_at;
+        for source in &snapshot.sources {
+            until = until.min(source.envelope.decode()?.expires_at);
+        }
+        let document: pki::Trust = read(&self.journal.db, "pki")?.ok_or(Error::Identity)?;
+        let pki = VerifiedTrust::device(
+            document,
+            self.backend.instance,
+            self.backend.tenant,
+            pki::Purpose::DaDevice,
+            self.now()?,
+        )?;
+        let active = self.active()?.ok_or(Error::Identity)?;
+        let (_, cert_until, _) = crate::tls::device_validity(
+            &active.chain,
+            &active.key,
+            &self.secrets,
+            self.now()?,
+            &pki,
+        )?;
+        until = until.min(pki.expires).min(cert_until);
         let result = self.resolve(id, trust, &doc, &publication, snapshot, &mut sources);
         let effective = match result {
             Ok(value) => value,
@@ -372,30 +460,41 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 consumer.apply(None)?;
                 write(&self.journal.db, "effective-digest", &None::<String>)?;
                 self.application(
-                    http,
                     id,
                     &doc,
                     &envelope,
                     ApplicationState::Rejected,
                     &sources,
                     Some(diagnostic(&e)),
-                )
-                .await?;
+                )?;
                 return Err(e);
             }
         };
         self.application(
-            http,
             id,
             &doc,
             &envelope,
             ApplicationState::Validated,
             &sources,
             None,
-        )
-        .await?;
+        )?;
+        let selected = Selection {
+            identity: id.clone(),
+            settings: effective.clone(),
+            native,
+        };
+        // Publish the bounds before the native owner can expose the selected settings.
+        write(
+            &self.journal.db,
+            "applied-proof",
+            &Some(AppliedProof {
+                until,
+                sources: source_ids,
+                effective: selected.clone(),
+            }),
+        )?;
         let confirmed = consumer
-            .apply(Some(&effective))
+            .apply(Some(&selected))
             .is_ok_and(|actual| actual.as_ref() == Some(&effective));
         write(
             &self.journal.db,
@@ -407,8 +506,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         } else {
             ApplicationState::Unknown
         };
-        self.application(http, id, &doc, &envelope, state, &sources, None)
-            .await?;
+        self.application(id, &doc, &envelope, state, &sources, None)?;
         if confirmed {
             Ok(())
         } else {
@@ -417,11 +515,12 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     }
 
     pub(super) fn withdraw(&self, consumer: &mut impl PolicyConsumer) -> Result<(), Error> {
-        consumer.apply(None)?;
         let tx = self.journal.db.unchecked_transaction()?;
+        write(&tx, "applied-proof", &None::<AppliedProof>)?;
         write(&tx, "effective-digest", &None::<String>)?;
         tx.execute("DELETE FROM state WHERE name IN ('app-stage/received','app-stage/validated','app-stage/outcome')",[])?;
         tx.commit()?;
+        consumer.apply(None)?;
         Ok(())
     }
     pub(super) fn resolve(
@@ -485,6 +584,12 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                     ))?,
                     ConfigurationField::Windows => crate::store::encode(&doc.content.windows)?,
                 };
+                let watermark=format!("managed/{}/{field:?}",doc.id);
+                let digest=crate::store::hash(&value);
+                if let Some((revision,version,previous_digest))=read::<(u64,Uuid,String)>(&self.journal.db,&watermark)? {
+                    if revision>doc.revision || revision==doc.revision && (version!=doc.version || previous_digest!=digest) {return Err(Error::Conflict);}
+                }
+                write(&self.journal.db,&watermark,&(doc.revision,doc.version,digest))?;
                 found.entry(doc.id).or_default().insert(*field);
                 locks.entry(doc.id).or_default().insert(*field);
                 write(&self.journal.db, "locks", &locks)?;

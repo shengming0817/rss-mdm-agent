@@ -11,6 +11,19 @@ const fields = {
   label: "RSS_MDM_ORGANIZATION_LABEL",
 };
 
+export function publicCa(pem) {
+  if (
+    Buffer.byteLength(pem) > 65536 ||
+    !/^\s*-----BEGIN CERTIFICATE-----[A-Za-z0-9+/=\s]+-----END CERTIFICATE-----\s*$/.test(
+      pem,
+    )
+  )
+    throw new Error();
+  const certificate = new X509Certificate(pem);
+  if (!certificate.ca) throw new Error();
+  return certificate.toString();
+}
+
 export function organizationConfiguration(root) {
   let values;
   try {
@@ -33,16 +46,7 @@ export function organizationConfiguration(root) {
     try {
       if (!isAbsolute(caFile)) throw new Error();
       const pem = readFileSync(caFile, "utf8");
-      if (
-        Buffer.byteLength(pem) > 65536 ||
-        !/^\s*-----BEGIN CERTIFICATE-----[A-Za-z0-9+/=\s]+-----END CERTIFICATE-----\s*$/.test(
-          pem,
-        )
-      )
-        throw new Error();
-      const certificate = new X509Certificate(pem);
-      if (!certificate.ca) throw new Error();
-      organization.ca_pem = certificate.toString();
+      organization.ca_pem = publicCa(pem);
     } catch {
       throw new Error(
         "RSS_MDM_CA_FILE must be an absolute path to one PEM CA public certificate (no private key)",

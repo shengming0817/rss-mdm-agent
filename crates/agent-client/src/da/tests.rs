@@ -21,6 +21,12 @@ use serde_json::{json, Value};
 use std::sync::{atomic::AtomicI64, Mutex};
 use wire::{ApplicationState, DeliveryPermission, Health, SourceState};
 
+impl Credentials for Secrets {
+    fn release(&self, reference: &str, _key: bool) -> Result<(), Error> {
+        self.0.lock().unwrap().remove(reference);
+        Ok(())
+    }
+}
 struct Server {
     grant: Option<wire::Grant>,
     candidate: Option<enroll::Candidate>,
@@ -60,6 +66,11 @@ async fn endpoint(
         }
         "registrations/status" => {
             assert_eq!(input["operationId"], grant.operation_id.to_string());
+            assert_eq!(input["grantId"], grant.grant_id.to_string());
+            assert_eq!(
+                input["secret"],
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+            );
             json!({"grant":grant,"issuanceId":s.candidate.as_ref().map(|v|v.issuance_id),"issuanceUnknown":false,"registration":s.registration})
         }
         "certificates" => {
@@ -164,6 +175,30 @@ async fn endpoint(
     };
     Json(output).into_response()
 }
+async fn contract_exchange(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    use axum::body::{to_bytes, Body};
+    let (parts, body) = request.into_parts();
+    let body = to_bytes(body, 1024 * 1024).await.unwrap();
+    let contract = crate::test_support::contract::fixed();
+    contract
+        .request(parts.method.as_str(), &parts.uri, &parts.headers, &body)
+        .unwrap();
+    let endpoint = contract
+        .endpoint(parts.method.as_str(), parts.uri.path())
+        .unwrap();
+    let response = next
+        .run(axum::http::Request::from_parts(parts, Body::from(body)))
+        .await;
+    let (parts, body) = response.into_parts();
+    let body = to_bytes(body, 1024 * 1024).await.unwrap();
+    contract
+        .response(endpoint, parts.status.as_u16(), &parts.headers, &body)
+        .unwrap();
+    Response::from_parts(parts, Body::from(body))
+}
 struct Consumer(Option<AccessConfiguration>);
 impl PolicyConsumer for Consumer {
     fn managed_snapshot(&self) -> ManagedSnapshot {
@@ -172,11 +207,8 @@ impl PolicyConsumer for Consumer {
             sources: vec![],
         }
     }
-    fn apply(
-        &mut self,
-        s: Option<&AccessConfiguration>,
-    ) -> Result<Option<AccessConfiguration>, Error> {
-        self.0 = s.cloned();
+    fn apply(&mut self, s: Option<&Selection>) -> Result<Option<AccessConfiguration>, Error> {
+        self.0 = s.map(|selection| selection.settings.clone());
         Ok(self.0.clone())
     }
     fn health(&self) -> (Health, Health) {
@@ -254,6 +286,7 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
     };
     let router = axum::Router::new()
         .fallback(endpoint)
+        .layer(axum::middleware::from_fn(contract_exchange))
         .with_state(state.clone());
     let server = tokio::spawn(async move {
         axum::serve(
@@ -327,9 +360,47 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         serde_json::from_value::<ApplicationState>(json!("verified")),
         Err(_)
     ));
+    let archived = inspect(&root.path, &backend, install).unwrap().unwrap();
+    assert_eq!(archived.application_receipt.unwrap()["sequence"], 3);
+    client.release_settled().unwrap();
+    assert!(secrets.key(&active.key).is_err());
+    assert!(secrets.key(&renewed.key).is_ok());
+    super::validate_keys(&root.path, &backend, install, &secrets).unwrap();
     server.abort();
+    time.set(2_001_000_001);
+    assert!(client.drive(&mut consumer).await.is_err());
+    assert!(consumer.0.is_none());
+    assert!(inspect(&root.path, &backend, install)
+        .unwrap()
+        .unwrap()
+        .effective_digest
+        .is_none());
 }
 
+#[test]
+fn expired_unsubmitted_grant_allows_new_authorization_without_reusing_its_key() {
+    let root = Root::new();
+    let time = Time(Arc::new(AtomicI64::new(2_000_000_000)));
+    let secrets = Secrets::new();
+    let backend = Backend {
+        instance: SERVICE_ID,
+        tenant: Uuid::new_v4(),
+        origin: "https://da.test".into(),
+        ca_pem: String::from_utf8(fixture::ca()).unwrap(),
+    };
+    let client = Client::open(&root.path, backend, Uuid::new_v4(), secrets.clone(), time).unwrap();
+    let original = client.prepare(Uuid::new_v4()).unwrap();
+    let expired = wire::Grant {
+        grant_id: Uuid::new_v4(),
+        operation_id: original.operation_id,
+        expires_at: 1_999_999_999,
+        device: rss_mdm_agent_wire::DeviceId::new_v4(),
+    };
+    assert_eq!(client.import(expired), Err(Error::Expired));
+    client.release_settled().unwrap();
+    assert!(client.prepare(original.operation_id).is_err());
+    assert!(client.prepare(Uuid::new_v4()).is_ok());
+}
 #[test]
 fn field_locks_survive_disappearing_sources_and_reject_rollback_and_foreign_signatures() {
     use wire::{ConfigurationField as Field, ReportIdentity};
@@ -371,6 +442,9 @@ fn field_locks_survive_disappearing_sources_and_reject_rollback_and_foreign_sign
     managed.operation_id = Uuid::new_v4();
     managed.revision -= 1;
     managed.managed_fields = vec![Field::Windows];
+    managed.content.windows =
+        serde_json::from_value(json!({"kind":"rss_factor","accounts":["local"]})).unwrap();
+    managed.native = wire::NativeExpectation::new(&managed.content, vec![], None).unwrap();
     managed.content.role = Some(rss_mdm_agent_wire::runtime::AccessRole::Administrator);
     let wrap = |doc: &wire::Configuration| {
         let payload = doc.payload().unwrap();
@@ -397,6 +471,15 @@ fn field_locks_survive_disappearing_sources_and_reject_rollback_and_foreign_sign
     let run = |doc: &wire::Configuration, input, publication: &Value| {
         client.resolve(&identity, &trust, doc, publication, input, &mut vec![])
     };
+    let selected = run(&backend_config, snapshot(wrap(&managed)), &published).unwrap();
+    assert_eq!(selected.windows, managed.content.windows);
+    assert_ne!(selected.windows, backend_config.content.windows);
+    let mut older = managed.clone();
+    older.revision -= 1;
+    assert_eq!(
+        run(&backend_config, snapshot(wrap(&older)), &published),
+        Err(Error::Conflict)
+    );
     assert_eq!(
         run(&backend_config, snapshot(wrap(&managed)), &published)
             .unwrap()

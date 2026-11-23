@@ -3,6 +3,8 @@
 #[cfg(target_os = "macos")]
 mod macos;
 pub(crate) mod policy;
+#[cfg(windows)]
+mod windows;
 use crate::{deployment::Deployment, DeviceSecrets, SystemClock};
 use agent_client::{da, Error};
 use execution_ipc::host::{
@@ -10,15 +12,26 @@ use execution_ipc::host::{
 };
 use std::{
     path::Path,
-    sync::{mpsc, Arc},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     thread,
     time::Duration,
 };
 use uuid::Uuid;
 
+pub(crate) fn has_retained_identity(d: &Deployment) -> Result<bool, Error> {
+    Ok(d.da_root()?.try_exists()?)
+}
 pub(crate) fn preflight(d: &Deployment) -> Result<(), Error> {
     if let Ok(backend) = d.modules.da.backend() {
-        da::inspect(&d.da_root()?, backend, d.installation_id)?;
+        let root = d.da_root()?;
+        if da::inspect(&root, backend, d.installation_id)?.is_some() {
+            let provider = provider(d, &root, backend)?;
+            provider.verify_storage(&root)?;
+            da::validate_keys(&root, backend, d.installation_id, &provider)?;
+        }
     }
     Ok(())
 }
@@ -28,17 +41,20 @@ pub(crate) fn status(d: &Deployment) -> Result<Option<da::Status>, Error> {
     };
     da::inspect(&d.da_root()?, backend, d.installation_id)
 }
-fn open(d: &Deployment) -> Result<da::Client<DeviceSecrets, SystemClock>, Error> {
-    let root = d.da_root()?;
-    let backend = d.modules.da.backend()?;
+fn provider(d: &Deployment, root: &Path, backend: &da::Backend) -> Result<DeviceSecrets, Error> {
     let namespace = crate::installation::hash(
         &serde_json::to_vec(&("da", d.installation_id, backend.instance, backend.tenant))
             .map_err(|_| Error::Configuration)?,
     );
-    platform_private_storage::directory(&root)?;
     let secrets = root.join("secrets");
-    platform_private_storage::directory(&secrets)?;
-    let store = DeviceSecrets::open(&secrets, &namespace)?;
+    DeviceSecrets::open(&secrets, &namespace)
+}
+fn open(d: &Deployment) -> Result<da::Client<DeviceSecrets, SystemClock>, Error> {
+    let root = d.da_root()?;
+    let backend = d.modules.da.backend()?;
+    platform_private_storage::directory(&root)?;
+    platform_private_storage::directory(&root.join("secrets"))?;
+    let store = provider(d, &root, backend)?;
     if root.join("initialized").try_exists()? {
         store.verify_storage(&root)?;
     } else {
@@ -91,7 +107,9 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
         None
     };
     let policy = d.clients.clone();
-    let (stop, rx) = mpsc::channel();
+    let (stop, mut stopped) = tokio::sync::oneshot::channel::<()>();
+    let ready = Arc::new(AtomicBool::new(false));
+    let available = ready.clone();
     let worker = thread::Builder::new()
         .name("device-access".into())
         .spawn(move || {
@@ -99,31 +117,48 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                 .enable_all()
                 .build()
                 .map_err(|_| Error::Unavailable)?;
-            loop {
-                let run = || -> Result<(), Error> {
-                    let da = open(&d)?;
-                    runtime.block_on(async {
-                        let mut policy = policy::Machine::observe(d.da_root()?).await;
-                        da.drive(&mut policy).await
-                    })
-                };
-                let delay = match run() {
-                    Ok(()) => 30,
-                    Err(Error::Conflict) => 2,
-                    Err(error) => {
-                        eprintln!("device_access: {error}");
-                        10
+            runtime.block_on(async move {
+                let work = async {
+                    loop {
+                        // Only explicit provisioning may initialize a DA identity namespace.
+                        if !has_retained_identity(&d)? {
+                            available.store(true, Ordering::Release);
+                            tokio::time::sleep(Duration::from_secs(2)).await;
+                            continue;
+                        }
+                        let result = match open(&d) {
+                            Ok(client) => {
+                                available.store(true, Ordering::Release);
+                                let mut policy = policy::Machine::observe(
+                                    d.da_root()?,
+                                    #[cfg(windows)]
+                                    crate::access_worker::root(&d.execution),
+                                )
+                                .await;
+                                client.drive(&mut policy).await
+                            }
+                            Err(e) => {
+                                available.store(false, Ordering::Release);
+                                Err(e)
+                            }
+                        };
+                        let delay = match result {
+                            Ok(()) => 30,
+                            Err(Error::Conflict) => 2,
+                            Err(e) => {
+                                eprintln!("device_access: {e}");
+                                10
+                            }
+                        };
+                        tokio::time::sleep(Duration::from_secs(delay)).await;
                     }
                 };
-                if rx.recv_timeout(Duration::from_secs(delay))
-                    != Err(mpsc::RecvTimeoutError::Timeout)
-                {
-                    return Ok(());
-                }
-            }
+                tokio::select! {biased; _=&mut stopped=>Ok(()), result=work=>result}
+            })
         })?;
     Ok(Box::new(Service {
         mdm,
+        ready,
         policy,
         stop: Some(stop),
         worker: Some(worker),
@@ -132,7 +167,8 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
 struct Service {
     mdm: Option<Box<dyn Handler>>,
     policy: PeerPolicy,
-    stop: Option<mpsc::Sender<()>>,
+    ready: Arc<AtomicBool>,
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
     worker: Option<thread::JoinHandle<Result<(), Error>>>,
 }
 impl Handler for Service {
@@ -161,7 +197,9 @@ impl Handler for Service {
         match request {
             Request::ServiceStatus {} => Reply::ServiceStatus {
                 value: ServiceStatus::new(
-                    if self.worker.as_ref().is_some_and(|w| !w.is_finished()) {
+                    if self.ready.load(Ordering::Acquire)
+                        && self.worker.as_ref().is_some_and(|w| !w.is_finished())
+                    {
                         Readiness::Ready
                     } else {
                         Readiness::NotReady

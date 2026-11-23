@@ -1,7 +1,7 @@
 //! The module's active local configuration and the native source snapshot have different
 //! owners. A successful file publication cannot establish that a login extension is active.
 use agent_client::{
-    da::{ManagedSnapshot, ManagedSource, PolicyConsumer},
+    da::{ManagedSnapshot, ManagedSource, PolicyConsumer, Selection},
     Error,
 };
 use rss_mdm_agent_wire::{
@@ -12,11 +12,23 @@ use std::path::PathBuf;
 
 pub(crate) struct Machine {
     root: PathBuf,
+    #[cfg(windows)]
+    native_root: PathBuf,
     source: Option<Vec<ManagedSource>>,
     state: SourceState,
+    #[cfg(target_os = "macos")]
+    inventory: Option<plist::Value>,
 }
 impl Machine {
-    pub(crate) async fn observe(root: PathBuf) -> Self {
+    pub(crate) async fn observe(root: PathBuf, #[cfg(windows)] native_root: PathBuf) -> Self {
+        #[cfg(target_os = "macos")]
+        let inventory = inventory().await;
+        #[cfg(target_os = "macos")]
+        let sources = inventory
+            .as_ref()
+            .map_err(|e| *e)
+            .and_then(super::macos::snapshot);
+        #[cfg(not(target_os = "macos"))]
         let sources = snapshot().await;
         let state = match &sources {
             Ok(v) if v.is_empty() => SourceState::Missing,
@@ -26,7 +38,11 @@ impl Machine {
         };
         Self {
             root,
+            #[cfg(windows)]
+            native_root,
             source: sources.ok(),
+            #[cfg(target_os = "macos")]
+            inventory: inventory.ok(),
             state,
         }
     }
@@ -50,10 +66,10 @@ impl PolicyConsumer for Machine {
     }
     fn apply(
         &mut self,
-        settings: Option<&AccessConfiguration>,
+        settings: Option<&Selection>,
     ) -> Result<Option<AccessConfiguration>, Error> {
         use platform_private_storage as fs;
-        let active = self.root.join("effective-configuration.json");
+        let active = self.root.join("selected-configuration.json");
         let bytes = serde_json::to_vec(&settings).map_err(|_| Error::Protocol)?;
         if fs::read(&active, 65536).ok().as_deref() != Some(&bytes) {
             let staged = self.root.join(format!("{}.pending", uuid::Uuid::new_v4()));
@@ -63,42 +79,33 @@ impl PolicyConsumer for Machine {
                 return Err(e.into());
             }
         }
-        let installed: Option<AccessConfiguration> =
-            serde_json::from_slice(&fs::read(&active, 65536)?).map_err(|_| Error::Storage)?;
-        // Only the installed client policy has been committed here. If the selected configuration
-        // requires a native mechanism, its independent readback is required for an Applied report.
-        if let Some(config) = installed.as_ref().filter(|c| c.enabled) {
-            #[cfg(target_os = "macos")]
-            if config.mac.is_some()
-                && !self.source.as_ref().is_some_and(|s| {
-                    s.iter().any(|s| {
-                        s.envelope
-                            .decode()
-                            .is_ok_and(|m| m.content.mac == config.mac)
-                    })
-                })
-            {
-                return Ok(None);
-            }
-            #[cfg(windows)]
-            if config.windows != rss_mdm_agent_wire::runtime::AccessWindowsConfiguration::Disabled {
-                return Ok(None);
-            }
+        let Some(target) = settings else {
+            return Ok(None);
+        };
+        if !matches!(self.state, SourceState::Missing | SourceState::Present) {
+            return Ok(None);
         }
-        Ok(installed)
+        #[cfg(target_os = "macos")]
+        let confirmed =
+            super::macos::readback(self.inventory.as_ref().ok_or(Error::Unavailable)?, target)?;
+        #[cfg(windows)]
+        let confirmed = super::windows::readback(&self.native_root, target)?;
+        #[cfg(not(any(windows, target_os = "macos")))]
+        let confirmed = false;
+        Ok(confirmed.then(|| target.settings.clone()))
     }
     fn health(&self) -> (Health, Health) {
         (Health::Unknown, Health::Unknown)
     }
 }
 #[cfg(target_os = "macos")]
-async fn snapshot() -> Result<Vec<ManagedSource>, Error> {
+async fn inventory() -> Result<plist::Value, Error> {
     let bytes =
         crate::mdm_state::profiles(&["show", "-type", "configuration", "-output", "stdout-xml"])
             .await
             .ok_or(Error::Unavailable)?;
     let doc = plist::Value::from_reader_xml(bytes.as_slice()).map_err(|_| Error::Protocol)?;
-    super::macos::snapshot(&doc)
+    Ok(doc)
 }
 #[cfg(windows)]
 async fn snapshot() -> Result<Vec<ManagedSource>, Error> {

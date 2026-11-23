@@ -371,32 +371,36 @@ impl SecretStore {
             }
             let (reference, key): (String, bool) =
                 serde_json::from_slice(&bytes).map_err(io::Error::other)?;
-            let account = self.account(&reference)?;
-            #[cfg(target_os = "macos")]
-            self.keychain.without_interaction(|| {
-                if key {
-                    self.keychain.delete_device_key(&account)
-                } else {
-                    self.keychain.delete("RSS MDM Agent device", &account)
-                }
-            })?;
-            #[cfg(windows)]
-            if key {
-                platform_credentials::DeviceKey::delete(&account)?;
-            } else {
-                let secret = self
-                    .root
-                    .join(format!("{:x}.dpapi", Sha256::digest(account.as_bytes())));
-                match std::fs::remove_file(secret) {
-                    Ok(()) => (),
-                    Err(e) if e.kind() == io::ErrorKind::NotFound => (),
-                    Err(e) => return Err(e),
-                }
-            }
-            #[cfg(not(any(windows, target_os = "macos")))]
-            return Err(io::ErrorKind::Unsupported.into());
+            self.release_reference(&reference, key)?;
         }
         Ok(complete)
+    }
+    pub(crate) fn release_reference(&self, reference: &str, key: bool) -> io::Result<()> {
+        let account = self.account(reference)?;
+        #[cfg(target_os = "macos")]
+        self.keychain.without_interaction(|| {
+            if key {
+                self.keychain.delete_device_key(&account)
+            } else {
+                self.keychain.delete("RSS MDM Agent device", &account)
+            }
+        })?;
+        #[cfg(windows)]
+        if key {
+            platform_credentials::DeviceKey::delete(&account)?;
+        } else {
+            let secret = self
+                .root
+                .join(format!("{:x}.dpapi", Sha256::digest(account.as_bytes())));
+            match std::fs::remove_file(secret) {
+                Ok(()) => (),
+                Err(e) if e.kind() == io::ErrorKind::NotFound => (),
+                Err(e) => return Err(e),
+            }
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
+        return Err(io::ErrorKind::Unsupported.into());
+        Ok(())
     }
     fn account(&self, reference: &str) -> io::Result<String> {
         if reference.is_empty()

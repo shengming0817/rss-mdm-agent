@@ -31,7 +31,7 @@ pub(super) struct Active {
     pub lifetime: i64,
 }
 
-impl<S: IdentityProvider, C: Clock> Client<S, C> {
+impl<S: Credentials, C: Clock> Client<S, C> {
     pub(super) fn active(&self) -> Result<Option<Active>, Error> {
         read(&self.journal.db, "active")
     }
@@ -51,6 +51,11 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             }
             return Ok(p);
         }
+        if read::<serde_json::Value>(&self.journal.db, &format!("registration/{operation}"))?
+            .is_some()
+        {
+            return Err(Error::Conflict);
+        }
         let p = Pending {
             operation,
             issue: Uuid::new_v4(),
@@ -64,7 +69,29 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         self.save(&p)?;
         Ok(p)
     }
+    pub(super) fn release_settled(&self) -> Result<(), Error> {
+        let jobs: Vec<(String, bool)> = read(&self.journal.db, "release")?.unwrap_or_default();
+        for (reference, key) in &jobs {
+            self.secrets.release(reference, *key)?;
+        }
+        self.journal
+            .db
+            .execute("DELETE FROM state WHERE name='release'", [])?;
+        Ok(())
+    }
+    fn end_grant(&self, p: &Pending, reason: enroll::ErrorCode) -> Result<(), Error> {
+        let error = crate::identity::enrollment_error(reason);
+        let tx = self.journal.db.unchecked_transaction()?;
+        write(&tx, &format!("registration/{}", p.operation), &(reason, p))?;
+        let mut release: Vec<(String, bool)> = read(&tx, "release")?.unwrap_or_default();
+        release.extend([(p.key(), true), (p.secret(), false)]);
+        write(&tx, "release", &release)?;
+        write(&tx, "enrollment", &None::<Pending>)?;
+        tx.commit()?;
+        Err(error)
+    }
     fn request(&self, p: &mut Pending) -> Result<wire::GrantRequest, Error> {
+        let secret = self.secrets.create_secret(&p.secret())?;
         if p.csr.is_none() {
             self.secrets.create_key(&p.key())?;
             p.csr = Some(crate::identity::csr(&self.secrets, &p.key())?);
@@ -72,7 +99,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         }
         Ok(wire::GrantRequest {
             operation_id: p.operation,
-            secret: self.secrets.create_secret(&p.secret())?,
+            secret,
             csr: p.csr.clone().ok_or(Error::Storage)?,
             expires_in_seconds: 3600,
         })
@@ -88,7 +115,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     /// Attach the exact administrator grant to its locally prepared CSR.
     pub fn import(&self, grant: wire::Grant) -> Result<(), Error> {
         let Some(mut p) = self.pending()? else {
-            let completed: Option<Vec<u8>> = read(&self.journal.db, "completed-grant")?;
+            let completed: Option<Vec<u8>> =
+                read(&self.journal.db, &format!("grant/{}", grant.operation_id))?;
             return if completed == Some(crate::store::encode(&grant)?) {
                 Ok(())
             } else {
@@ -109,7 +137,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             return Ok(());
         }
         if grant.expires_at <= self.now()? {
-            return Err(Error::Expired);
+            p.grant = Some(grant);
+            return self.end_grant(&p, enroll::ErrorCode::GrantExpired);
         }
         p.grant = Some(grant);
         self.save(&p)
@@ -176,15 +205,23 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 csr: p.csr.clone().ok_or(Error::Storage)?,
             };
             let candidate = match self
-                .call::<h::DaCertificate>(&http, None, Some(&request))
-                .await
+                .exchange::<h::DaCertificate>(&http, None, Some(&request))
+                .await?
             {
-                Err(Error::IssuanceUnknown) => {
-                    p.unknown = true;
-                    self.save(&p)?;
-                    return Err(Error::IssuanceUnknown);
-                }
-                result => result?,
+                Ok(candidate) => candidate,
+                Err(fault) => match fault.code {
+                    enroll::ErrorCode::IssuanceUnknown => {
+                        p.unknown = true;
+                        self.save(&p)?;
+                        return Err(Error::IssuanceUnknown);
+                    }
+                    enroll::ErrorCode::GrantExpired | enroll::ErrorCode::GrantRevoked
+                        if progress.issuance_id.is_none() =>
+                    {
+                        return self.end_grant(&p, fault.code);
+                    }
+                    code => return Err(crate::identity::enrollment_error(code)),
+                },
             };
             if candidate.operation_id != p.issue
                 || candidate.issuance_id.is_nil()
@@ -220,7 +257,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             Some(receipt) => receipt,
             None => {
                 if candidate.activate_before <= self.now()? {
-                    return Err(Error::Expired);
+                    return self.end_grant(&p, enroll::ErrorCode::GrantExpired);
                 }
                 let peer = self.http(Some((&key, &candidate.certificate_chain)))?;
                 self.call::<h::DaActivate>(
@@ -244,6 +281,15 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         {
             return Err(Error::Identity);
         }
+        let mut release: Vec<(String, bool)> =
+            read(&self.journal.db, "release")?.unwrap_or_default();
+        if let Some(previous) = self.active()? {
+            if previous.key == key {
+                return Err(Error::Identity);
+            }
+            release.push((previous.key, true));
+        }
+        release.push((p.secret(), false));
         let tx = self.journal.db.unchecked_transaction()?;
         write(&tx, &format!("registration/{}", p.operation), &receipt)?;
         write(
@@ -256,9 +302,64 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                 lifetime: after - before,
             },
         )?;
-        write(&tx, "completed-grant", &crate::store::encode(grant)?)?;
+        write(
+            &tx,
+            &format!("grant/{}", grant.operation_id),
+            &crate::store::encode(grant)?,
+        )?;
+        write(&tx, "release", &release)?;
         write(&tx, "enrollment", &None::<Pending>)?;
         tx.commit()?;
         Ok(())
     }
+}
+
+/// Reopen the platform references required to resume this exact registration. Expired
+/// certificates remain inspectable during maintenance; this check never authorizes TLS.
+pub fn validate_keys(
+    root: &Path,
+    backend: &Backend,
+    installation: Uuid,
+    secrets: &impl IdentityProvider,
+) -> Result<(), Error> {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    use der::{Decode, Encode};
+    let Some(db) = storage::inspect(root, backend, installation)? else {
+        return Ok(());
+    };
+    let check_chain = |chain: &[String], key: &str| {
+        let certified =
+            rustls::sign::CertifiedKey::new(crate::tls::certificates(chain)?, secrets.key(key)?);
+        certified.keys_match().map_err(|_| Error::Identity)
+    };
+    if let Some(active) = read::<Active>(&db, "active")? {
+        if active.receipt.service_id != backend.instance || active.receipt.tenant != backend.tenant
+        {
+            return Err(Error::Identity);
+        }
+        check_chain(&active.chain, &active.key)?;
+    }
+    if let Some(p) = read::<Option<Pending>>(&db, "enrollment")?.flatten() {
+        if let Some(csr) = &p.csr {
+            let request = x509_cert::request::CertReq::from_der(
+                &STANDARD.decode(csr).map_err(|_| Error::Storage)?,
+            )
+            .map_err(|_| Error::Storage)?;
+            let key = secrets.key(&p.key())?;
+            if key.public_key().ok_or(Error::Identity)?.as_ref()
+                != request
+                    .info
+                    .public_key
+                    .to_der()
+                    .map_err(|_| Error::Storage)?
+            {
+                return Err(Error::Identity);
+            }
+            secrets.resolve(&p.secret())?;
+        }
+        if let Some(candidate) = &p.candidate {
+            check_chain(&candidate.certificate_chain, &p.key())?;
+        }
+    }
+    Ok(())
 }

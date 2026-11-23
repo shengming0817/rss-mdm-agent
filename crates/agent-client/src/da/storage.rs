@@ -104,11 +104,11 @@ impl Journal {
         }
         let mut db = connection(root, true)?;
         db.pragma_update(None, "synchronous", "FULL")?;
-        db.pragma_update(None, "max_page_count", 8192)?;
+
         if !published && files::sqlite_format(&db)?.is_none() {
             let t = db.transaction()?;
             t.execute_batch("CREATE TABLE state(name TEXT PRIMARY KEY,body BLOB NOT NULL);
-                CREATE TABLE receipts(kind TEXT NOT NULL,sequence INTEGER NOT NULL,report BLOB NOT NULL,receipt BLOB NOT NULL,PRIMARY KEY(kind,sequence));")?;
+                CREATE TABLE reports(kind TEXT NOT NULL,sequence INTEGER NOT NULL,body BLOB,operation TEXT,receipt BLOB,error TEXT,PRIMARY KEY(kind,sequence)); CREATE INDEX pending_reports ON reports(kind,sequence) WHERE body IS NOT NULL AND error IS NULL;")?;
             write(
                 &t,
                 "authority",

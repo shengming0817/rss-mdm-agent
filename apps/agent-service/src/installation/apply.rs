@@ -303,6 +303,7 @@ pub(super) fn module_status(config: &Path) -> Result<(), Error> {
     };
     let observed = binding(&deployment);
     let registered = observed.as_ref().ok().map(|value| value.is_some());
+    let da = crate::da_service::status(&deployment);
     let j = Journal::new(config)?;
     let pending = j
         .read(&j.active())?
@@ -311,7 +312,7 @@ pub(super) fn module_status(config: &Path) -> Result<(), Error> {
     outcome::details(serde_json::json!({
         "available": available,
         "enabled": { "mdm":deployment.modules.mdm.enabled(), "da":deployment.modules.da.enabled() },
-        "mdmRegistered":registered,"da":crate::da_service::status(&deployment)?,"pendingOperation":pending,
+        "mdmRegistered":registered,"da":da.as_ref().ok().and_then(|state|state.as_ref()),"daError":da.as_ref().err(),"pendingOperation":pending,
         "revision":deployment.modules.revision,
     }))?;
     Ok(())

@@ -163,7 +163,7 @@ fn policy_value(record: &HelloRecord) -> Result<Option<bool>, Failure> {
         _ => Err(Failure::Unsupported),
     }
 }
-fn policy(record: &HelloRecord) -> Result<O, Failure> {
+pub(crate) fn read_policy(record: &HelloRecord) -> Result<O, Failure> {
     if conflicts(record, record.retired)?
         || (!record.retired && matches!(record.policy, HelloPolicy::Unmanaged))
     {
@@ -266,7 +266,7 @@ pub(super) fn observe(
             enabled: record.enabled,
         };
     }
-    let policy = policy(&observed)?;
+    let policy = read_policy(&observed)?;
     let current = user(&record.authority.sid).ok();
     let now = (crate::wall().map_err(|_| Failure::NativeFailure)? / 1000) as i64;
     let facts = w::AccessWhfbFacts {
@@ -506,7 +506,7 @@ fn set_policy(record: &HelloRecord) -> Result<(), Failure> {
         confirmed.policy = HelloPolicy::Owned {
             enabled: record.enabled,
         };
-        if policy(&confirmed)?
+        if read_policy(&confirmed)?
             != if record.enabled {
                 O::Present
             } else {

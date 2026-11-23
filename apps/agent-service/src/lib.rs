@@ -73,6 +73,12 @@ impl DeviceSecrets {
         Ok(())
     }
 }
+impl agent_client::da::Credentials for DeviceSecrets {
+    fn release(&self, reference: &str, key: bool) -> Result<(), Error> {
+        self.0.release_reference(reference, key)?;
+        Ok(())
+    }
+}
 impl IdentityProvider for DeviceSecrets {
     fn software_read_token(
         &self,

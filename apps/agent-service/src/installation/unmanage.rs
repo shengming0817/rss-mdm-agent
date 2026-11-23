@@ -77,9 +77,7 @@ fn validate(r: &Recovery, task: uuid::Uuid) -> Result<(), Error> {
 pub(crate) fn supported(d: &Deployment) -> bool {
     if !d.modules.mdm.enabled()
         || d.modules.da.enabled()
-        || d.da_root()
-            .and_then(|root| Ok(root.try_exists()?))
-            .unwrap_or(true)
+        || crate::da_service::has_retained_identity(d).unwrap_or(true)
     {
         return false;
     }
@@ -99,7 +97,7 @@ fn prepare(d: &Deployment, permit: &UnmanagePermit, package_managed: bool) -> Re
         }
         return Ok(());
     }
-    if d.modules.da.enabled() || d.da_root()?.try_exists()? {
+    if d.modules.da.enabled() || crate::da_service::has_retained_identity(d)? {
         return Err(Error::Denied);
     }
     if !package_managed && !supported(d) {
@@ -261,6 +259,9 @@ fn execute(task: uuid::Uuid, package_entry: bool) -> Result<(), Error> {
         Ok(_) => {
             let current = Deployment::metadata(&config)?;
             current.require_mdm_assembly()?;
+            if current.modules.da.enabled() || crate::da_service::has_retained_identity(&current)? {
+                return Err(Error::Denied);
+            }
             lifecycle::preserved(&r.deployment, &current)?;
             if current.service.path != r.deployment.service.path
                 || current.installation_artifact != r.deployment.installation_artifact

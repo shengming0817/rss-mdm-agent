@@ -108,8 +108,16 @@ pub(super) fn snapshot(document: &Value) -> Result<Vec<ManagedSource>, Error> {
     Ok(out)
 }
 fn check_native(c: &Configuration, items: &[Value]) -> Result<(), Error> {
-    let mac = c.native.mac.as_ref().ok_or(Error::Untrusted)?;
-    let login = c.content.mac.as_ref().ok_or(Error::Untrusted)?;
+    check_settings(&c.content, &c.native, c.tenant, items)
+}
+fn check_settings(
+    settings: &rss_mdm_agent_wire::runtime::AccessConfiguration,
+    native: &rss_mdm_agent_wire::da::NativeExpectation,
+    tenant: Uuid,
+    items: &[Value],
+) -> Result<(), Error> {
+    let mac = native.mac.as_ref().ok_or(Error::Untrusted)?;
+    let login = settings.mac.as_ref().ok_or(Error::Untrusted)?;
     let mut platform = Dictionary::new();
     platform.insert(
         "AuthenticationMethod".into(),
@@ -163,7 +171,7 @@ fn check_native(c: &Configuration, items: &[Value]) -> Result<(), Error> {
             ),
         );
     }
-    let endpoints = Endpoints::new(&mac.origin, c.tenant)?;
+    let endpoints = Endpoints::new(&mac.origin, tenant)?;
     let mut sso = Dictionary::new();
     sso.insert("Type".into(), "Redirect".into());
     sso.insert(
@@ -210,4 +218,78 @@ fn check_native(c: &Configuration, items: &[Value]) -> Result<(), Error> {
         }
     }
     Ok(())
+}
+
+/// profiles(1) reports installed native payloads independently of the selected policy file.
+pub(super) fn readback(
+    inventory: &Value,
+    target: &agent_client::da::Selection,
+) -> Result<bool, Error> {
+    let Some(mac) = &target.native.mac else {
+        return Ok(false);
+    };
+    let root = inventory.as_dictionary().ok_or(Error::Protocol)?;
+    let profiles = match root.get("_computerlevel") {
+        Some(value) => value.as_array().ok_or(Error::Protocol)?.as_slice(),
+        None => &[],
+    };
+    let mut matched = false;
+    for value in profiles {
+        let profile = value.as_dictionary().ok_or(Error::Protocol)?;
+        let items = profile
+            .get("ProfileItems")
+            .and_then(Value::as_array)
+            .ok_or(Error::Protocol)?;
+        let mut applies = false;
+        for item in items {
+            let data = item.as_dictionary().ok_or(Error::Protocol)?;
+            if text(data, "PayloadType")? == "com.apple.extensiblesso"
+                && text(fields(data)?, "ExtensionIdentifier")? == mac.deployment.extension_id
+            {
+                applies = true;
+            }
+        }
+        if !applies {
+            continue;
+        }
+        if matched || !target.settings.enabled {
+            return Ok(false);
+        }
+        let bindings = &target.native.bindings;
+        if bindings.len() != 4
+            || items.len() != 3
+            || text(profile, "ProfileIdentifier")? != bindings[0].identifier
+            || Uuid::parse_str(text(profile, "ProfileUUID")?).ok() != Some(bindings[0].uuid)
+            || profile
+                .get("ProfileVersion")
+                .and_then(Value::as_unsigned_integer)
+                != Some(u64::from(bindings[0].version))
+        {
+            return Ok(false);
+        }
+        for (item, bind) in items.iter().zip(&bindings[1..]) {
+            let data = item.as_dictionary().ok_or(Error::Protocol)?;
+            if text(data, "PayloadIdentifier")? != bind.identifier
+                || Uuid::parse_str(text(data, "PayloadUUID")?).ok() != Some(bind.uuid)
+                || data
+                    .get("PayloadVersion")
+                    .and_then(Value::as_unsigned_integer)
+                    != Some(u64::from(bind.version))
+            {
+                return Ok(false);
+            }
+        }
+        if check_settings(
+            &target.settings,
+            &target.native,
+            target.identity.tenant,
+            items,
+        )
+        .is_err()
+        {
+            return Ok(false);
+        }
+        matched = true;
+    }
+    Ok(matched == target.settings.enabled)
 }

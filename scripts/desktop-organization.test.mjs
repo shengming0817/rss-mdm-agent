@@ -21,6 +21,7 @@ import {
 import { agentOrganizationConfiguration } from "./agent-organization.mjs";
 import {
   desktopBuildEnvironment,
+  publicCa,
   organizationBuildInput,
 } from "./desktop-organization.mjs";
 
@@ -136,6 +137,9 @@ test("desktop and Agent consume the same env CA without embedding paths or priva
   assert.equal(template.modules.mdm.backend.ca_pem, undefined);
   assert.equal(environment.RSS_MDM_CA_FILE, undefined);
   assert.ok(!environment[organizationBuildInput].includes(ca));
+  assert.throws(() =>
+    publicCa(readFileSync(ca, "utf8") + readFileSync(key, "utf8")),
+  );
   configure(key);
   assert.throws(() => desktopBuildEnvironment(root), /public certificate/);
   configure("relative.pem");

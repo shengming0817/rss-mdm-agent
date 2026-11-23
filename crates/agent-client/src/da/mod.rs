@@ -38,17 +38,23 @@ impl Backend {
 
 mod configuration;
 mod registration;
+pub use registration::validate_keys;
 mod storage;
 use crate::{
     http::{Call, Endpoint},
     trust::VerifiedTrust,
     Clock, IdentityProvider,
 };
-pub use configuration::{ManagedSnapshot, ManagedSource, PolicyConsumer};
+pub use configuration::{ManagedSnapshot, ManagedSource, PolicyConsumer, Selection};
 use rss_mdm_agent_wire::{da as wire, enroll, pki};
 use std::{path::Path, sync::Arc, time::Duration};
 use storage::{read, write};
 
+/// Machine credential storage with idempotent, single-reference release after DA settlement.
+pub trait Credentials: IdentityProvider {
+    /// Delete the retired private key or bootstrap secret in this deployment namespace.
+    fn release(&self, reference: &str, key: bool) -> Result<(), Error>;
+}
 /// Single durable DA identity and its pending protocol operations.
 pub struct Client<S, C> {
     backend: Backend,
@@ -72,8 +78,14 @@ pub struct Status {
     pub status_sequence: i64,
     /// Last allocated application-report sequence.
     pub application_sequence: i64,
+    /// Latest original server receipt for periodic health.
+    pub status_receipt: Option<serde_json::Value>,
+    /// Latest original server receipt for a configuration observation.
+    pub application_receipt: Option<serde_json::Value>,
     /// Backend artifact associated with confirmed effective settings.
     pub effective_digest: Option<String>,
+    /// Failure of a replacement operation while the current credential remains usable.
+    pub renewal_error: Option<Error>,
     /// Most recent closed local or protocol failure.
     pub diagnostic: Option<Error>,
 }
@@ -89,7 +101,14 @@ pub fn inspect(
     };
     let active = read::<registration::Active>(&c, "active")?;
     let pending = read::<Option<registration::Pending>>(&c, "enrollment")?.flatten();
+    let receipt = |kind: &str| -> Result<Option<serde_json::Value>, Error> {
+        use rusqlite::OptionalExtension;
+        let bytes:Option<Vec<u8>>=c.query_row("SELECT receipt FROM reports WHERE kind=?1 AND receipt IS NOT NULL ORDER BY sequence DESC LIMIT 1",[kind],|r|r.get(0)).optional()?;
+        bytes.as_deref().map(crate::store::decode).transpose()
+    };
     Ok(Some(Status {
+        status_receipt: receipt("status")?,
+        application_receipt: receipt("application")?,
         registration: active.map(|a| a.receipt),
         pending_operation: pending.as_ref().map(|p| p.operation),
         issuance_unknown: pending.is_some_and(|p| p.unknown),
@@ -97,10 +116,11 @@ pub fn inspect(
         application_sequence: read(&c, "application-sequence")?.unwrap_or(0),
         effective_digest: read(&c, "effective-digest")?.flatten(),
         diagnostic: read(&c, "last-error")?.flatten(),
+        renewal_error: read(&c, "renewal-error")?.flatten(),
     }))
 }
 
-impl<S: IdentityProvider, C: Clock> Client<S, C> {
+impl<S: Credentials, C: Clock> Client<S, C> {
     /// Open the installation-bound private store and acquire its single writer lease.
     pub fn open(
         root: &Path,
@@ -156,6 +176,16 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         query: Option<&str>,
         input: Option<&E::Input>,
     ) -> Result<E::Output, Error> {
+        self.exchange::<E>(http, query, input)
+            .await?
+            .map_err(|e| crate::identity::enrollment_error(e.code))
+    }
+    async fn exchange<E: Endpoint>(
+        &self,
+        http: &reqwest::Client,
+        query: Option<&str>,
+        input: Option<&E::Input>,
+    ) -> Result<Result<E::Output, enroll::ErrorBody>, Error> {
         let response = Call::<E>::new(http, &self.origin, &[], query, input)?
             .timeout(Duration::from_secs(10))
             .send()
@@ -164,15 +194,15 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let bytes = crate::client::bounded(response, 1024 * 1024).await?;
         if !status.is_success() {
             let body: enroll::ErrorBody = crate::store::decode(&bytes)?;
-            return Err(crate::identity::enrollment_error(body.code));
+            return Ok(Err(body));
         }
         if E::SPEC.media.is_none() {
             if !bytes.is_empty() {
                 return Err(Error::Protocol);
             }
-            return crate::store::decode(b"null");
+            return Ok(Ok(crate::store::decode(b"null")?));
         }
-        crate::store::decode(&bytes)
+        Ok(Ok(crate::store::decode(&bytes)?))
     }
     async fn pki(&self) -> Result<VerifiedTrust, Error> {
         let trust: pki::Trust = self
@@ -209,6 +239,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     }
     /// Reconcile one device cycle using a fresh machine observation.
     pub async fn drive(&self, consumer: &mut impl PolicyConsumer) -> Result<(), Error> {
+        let cleanup = self.release_settled();
         let result = self.maintain(consumer).await;
         if matches!(
             result,
@@ -224,6 +255,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         ) {
             self.withdraw(consumer)?;
         }
+        let result = result.and(cleanup);
         write(
             &self.journal.db,
             "last-error",
@@ -233,11 +265,15 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     }
     async fn maintain(&self, consumer: &mut impl PolicyConsumer) -> Result<(), Error> {
         let snapshot = consumer.managed_snapshot();
+        self.check_local(&snapshot, consumer)?;
         if self.active()?.is_none() && self.pending()?.is_none_or(|p| p.grant.is_none()) {
             return Ok(());
         }
         let pki = self.pki().await?;
-        self.enroll(&pki).await?;
+        let enrollment = self.enroll(&pki).await;
+        if self.active()?.is_none() {
+            enrollment?;
+        }
         let active = self.active()?.ok_or(Error::Identity)?;
         let (_, after, device) = crate::tls::device_validity(
             &active.chain,
@@ -254,9 +290,13 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         {
             self.start_renewal()?;
         }
-        self.trust_and_reports(&http, &active.receipt, &pki.document, consumer, snapshot)
-            .await?;
-        Ok(())
+        let result = self
+            .trust_and_reports(&http, &active.receipt, &pki.document, consumer, snapshot)
+            .await;
+        let delivery = self.flush(&http).await;
+        // A failed replacement grant does not retire the credential that just authenticated.
+        write(&self.journal.db, "renewal-error", &enrollment.err())?;
+        result.and(delivery)
     }
 }
 
