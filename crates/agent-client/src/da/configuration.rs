@@ -87,8 +87,8 @@ struct Current {
     artifact: Option<wire::SignedConfiguration>,
 }
 #[derive(Serialize, Deserialize)]
-struct AppliedProof {
-    until: i64,
+pub(super) struct AppliedProof {
+    pub(super) until: i64,
     sources: BTreeSet<String>,
     effective: Selection,
 }
@@ -584,12 +584,23 @@ impl<S: Credentials, C: Clock> Client<S, C> {
                     ))?,
                     ConfigurationField::Windows => crate::store::encode(&doc.content.windows)?,
                 };
-                let watermark=format!("managed/{}/{field:?}",doc.id);
-                let digest=crate::store::hash(&value);
-                if let Some((revision,version,previous_digest))=read::<(u64,Uuid,String)>(&self.journal.db,&watermark)? {
-                    if revision>doc.revision || revision==doc.revision && (version!=doc.version || previous_digest!=digest) {return Err(Error::Conflict);}
+                let watermark = format!("managed/{}/{field:?}", doc.id);
+                let digest = crate::store::hash(&value);
+                if let Some((revision, version, previous_digest)) =
+                    read::<(u64, Uuid, String)>(&self.journal.db, &watermark)?
+                {
+                    if revision > doc.revision
+                        || revision == doc.revision
+                            && (version != doc.version || previous_digest != digest)
+                    {
+                        return Err(Error::Conflict);
+                    }
                 }
-                write(&self.journal.db,&watermark,&(doc.revision,doc.version,digest))?;
+                write(
+                    &self.journal.db,
+                    &watermark,
+                    &(doc.revision, doc.version, digest),
+                )?;
                 found.entry(doc.id).or_default().insert(*field);
                 locks.entry(doc.id).or_default().insert(*field);
                 write(&self.journal.db, "locks", &locks)?;

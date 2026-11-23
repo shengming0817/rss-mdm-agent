@@ -6,7 +6,7 @@ pub(crate) mod policy;
 #[cfg(windows)]
 mod windows;
 use crate::{deployment::Deployment, DeviceSecrets, SystemClock};
-use agent_client::{da, Error};
+use agent_client::{da, Clock, Error};
 use execution_ipc::host::{
     Handler, Peer, PeerPolicy, Readiness, Reply, Request, ServiceStatus, SessionFence,
 };
@@ -27,7 +27,14 @@ pub(crate) fn has_retained_identity(d: &Deployment) -> Result<bool, Error> {
 pub(crate) fn preflight(d: &Deployment) -> Result<(), Error> {
     if let Ok(backend) = d.modules.da.backend() {
         let root = d.da_root()?;
-        if da::inspect(&root, backend, d.installation_id)?.is_some() {
+        if da::inspect(
+            &root,
+            backend,
+            d.installation_id,
+            SystemClock::new()?.now()?,
+        )?
+        .is_some()
+        {
             let provider = provider(d, &root, backend)?;
             provider.verify_storage(&root)?;
             da::validate_keys(&root, backend, d.installation_id, &provider)?;
@@ -39,7 +46,12 @@ pub(crate) fn status(d: &Deployment) -> Result<Option<da::Status>, Error> {
     let Ok(backend) = d.modules.da.backend() else {
         return Ok(None);
     };
-    da::inspect(&d.da_root()?, backend, d.installation_id)
+    da::inspect(
+        &d.da_root()?,
+        backend,
+        d.installation_id,
+        SystemClock::new()?.now()?,
+    )
 }
 fn provider(d: &Deployment, root: &Path, backend: &da::Backend) -> Result<DeviceSecrets, Error> {
     let namespace = crate::installation::hash(

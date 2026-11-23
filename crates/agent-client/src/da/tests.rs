@@ -73,30 +73,7 @@ async fn endpoint(
             );
             json!({"grant":grant,"issuanceId":s.candidate.as_ref().map(|v|v.issuance_id),"issuanceUnknown":false,"registration":s.registration})
         }
-        "certificates" => {
-            let req: wire::CertificateRequest = serde_json::from_value(input).unwrap();
-            assert_eq!(req.grant_id, grant.grant_id);
-            let csr =
-                x509_cert::request::CertReq::from_der(&STANDARD.decode(req.csr).unwrap()).unwrap();
-            assert_eq!(csr.info.subject.to_string(), "CN=rss-da-device");
-            let san = format!(
-                "urn:rss:da:device:v1:{SERVICE_ID}:{tenant}:{}",
-                URL_SAFE_NO_PAD.encode(grant.device.to_string())
-            );
-            let chain = fixture::device_chain(
-                "CN=rss-da-device",
-                &san,
-                csr.info.public_key.to_der().unwrap(),
-                4_070_908_800,
-            );
-            json!(s.candidate.get_or_insert_with(|| enroll::Candidate {
-                wire_version: 1,
-                operation_id: req.operation_id,
-                issuance_id: Uuid::new_v4(),
-                certificate_chain: chain,
-                activate_before: 2_000_010_000
-            }))
-        }
+        "certificates" => issue_candidate(&mut s, &grant, tenant, input),
         "activate" => {
             let c = s.candidate.clone().unwrap();
             assert_eq!(
@@ -175,6 +152,29 @@ async fn endpoint(
         }
     };
     Json(output).into_response()
+}
+fn issue_candidate(s: &mut Server, grant: &wire::Grant, tenant: Uuid, input: Value) -> Value {
+    let req: wire::CertificateRequest = serde_json::from_value(input).unwrap();
+    assert_eq!(req.grant_id, grant.grant_id);
+    let csr = x509_cert::request::CertReq::from_der(&STANDARD.decode(req.csr).unwrap()).unwrap();
+    assert_eq!(csr.info.subject.to_string(), "CN=rss-da-device");
+    let san = format!(
+        "urn:rss:da:device:v1:{SERVICE_ID}:{tenant}:{}",
+        URL_SAFE_NO_PAD.encode(grant.device.to_string())
+    );
+    let chain = fixture::device_chain(
+        "CN=rss-da-device",
+        &san,
+        csr.info.public_key.to_der().unwrap(),
+        4_070_908_800,
+    );
+    json!(s.candidate.get_or_insert_with(|| enroll::Candidate {
+        wire_version: 1,
+        operation_id: req.operation_id,
+        issuance_id: Uuid::new_v4(),
+        certificate_chain: chain,
+        activate_before: 2_000_010_000
+    }))
 }
 async fn contract_exchange(
     request: axum::extract::Request,
@@ -343,13 +343,13 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         ["received", "validated", "applied"]
     );
     assert_eq!(
-        inspect(&root.path, &backend, install)
+        inspect(&root.path, &backend, install, time.now().unwrap())
             .unwrap()
             .unwrap()
             .application_sequence,
         3
     );
-    assert!(inspect(&root.path, &backend, Uuid::new_v4()).is_err());
+    assert!(inspect(&root.path, &backend, Uuid::new_v4(), time.now().unwrap()).is_err());
     client.start_renewal().unwrap();
     client.drive(&mut consumer).await.unwrap();
     let renewed = client.active().unwrap().unwrap();
@@ -357,11 +357,10 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
     assert_eq!(renewed.receipt.device, grant.device);
     assert!(consumer.0.is_some());
     assert_eq!(state.lock().unwrap().status.len(), 1);
-    assert!(matches!(
-        serde_json::from_value::<ApplicationState>(json!("verified")),
-        Err(_)
-    ));
-    let archived = inspect(&root.path, &backend, install).unwrap().unwrap();
+    assert!(serde_json::from_value::<ApplicationState>(json!("verified")).is_err());
+    let archived = inspect(&root.path, &backend, install, time.now().unwrap())
+        .unwrap()
+        .unwrap();
     assert_eq!(archived.application_receipt.unwrap()["sequence"], 3);
     client.release_settled().unwrap();
     assert!(secrets.key(&active.key).is_err());
@@ -371,7 +370,7 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
     time.set(2_001_000_001);
     assert!(client.drive(&mut consumer).await.is_err());
     assert!(consumer.0.is_none());
-    assert!(inspect(&root.path, &backend, install)
+    assert!(inspect(&root.path, &backend, install, time.now().unwrap())
         .unwrap()
         .unwrap()
         .effective_digest

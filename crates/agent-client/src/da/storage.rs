@@ -44,15 +44,8 @@ fn verify(conn: &Connection, backend: &Backend, installation: Uuid) -> Result<()
     if files::sqlite_format(conn)? != Some((APP, 1)) {
         return Err(Error::Schema);
     }
-    let saved: (Uuid, Uuid, Uuid, String) = read(conn, "authority")?.ok_or(Error::Storage)?;
-    if saved
-        != (
-            installation,
-            backend.instance,
-            backend.tenant,
-            crate::store::hash(backend.ca_pem.as_bytes()),
-        )
-    {
+    let saved: (Uuid, Uuid, Uuid) = read(conn, "authority")?.ok_or(Error::Storage)?;
+    if saved != (installation, backend.instance, backend.tenant) {
         return Err(Error::Identity);
     }
     Ok(())
@@ -112,12 +105,7 @@ impl Journal {
             write(
                 &t,
                 "authority",
-                &(
-                    installation,
-                    backend.instance,
-                    backend.tenant,
-                    crate::store::hash(backend.ca_pem.as_bytes()),
-                ),
+                &(installation, backend.instance, backend.tenant),
             )?;
             t.pragma_update(None, "application_id", APP)?;
             t.pragma_update(None, "user_version", 1)?;

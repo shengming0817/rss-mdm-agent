@@ -14,6 +14,7 @@ pub(super) struct Pending {
     pub grant: Option<wire::Grant>,
     candidate: Option<enroll::Candidate>,
     pub unknown: bool,
+    pub issuance_id: Option<Uuid>,
 }
 impl Pending {
     fn key(&self) -> String {
@@ -65,6 +66,7 @@ impl<S: Credentials, C: Clock> Client<S, C> {
             grant: None,
             candidate: None,
             unknown: false,
+            issuance_id: None,
         };
         self.save(&p)?;
         Ok(p)
@@ -198,7 +200,11 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         if crate::store::encode(&progress.grant)? != crate::store::encode(grant)? {
             return Err(Error::Identity);
         }
+        if p.issuance_id.is_some() && p.issuance_id != progress.issuance_id {
+            return Err(Error::Identity);
+        }
         if progress.issuance_unknown {
+            p.issuance_id = progress.issuance_id;
             p.unknown = true;
             self.save(&p)?;
             return Err(Error::IssuanceUnknown);
@@ -217,6 +223,7 @@ impl<S: Credentials, C: Clock> Client<S, C> {
                 Ok(candidate) => candidate,
                 Err(fault) => match fault.code {
                     enroll::ErrorCode::IssuanceUnknown => {
+                        p.issuance_id = fault.issuance_id;
                         p.unknown = true;
                         self.save(&p)?;
                         return Err(Error::IssuanceUnknown);
@@ -237,6 +244,7 @@ impl<S: Credentials, C: Clock> Client<S, C> {
             {
                 return Err(Error::Identity);
             }
+            p.issuance_id = Some(candidate.issuance_id);
             p.candidate = Some(candidate);
             p.unknown = false;
             self.save(&p)?;

@@ -74,6 +74,8 @@ pub struct Status {
     pub pending_operation: Option<Uuid>,
     /// A dispatched issue needs reconciliation at the CA.
     pub issuance_unknown: bool,
+    /// Original issuer attempt to use for administrative recovery.
+    pub issuance_id: Option<Uuid>,
     /// Last allocated periodic report sequence.
     pub status_sequence: i64,
     /// Last allocated application-report sequence.
@@ -84,6 +86,8 @@ pub struct Status {
     pub application_receipt: Option<serde_json::Value>,
     /// Backend artifact associated with confirmed effective settings.
     pub effective_digest: Option<String>,
+    /// Exclusive deadline of the last native observation.
+    pub valid_until: Option<i64>,
     /// Failure of a replacement operation while the current credential remains usable.
     pub renewal_error: Option<Error>,
     /// Most recent closed local or protocol failure.
@@ -95,6 +99,7 @@ pub fn inspect(
     root: &Path,
     backend: &Backend,
     installation: Uuid,
+    now: i64,
 ) -> Result<Option<Status>, Error> {
     let Some(c) = storage::inspect(root, backend, installation)? else {
         return Ok(None);
@@ -106,15 +111,26 @@ pub fn inspect(
         let bytes:Option<Vec<u8>>=c.query_row("SELECT receipt FROM reports WHERE kind=?1 AND receipt IS NOT NULL ORDER BY sequence DESC LIMIT 1",[kind],|r|r.get(0)).optional()?;
         bytes.as_deref().map(crate::store::decode).transpose()
     };
+    let valid_until = read::<Option<configuration::AppliedProof>>(&c, "applied-proof")?
+        .flatten()
+        .map(|p| p.until);
+    let valid = valid_until.is_some_and(|until| now < until)
+        && read::<i64>(&c, "clock")?.is_some_and(|seen| now >= seen);
     Ok(Some(Status {
         status_receipt: receipt("status")?,
         application_receipt: receipt("application")?,
         registration: active.map(|a| a.receipt),
         pending_operation: pending.as_ref().map(|p| p.operation),
+        issuance_id: pending.as_ref().and_then(|p| p.issuance_id),
         issuance_unknown: pending.is_some_and(|p| p.unknown),
         status_sequence: read(&c, "status-sequence")?.unwrap_or(0),
         application_sequence: read(&c, "application-sequence")?.unwrap_or(0),
-        effective_digest: read(&c, "effective-digest")?.flatten(),
+        valid_until,
+        effective_digest: if valid {
+            read(&c, "effective-digest")?.flatten()
+        } else {
+            None
+        },
         diagnostic: read(&c, "last-error")?.flatten(),
         renewal_error: read(&c, "renewal-error")?.flatten(),
     }))
@@ -212,13 +228,6 @@ impl<S: Credentials, C: Clock> Client<S, C> {
                 None,
             )
             .await?;
-        if url::Url::parse(&trust.origin)
-            .map_err(|_| Error::Untrusted)?
-            .origin()
-            != self.origin.origin()
-        {
-            return Err(Error::Untrusted);
-        }
         let verified = VerifiedTrust::device(
             trust,
             self.backend.instance,

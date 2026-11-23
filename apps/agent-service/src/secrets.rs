@@ -102,9 +102,14 @@ mod tests {
             .unwrap();
         let mut consumer = Machine::observe(journal.clone()).await;
         client.drive(&mut consumer).await.unwrap();
-        let first = agent_client::da::inspect(&journal, &backend, installation)
-            .unwrap()
-            .unwrap();
+        let first = agent_client::da::inspect(
+            &journal,
+            &backend,
+            installation,
+            agent_client::Clock::now(&crate::SystemClock::new().unwrap()).unwrap(),
+        )
+        .unwrap()
+        .unwrap();
         assert!(
             first.effective_digest.is_some()
                 && first.application_sequence >= 3
@@ -113,9 +118,14 @@ mod tests {
         client.start_renewal().unwrap();
         drop(client);
         open().drive(&mut consumer).await.unwrap();
-        let second = agent_client::da::inspect(&journal, &backend, installation)
-            .unwrap()
-            .unwrap();
+        let second = agent_client::da::inspect(
+            &journal,
+            &backend,
+            installation,
+            agent_client::Clock::now(&crate::SystemClock::new().unwrap()).unwrap(),
+        )
+        .unwrap()
+        .unwrap();
         let a = first.registration.as_ref().unwrap();
         let b = second.registration.as_ref().unwrap();
         assert_eq!(a.device, b.device);

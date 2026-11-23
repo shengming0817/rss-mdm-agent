@@ -67,8 +67,11 @@ impl Deployment {
         crate::da_service::assemble(self)
     }
     pub(crate) fn mdm_owner(self) -> Result<Box<dyn execution_ipc::host::Handler>, Error> {
-        let policy=self.clients.clone();
-        match self.preflight().and_then(|_|crate::registration::RegistrationOwner::new(self)) {
+        let policy = self.clients.clone();
+        match self
+            .preflight()
+            .and_then(|_| crate::registration::RegistrationOwner::new(self))
+        {
             Ok(owner) => Ok(Box::new(owner)),
             Err(error) => {
                 execution_ipc::record_startup_failure(startup_failure(error));
