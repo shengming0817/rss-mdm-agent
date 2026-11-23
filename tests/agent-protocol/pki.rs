@@ -265,9 +265,12 @@ pub fn chain_until_device(
         "urn:rss-mdm:agent:v1:{tenant}:{}",
         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(device.to_string())
     );
+    device_chain("CN=rss-mdm-agent", &uri, public, until)
+}
+pub fn device_chain(subject: &str, uri: &str, public: Vec<u8>, until: u64) -> Vec<String> {
     let certificate = certificate_until(
         "CN=Agent fixture CA",
-        "CN=rss-mdm-agent",
+        subject,
         public,
         vec![
             extension(
@@ -286,7 +289,7 @@ pub fn chain_until_device(
             ),
             extension(
                 SubjectAltName(vec![GeneralName::UniformResourceIdentifier(
-                    der::asn1::Ia5String::new(&uri).unwrap(),
+                    der::asn1::Ia5String::new(uri).unwrap(),
                 )]),
                 false,
             ),

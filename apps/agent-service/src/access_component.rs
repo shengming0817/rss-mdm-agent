@@ -208,7 +208,7 @@ pub(crate) fn remove_for(deployment: &crate::deployment::Deployment) -> Result<(
     let config = device_access::windows::installation().map_err(|_| Error::Identity)?;
     crate::access_worker::verify_installation(
         &crate::access_worker::root(&deployment.execution),
-        deployment.service_id,
+        deployment.mdm()?.instance,
         &config.root,
         config.id,
     )?;
@@ -237,7 +237,7 @@ pub(crate) fn install_for(
         };
     };
     let root = crate::access_worker::root(&deployment.execution);
-    device_access::Store::open(&root, deployment.service_id).map_err(|_| Error::Storage)?;
+    device_access::Store::open(&root, deployment.mdm()?.instance).map_err(|_| Error::Storage)?;
     if !repair && exists(CONFIG_KEY)? {
         match get(CONFIG_KEY, "MaintenanceDisabled")?.as_str() {
             "1" => return Ok(()),
@@ -255,12 +255,17 @@ pub(crate) fn install_for(
         None
     };
     if let Some(old) = &old {
-        crate::access_worker::verify_installation(&root, deployment.service_id, &old.root, old.id)?;
+        crate::access_worker::verify_installation(
+            &root,
+            deployment.mdm()?.instance,
+            &old.root,
+            old.id,
+        )?;
     }
     let unchanged = old.is_some() && get(CONFIG_KEY, "ImageSha256")? == digest;
     let config = Installation {
         root,
-        id: deployment.service_id,
+        id: deployment.mdm()?.instance,
         installed_boot: if unchanged {
             old.as_ref().ok_or(Error::Identity)?.installed_boot
         } else {
@@ -295,7 +300,7 @@ pub(crate) fn preflight(deployment: &crate::deployment::Deployment) -> Result<()
     }
     device_access::Store::validate_existing(
         &crate::access_worker::root(&deployment.execution),
-        deployment.service_id,
+        deployment.mdm()?.instance,
     )
     .map_err(|_| Error::Storage)?;
     Ok(())

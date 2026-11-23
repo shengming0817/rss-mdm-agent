@@ -15,7 +15,7 @@ import {
 } from "node:fs";
 import { join, resolve, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createHash, randomUUID, X509Certificate } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { macosSigningArguments } from "./macos-signing.mjs";
 import { cargoTargetDir } from "./cargo-target.mjs";
 import { runtimeTreeSha256 } from "./ai-host-artifacts.mjs";
@@ -25,7 +25,10 @@ import {
   buildPlatformSso,
   containerEntitlements,
 } from "./build-platform-sso.mjs";
-import { organizationConfiguration } from "./desktop-organization.mjs";
+import {
+  organizationConfiguration,
+  publicCa,
+} from "./desktop-organization.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
 const args = process.argv.slice(2);
 const input = args.indexOf("--organization");
@@ -67,52 +70,29 @@ if (
 if (format === "windows_msix" && !process.env.RSS_WINDOWS_PUBLISHER)
   throw Error("MSIX requires a Publisher identity");
 const organization = JSON.parse(readFileSync(resolve(args[input + 1]), "utf8"));
-const allowed = [
-  "service_id",
-  "connections",
-  "tenant",
-  "label",
-  "signing_keys",
-  "ca_pem",
-];
-if (Object.keys(organization).some((key) => !allowed.includes(key)))
-  throw Error("Organization input accepts public trust fields only");
 if (
-  !/^[0-9a-f-]{36}$/.test(organization.service_id) ||
-  !/^[0-9a-f-]{36}$/.test(organization.tenant) ||
-  !organization.label ||
-  !Object.keys(organization.signing_keys ?? {}).length
+  Object.keys(organization).some(
+    (key) => !["modules", "desktop"].includes(key),
+  ) ||
+  !organization.modules
 )
-  throw Error("Invalid organization identity or signing keys");
-for (const pem of [organization.ca_pem].filter(Boolean)) {
-  if (
-    !/^\s*-----BEGIN CERTIFICATE-----[A-Za-z0-9+/=\s]+-----END CERTIFICATE-----\s*$/.test(
-      pem,
-    ) ||
-    !new X509Certificate(pem).ca
-  )
-    throw Error("One public CA certificate required");
-}
-if (!organization.ca_pem)
-  throw Error("A protected HTTPS bootstrap CA is required");
-for (const key of Object.values(organization.signing_keys))
-  if (Buffer.from(key, "base64url").length !== 32)
-    throw Error("Ed25519 public key required");
-// Reuse the existing website configuration; never send user login to the device TLS listener.
-const desktopConfiguration = organizationConfiguration(root);
-if (desktopConfiguration.tenant.toLowerCase() !== organization.tenant)
+  throw Error("Organization input requires explicit module defaults");
+const defaults = organization.modules;
+const desktopConfiguration =
+  organization.desktop ??
+  (defaults.mdm?.state === "enabled" ? organizationConfiguration(root) : null);
+if (desktopConfiguration?.ca_pem !== undefined)
+  desktopConfiguration.ca_pem = publicCa(desktopConfiguration.ca_pem);
+if (
+  desktopConfiguration &&
+  defaults.mdm?.state === "enabled" &&
+  desktopConfiguration.tenant?.toLowerCase() !== defaults.mdm.backend.tenant
+)
   throw Error("Desktop and Agent must belong to the same tenant");
-const env = {
-  ...process.env,
-  RSS_BUILD_MDM_ORGANIZATION: JSON.stringify({
-    origin: desktopConfiguration.origin,
-    tenant: organization.tenant,
-    label: organization.label,
-    ...(desktopConfiguration.ca_pem
-      ? { ca_pem: desktopConfiguration.ca_pem }
-      : {}),
-  }),
-};
+const env = { ...process.env };
+delete env.RSS_BUILD_MDM_ORGANIZATION;
+if (desktopConfiguration)
+  env.RSS_BUILD_MDM_ORGANIZATION = JSON.stringify(desktopConfiguration);
 // The outer build runner retains the worktree/target locks for this entire package build.
 // pnpm descendants do not inherit their descriptors and must not claim a borrowed lease.
 delete env._AGENT_BUILD_LEASE;
@@ -295,13 +275,14 @@ if (windows) {
   packagedRuntime = join(app, "Contents/Resources/ai-host-runtime");
   sign(app, undefined, "com.rss.mdmagent");
   const nativeExtensions = appleSigned(app);
-  psso = nativeExtensions
-    ? buildPlatformSso({
-        output: join(app, "Contents/PlugIns/RSSPlatformSSO.appex"),
-        identity: macosIdentity,
-        release: true,
-      })
-    : null;
+  psso =
+    nativeExtensions && desktopConfiguration
+      ? buildPlatformSso({
+          output: join(app, "Contents/PlugIns/RSSPlatformSSO.appex"),
+          identity: macosIdentity,
+          release: true,
+        })
+      : null;
   assemblePasskeyHost({
     app,
     output: join(output, "passkey-container-entitlements.plist"),
@@ -363,7 +344,8 @@ function image(path) {
   return result;
 }
 const candidate = {
-  assembly: { mdm: true, da: false },
+  assembly: { mdm: true, da: true },
+  defaults,
   windows_login: windowsLogin ? image(windowsLogin) : null,
   platform_sso: psso
     ? {
@@ -371,7 +353,7 @@ const candidate = {
         origin: desktopConfiguration.origin,
       }
     : null,
-  version: 2,
+  version: 3,
   format,
   product_version: version,
   target,
@@ -381,11 +363,6 @@ const candidate = {
   cli: image(cli),
   runtime_root: join(installed, packagedRuntime.slice(payload.length + 1)),
   runtime_sha256: runtimeTreeSha256(packagedRuntime),
-  service_id: organization.service_id,
-  connections: organization.connections,
-  tenant: organization.tenant,
-  signing_keys: organization.signing_keys,
-  ca_pem: organization.ca_pem ?? null,
   signing_mode: release ? "release" : "development",
 };
 const candidateBytes = JSON.stringify(candidate, null, 2) + "\n";

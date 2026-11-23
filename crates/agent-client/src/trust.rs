@@ -224,13 +224,28 @@ fn crl(der: Vec<u8>, signer: &X509Certificate<'_>, now: i64) -> Result<Crl, Erro
 
 impl VerifiedTrust {
     pub fn new(document: Trust, cfg: &Config, now: i64) -> Result<Self, Error> {
+        Self::device(document, cfg.service_id, cfg.tenant, Purpose::Agent, now)
+    }
+
+    pub fn device(
+        document: Trust,
+        instance: uuid::Uuid,
+        tenant: uuid::Uuid,
+        purpose: Purpose,
+        now: i64,
+    ) -> Result<Self, Error> {
+        let provisioner = match purpose {
+            Purpose::Agent => "rss-agent",
+            Purpose::DaDevice => "rss-da-device",
+            _ => return Err(Error::Untrusted),
+        };
         if now < 0 {
             return Err(Error::Clock);
         }
         document.validate()?;
-        if document.purpose != Purpose::Agent
-            || document.service_id != cfg.service_id
-            || document.tenant != cfg.tenant
+        if document.purpose != purpose
+            || document.service_id != instance
+            || document.tenant != tenant
         {
             return Err(Error::Untrusted);
         }
@@ -239,7 +254,7 @@ impl VerifiedTrust {
         let mut watermarks = BTreeMap::new();
         let mut expires = i64::MAX;
         for g in &document.issuers {
-            if g.provisioner != "rss-agent" || g.kid.is_empty() || g.kid.len() > 128 {
+            if g.provisioner != provisioner || g.kid.is_empty() || g.kid.len() > 128 {
                 return Err(Error::Untrusted);
             }
             let issuer_der = bytes(&g.certificate, 32768)?;

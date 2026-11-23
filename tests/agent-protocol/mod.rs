@@ -1627,6 +1627,7 @@ fn enrollment_response(d: &mut Data, action: &str, value: Value, peer: Option<&[
                 d,
                 "requests",
                 serde_json::to_value(enroll::GrantRequest {
+                    tenant_id: d.tenant,
                     wire_version: 1,
                     operation_id: request.operation_id,
                     secret: request.secret,
@@ -2130,10 +2131,10 @@ pub fn execution_context() -> SoftwareExecutionContext {
 }
 
 #[derive(Clone, Debug)]
-struct TlsIdentity(Option<Vec<u8>>);
-struct TlsListener {
-    listener: tokio::net::TcpListener,
-    acceptor: tokio_rustls::TlsAcceptor,
+pub struct TlsIdentity(pub Option<Vec<u8>>);
+pub struct TlsListener {
+    pub listener: tokio::net::TcpListener,
+    pub acceptor: tokio_rustls::TlsAcceptor,
 }
 impl axum::serve::Listener for TlsListener {
     type Io = tokio_rustls::server::TlsStream<tokio::net::TcpStream>;

@@ -4,7 +4,7 @@ mod apply;
 pub use apply::{apply_authorized_profile, AuthorizedProfile};
 mod lifecycle;
 mod profile;
-pub use profile::{Assembly, Modules};
+pub use profile::{Assembly, MdmBackend, Module, Modules};
 mod unmanage;
 pub(crate) use unmanage::{launch as launch_unmanage, supported as unmanage_supported};
 #[cfg(windows)]
@@ -46,8 +46,8 @@ pub use windows::worker;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Candidate {
-    #[serde(default = "Assembly::baseline_mdm")]
     pub assembly: Assembly,
+    pub defaults: Modules,
     pub windows_login: Option<Artifact>,
     pub platform_sso: Option<crate::deployment::PlatformSsoConfiguration>,
     pub version: u8,
@@ -60,11 +60,6 @@ pub struct Candidate {
     pub cli: Artifact,
     pub runtime_root: PathBuf,
     pub runtime_sha256: String,
-    pub service_id: uuid::Uuid,
-    pub connections: rss_mdm_agent_wire::connections::SignedConfiguration,
-    pub tenant: uuid::Uuid,
-    pub signing_keys: BTreeMap<String, String>,
-    pub ca_pem: Option<String>,
     pub signing_mode: SigningMode,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,7 +112,7 @@ impl Candidate {
             return Err(Error::Identity);
         }
         let candidate: Self = serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
-        if candidate.version != 2
+        if candidate.version != 3
             || serde_json::to_value(&candidate.platform_sso).ok()
                 != serde_json::to_value(&deployment.platform_sso).ok()
             || candidate.service.path != deployment.service.path
@@ -126,12 +121,6 @@ impl Candidate {
                     || cli.image.sha256 != candidate.cli.sha256
                     || cli.image.cdhash != candidate.cli.cdhash
             })
-            || candidate.service_id != deployment.service_id
-            || candidate.connections != deployment.connections
-            || candidate.tenant != deployment.tenant
-            || candidate.signing_keys != deployment.signing_keys
-            || candidate.ca_pem.as_deref().map(str::as_bytes)
-                != deployment.network()?.ca_pem.as_deref()
             || candidate.target != Target::current().map_err(|_| Error::Unsupported)?
         {
             return Err(Error::Identity);
@@ -139,25 +128,11 @@ impl Candidate {
         Ok(candidate)
     }
     fn validate_trust(&self) -> Result<(), Error> {
-        use base64::Engine;
-        let keys = self
-            .signing_keys
-            .iter()
-            .map(|(id, key)| {
-                Ok((
-                    id.clone(),
-                    base64::engine::general_purpose::URL_SAFE_NO_PAD
-                        .decode(key)
-                        .map_err(|_| Error::Configuration)?,
-                ))
-            })
-            .collect::<Result<_, Error>>()?;
-        agent_client::verify_connections(&self.connections, self.service_id, self.tenant, &keys)?;
+        self.defaults.validate_for(self.assembly)?;
         if self.assembly != Assembly::CURRENT
-            || self.version != 2
+            || self.version != 3
             || self.target != Target::current().map_err(|_| Error::Unsupported)?
             || !self.root.is_absolute()
-            || self.tenant.is_nil()
             || self.product_version.is_empty()
             || self.product_version.len() > 64
             || !digest_valid(&self.runtime_sha256)
@@ -168,25 +143,6 @@ impl Candidate {
             || self.service.path == self.desktop.path
             || self.cli.path == self.desktop.path
             || self.cli.path == self.service.path
-            || self.signing_keys.is_empty()
-        {
-            return Err(Error::Configuration);
-        }
-        agent_client::validate_public_ca(
-            self.ca_pem.as_ref().ok_or(Error::Configuration)?.as_bytes(),
-        )?;
-        if self.signing_keys.len() > 32
-            || self.signing_keys.iter().any(|(id, key)| {
-                use base64::Engine;
-                id.is_empty()
-                    || id.len() > 128
-                    || !id
-                        .bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
-                    || base64::engine::general_purpose::URL_SAFE_NO_PAD
-                        .decode(key)
-                        .map_or(true, |k| k.len() != 32)
-            })
         {
             return Err(Error::Configuration);
         }
@@ -275,20 +231,15 @@ impl Candidate {
             interactive: true,
         };
         Ok(Deployment {
-            modules: None,
+            modules: self.defaults.clone(),
             cli: Some(execution_ipc::entry::CliPolicy {
                 image: self.cli.clone(),
                 machine_actions: vec![],
             }),
             platform_sso: self.platform_sso.clone(),
-            service_id: self.service_id,
-            connections: self.connections.clone(),
             software_read_grants: vec![],
             version: execution_ipc::host::DEPLOYMENT_VERSION,
             ipc_version: execution_ipc::host::IPC_VERSION,
-            tenant: self.tenant,
-            signing_keys: self.signing_keys.clone(),
-            ca_file: self.ca_pem.as_ref().map(|_| base.join("https-ca.pem")),
             installation_id: uuid::Uuid::new_v4(),
             installation_artifact: artifact,
             state_root: base.join("state"),
@@ -365,17 +316,13 @@ impl Candidate {
         }
         let candidate: Candidate =
             serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
-        if candidate.version != 2
-            || candidate.service_id != deployment.service_id
-            || candidate.connections != deployment.connections
-            || candidate.tenant != deployment.tenant
+        if candidate.version != 3
             || candidate.service.path != deployment.service.path
             || deployment.cli.as_ref().is_none_or(|cli| {
                 cli.image.path != candidate.cli.path
                     || cli.image.sha256 != candidate.cli.sha256
                     || cli.image.cdhash != candidate.cli.cdhash
             })
-            || candidate.signing_keys != deployment.signing_keys
         {
             return Err(Error::Identity);
         }
@@ -533,7 +480,7 @@ pub fn run(args: &[OsString]) -> Result<(), Error> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 pub(crate) fn validate_native_artifact(image: &Artifact) -> Result<(), Error> {
     Target::current()

@@ -36,7 +36,7 @@ pub(crate) async fn observe(expected: Option<&str>) -> State {
     }
 }
 #[cfg(target_os = "macos")]
-async fn profiles(args: &[&str]) -> Option<Vec<u8>> {
+pub(crate) async fn profiles(args: &[&str]) -> Option<Vec<u8>> {
     use tokio::io::AsyncReadExt;
     let mut child = tokio::process::Command::new("/usr/bin/profiles")
         .args(args)

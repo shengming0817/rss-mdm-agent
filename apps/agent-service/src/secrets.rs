@@ -35,6 +35,109 @@ mod tests {
             let _ = std::fs::remove_dir_all(&self.root);
         }
     }
+    /// The deployment harness supplies a fresh DA listener and performs the administrator's
+    /// authenticated grant exchange. Only disposable keychain material is used on this Mac.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "requires a deployed standalone DA and its administrator grant exchange"]
+    async fn standalone_da_interop_with_platform_key() {
+        use crate::da_service::policy::Machine;
+        use agent_client::da::{Backend, Client};
+        let io = PathBuf::from(
+            std::env::var_os("RSS_DA_INTEROP_ROOT").expect("isolated exchange directory"),
+        );
+        files::validate(&io).unwrap();
+        let backend: Backend =
+            serde_json::from_slice(&files::read(&io.join("backend.json"), 65536).unwrap()).unwrap();
+        let root = crate::protocol_test_support::Root::new();
+        let isolated = Isolated {
+            root: root.path.clone(),
+            path: root.path.join("standalone.keychain"),
+        };
+        let keychain = Keychain::create_file(&isolated.path, "isolated-test-password").unwrap();
+        let namespace = crate::installation::hash(uuid::Uuid::new_v4().as_bytes());
+        let installation = uuid::Uuid::new_v4();
+        let journal = root.path.join("da");
+        let open = || {
+            Client::open(
+                &journal,
+                backend.clone(),
+                installation,
+                crate::DeviceSecrets(SecretStore {
+                    root: root.path.clone(),
+                    namespace: namespace.clone(),
+                    keychain: keychain.clone(),
+                    access: Mutex::new(()),
+                }),
+                crate::SystemClock::new().unwrap(),
+            )
+            .unwrap()
+        };
+        let original = uuid::Uuid::new_v4();
+        let client = open();
+        let grant_request = client.prepare(original, Ok).unwrap();
+        let publish = |name: &str, bytes: &[u8]| {
+            let tmp = io.join(format!("{name}.staged"));
+            files::write_new(&tmp, bytes).unwrap();
+            files::publish_new(&tmp, &io.join(name)).unwrap();
+            std::fs::remove_file(tmp).unwrap();
+        };
+        publish(
+            "request.json",
+            &zeroize::Zeroizing::new(serde_json::to_vec(&grant_request).unwrap()),
+        );
+        drop(client);
+        tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            while !io.join("grant.json").exists() {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let client = open();
+        client
+            .import(
+                serde_json::from_slice(&files::read(&io.join("grant.json"), 65536).unwrap())
+                    .unwrap(),
+            )
+            .unwrap();
+        let mut consumer = Machine::observe(journal.clone()).await;
+        client.drive(&mut consumer).await.unwrap();
+        let first = agent_client::da::inspect(
+            &journal,
+            &backend,
+            installation,
+            agent_client::Clock::now(&crate::SystemClock::new().unwrap()).unwrap(),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(
+            first.effective_digest.is_some()
+                && first.application_sequence >= 3
+                && first.status_sequence >= 1
+        );
+        client.start_renewal().unwrap();
+        drop(client);
+        open().drive(&mut consumer).await.unwrap();
+        let second = agent_client::da::inspect(
+            &journal,
+            &backend,
+            installation,
+            agent_client::Clock::now(&crate::SystemClock::new().unwrap()).unwrap(),
+        )
+        .unwrap()
+        .unwrap();
+        let a = first.registration.as_ref().unwrap();
+        let b = second.registration.as_ref().unwrap();
+        assert_eq!(a.device, b.device);
+        assert_ne!(a.credential, b.credential);
+        publish(
+            "agent-result.json",
+            &serde_json::to_vec_pretty(&serde_json::json!({"first":first,"renewed":second}))
+                .unwrap(),
+        );
+        drop(keychain);
+        drop(isolated);
+    }
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn native_key_completes_real_mtls_and_reopens_original_binding() {
         let _budget = crate::scenario_budget::enter();
@@ -279,32 +382,36 @@ impl SecretStore {
             }
             let (reference, key): (String, bool) =
                 serde_json::from_slice(&bytes).map_err(io::Error::other)?;
-            let account = self.account(&reference)?;
-            #[cfg(target_os = "macos")]
-            self.keychain.without_interaction(|| {
-                if key {
-                    self.keychain.delete_device_key(&account)
-                } else {
-                    self.keychain.delete("RSS MDM Agent device", &account)
-                }
-            })?;
-            #[cfg(windows)]
-            if key {
-                platform_credentials::DeviceKey::delete(&account)?;
-            } else {
-                let secret = self
-                    .root
-                    .join(format!("{:x}.dpapi", Sha256::digest(account.as_bytes())));
-                match std::fs::remove_file(secret) {
-                    Ok(()) => (),
-                    Err(e) if e.kind() == io::ErrorKind::NotFound => (),
-                    Err(e) => return Err(e),
-                }
-            }
-            #[cfg(not(any(windows, target_os = "macos")))]
-            return Err(io::ErrorKind::Unsupported.into());
+            self.release_reference(&reference, key)?;
         }
         Ok(complete)
+    }
+    pub(crate) fn release_reference(&self, reference: &str, key: bool) -> io::Result<()> {
+        let account = self.account(reference)?;
+        #[cfg(target_os = "macos")]
+        self.keychain.without_interaction(|| {
+            if key {
+                self.keychain.delete_device_key(&account)
+            } else {
+                self.keychain.delete("RSS MDM Agent device", &account)
+            }
+        })?;
+        #[cfg(windows)]
+        if key {
+            platform_credentials::DeviceKey::delete(&account)?;
+        } else {
+            let secret = self
+                .root
+                .join(format!("{:x}.dpapi", Sha256::digest(account.as_bytes())));
+            match std::fs::remove_file(secret) {
+                Ok(()) => (),
+                Err(e) if e.kind() == io::ErrorKind::NotFound => (),
+                Err(e) => return Err(e),
+            }
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
+        return Err(io::ErrorKind::Unsupported.into());
+        Ok(())
     }
     fn account(&self, reference: &str) -> io::Result<String> {
         if reference.is_empty()

@@ -59,7 +59,11 @@ pub fn from_metadata(metadata: &Value) -> Result<Contract, Box<dyn std::error::E
         serde_json::from_slice(&std::fs::read(directory.join("http-v1-source.json"))?)?;
     if provenance["repository"] != "https://dev.azure.com/shengming0923/rss/_git/rss-mdm"
         || provenance["revision"] != revision.0
-        || provenance["listener"] != "agent"
+        || !["agent", "da"].iter().all(|k| {
+            provenance["sources"][*k]
+                .as_str()
+                .is_some_and(|s| s.len() == 64)
+        })
     {
         return Err("HTTP snapshot differs from the locked wire source".into());
     }
@@ -70,9 +74,13 @@ pub fn from_metadata(metadata: &Value) -> Result<Contract, Box<dyn std::error::E
     let document: Value = serde_json::from_slice(&bytes)?;
     if document["formatVersion"] != 1
         || document["schemaDialect"] != "https://json-schema.org/draft/2020-12/schema"
-        || !document["endpoints"]
-            .as_array()
-            .is_some_and(|e| !e.is_empty() && e.iter().all(|e| e["listener"] == "agent"))
+        || !document["endpoints"].as_array().is_some_and(|e| {
+            ["agent", "da"]
+                .iter()
+                .all(|listener| e.iter().any(|op| op["listener"] == *listener))
+                && e.iter()
+                    .all(|op| matches!(op["listener"].as_str(), Some("agent" | "da")))
+        })
         || !document["schemas"].is_object()
     {
         return Err("invalid Agent HTTP snapshot".into());
@@ -103,11 +111,7 @@ impl Contract {
             .as_array()
             .unwrap()
             .iter()
-            .find(|e| {
-                e["listener"] == "agent"
-                    && e["method"] == method
-                    && matches_path(e["path"].as_str().unwrap(), path)
-            })
+            .find(|e| e["method"] == method && matches_path(e["path"].as_str().unwrap(), path))
     }
     pub fn validate(
         &self,

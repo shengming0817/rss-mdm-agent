@@ -47,6 +47,7 @@ mod config;
 mod content;
 mod transfer;
 pub use transfer::{TransferObservation, Transfers};
+pub mod da;
 mod native_content;
 /// Bounded verification of the standard native source documents, without execution authority.
 pub mod native_source;
@@ -83,6 +84,9 @@ pub enum Error {
     /// Current authorization was rejected.
     #[error("Agent permission denied")]
     Denied,
+    /// A DA grant already exists or the original renewal request awaits reconciliation.
+    #[error("DA grant already requested; resume the pending operation shown by installation status before exporting another request")]
+    DaGrantPending,
     /// An immutable request conflicts.
     #[error("Agent operation conflict")]
     Conflict,

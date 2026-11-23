@@ -321,13 +321,22 @@ it("stops only the registration wait and resumes the same retained grant", async
   await act(async () => {
     f.desktop.state.workspace!.navigation.select("settings", "registration");
   });
-  fireEvent.click(await screen.findByRole("button", { name: "注册这台设备" }));
-  fireEvent.click(await screen.findByRole("button", { name: "停止等待注册" }));
-  const resume = await screen.findByRole("button", { name: "继续核验原注册" });
+  // The action moves between the registration page and its pending dialog.
+  // Find the labelled button without traversing every mounted page on each poll.
+  const action = async (label: string) => {
+    const text = await screen.findByText(label, { selector: "button span" });
+    const button = text.closest("button");
+    if (!button || button.disabled)
+      throw Error("registration action unavailable");
+    return button;
+  };
+  fireEvent.click(await action("注册这台设备"));
+  fireEvent.click(await action("停止等待注册"));
+  const resume = await action("继续核验原注册");
   expect(screen.getByText("original-grant")).toBeTruthy();
   fireEvent.click(resume);
   await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
-  await screen.findByRole("button", { name: "继续核验原注册" });
+  await action("继续核验原注册");
   expect(screen.getByText("original-grant")).toBeTruthy();
   expect(status.registered).toBe(false);
   f.app.unmount();

@@ -75,6 +75,9 @@ fn validate(r: &Recovery, task: uuid::Uuid) -> Result<(), Error> {
     Ok(())
 }
 pub(crate) fn supported(d: &Deployment) -> bool {
+    if !d.modules.mdm.enabled() || crate::da_service::has_retained_identity(d).unwrap_or(true) {
+        return false;
+    }
     Deployment::default_path()
         .and_then(|p| Candidate::retained(&p, d))
         .and_then(|c| c.format())
@@ -90,6 +93,9 @@ fn prepare(d: &Deployment, permit: &UnmanagePermit, package_managed: bool) -> Re
             return Err(Error::Conflict);
         }
         return Ok(());
+    }
+    if crate::da_service::has_retained_identity(d)? {
+        return Err(Error::Denied);
     }
     if !package_managed && !supported(d) {
         return Err(Error::Unsupported);
@@ -250,6 +256,9 @@ fn execute(task: uuid::Uuid, package_entry: bool) -> Result<(), Error> {
         Ok(_) => {
             let current = Deployment::metadata(&config)?;
             current.require_mdm_assembly()?;
+            if crate::da_service::has_retained_identity(&current)? {
+                return Err(Error::Denied);
+            }
             lifecycle::preserved(&r.deployment, &current)?;
             if current.service.path != r.deployment.service.path
                 || current.installation_artifact != r.deployment.installation_artifact
@@ -268,7 +277,7 @@ fn execute(task: uuid::Uuid, package_entry: bool) -> Result<(), Error> {
             let root = crate::access_worker::root(&d.execution);
             // Preserve the service and durable fences while user/directory cleanup is pending.
             if root.exists()
-                && !device_access::Store::open(&root, d.service_id)
+                && !device_access::Store::open(&root, d.mdm()?.instance)
                     .map_err(|_| Error::Identity)?
                     .hello_cleanup_complete()
                     .map_err(|_| Error::Identity)?

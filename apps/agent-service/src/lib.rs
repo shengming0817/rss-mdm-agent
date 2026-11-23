@@ -6,6 +6,7 @@ mod collected_data;
 mod collection_environment;
 mod collection_projection;
 pub mod collection_worker;
+mod da_service;
 pub mod deployment;
 mod device_overview;
 pub mod enrollment_worker;
@@ -69,6 +70,12 @@ impl DeviceSecrets {
                 .map_err(|_| Error::Identity)?,
         );
         self.0.import(reference, &bytes)?;
+        Ok(())
+    }
+}
+impl agent_client::da::Credentials for DeviceSecrets {
+    fn release(&self, reference: &str, key: bool) -> Result<(), Error> {
+        self.0.release_reference(reference, key)?;
         Ok(())
     }
 }

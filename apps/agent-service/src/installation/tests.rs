@@ -15,13 +15,8 @@ pub(super) fn candidate(root: &crate::protocol_test_support::Root) -> Candidate 
         },
         windows_login: None,
         platform_sso: None,
-        service_id: crate::protocol_test_support::SERVICE_ID,
-        connections: crate::protocol_test_support::signed_connections(
-            "https://agent.example.org".into(),
-            uuid::Uuid::from_u128(2),
-            1,
-        ),
-        version: 2,
+        defaults: mdm_defaults(),
+        version: 3,
         format: if target.platform() == "darwin" {
             rss_mdm_agent_wire::enroll::configuration::InstallerFormat::MacosPkg
         } else {
@@ -38,22 +33,38 @@ pub(super) fn candidate(root: &crate::protocol_test_support::Root) -> Candidate 
         },
         runtime_root: root.path.join("runtime"),
         runtime_sha256: "c".repeat(64),
-        tenant: uuid::Uuid::from_u128(2),
-        signing_keys: BTreeMap::from([("test".into(), {
-            use base64::Engine;
-            use ring::signature::KeyPair;
-            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
-                ring::signature::Ed25519KeyPair::from_seed_unchecked(&[7; 32])
-                    .unwrap()
-                    .public_key()
-                    .as_ref(),
-            )
-        })]),
-        ca_pem: Some(String::from_utf8(crate::protocol_test_support::pki::ca()).unwrap()),
         signing_mode: SigningMode::Development,
     }
 }
 
+pub(crate) fn mdm_defaults() -> Modules {
+    Modules {
+        revision: 1,
+        mdm: Module::Enabled {
+            backend: MdmBackend {
+                instance: crate::protocol_test_support::SERVICE_ID,
+                connections: crate::protocol_test_support::signed_connections(
+                    "https://agent.example.org".into(),
+                    uuid::Uuid::from_u128(2),
+                    1,
+                ),
+                tenant: uuid::Uuid::from_u128(2),
+                signing_keys: BTreeMap::from([("test".into(), {
+                    use base64::Engine;
+                    use ring::signature::KeyPair;
+                    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+                        ring::signature::Ed25519KeyPair::from_seed_unchecked(&[7; 32])
+                            .unwrap()
+                            .public_key()
+                            .as_ref(),
+                    )
+                })]),
+                ca_pem: String::from_utf8(crate::protocol_test_support::pki::ca()).unwrap(),
+            },
+        },
+        da: Module::Disabled,
+    }
+}
 #[test]
 fn candidate_requires_current_format_and_valid_identity() {
     let root = crate::protocol_test_support::Root::new();
@@ -140,22 +151,32 @@ fn program_refresh_keeps_stable_namespace_and_source_grants_across_signed_seed_c
             origin: "https://software.example.org".into(),
         });
     let mut next = old.clone();
-    next.connections.configuration.revision += 1;
-    next.connections.configuration.origins = vec!["https://new-agent.example.org:9445".into()];
-    next.connections.configuration.preferred_origin =
-        next.connections.configuration.origins[0].clone();
-    next.connections =
-        crate::protocol_test_support::sign_connections(next.connections.configuration);
+    let Module::Enabled { backend } = &mut next.modules.mdm else {
+        panic!()
+    };
+    backend.connections.configuration.revision += 1;
+    backend.connections.configuration.origins = vec!["https://new-agent.example.org:9445".into()];
+    backend.connections.configuration.preferred_origin =
+        backend.connections.configuration.origins[0].clone();
+    backend.connections =
+        crate::protocol_test_support::sign_connections(backend.connections.configuration.clone());
     assert_eq!(old.namespace().unwrap(), next.namespace().unwrap());
     lifecycle::preserved(&old, &next).unwrap();
-    next.service_id = uuid::Uuid::new_v4();
+    let Module::Enabled { backend } = &mut next.modules.mdm else {
+        panic!()
+    };
+    backend.instance = uuid::Uuid::new_v4();
     assert_eq!(lifecycle::preserved(&old, &next), Err(Error::Identity));
     assert_ne!(old.namespace().unwrap(), next.namespace().unwrap());
     next = old.clone();
     next.software_read_grants.clear();
     assert_eq!(lifecycle::preserved(&old, &next), Err(Error::Identity));
     next = old.clone();
-    next.signing_keys
+    let Module::Enabled { backend } = &mut next.modules.mdm else {
+        panic!()
+    };
+    backend
+        .signing_keys
         .insert("new-root".into(), "unapproved".into());
     assert_eq!(lifecycle::preserved(&old, &next), Err(Error::Identity));
 }

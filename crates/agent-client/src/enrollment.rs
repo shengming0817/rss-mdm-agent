@@ -474,6 +474,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         let bootstrap = crate::tls::client(&self.store.cfg, None, &self.secrets)?;
         if p.grant.is_none() {
             let request = enroll::GrantRequest {
+                tenant_id: self.store.cfg.tenant,
                 wire_version: enroll::API_VERSION,
                 operation_id: p.operation,
                 secret: self.secrets.resolve(&p.secret_reference)?,

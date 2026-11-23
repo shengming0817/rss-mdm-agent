@@ -65,7 +65,7 @@ pub fn initialize() -> Result<Deployment, Error> {
     };
     let profile = match &old {
         Some(old) => LocalAccess::from_deployment(old),
-        None => super::lifecycle::initial_profile()?,
+        None => super::lifecycle::initial_profile(candidate.defaults.mdm.enabled())?,
     };
     let bytes = json(&candidate)?;
     let digest = hash(&bytes);
@@ -78,28 +78,9 @@ pub fn initialize() -> Result<Deployment, Error> {
     let mut next = candidate.deployment(digest, profile, &config, old.as_ref())?;
     if let Some(old) = old {
         next.modules = old.modules.clone();
-        if let Some(modules) = &next.modules {
-            modules.validate(&candidate)?;
-        }
+        next.modules.validate_for(candidate.assembly)?;
         super::lifecycle::inherit(&old, &mut next)?;
         // The OS stopped the previous package service. Retained identity/journal are reopened below.
-        if let Some(ca) = &old.ca_file {
-            if installation_security::read_protected(ca).map_err(|_| Error::Identity)?
-                != candidate.ca_pem.as_ref().ok_or(Error::Identity)?.as_bytes()
-            {
-                return Err(Error::Identity);
-            }
-        }
-    }
-    if let Some(ca) = &next.ca_file {
-        retain_public(
-            ca,
-            candidate
-                .ca_pem
-                .as_ref()
-                .ok_or(Error::Configuration)?
-                .as_bytes(),
-        )?;
     }
     crate::local_permissions::initialize(&next.execution.local_permissions)?;
     publish(&config, &json(&next)?)?;
