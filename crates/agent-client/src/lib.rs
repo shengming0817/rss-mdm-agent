@@ -84,6 +84,9 @@ pub enum Error {
     /// Current authorization was rejected.
     #[error("Agent permission denied")]
     Denied,
+    /// A DA grant already exists or the original renewal request awaits reconciliation.
+    #[error("DA grant already requested; resume the pending operation shown by installation status before exporting another request")]
+    DaGrantPending,
     /// An immutable request conflicts.
     #[error("Agent operation conflict")]
     Conflict,

@@ -40,6 +40,7 @@ struct Server {
     lose_activation: bool,
     lose_report: bool,
     fail_trust_ack: bool,
+    lose_renewal_reply: bool,
     expire_after_issue: bool,
 }
 async fn endpoint(
@@ -105,19 +106,7 @@ async fn endpoint(
         other => {
             assert!(s.active.is_some() && peer.0 == s.active);
             match other {
-                "renewal-grants" => {
-                    let req: wire::GrantRequest = serde_json::from_value(input).unwrap();
-                    let next = wire::Grant {
-                        grant_id: Uuid::new_v4(),
-                        device: grant.device,
-                        operation_id: req.operation_id,
-                        expires_at: 2_000_010_000,
-                    };
-                    s.grant = Some(next.clone());
-                    s.registration = None;
-                    s.candidate = None;
-                    json!(next)
-                }
+                "renewal-grants" => return renewal_response(&mut s, &grant, input),
                 "configuration-trust" => json!(s.trust),
                 "configuration-trust/acknowledgements" => {
                     assert_eq!(input["digest"], s.trust.installation_digest().unwrap());
@@ -161,6 +150,26 @@ async fn endpoint(
         }
     };
     Json(output).into_response()
+}
+fn renewal_response(s: &mut Server, grant: &wire::Grant, input: Value) -> Response {
+    let req: wire::GrantRequest = serde_json::from_value(input).unwrap();
+    let next = wire::Grant {
+        grant_id: Uuid::new_v4(),
+        device: grant.device,
+        operation_id: req.operation_id,
+        expires_at: 2_000_010_000,
+    };
+    s.grant = Some(next.clone());
+    s.registration = None;
+    s.candidate = None;
+    if s.lose_renewal_reply {
+        return (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"code":"service_unavailable","issuanceId":null})),
+        )
+            .into_response();
+    }
+    Json(next).into_response()
 }
 fn certificate_response(
     s: &mut Server,
@@ -310,6 +319,7 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         lose_activation: true,
         lose_report: true,
         fail_trust_ack: false,
+        lose_renewal_reply: false,
         expire_after_issue: false,
     }));
     let listener = TlsListener {
@@ -420,6 +430,12 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
     );
     client.drive(&mut consumer).await.unwrap();
     assert!(client.pending().unwrap().is_some() && state.lock().unwrap().candidate.is_some());
+    assert_eq!(
+        client
+            .prepare::<()>(pending, |_| panic!("must resume renewal"))
+            .err(),
+        Some(Error::DaGrantPending)
+    );
     client.drive(&mut consumer).await.unwrap();
     assert!(client.pending().unwrap().is_none());
     assert_eq!(
@@ -435,6 +451,15 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
     }
     assert!(client.drive(&mut consumer).await.is_err());
     assert!(consumer.0.is_none());
+    state.lock().unwrap().lose_renewal_reply = true;
+    let lost_renewal = client.start_renewal().unwrap();
+    assert!(client.drive(&mut consumer).await.is_err());
+    assert_eq!(
+        client
+            .prepare::<()>(lost_renewal, |_| panic!("unsettled renewal"))
+            .err(),
+        Some(Error::DaGrantPending)
+    );
     server.abort();
     // Simulate a crash after durable invalidation but before the selected file was removed.
     consumer.0 = last_selection;
@@ -442,7 +467,7 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
     let client = open();
     assert!(client.drive(&mut consumer).await.is_err());
     assert!(consumer.0.is_none());
-    time.set(2_001_000_001);
+    time.set(renewed.validity.1 + 1);
     assert!(client.drive(&mut consumer).await.is_err());
     assert!(consumer.0.is_none());
     assert!(inspect(&root.path, &backend, install, time.now().unwrap())
@@ -451,7 +476,7 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         .effective_digest
         .is_none());
     let op = Uuid::new_v4();
-    let recovery = client.prepare(op, Ok).unwrap();
+    client.prepare(op, Ok).unwrap();
     let grant = wire::Grant {
         operation_id: op,
         device: renewed.receipt.device,
@@ -462,7 +487,12 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
     wrong.device = rss_mdm_agent_wire::DeviceId::new_v4();
     assert_eq!(client.import(wrong), Err(Error::Identity));
     client.import(grant).unwrap();
-    assert_eq!(recovery.csr, client.prepare(op, Ok).unwrap().csr);
+    assert_eq!(
+        client
+            .prepare::<()>(op, |_| panic!("grant already imported"))
+            .err(),
+        Some(Error::DaGrantPending)
+    );
 }
 
 #[test]
@@ -476,10 +506,11 @@ fn expired_unsubmitted_grant_allows_new_authorization_without_reusing_its_key() 
         origin: "https://da.test".into(),
         ca_pem: String::from_utf8(fixture::ca()).unwrap(),
     };
+    let installation = Uuid::new_v4();
     let client = Client::open(
         &root.path,
         backend,
-        Uuid::new_v4(),
+        installation,
         secrets.clone(),
         time.clone(),
     )
@@ -492,7 +523,10 @@ fn expired_unsubmitted_grant_allows_new_authorization_without_reusing_its_key() 
         device: rss_mdm_agent_wire::DeviceId::new_v4(),
     };
     assert_eq!(client.import(expired), Err(Error::Expired));
+    assert!(has_live_credentials(&root.path, installation).unwrap());
     client.release_settled().unwrap();
+    assert!(!has_live_credentials(&root.path, installation).unwrap());
+    assert!(has_live_credentials(&root.path, Uuid::new_v4()).is_err());
     assert!(client.prepare(original.operation_id, Ok).is_err());
     let next = client.prepare(Uuid::new_v4(), Ok).unwrap();
     let valid = wire::Grant {

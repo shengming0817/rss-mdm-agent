@@ -13,9 +13,10 @@ pub(super) struct Pending {
     administrator: bool,
     csr: Option<String>,
     pub grant: Option<wire::Grant>,
+    renewal_dispatched: bool,
     issue_started: bool,
     candidate: Option<enroll::Candidate>,
-    validated_lifetime: Option<i64>,
+    validated_validity: Option<(i64, i64)>,
     pub unknown: bool,
     pub issuance_id: Option<Uuid>,
 }
@@ -32,7 +33,7 @@ pub(super) struct Active {
     pub receipt: wire::Registration,
     pub chain: Vec<String>,
     pub key: String,
-    pub lifetime: i64,
+    pub validity: (i64, i64),
 }
 
 impl<S: Credentials, C: Clock> Client<S, C> {
@@ -54,6 +55,17 @@ impl<S: Credentials, C: Clock> Client<S, C> {
                 .is_some_and(|grant| grant.expires_at <= now)
             {
                 self.end_grant(&p, enroll::ErrorCode::GrantExpired)?;
+                return Ok(None);
+            }
+            // The key has not gone to the CA without a returned grant. Once the original
+            // credential expires, a fresh administrator operation can recover the same device.
+            if p.renewal_dispatched
+                && p.grant.is_none()
+                && self
+                    .active()?
+                    .is_some_and(|active| active.validity.1 <= now)
+            {
+                self.end_grant(&p, enroll::ErrorCode::CertificateExpired)?;
                 return Ok(None);
             }
         }
@@ -85,9 +97,10 @@ impl<S: Credentials, C: Clock> Client<S, C> {
             administrator: false,
             csr: None,
             grant: None,
+            renewal_dispatched: false,
             issue_started: false,
             candidate: None,
-            validated_lifetime: None,
+            validated_validity: None,
             unknown: false,
             issuance_id: None,
         };
@@ -146,6 +159,9 @@ impl<S: Credentials, C: Clock> Client<S, C> {
     ) -> Result<T, Error> {
         let expected = self.active()?.map(|active| active.receipt.device);
         let mut p = self.begin(operation, expected)?;
+        if p.grant.is_some() || p.renewal_dispatched {
+            return Err(Error::DaGrantPending);
+        }
         let exported = export(self.request(&mut p)?)?;
         p.administrator = true;
         self.save(&p)?;
@@ -215,6 +231,10 @@ impl<S: Credentials, C: Clock> Client<S, C> {
             }
             let http = self.http(Some((&active.key, &active.chain)))?;
             let request = self.request(&mut p)?;
+            if !p.renewal_dispatched {
+                p.renewal_dispatched = true;
+                self.save(&p)?;
+            }
             self.import(self.call::<h::DaRenew>(&http, None, Some(&request)).await?)?;
             p = self.pending()?.ok_or(Error::Storage)?;
         }
@@ -324,7 +344,7 @@ impl<S: Credentials, C: Clock> Client<S, C> {
                 if certified != device {
                     return Err(Error::Identity);
                 }
-                p.validated_lifetime = Some(after - before);
+                p.validated_validity = Some((before, after));
                 self.save(&p)?;
                 let peer = self.http(Some((&key, &candidate.certificate_chain)))?;
                 match self
@@ -379,7 +399,7 @@ impl<S: Credentials, C: Clock> Client<S, C> {
                 receipt,
                 key,
                 chain: candidate.certificate_chain.clone(),
-                lifetime: p.validated_lifetime.ok_or(Error::Identity)?,
+                validity: p.validated_validity.ok_or(Error::Identity)?,
             },
         )?;
         write(

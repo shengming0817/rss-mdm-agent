@@ -48,6 +48,7 @@ use crate::{
 pub use configuration::{ManagedSnapshot, ManagedSource, PolicyConsumer, Selection};
 use rss_mdm_agent_wire::{da as wire, enroll, pki};
 use std::{path::Path, sync::Arc, time::Duration};
+pub use storage::has_live_credentials;
 use storage::{read, write};
 
 /// Machine credential storage with idempotent, single-reference release after DA settlement.
@@ -296,7 +297,8 @@ impl<S: Credentials, C: Clock> Client<S, C> {
             return Err(Error::Identity);
         }
         let http = self.http(Some((&active.key, &active.chain)))?;
-        if after - self.now()? < (active.lifetime / 3).clamp(60, 86400) && self.pending()?.is_none()
+        if after - self.now()? < ((active.validity.1 - active.validity.0) / 3).clamp(60, 86400)
+            && self.pending()?.is_none()
         {
             self.start_renewal()?;
         }

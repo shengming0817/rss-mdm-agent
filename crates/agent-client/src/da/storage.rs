@@ -51,6 +51,36 @@ fn verify(conn: &Connection, backend: &Backend, installation: Uuid) -> Result<()
     Ok(())
 }
 
+/// Decide whether DA still holds authority that an MDM retirement cannot release.
+pub fn has_live_credentials(root: &Path, installation: Uuid) -> Result<bool, Error> {
+    match root.symlink_metadata() {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e.into()),
+        Ok(meta) if !meta.is_dir() => return Err(Error::Storage),
+        _ => (),
+    }
+    private_root(root)?;
+    if std::fs::read_dir(root)?.next().transpose()?.is_none() {
+        return Ok(false);
+    }
+    if files::read(&root.join("initialized"), 16)? != b"da-v1" {
+        return Err(Error::Schema);
+    }
+    let mut db = connection(root, false)?;
+    let tx = db.transaction()?;
+    if files::sqlite_format(&tx)? != Some((APP, 1)) {
+        return Err(Error::Schema);
+    }
+    let (owner, _, _): (Uuid, Uuid, Uuid) = read(&tx, "authority")?.ok_or(Error::Storage)?;
+    if owner != installation {
+        return Err(Error::Identity);
+    }
+    let active = read::<super::registration::Active>(&tx, "active")?;
+    let pending = read::<Option<super::registration::Pending>>(&tx, "enrollment")?.flatten();
+    let release: Vec<(String, bool)> = read(&tx, "release")?.unwrap_or_default();
+    Ok(active.is_some() || pending.is_some() || !release.is_empty())
+}
+
 pub(super) fn inspect(
     root: &Path,
     backend: &Backend,

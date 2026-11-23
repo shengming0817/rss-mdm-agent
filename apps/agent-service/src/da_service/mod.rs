@@ -21,7 +21,7 @@ use std::{
 };
 use uuid::Uuid;
 
-pub(crate) fn has_retained_identity(d: &Deployment) -> Result<bool, Error> {
+fn channel_initialized(d: &Deployment) -> Result<bool, Error> {
     let root = d.da_root()?;
     match root.symlink_metadata() {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
@@ -29,6 +29,9 @@ pub(crate) fn has_retained_identity(d: &Deployment) -> Result<bool, Error> {
         Ok(meta) if meta.is_dir() => Ok(std::fs::read_dir(root)?.next().transpose()?.is_some()),
         Ok(_) => Err(Error::Storage),
     }
+}
+pub(crate) fn has_retained_identity(d: &Deployment) -> Result<bool, Error> {
+    da::has_live_credentials(&d.da_root()?, d.installation_id)
 }
 pub(crate) fn preflight(d: &Deployment) -> Result<(), Error> {
     if let Ok(backend) = d.modules.da.backend() {
@@ -70,6 +73,7 @@ fn provider(d: &Deployment, root: &Path, backend: &da::Backend) -> Result<Device
 fn open(d: &Deployment) -> Result<da::Client<DeviceSecrets, SystemClock>, Error> {
     let root = d.da_root()?;
     let backend = d.modules.da.backend()?;
+    platform_private_storage::directory(root.parent().ok_or(Error::Configuration)?)?;
     platform_private_storage::directory(&root)?;
     platform_private_storage::directory(&root.join("secrets"))?;
     let store = provider(d, &root, backend)?;
@@ -142,7 +146,7 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                 let work = async {
                     loop {
                         // Only explicit provisioning may initialize a DA identity namespace.
-                        let result = match has_retained_identity(&d).and_then(|retained| {
+                        let result = match channel_initialized(&d).and_then(|retained| {
                             if retained {
                                 open(&d).map(Some)
                             } else {

@@ -122,7 +122,8 @@ impl Deployment {
             .state_root
             .parent()
             .ok_or(Error::Configuration)?
-            .join("device-access-channel"))
+            .join("device-access-channel")
+            .join(self.installation_id.to_string()))
     }
     pub fn load(path: &Path) -> Result<Self, Error> {
         let value = Self::metadata(path)?;
@@ -653,7 +654,7 @@ pub(crate) fn startup_failure(error: Error) -> execution_contract::ProcessFailur
         Error::Protocol | Error::Configuration => K::InvalidInput,
         Error::Schema | Error::Unsupported => K::Unsupported,
         Error::Capacity => K::Capacity,
-        Error::Conflict | Error::EnrollmentPaused => K::Conflict,
+        Error::Conflict | Error::EnrollmentPaused | Error::DaGrantPending => K::Conflict,
         Error::Storage
         | Error::Network
         | Error::Unavailable
