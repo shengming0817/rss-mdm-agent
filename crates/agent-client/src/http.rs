@@ -6,7 +6,7 @@ use crate::{
 };
 use reqwest::{header::HeaderMap, Method, RequestBuilder, StatusCode};
 use rss_mdm_agent_wire::{
-    activities as a, connections, enroll as e, filevault as f, pki, platform_sso as s,
+    activities as a, connections, da, enroll as e, filevault as f, pki, platform_sso as s,
     runtime as w, task_trust,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -81,6 +81,17 @@ operations! {
     TelemetryStatus: GET "/api/v1/agent/runtime/telemetry/batches/{id}" [200] Some("application/json"), () => w::TelemetryReceipt;
     TelemetryGap: POST "/api/v1/agent/runtime/telemetry/gaps" [202] Some("application/json"), w::TelemetryGapReport => w::TelemetryGapReceipt;
     TelemetryGapStatus: GET "/api/v1/agent/runtime/telemetry/gaps/{id}" [200] Some("application/json"), () => w::TelemetryGapReceipt;
+    DaCertificate: POST "/api/v1/da/certificates" [200] Some("application/json"), da::CertificateRequest => e::Candidate;
+    DaActivate: POST "/api/v1/da/activate" [200] Some("application/json"), e::ActivationRequest => da::Registration;
+    DaProgress: POST "/api/v1/da/registrations/status" [200] Some("application/json"), e::StatusRequest => da::Progress;
+    DaRenew: POST "/api/v1/da/renewal-grants" [200] Some("application/json"), da::GrantRequest => da::Grant;
+    DaPki: GET "/api/v1/da/pki/trust" [200] Some("application/json"), () => pki::Trust;
+    DaPkiAck: POST "/api/v1/da/pki/acknowledgements" [200] None, pki::Acknowledgement => ();
+    DaTrust: GET "/api/v1/da/configuration-trust" [200] Some("application/json"), () => da::ConfigurationTrust;
+    DaTrustAck: POST "/api/v1/da/configuration-trust/acknowledgements" [200] None, task_trust::Acknowledgement => ();
+    DaConfiguration: GET "/api/v1/da/configuration" [200] Some("application/json"), () => serde_json::Value;
+    DaStatus: POST "/api/v1/da/status-reports" [200] Some("application/json"), da::StatusReport => serde_json::Value;
+    DaApplication: POST "/api/v1/da/configuration-reports" [200] Some("application/json"), da::ApplicationReport => serde_json::Value;
     Grant: POST "/api/v1/agent/enroll/requests" [200] Some("application/json"), e::GrantRequest => e::GrantReceipt;
     Renewal: POST "/api/v1/agent/enroll/renewal-grants" [200] Some("application/json"), e::GrantRequest => e::GrantReceipt;
     RenewalStatus: POST "/api/v1/agent/enroll/renewal-grants/status" [200] Some("application/json"), e::RenewalStatusRequest => e::GrantReceipt;

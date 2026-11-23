@@ -157,7 +157,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
                     &self.bootstrap,
                     &self.connection_origin()?,
                     &[],
-                    None,
+                    Some(&format!("tenantId={}", self.store.cfg.tenant)),
                     None,
                 )?
                 .timeout(self.store.cfg.limits.request_timeout),

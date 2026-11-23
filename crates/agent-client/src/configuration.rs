@@ -153,8 +153,14 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         if c.installation.is_none() {
             let (status, bytes) = self
                 .agent_json_transport(
-                    Call::<h::Packages>::new(http, &self.connection_origin()?, &[], None, None)?
-                        .timeout(self.store.cfg.limits.request_timeout),
+                    Call::<h::Packages>::new(
+                        http,
+                        &self.connection_origin()?,
+                        &[],
+                        Some(&format!("tenantId={}", self.store.cfg.tenant)),
+                        None,
+                    )?
+                    .timeout(self.store.cfg.limits.request_timeout),
                     self.store.cfg.limits.response_bytes,
                 )
                 .await?;

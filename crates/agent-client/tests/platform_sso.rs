@@ -153,6 +153,7 @@ async fn invalid_response_cannot_hide_in_an_unobserved_connection_task() {
         .unwrap();
     let response = http
         .get(server.url.join("api/v1/agent/enroll/trust").unwrap())
+        .query(&[("tenantId", server.config().tenant)])
         .send()
         .await
         .unwrap();
