@@ -39,6 +39,7 @@ export function msiSource({ version, target, id, payload, files }) {
     .join("");
   return `<?xml version="1.0" encoding="utf-8"?>
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"><Package Name="RSS MDM Agent" Manufacturer="RSS" Version="${xml(version)}" UpgradeCode="${target === "windows-arm64" ? "E7A59295-D81E-4C06-99F4-B74A3B73C3DA" : "85C84C72-1836-42C3-8E51-9D14302B98AD"}" Scope="perMachine">
+<Launch Condition="NOT RollbackDisabled" Message="RSS MDM Agent requires Windows Installer rollback support."/>
 <MajorUpgrade DowngradeErrorMessage="A newer RSS MDM Agent is installed." Schedule="afterInstallExecute"/><MediaTemplate EmbedCab="yes"/>
 <StandardDirectory Id="ProgramFiles64Folder"><Directory Id="PRODUCTROOT" Name="RSS MDM Agent"><Directory Id="VERSIONS" Name="versions"><Directory Id="INSTALLROOT" Name="${xml(id)}">${tree("")}</Directory></Directory></Directory></StandardDirectory>
 <StandardDirectory Id="ProgramMenuFolder"/>
@@ -56,15 +57,13 @@ export function msiSource({ version, target, id, payload, files }) {
 ${components}<Feature Id="Agent" Level="1"><ComponentRef Id="AgentShortcut"/><ComponentRef Id="AgentProtocol"/>${files.map((file) => `<ComponentRef Id="c${key(file)}"/>`).join("")}</Feature>
 <CustomAction Id="SaveAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-save" Execute="deferred" Impersonate="no" Return="check"/>
 <CustomAction Id="RollbackAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-rollback" Execute="rollback" Impersonate="no" Return="check"/>
-<CustomAction Id="CommitAgent" BinaryRef="InstallationOwner" ExeCommand="--installation msi-commit" Execute="commit" Impersonate="no" Return="check"/>
-<CustomAction Id="ApplyAgent" FileRef="${service}" ExeCommand="--installation apply --candidate &quot;[INSTALLROOT]candidate.json&quot;" Execute="deferred" Impersonate="no" Return="check"/>
-<CustomAction Id="RemoveAgent" FileRef="${service}" ExeCommand="--installation remove --binary &quot;[#${service}]&quot; --operation &quot;[RSSRETIREMENTTASK]&quot;" Execute="deferred" Impersonate="no" Return="check"/>
+<CustomAction Id="ApplyAgent" FileRef="${service}" ExeCommand="--installation msi-apply --candidate &quot;[INSTALLROOT]candidate.json&quot;" Execute="deferred" Impersonate="no" Return="check"/>
+<CustomAction Id="RemoveAgent" FileRef="${service}" ExeCommand="--installation msi-remove --binary &quot;[#${service}]&quot; --operation &quot;[RSSRETIREMENTTASK]&quot;" Execute="deferred" Impersonate="no" Return="check"/>
 <InstallExecuteSequence>
 <Custom Action="SaveAgent" Before="RollbackAgent" Condition="NOT UPGRADINGPRODUCTCODE"/>
 <Custom Action="RollbackAgent" Before="RemoveAgent" Condition="NOT UPGRADINGPRODUCTCODE"/>
 <Custom Action="RemoveAgent" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE"/>
 <Custom Action="ApplyAgent" After="InstallFiles" Condition="NOT REMOVE=&quot;ALL&quot;"/>
-<Custom Action="CommitAgent" After="ApplyAgent" Condition="NOT UPGRADINGPRODUCTCODE"/>
 </InstallExecuteSequence>
 </Package></Wix>\n`;
 }

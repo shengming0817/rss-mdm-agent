@@ -1,14 +1,13 @@
 use super::*;
-#[test]
-fn candidate_requires_current_format_and_valid_identity() {
-    let root = crate::protocol_test_support::Root::new();
+pub(super) fn candidate(root: &crate::protocol_test_support::Root) -> Candidate {
     let image = Artifact {
         path: root.path.join("service"),
         sha256: "a".repeat(64),
         cdhash: None,
     };
     let target = Target::current().unwrap();
-    let candidate = Candidate {
+    Candidate {
+        assembly: Assembly::CURRENT,
         cli: Artifact {
             path: root.path.join("rssmdm"),
             sha256: "d".repeat(64),
@@ -52,7 +51,13 @@ fn candidate_requires_current_format_and_valid_identity() {
         })]),
         ca_pem: Some(String::from_utf8(crate::protocol_test_support::pki::ca()).unwrap()),
         signing_mode: SigningMode::Development,
-    };
+    }
+}
+
+#[test]
+fn candidate_requires_current_format_and_valid_identity() {
+    let root = crate::protocol_test_support::Root::new();
+    let candidate = candidate(&root);
     // Exercise the actual public installer CLI through its bounded external reader.
     // Native image checks deliberately remain in the privileged installation path.
     let public = root.path.join("candidate.json");
@@ -83,7 +88,7 @@ fn candidate_requires_current_format_and_valid_identity() {
     let decoded: Candidate = serde_json::from_value(psso.clone()).unwrap();
     // Installer metadata and artifact checks are independent of the optional
     // PSSO runtime's exact OS version; non-Mac payloads cannot claim this role.
-    if target == Target::MacosArm64 {
+    if candidate.target == Target::MacosArm64 {
         assert_eq!(decoded.validate_trust(), Ok(()));
         assert_eq!(decoded.validate(), Err(Error::Identity));
         psso["platform_sso"]["origin"] = "http://console.example.org".into();

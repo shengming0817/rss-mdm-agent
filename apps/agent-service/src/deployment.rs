@@ -23,6 +23,9 @@ pub struct PlatformSsoConfiguration {
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Deployment {
+    /// Absence selects the fixed package MDM configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modules: Option<crate::installation::Modules>,
     /// Actual installed CLI; absence means no CLI image is trusted.
     pub cli: Option<execution_ipc::entry::CliPolicy>,
     /// Optional installed macOS PSSO component. Absence means not installed, never a compatibility fallback.
@@ -68,6 +71,7 @@ impl Deployment {
     /// Assemble the machine owner. Registration is driven only by explicit IPC or retained operations.
     pub fn assemble(self) -> Result<Box<dyn execution_ipc::host::Handler>, Error> {
         self.require_service()?;
+        self.require_mdm_assembly()?;
         match self.preflight() {
             Ok(()) => Ok(Box::new(crate::registration::RegistrationOwner::new(self)?)),
             Err(error) => {
@@ -103,7 +107,14 @@ impl Deployment {
         {
             return Err(Error::Configuration);
         }
+        value.require_mdm_assembly()?;
         Ok(value)
+    }
+    pub(crate) fn require_mdm_assembly(&self) -> Result<(), Error> {
+        if let Some(modules) = &self.modules {
+            modules.require_mdm_assembly(self)?;
+        }
+        Ok(())
     }
     pub fn load(path: &Path) -> Result<Self, Error> {
         let value = Self::metadata(path)?;
@@ -192,7 +203,7 @@ impl Deployment {
         )
         .map_err(crate::error::app_error)
     }
-    fn require_service(&self) -> Result<(), Error> {
+    pub(crate) fn require_service(&self) -> Result<(), Error> {
         if !self
             .server_policy()
             .subjects
@@ -230,6 +241,14 @@ impl Deployment {
                 ))
             })
             .collect::<Result<_, Error>>()?;
+        let ca_pem = self
+            .ca_file
+            .as_ref()
+            .map(|p| installation_security::read_protected(p).map_err(|_| Error::Configuration))
+            .transpose()?;
+        if let Some(modules) = &self.modules {
+            modules.verify_ca(ca_pem.as_deref())?;
+        }
         Ok(Config {
             service_id: self.service_id,
             connections: self.connections.clone(),
@@ -255,11 +274,7 @@ impl Deployment {
             architecture,
             registration_keys: keys,
             transport: Transport::Https,
-            ca_pem: self
-                .ca_file
-                .as_ref()
-                .map(|p| installation_security::read_protected(p).map_err(|_| Error::Configuration))
-                .transpose()?,
+            ca_pem,
             limits: Limits {
                 pending_reports: 128,
                 pending_tasks: 128,
@@ -758,6 +773,27 @@ pub(crate) mod tests {
         }
     }
     #[test]
+    #[ignore = "requires a protected system-owned state directory and parent"]
+    fn a_retained_first_install_binding_without_communication_storage_fails_preflight() {
+        let tmp = crate::protocol_test_support::Root::new();
+        let mut d = deployment();
+        d.state_root = tmp.path.join("state");
+        assert!(d.preflight().is_ok());
+        platform_private_storage::directory(&d.state_root).unwrap();
+        let identity = d.namespace().unwrap();
+        platform_private_storage::write_new(
+            &d.state_root.join("identity-binding"),
+            identity.as_bytes(),
+        )
+        .unwrap();
+        assert!(d.preflight().is_err());
+        assert!(!d.state_root.join("communication").exists());
+        assert_eq!(
+            platform_private_storage::read(&d.state_root.join("identity-binding"), 128).unwrap(),
+            identity.as_bytes()
+        );
+    }
+    #[test]
     fn refresh_requires_existing_installation_bound_access_storage() {
         let root = std::env::temp_dir()
             .canonicalize()
@@ -809,6 +845,7 @@ pub(crate) mod tests {
             cdhash: None,
         };
         Deployment {
+            modules: None,
             cli: None,
             platform_sso: None,
             service_id: crate::protocol_test_support::SERVICE_ID,

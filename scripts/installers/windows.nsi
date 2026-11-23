@@ -255,7 +255,13 @@ Function .onInit
     Abort
   ${EndIf}
   ${GetParameters} $0
+  ClearErrors
   ${GetOptions} $0 "/PROFILE=" $InstallProfile
+  ${IfNot} ${Errors}
+  ${AndIf} $InstallProfile == ""
+    SetErrorLevel 1
+    Abort "The /PROFILE= option requires an absolute path."
+  ${EndIf}
 FunctionEnd
 Section "Install"
   ${If} $INSTDIR != "$PROGRAMFILES64\RSS MDM Agent"

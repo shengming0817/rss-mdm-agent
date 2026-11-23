@@ -12,21 +12,25 @@ enum Action {
     Import,
     ImportConnections,
     #[cfg(windows)]
+    MsiApply,
+    #[cfg(windows)]
+    MsiRemove,
+    #[cfg(windows)]
     MsiSave,
     #[cfg(windows)]
     MsiRollback,
-    #[cfg(windows)]
-    MsiCommit,
 }
 impl Action {
     fn parse(value: &str) -> Result<Self, Error> {
         match value {
             #[cfg(windows)]
+            "msi-remove" => Ok(Self::MsiRemove),
+            #[cfg(windows)]
+            "msi-apply" => Ok(Self::MsiApply),
+            #[cfg(windows)]
             "msi-save" => Ok(Self::MsiSave),
             #[cfg(windows)]
             "msi-rollback" => Ok(Self::MsiRollback),
-            #[cfg(windows)]
-            "msi-commit" => Ok(Self::MsiCommit),
             "install" => Ok(Self::Install),
             "remove" => Ok(Self::Remove),
             "remove-lab-registration" => Ok(Self::RemoveLabRegistration),
@@ -132,9 +136,21 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
             .get("--operation")
             .and_then(|p| p.to_str())
             .ok_or(Error::Configuration)?;
-        return platform::operation_status(
-            uuid::Uuid::parse_str(id).map_err(|_| Error::Configuration)?,
-        );
+        let id = uuid::Uuid::parse_str(id).map_err(|_| Error::Configuration)?;
+        #[cfg(windows)]
+        if platform::worker_operation(id)? {
+            return platform::operation_status(id);
+        }
+        if !opts.system()? {
+            return Err(Error::Denied);
+        }
+        if platform::dispatch(args)? {
+            return Ok(());
+        }
+        if apply::status(&opts.config()?, id)? {
+            return Ok(());
+        }
+        return platform::operation_status(id);
     }
     if action == "validate-trust" {
         let bytes = installation_security::read_external(
@@ -158,13 +174,41 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
     }
     let _lock = installation_lock(&opts.config()?, opts.system()?)?;
     outcome::phase("locked-preflight")?;
+    #[cfg(windows)]
+    if opts.system()?
+        && !matches!(
+            action,
+            Action::Apply
+                | Action::Status
+                | Action::MsiSave
+                | Action::MsiApply
+                | Action::MsiRemove
+                | Action::MsiRollback
+        )
+    {
+        allow_configuration_write(&opts.config()?)?;
+    }
+    let can_resume = matches!(action, Action::Apply | Action::Status);
+    if opts.system()? && !can_resume {
+        apply::ensure_idle(&opts.config()?)?;
+    }
     match action {
         #[cfg(windows)]
-        Action::MsiSave | Action::MsiRollback | Action::MsiCommit => {
-            if !opts.system()? || opts.config()? != Deployment::default_path()? {
-                return Err(Error::Identity);
+        Action::MsiApply | Action::MsiSave | Action::MsiRollback | Action::MsiRemove => {
+            let config = opts.config()?;
+            if !opts.system()? || config != Deployment::default_path()? {
+                return Err(Error::Denied);
             }
-            msi_transaction(action, &opts.config()?)?;
+            if !matches!(action, Action::MsiSave) {
+                require_msi_sequence(&config)?;
+            }
+            if matches!(action, Action::MsiRemove) {
+                return remove_package(&opts);
+            }
+            if matches!(action, Action::MsiApply) {
+                return apply_msi_package(&opts.path("--candidate")?, &config);
+            }
+            return msi_transaction(action, &config);
         }
         Action::Install => {
             let binary = opts.path("--binary")?;
@@ -195,21 +239,10 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
             platform::remove(true, &binary, &config)?;
         }
         Action::Remove => {
-            let binary = opts.path("--binary")?;
-            let config = opts.config()?;
             if opts.system()? {
-                let task = opts
-                    .values
-                    .get("--operation")
-                    .and_then(|v| v.to_str())
-                    .ok_or(Error::Denied)?;
-                unmanage::package_remove(
-                    &config,
-                    &binary,
-                    uuid::Uuid::parse_str(task).map_err(|_| Error::Denied)?,
-                )?;
+                remove_package(&opts)?;
             } else {
-                platform::remove(false, &binary, &config)?;
+                platform::remove(false, &opts.path("--binary")?, &opts.config()?)?;
             }
         }
         Action::Uninstall => {
@@ -228,10 +261,18 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
         }
         Action::Status => {
             platform::status(opts.system()?)?;
+            if opts.system()? {
+                apply::module_status(&opts.config()?)?;
+            }
         }
         Action::Refresh => {
             if !opts.system()? {
                 return Err(Error::Configuration);
+            }
+            let old = Deployment::metadata(&opts.config()?)?;
+            let next = Deployment::metadata(&opts.path("--candidate-config")?)?;
+            if old.modules != next.modules {
+                return Err(Error::Conflict);
             }
             refresh(
                 &opts.path("--binary")?,
@@ -244,10 +285,43 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
             if !opts.system()? {
                 return Err(Error::Identity);
             }
-            apply(
-                &opts.path("--candidate")?,
-                opts.values.get("--profile"),
+            let candidate = opts
+                .values
+                .get("--candidate")
+                .map(|_| opts.path("--candidate"))
+                .transpose()?;
+            let profile = opts
+                .values
+                .get("--profile")
+                .map(|_| {
+                    installation_security::read_protected(&opts.path("--profile")?)
+                        .map_err(|_| Error::Identity)
+                })
+                .transpose()?;
+            let operation = opts
+                .values
+                .get("--operation")
+                .map(|p| {
+                    p.to_str()
+                        .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                        .filter(|id| !id.is_nil())
+                        .ok_or(Error::Configuration)
+                })
+                .transpose()?;
+            if candidate.is_none() && profile.is_none() && operation.is_none() {
+                return Err(Error::Configuration);
+            }
+            let source = if candidate.is_some() {
+                apply::Source::Package
+            } else {
+                apply::Source::Administrator
+            };
+            apply::run(
                 &opts.config()?,
+                candidate.as_deref(),
+                profile.as_deref(),
+                operation,
+                source,
             )?;
             if let Some(package) = opts.values.get("--package-path") {
                 // Installation succeeds independently of registration. Invalid material is reported,
@@ -327,6 +401,19 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
     );
     Ok(())
 }
+fn remove_package(opts: &Options) -> Result<(), Error> {
+    let task = opts
+        .values
+        .get("--operation")
+        .and_then(|v| v.to_str())
+        .ok_or(Error::Denied)?;
+    unmanage::package_remove(
+        &opts.config()?,
+        &opts.path("--binary")?,
+        uuid::Uuid::parse_str(task).map_err(|_| Error::Denied)?,
+    )
+}
+
 // Fixed packages own image/trust metadata; protected administrator deployment
 // owns execution configuration. Reinstalling must not reset pinned interpreters,
 // package managers, local permissions or budgets to the installer's defaults.
@@ -368,6 +455,37 @@ fn persistent(binary: &Path, config: &Path) -> Result<(), Error> {
     )
     .map(|_| ())
 }
+pub(super) fn preflight_refresh(
+    old: &Deployment,
+    config: &Path,
+    next: &Deployment,
+    next_config: &Path,
+) -> Result<(), Error> {
+    Deployment::load(next_config)?;
+    preserved(old, next)?;
+    #[cfg(target_os = "macos")]
+    crate::service::platform_sso::upgrade_preflight(old)?;
+    if old.service.path.exists() {
+        Deployment::load_persistent(config)?;
+    }
+    preflight_candidate_state(next, next_config)
+}
+pub(super) fn preflight_candidate_state(
+    next: &Deployment,
+    next_config: &Path,
+) -> Result<(), Error> {
+    persistent(&next.service.path, next_config)?;
+    #[cfg(windows)]
+    crate::access_component::preflight(next)?;
+    Ok(())
+}
+// Package callbacks may exit between issuing STOP and observing process exit.
+pub(super) fn stop_for_maintenance(deployment: &Deployment, config: &Path) -> Result<(), Error> {
+    let evidence = config.with_extension("service-stop");
+    platform::stop_for_apply(deployment, config, &evidence)?;
+    std::fs::remove_file(evidence)?;
+    Ok(())
+}
 fn refresh(
     current: &Path,
     config: &Path,
@@ -376,35 +494,23 @@ fn refresh(
 ) -> Result<(), Error> {
     let old = Deployment::metadata(config)?;
     outcome::phase("refresh-preflight")?;
-    let next = Deployment::load(next_config)?;
+    let next = Deployment::metadata(next_config)?;
     if old.service.path != current || next.service.path != candidate {
         return Err(Error::Identity);
     }
-    preserved(&old, &next)?;
-    #[cfg(target_os = "macos")]
-    crate::service::platform_sso::upgrade_preflight(&old)?;
-    if current.exists() {
-        Deployment::load_persistent(config)?;
-    }
-    persistent(candidate, next_config)?;
-    #[cfg(windows)]
-    crate::access_component::preflight(&next)?;
+    preflight_refresh(&old, config, &next, next_config)?;
     outcome::phase("refresh-quiescence")?;
-    platform::quiescent(&old, config)?;
     transition(|action| {
         outcome::phase(action.phase())?;
         match action {
-            Step::StopCurrent => platform::stop(true, current, config),
+            Step::StopCurrent => stop_for_maintenance(&old, config),
             Step::RemoveCurrent => platform::remove(true, current, config),
             Step::PublishCandidate => {
                 crate::local_permissions::initialize(&next.execution.local_permissions)?;
                 publish(config, &json(&next)?)
             }
             Step::RegisterCandidate => platform::register(true, candidate, config),
-            Step::StopCandidate => {
-                platform::quiescent(&next, config)?;
-                platform::stop(true, candidate, config)
-            }
+            Step::StopCandidate => stop_for_maintenance(&next, config),
             Step::RemoveCandidate => platform::remove(true, candidate, config),
             Step::RestoreCurrent => publish(config, &json(&old)?),
             Step::RegisterCurrent => platform::restore_registration(current, config),
@@ -597,96 +703,16 @@ mod configuration_restart_tests {
     }
 }
 
-pub(super) fn initial_profile() -> Result<Profile, Error> {
+pub(super) fn initial_profile() -> Result<LocalAccess, Error> {
     if execution_ipc::host::active_user_subject().is_err() {
         // No interactive subject gains IPC access merely because a machine is being enrolled.
-        return Ok(Profile {
+        return Ok(LocalAccess {
             subjects: vec![],
             helper_work_roots: BTreeMap::new(),
         });
     }
     platform::interactive_profile()
 }
-fn apply(candidate_path: &Path, profile: Option<&PathBuf>, config: &Path) -> Result<(), Error> {
-    outcome::phase("candidate-preflight")?;
-    let (candidate, artifact) = Candidate::load(candidate_path)?;
-    let old = match std::fs::symlink_metadata(config) {
-        Ok(_) => Some(Deployment::metadata(config)?),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => return Err(e.into()),
-    };
-    let profile = match profile {
-        Some(path) => serde_json::from_slice::<Profile>(
-            &installation_security::read_protected(path).map_err(|_| Error::Configuration)?,
-        )
-        .map_err(|_| Error::Configuration)?,
-        None => match &old {
-            Some(d) => Profile {
-                subjects: d.clients.subjects.clone(),
-                helper_work_roots: d.helper_work_roots.clone(),
-            },
-            None => initial_profile()?,
-        },
-    };
-    platform::preflight_desktop_entry(&candidate)?;
-    platform::public_directory(config.parent().ok_or(Error::Configuration)?)?;
-    let manifests = config
-        .parent()
-        .ok_or(Error::Configuration)?
-        .join("install-manifests");
-    platform::public_directory(&manifests)?;
-    let candidate_bytes =
-        installation_security::read_protected(candidate_path).map_err(|_| Error::Identity)?;
-    if hash(&candidate_bytes) != artifact {
-        return Err(Error::Identity);
-    }
-    retain_public(
-        &manifests.join(format!("{artifact}.json")),
-        &candidate_bytes,
-    )?;
-    let mut next = candidate.deployment(artifact, profile, config)?;
-    if let Some(old) = old {
-        inherit(&old, &mut next)?;
-        if let Some(ca) = &old.ca_file {
-            if installation_security::read_protected(ca).map_err(|_| Error::Identity)?
-                != candidate.ca_pem.as_ref().ok_or(Error::Identity)?.as_bytes()
-            {
-                return Err(Error::Identity);
-            }
-        }
-        let staged = config.with_extension(format!("candidate-{}", uuid::Uuid::new_v4()));
-        write_new(&staged, &json(&next)?)?;
-        let result = refresh(&old.service.path, config, &next.service.path, &staged);
-        let _ = std::fs::remove_file(staged);
-        result?;
-    } else {
-        if std::fs::symlink_metadata(&next.state_root).is_ok() {
-            return Err(Error::Identity);
-        }
-        // Existing trust files are never overwritten, including failed or retired installations.
-        outcome::phase("publish-trust")?;
-        if let Some(ca) = &next.ca_file {
-            retain_public(
-                ca,
-                candidate
-                    .ca_pem
-                    .as_ref()
-                    .ok_or(Error::Configuration)?
-                    .as_bytes(),
-            )?;
-        }
-        outcome::phase("publish-configuration")?;
-        crate::local_permissions::initialize(&next.execution.local_permissions)?;
-        publish_new(config, &json(&next)?)?;
-        Deployment::load(config)?;
-        outcome::phase("register-candidate")?;
-        platform::register(true, &next.service.path, config)?;
-    }
-    outcome::phase("desktop-entry")?;
-    platform::desktop_entry(&candidate)?;
-    Ok(())
-}
-
 pub(super) fn installation_lock(config: &Path, system: bool) -> Result<std::fs::File, Error> {
     let root = config.parent().ok_or(Error::Configuration)?;
     if system {
@@ -804,18 +830,133 @@ mod tests {
     }
 }
 
+#[cfg(windows)]
+fn apply_msi_package(candidate_path: &Path, config: &Path) -> Result<(), Error> {
+    outcome::phase("candidate-preflight")?;
+    let candidate_bytes =
+        installation_security::read_protected(candidate_path).map_err(|_| Error::Identity)?;
+    let candidate: Candidate =
+        serde_json::from_slice(&candidate_bytes).map_err(|_| Error::Configuration)?;
+    candidate.validate()?;
+    let artifact = hash(&candidate_bytes);
+    let active = config.try_exists()?;
+    let inactive = apply::inactive_deployment(config)?;
+    let old = if active {
+        Some(Deployment::metadata(config)?)
+    } else if inactive.try_exists()? {
+        Some(Deployment::metadata(&inactive)?)
+    } else {
+        None
+    };
+    if candidate.format()? != "windows_msi" {
+        return Err(Error::Unsupported);
+    }
+    let profile = match &old {
+        Some(d) => LocalAccess::from_deployment(d),
+        None => initial_profile()?,
+    };
+    platform::public_directory(config.parent().ok_or(Error::Configuration)?)?;
+    let manifests = config
+        .parent()
+        .ok_or(Error::Configuration)?
+        .join("install-manifests");
+    platform::public_directory(&manifests)?;
+    retain_public(
+        &manifests.join(format!("{artifact}.json")),
+        &candidate_bytes,
+    )?;
+    let mut next = candidate.deployment(artifact, profile, config, old.as_ref())?;
+    if let Some(old) = &old {
+        next.modules = old.modules.clone();
+        if let Some(modules) = &next.modules {
+            modules.validate(&candidate)?;
+        }
+        inherit(old, &mut next)?;
+        if let Some(ca) = &old.ca_file {
+            if installation_security::read_protected(ca).map_err(|_| Error::Identity)?
+                != candidate.ca_pem.as_ref().ok_or(Error::Identity)?.as_bytes()
+            {
+                return Err(Error::Identity);
+            }
+        }
+    }
+    let staged = config.with_extension(format!("candidate-{}", uuid::Uuid::new_v4()));
+    write_new(&staged, &json(&next)?)?;
+    let result = (|| {
+        if let Some(old) = old.as_ref().filter(|_| active) {
+            return refresh(&old.service.path, config, &next.service.path, &staged);
+        }
+        if old.is_none() && next.state_root.try_exists()? {
+            return Err(Error::Identity);
+        }
+        // Existing trust files are never overwritten, including failed or retired installations.
+        outcome::phase("publish-trust")?;
+        if let Some(ca) = &next.ca_file {
+            retain_public(
+                ca,
+                candidate
+                    .ca_pem
+                    .as_ref()
+                    .ok_or(Error::Configuration)?
+                    .as_bytes(),
+            )?;
+        }
+        Deployment::load(&staged)?;
+        if old.is_some() {
+            preflight_candidate_state(&next, &staged)?;
+        }
+        outcome::phase("publish-configuration")?;
+        crate::local_permissions::initialize(&next.execution.local_permissions)?;
+        publish_new(config, &json(&next)?)?;
+        outcome::phase("register-candidate")?;
+        platform::register(true, &next.service.path, config)
+    })();
+    let _ = std::fs::remove_file(staged);
+    result?;
+    if inactive.try_exists()? {
+        std::fs::remove_file(inactive)?;
+    }
+    Ok(())
+}
+
+// Save and Rollback run in the native execute script under separate invocations. Only
+// exclude overlapping writes while Installer is executing; its rollback bytes belong
+// to Installer and are never read or discarded by profile maintenance.
+#[cfg(windows)]
+pub(super) fn allow_configuration_write(config: &Path) -> Result<(), Error> {
+    if config == Deployment::default_path()?
+        && config.with_extension("msi-rollback").try_exists()?
+        && platform::msi_executing()?
+    {
+        return Err(Error::Conflict);
+    }
+    Ok(())
+}
+#[cfg(windows)]
+fn require_msi_sequence(config: &Path) -> Result<(), Error> {
+    if config != Deployment::default_path()?
+        || !config.with_extension("msi-rollback").try_exists()?
+        || !platform::msi_executing()?
+    {
+        return Err(Error::Conflict);
+    }
+    Ok(())
+}
 // MSI owns file rollback; the installation owner owns service/configuration compensation.
 #[cfg(windows)]
 fn msi_transaction(action: Action, config: &Path) -> Result<(), Error> {
     let snapshot = config.with_extension("msi-rollback");
     match action {
         Action::MsiSave => {
+            if !platform::msi_executing()? {
+                return Err(Error::Conflict);
+            }
             let old = match std::fs::symlink_metadata(config) {
                 Ok(_) => Some(Deployment::metadata(config)?),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
                 Err(error) => return Err(error.into()),
             };
-            write_new(&snapshot, &json(&old)?)?;
+            publish(&snapshot, &json(&old)?)?;
         }
         Action::MsiRollback => {
             let bytes = match installation_security::read_protected(&snapshot) {
@@ -830,30 +971,32 @@ fn msi_transaction(action: Action, config: &Path) -> Result<(), Error> {
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
                 Err(error) => return Err(error.into()),
             };
-            if let Some(old) = old {
+            if let Some(old) = &old {
                 old.service
                     .verify(&old.service.path)
                     .map_err(|_| Error::Identity)?;
                 validate_native_artifact(&old.service)?;
-                if let Some(current) = current {
-                    preserved(&old, &current)?;
-                    platform::quiescent(&current, config)?;
-                    platform::remove(true, &current.service.path, config)?;
+                if let Some(current) = &current {
+                    preserved(old, current)?;
                 }
+            }
+            if let Some(d) = current.as_ref().or(old.as_ref()) {
+                stop_for_maintenance(d, config)?;
+            }
+            if let Some(current) = &current {
+                platform::remove(true, &current.service.path, config)?;
+            }
+            if let Some(old) = old {
                 publish(config, &json(&old)?)?;
                 platform::restore_registration(&old.service.path, config)?;
-            } else if let Some(current) = current {
-                platform::quiescent(&current, config)?;
-                platform::remove(true, &current.service.path, config)?;
-                // Preserve initialized identity/journal and metadata for the next explicit install.
+            } else if current.is_some() {
+                let inactive = apply::inactive_deployment(config)?;
+                let profiles = inactive.parent().ok_or(Error::Configuration)?;
+                platform::public_directory(profiles.parent().ok_or(Error::Configuration)?)?;
+                platform_private_storage::directory(profiles)?;
+                platform::replace(config, &inactive)?;
             }
             std::fs::remove_file(snapshot)?;
-        }
-        Action::MsiCommit => {
-            if snapshot.exists() {
-                installation_security::protected(&snapshot).map_err(|_| Error::Identity)?;
-                std::fs::remove_file(snapshot)?;
-            }
         }
         _ => return Err(Error::Configuration),
     }

@@ -35,11 +35,37 @@
 
 安装成功与认证 readiness 分开核实，使用获准的普通用户运行已安装桌面的 `--service-probe`。共享注册文件仍由管理员负责保管和清理，安装器不删除它。
 
-初装从实际互动登录发现主体及 helper 路径；无人登录的静默初装可省略 profile，以空 IPC 用户集合启动机器注册；管理员需要预设桌面访问主体时提供受保护的 profile（`subjects` 与 `helper_work_roots`）。Windows EXE 接受 `/S /PROFILE=绝对路径`；macOS 可先固定 profile 于 `/Library/Application Support/RSS MDM Agent/install-profile.json` 再运行 `installer -pkg ... -target /`。Rust 安装 owner 在安装、升级时登记配置用户的 helper，并启动当前登录用户实例；其余用户由系统登录任务启动。桌面只消费 IPC，AI Host 随桌面运行。
+无 profile 的初装使用包内 MDM 配置，从当前登录会话发现桌面主体和 helper 路径；无人登录时允许空主体集。升级省略整个 profile 会继承当前选择、注册和本地状态。显式 profile 必须声明两个模块和正整数 revision。以前仅含 `subjects`、`helper_work_roots` 的输入会被拒绝；请在下次安装前更新该文件，或移走它以继承当前部署。
+
+Windows EXE 接受 `/S /PROFILE=绝对路径`。macOS PKG 从 `/Library/Application Support/RSS MDM Agent/install-profile.json` 读取。文件及所在路径需要管理员保护。以下示例中，MDM 的实例、租户、签名连接文件的 preferred_origin 和验签公钥取自固定候选，`ca_sha256` 是候选 `ca_pem` 原始 UTF-8 字节的 SHA-256（含原换行）。
+
+```json
+{
+  "modules": {
+    "revision": 1,
+    "mdm": {
+      "state": "enabled",
+      "backend": {
+        "instance": "<service_id>", "tenant": "<tenant>",
+        "origin": "https://agent.example.org",
+        "ca_sha256": "<64 位小写十六进制摘要>",
+        "signing_keys": { "<key-id>": "<候选公钥>" }
+      }
+    },
+    "da": { "state": "disabled" }
+  },
+  "subjects": [],
+  "helper_work_roots": {}
+}
+```
+
+安装后修改同一格式并递增 revision，通过已安装的服务镜像执行 `--installation apply --profile <绝对路径> --operation <UUID>`。首次调用前选定 UUID，可在输出丢失后使用 `--installation operation-status --operation <UUID>` 查询原结果。配置相同的重试使用原参数；输入已持久保存，也可执行 `--installation apply --operation <UUID>` 继续本地操作。后端来源失去授权时，同一管理员命令只恢复原部署。MSIX 升级由系统包管理器接管，手工 apply 会明确拒绝。Windows SCM worker 回执的 `application_operation` 指向配置操作。`--installation status` 分别报告包内通道、启用选择和已观测的 MDM 注册；认证 readiness 沿用桌面服务探针。当前候选提供 MDM 通道，启用独立 DA 会在切换前返回 Unsupported。停用和授权退管是不同操作，部署 profile 不承载退管许可、注册秘密或 DA 签名策略。
 
 设备退管由服务端普通 Policy `unmanage_device` 发起。Agent 验证绑定当前租户、注册、设备和任务的签名 Start，持久接受后关闭新执行准入，读取 journal 的真实静止证明，再将卸载交给独立安装 worker。离线、证书故障和 MDM Profile 消失不构成卸载授权。产品 `uninstall` 和 system `remove` 入口必须携带 `--operation <已接受任务 UUID>`；仅传 UUID 不授予权限，缺少原 Start 或排空证明均拒绝。Windows NSIS 可传 `/RETIREMENT=<任务 UUID>`，MSI 对应 `RSSRETIREMENTTASK`；普通系统卸载入口不会隐式申请退管。
 
 受控卸载移除本安装服务和程序，按本安装凭据创建记录清理精确 Keychain/CNG/DPAPI 引用；首次初始化持有完整目录标记，旧安装缺少此标记时不能证明历史轮换凭据全部清理，删除已知引用后持久记录不完整证明并上报 Unknown，不永久重试，不自动回填或扩大为全机扫描；升级替换仍保留 installation ID、凭据和原任务。完成清理后删除本安装运行状态、执行材料和 work 目录，重新安装必须经新的注册授权，不继承旧任务。卸载先在 payload 外保留固定摘要的恢复程序及受保护 `install-operations/<任务 UUID>.retirement-work.json` 交接，逐阶段记录停止、程序移除、凭据清理、状态清理和载体最终回收；恢复不依赖已经删除的通信库或程序目录。恢复持有安装锁并核对当前安装身份，不能清理后来复用同一路径的新安装。launchd/SCM 对未完成的同一任务重试；阻塞的桌面应用退出后可继续。主体清理完成后先持久记录，再回收恢复载体；两者有独立完成判据，主体终态落盘后的恢复仍会回收载体。macOS 最终回收由固定参数的系统 shell launchd job 完成，Windows 先持久注册独立 SYSTEM 计划任务（注册与启动触发、固定周期重试），使用系统工具确认精确 SCM worker 已消失后再删除载体 EXE，最后删除自身任务；固定批处理定义与 JSON 一起保留为受保护审计；回收或回执未确认仍保留 Unknown。OS 历史日志、交接与受保护 `install-operations/<任务 UUID>.retirement.json` 安装结果保留。结果通过删除凭据前保留的内存传输提交，不复制长期凭据；响应丢失仍是未确认。当前固定安装 owner 仅对 macOS PKG、Windows NSIS 广告远程退管能力；MSI 缺少固定产品身份的远程包管理器接线，不广告该能力，已有授权的 MSI Remove 仍进入同一清理 owner；MSIX 的 Package Manager 卸载不冒充该安装 owner，保留不支持状态。Windows 独立回收任务接纳后报告 Unknown，交接成功不等于已经删除；真实平台效果由独立 T3 核实。
+
+安装后的配置变更保留已安装程序与桌面入口。仅递增配置版本时，服务继续运行。Windows MSI 的包结果由 Windows Installer 报告；配置操作按自己的 UUID 查询。
 
 Windows 安装操作返回 UUID 和不含输入内容的阶段回执。等待超时表示结果未知，worker 可能仍在运行；使用 `--installation operation-status --operation <UUID>` 核实，确认进程退出后回收该 worker。回执保留失败阶段、闭合错误、可得的原生退出码和补偿结果；超时后不要据命令退出自行删除正在使用的程序。
 

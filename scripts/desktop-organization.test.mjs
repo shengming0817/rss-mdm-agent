@@ -318,7 +318,10 @@ test("managed package formats use explicit machine service owners and escaped fi
 
   assert.ok(msi.includes('Execute="deferred" Impersonate="no"'));
   assert.ok(msi.includes("C:/build&amp;sign/payload"));
-  assert.ok(msi.includes("--installation apply"));
+  assert.ok(msi.includes("--installation msi-apply --candidate"));
+  assert.ok(msi.includes("--installation msi-remove --binary"));
+  assert.ok(msi.includes('<Custom Action="SaveAgent" Before="RollbackAgent"'));
+  assert.ok(!msi.includes("CommitAgent"));
   assert.ok(msi.includes('Execute="rollback"'));
   assert.ok(msi.includes("--installation msi-rollback"));
   assert.ok(msi.includes('Schedule="afterInstallExecute"'));

@@ -141,7 +141,10 @@ fn wait_stopped(handle: &Sc) -> Result<(), Error> {
     } else {
         None
     };
-    if before.dwCurrentState != SERVICE_STOPPED {
+    if !matches!(
+        before.dwCurrentState,
+        SERVICE_STOPPED | SERVICE_STOP_PENDING
+    ) {
         let mut receipt = SERVICE_STATUS::default();
         if unsafe { ControlService(handle.0, SERVICE_CONTROL_STOP, &mut receipt) } == 0
             && unsafe { GetLastError() } != ERROR_SERVICE_NOT_ACTIVE
@@ -243,6 +246,76 @@ fn register_verified(binary: &Path, config: &Path, deployment: &Deployment) -> R
     }
     Ok(())
 }
+// SCM's PID is unavailable once STOPPED is reported. Persist its creation time before
+// sending STOP so a replacement worker can still wait for the exact process.
+fn process_instance(pid: u32) -> Result<Option<(Handle, u64)>, Error> {
+    let h = unsafe { OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+    if h.is_null() {
+        return if unsafe { GetLastError() } == ERROR_INVALID_PARAMETER {
+            Ok(None)
+        } else {
+            Err(Error::Unavailable)
+        };
+    }
+    let h = Handle(h);
+    let (mut created, mut exited, mut kernel, mut user) = (
+        FILETIME::default(),
+        FILETIME::default(),
+        FILETIME::default(),
+        FILETIME::default(),
+    );
+    if unsafe { GetProcessTimes(h.0, &mut created, &mut exited, &mut kernel, &mut user) } == 0 {
+        return Err(Error::Unavailable);
+    }
+    Ok(Some((
+        h,
+        (u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime),
+    )))
+}
+
+pub(super) fn stop_for_apply(d: &Deployment, config: &Path, evidence: &Path) -> Result<(), Error> {
+    let mut processes: Vec<(u32, u64)> = if evidence.try_exists()? {
+        serde_json::from_slice(
+            &installation_security::read_protected(evidence).map_err(|_| Error::Identity)?,
+        )
+        .map_err(|_| Error::Storage)?
+    } else {
+        Vec::new()
+    };
+    if let Some(handle) = service(NAME)? {
+        owned(&handle, &d.service.path, config)?;
+        let status = state(&handle)?;
+        match status.dwCurrentState {
+            SERVICE_STOPPED => (),
+            SERVICE_RUNNING | SERVICE_PAUSED | SERVICE_PAUSE_PENDING | SERVICE_CONTINUE_PENDING => {
+                let (_, created) =
+                    process_instance(status.dwProcessId)?.ok_or(Error::Unavailable)?;
+                let identity = (status.dwProcessId, created);
+                if !processes.contains(&identity) {
+                    processes.push(identity);
+                }
+            }
+            SERVICE_STOP_PENDING if !processes.is_empty() => (),
+            _ => return Err(Error::Unavailable),
+        }
+    }
+    publish(evidence, &json(&processes)?)?;
+    quiescent(d, config)?;
+    stop(true, &d.service.path, config)?;
+    wait_for_recorded_processes(processes, 20_000)
+}
+fn wait_for_recorded_processes(processes: Vec<(u32, u64)>, timeout_ms: u32) -> Result<(), Error> {
+    for (pid, started) in processes {
+        if let Some((h, current)) = process_instance(pid)? {
+            if current == started
+                && unsafe { WaitForSingleObject(h.0, timeout_ms) } != WAIT_OBJECT_0
+            {
+                return Err(Error::Unavailable);
+            }
+        }
+    }
+    Ok(())
+}
 pub(super) fn stop(system: bool, binary: &Path, config: &Path) -> Result<(), Error> {
     if !system {
         return task_stop(binary, config, false);
@@ -313,6 +386,34 @@ pub(super) fn public_directory(path: &Path) -> Result<(), Error> {
     }
     installation_security::protected(path).map_err(|_| Error::Identity)
 }
+// Windows Installer execute-script exclusion only; mutex state never reports a package outcome.
+pub(super) fn msi_executing() -> Result<bool, Error> {
+    let mutex = unsafe {
+        OpenMutexW(
+            SYNCHRONIZE | MUTEX_MODIFY_STATE,
+            0,
+            wide(r"Global\_MSIExecute").as_ptr(),
+        )
+    };
+    if mutex.is_null() {
+        return if unsafe { GetLastError() } == ERROR_FILE_NOT_FOUND {
+            Ok(false)
+        } else {
+            Err(Error::Unavailable)
+        };
+    }
+    let mutex = Handle(mutex);
+    match unsafe { WaitForSingleObject(mutex.0, 0) } {
+        WAIT_TIMEOUT => Ok(true),
+        WAIT_OBJECT_0 | WAIT_ABANDONED => {
+            if unsafe { ReleaseMutex(mutex.0) } == 0 {
+                return Err(Error::Unavailable);
+            }
+            Ok(false)
+        }
+        _ => Err(Error::Unavailable),
+    }
+}
 pub(super) fn replace(staged: &Path, target: &Path) -> Result<(), Error> {
     if unsafe {
         MoveFileExW(
@@ -326,7 +427,7 @@ pub(super) fn replace(staged: &Path, target: &Path) -> Result<(), Error> {
     }
     Ok(())
 }
-pub(super) fn interactive_profile() -> Result<Profile, Error> {
+pub(super) fn interactive_profile() -> Result<LocalAccess, Error> {
     use windows_sys::Win32::System::Registry::*;
     let (subject, _) =
         execution_ipc::host::active_user_session().map_err(crate::error::app_error)?;
@@ -354,7 +455,7 @@ pub(super) fn interactive_profile() -> Result<Profile, Error> {
     if home.contains('%') || !Path::new(&home).is_absolute() {
         return Err(Error::Configuration);
     }
-    Ok(Profile {
+    Ok(LocalAccess {
         subjects: vec![subject.clone()],
         helper_work_roots: BTreeMap::from([(
             subject,
@@ -1096,6 +1197,12 @@ fn reclaim_worker(handle: &Sc, path: &Path) -> Result<bool, Error> {
     // Keep both the native lifetime evidence and any business result for diagnosis.
     Ok(true)
 }
+pub(super) fn worker_operation(id: uuid::Uuid) -> Result<bool, Error> {
+    let path = operation_root()?.join(format!("{id}.json"));
+    Ok(path.try_exists()?
+        || path.with_extension("worker.json").try_exists()?
+        || path.with_extension("result.json").try_exists()?)
+}
 pub(super) fn operation_status(id: uuid::Uuid) -> Result<(), Error> {
     let path = operation_root()?.join(format!("{id}.json"));
     let name = format!("RssExecution-Install-{id}");
@@ -1429,23 +1536,24 @@ impl Drop for ComApartment {
     }
 }
 
-pub(super) fn uninstall_payload(candidate: &Candidate) -> Result<(), Error> {
+pub(super) fn restore_desktop_entry(
+    candidate: &Candidate,
+    old: Option<&Candidate>,
+) -> Result<(), Error> {
+    if candidate.format()? != "windows_exe" {
+        return Ok(());
+    }
+    if let Some(old) = old.filter(|old| old.format().is_ok_and(|format| format == "windows_exe")) {
+        return desktop_entry(old);
+    }
+    remove_desktop_entry(candidate)
+}
+
+fn remove_desktop_entry(candidate: &Candidate) -> Result<(), Error> {
     use windows_sys::Win32::System::Registry::*;
     preflight_entry(candidate, true)?;
     if candidate.format()? == "windows_exe" {
         protocol_remove(candidate)?;
-    }
-    if let Some(image) = registry_value("ServiceImage")? {
-        if Path::new(&image) != candidate.service.path {
-            return Err(Error::Identity);
-        }
-    }
-    let retired = retire_payload(candidate)?;
-    if WORKER.get().is_some_and(|(_, p)| {
-        p.with_extension("exe") == std::env::current_exe().unwrap_or_default()
-    }) && retired.exists()
-    {
-        std::fs::remove_dir_all(retired)?;
     }
     let path = shortcut()?;
     if path.exists() {
@@ -1461,6 +1569,18 @@ pub(super) fn uninstall_payload(candidate: &Candidate) -> Result<(), Error> {
     };
     if status != 0 && status != ERROR_FILE_NOT_FOUND {
         return Err(Error::Unavailable);
+    }
+    Ok(())
+}
+
+pub(super) fn uninstall_payload(candidate: &Candidate) -> Result<(), Error> {
+    remove_desktop_entry(candidate)?;
+    let retired = retire_payload(candidate)?;
+    if WORKER.get().is_some_and(|(_, p)| {
+        p.with_extension("exe") == std::env::current_exe().unwrap_or_default()
+    }) && retired.exists()
+    {
+        std::fs::remove_dir_all(retired)?;
     }
     Ok(())
 }
@@ -1633,4 +1753,23 @@ pub(super) fn finish_unmanage(deployment: &Deployment, task: uuid::Uuid) -> Resu
     // reboot deletion can destroy the program before the SCM registration is gone.
     unsafe { scheduled.Run(&VARIANT::default()) }.map_err(|_| Error::Unavailable)?;
     Ok(false)
+}
+
+#[cfg(test)]
+mod stop_tests {
+    use super::*;
+
+    #[test]
+    fn stopped_scm_without_a_pid_still_waits_for_the_recorded_instance() {
+        let pid = std::process::id();
+        let (_, started) = process_instance(pid).unwrap().unwrap();
+        let bytes = serde_json::to_vec(&[(pid, started)]).unwrap();
+        // A later callback receives no PID from SCM. It still has the original
+        // persisted instance and cannot replace its registration while it lives.
+        assert_eq!(
+            wait_for_recorded_processes(serde_json::from_slice(&bytes).unwrap(), 0),
+            Err(Error::Unavailable)
+        );
+        assert!(wait_for_recorded_processes(vec![(pid, started.wrapping_sub(1))], 0).is_ok());
+    }
 }

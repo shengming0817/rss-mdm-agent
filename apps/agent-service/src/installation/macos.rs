@@ -149,7 +149,7 @@ fn write_job(system: bool, binary: &Path, config: &Path) -> Result<(), Error> {
     plist::Value::Dictionary(dict)
         .to_writer_xml(&mut bytes)
         .map_err(|_| Error::Configuration)?;
-    write_new(&path, &bytes)
+    publish_new(&path, &bytes)
 }
 fn job(system: bool, binary: &Path, config: &Path) -> plist::Dictionary {
     let mut dict = plist::Dictionary::new();
@@ -364,7 +364,7 @@ pub(super) fn quiescent(old: &Deployment, config: &Path) -> Result<(), Error> {
     }
     Ok(())
 }
-pub(super) fn interactive_profile() -> Result<Profile, Error> {
+pub(super) fn interactive_profile() -> Result<LocalAccess, Error> {
     let subject = execution_ipc::host::active_user_subject().map_err(crate::error::app_error)?;
     let uid: libc::uid_t = subject.parse().map_err(|_| Error::Identity)?;
     let mut entry = std::mem::MaybeUninit::<libc::passwd>::uninit();
@@ -388,7 +388,7 @@ pub(super) fn interactive_profile() -> Result<Profile, Error> {
             .to_str()
             .map_err(|_| Error::Identity)?,
     );
-    Ok(Profile {
+    Ok(LocalAccess {
         subjects: vec![subject.clone()],
         helper_work_roots: BTreeMap::from([(
             subject,
@@ -450,6 +450,31 @@ pub(super) fn desktop_entry(candidate: &Candidate) -> Result<(), Error> {
     }
     result?;
     launch_services(app, false)
+}
+pub(super) fn restore_desktop_entry(
+    candidate: &Candidate,
+    old: Option<&Candidate>,
+) -> Result<(), Error> {
+    preflight_desktop_entry(candidate)?;
+    let alias = Path::new("/Applications/RSS MDM Agent.app");
+    let app = candidate
+        .desktop
+        .path
+        .ancestors()
+        .find(|p| p.extension().is_some_and(|e| e == "app"))
+        .ok_or(Error::Configuration)?;
+    if old.is_none_or(|o| o.desktop.path != candidate.desktop.path) && app.try_exists()? {
+        launch_services(app, true)?;
+    }
+    if let Some(old) = old {
+        return desktop_entry(old);
+    }
+    match std::fs::read_link(alias) {
+        Ok(target) if target == app => Ok(std::fs::remove_file(alias)?),
+        Ok(_) => Err(Error::Identity),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.into()),
+    }
 }
 fn launch_services(app: &Path, unregister: bool) -> Result<(), Error> {
     let (status,_)=utility(Path::new("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"),&[if unregister{"-u"}else{"-f"}.into(),app.as_os_str().to_owned()])?;
@@ -644,4 +669,96 @@ mod retirement_tests {
         assert!(run().status.success());
         std::fs::remove_dir(&root).unwrap();
     }
+}
+
+// launchctl can remove a job before its process exits. Retain PID and kernel birth
+// time before bootout so a restarted installer can check that exact process.
+// ref: apple-oss-distributions/xnu bsd/sys/proc_info.h (PROC_PIDTBSDINFO).
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+struct JobProcess {
+    pid: u32,
+    seconds: u64,
+    microseconds: u64,
+}
+
+fn job_process(pid: u32) -> Result<Option<JobProcess>, Error> {
+    let pid = i32::try_from(pid).map_err(|_| Error::Identity)?;
+    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::uninit();
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as i32;
+    // SAFETY: proc_pidinfo writes at most the supplied size; read only a complete struct.
+    if unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            size,
+        )
+    } != size
+    {
+        if unsafe { libc::kill(pid, 0) } < 0
+            && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+        {
+            return Ok(None);
+        }
+        return Err(Error::Unavailable);
+    }
+    let info = unsafe { info.assume_init() };
+    Ok(Some(JobProcess {
+        pid: info.pbi_pid,
+        seconds: info.pbi_start_tvsec,
+        microseconds: info.pbi_start_tvusec,
+    }))
+}
+pub(super) fn stop_for_apply(d: &Deployment, config: &Path, evidence: &Path) -> Result<(), Error> {
+    let mut processes: Vec<JobProcess> = if evidence.try_exists()? {
+        serde_json::from_slice(
+            &installation_security::read_protected(evidence).map_err(|_| Error::Identity)?,
+        )
+        .map_err(|_| Error::Storage)?
+    } else {
+        vec![]
+    };
+    let mut jobs = vec![(true, endpoint(true)?)];
+    jobs.extend(
+        d.helper_work_roots
+            .keys()
+            .map(|s| (false, format!("gui/{s}/{LABEL}.user"))),
+    );
+    for (system, job) in jobs {
+        if !system {
+            let domain = job.rsplit_once('/').ok_or(Error::Configuration)?.0;
+            let (status, _) = utility(
+                Path::new("/bin/launchctl"),
+                &["print".into(), domain.into()],
+            )?;
+            if status.code() == Some(125) {
+                continue;
+            }
+            if !status.success() {
+                return Err(Error::Unavailable);
+            }
+        }
+        if let Some(pid) = registered(&job)?.filter(|pid| *pid != 0) {
+            read_job(system, &d.service.path, config)?;
+            if let Some(process) = job_process(pid)? {
+                if !processes.contains(&process) {
+                    processes.push(process);
+                }
+            }
+        }
+    }
+    publish(evidence, &json(&processes)?)?;
+    quiescent(d, config)?;
+    stop(true, &d.service.path, config)?;
+    let deadline = Instant::now() + STOP_TIMEOUT;
+    for process in processes {
+        while job_process(process.pid)? == Some(process) {
+            if Instant::now() >= deadline {
+                return Err(Error::Unavailable);
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+    Ok(())
 }

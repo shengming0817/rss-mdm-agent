@@ -363,6 +363,7 @@ function image(path) {
   return result;
 }
 const candidate = {
+  assembly: { mdm: true, da: false },
   windows_login: windowsLogin ? image(windowsLogin) : null,
   platform_sso: psso
     ? {
@@ -483,7 +484,7 @@ if (windows && format === "windows_msi") {
 } else {
   const scripts = join(output, "scripts");
   mkdirSync(scripts);
-  const postinstall = `#!/bin/sh\nset -eu\nprofile="/Library/Application Support/RSS MDM Agent/install-profile.json"\nif [ -f "$profile" ]; then\n  "${installed}/rss-execution-service" --installation apply --candidate "${installed}/candidate.json" --profile "$profile" --package-path "$1"\nelse\n  "${installed}/rss-execution-service" --installation apply --candidate "${installed}/candidate.json" --package-path "$1"\nfi\n`;
+  const postinstall = `#!/bin/sh\nset -eu\nprofile="/Library/Application Support/RSS MDM Agent/install-profile.json"\nif [ -e "$profile" ] || [ -L "$profile" ]; then\n  "${installed}/rss-execution-service" --installation apply --candidate "${installed}/candidate.json" --profile "$profile" --package-path "$1"\nelse\n  "${installed}/rss-execution-service" --installation apply --candidate "${installed}/candidate.json" --package-path "$1"\nfi\n`;
   writeFileSync(join(scripts, "postinstall"), postinstall, { mode: 0o755 });
   const component = join(output, "component.pkg");
   // A fixed version must never relocate to a discovered development/previous app bundle.
