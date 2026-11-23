@@ -925,9 +925,12 @@ pub(crate) fn save_binding(
 }
 
 /// Read the current format only. An old installation must retire using its original candidate.
-pub(crate) fn upgrade_preflight(deployment: &crate::deployment::Deployment) -> Result<(), Error> {
+pub(crate) fn upgrade_preflight(
+    deployment: &crate::deployment::Deployment,
+    has_extension: bool,
+) -> Result<(), Error> {
     let root = crate::access_worker::root(&deployment.execution);
-    if !root.exists() {
+    if !root.try_exists()? {
         return Ok(());
     }
     for entry in std::fs::read_dir(&root)? {
@@ -939,6 +942,9 @@ pub(crate) fn upgrade_preflight(deployment: &crate::deployment::Deployment) -> R
             let binding: ::platform_sso::LocalBinding =
                 state::read_optional(&root, &name)?.ok_or(Error::Storage)?;
             binding.configuration.validate()?;
+            if binding.enabled && !has_extension {
+                return Err(Error::Unavailable);
+            }
         } else if [
             ".psso-source",
             ".psso-registering",
@@ -948,6 +954,9 @@ pub(crate) fn upgrade_preflight(deployment: &crate::deployment::Deployment) -> R
         .iter()
         .any(|suffix| name.ends_with(suffix))
         {
+            if !has_extension && !name.ends_with(".psso-retired") {
+                return Err(Error::Unavailable);
+            }
             let coordinate: Coordinate =
                 state::read_optional(&root, &name)?.ok_or(Error::Storage)?;
             coordinate.context.validate().map_err(|_| Error::Identity)?;

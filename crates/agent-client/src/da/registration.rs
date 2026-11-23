@@ -10,10 +10,12 @@ pub(super) struct Pending {
     issue: Uuid,
     activate: Uuid,
     expected: Option<DeviceId>,
+    administrator: bool,
     csr: Option<String>,
     pub grant: Option<wire::Grant>,
     issue_started: bool,
     candidate: Option<enroll::Candidate>,
+    validated_lifetime: Option<i64>,
     pub unknown: bool,
     pub issuance_id: Option<Uuid>,
 }
@@ -80,10 +82,12 @@ impl<S: Credentials, C: Clock> Client<S, C> {
             issue: Uuid::new_v4(),
             activate: Uuid::new_v4(),
             expected,
+            administrator: false,
             csr: None,
             grant: None,
             issue_started: false,
             candidate: None,
+            validated_lifetime: None,
             unknown: false,
             issuance_id: None,
         };
@@ -136,10 +140,10 @@ impl<S: Credentials, C: Clock> Client<S, C> {
     }
     /// Hand the CSR-bound request to an administrator through protected local storage.
     pub fn prepare(&self, operation: Uuid) -> Result<wire::GrantRequest, Error> {
-        if self.active()?.is_some() {
-            return Err(Error::Conflict);
-        }
-        let mut p = self.begin(operation, None)?;
+        let expected = self.active()?.map(|active| active.receipt.device);
+        let mut p = self.begin(operation, expected)?;
+        p.administrator = true;
+        self.save(&p)?;
         self.request(&mut p)
     }
     /// Attach the exact administrator grant to its locally prepared CSR.
@@ -187,6 +191,9 @@ impl<S: Credentials, C: Clock> Client<S, C> {
             return Ok(());
         };
         if p.grant.is_none() {
+            if p.administrator {
+                return Ok(());
+            }
             let Some(expected) = p.expected else {
                 return Ok(());
             };
@@ -257,7 +264,7 @@ impl<S: Credentials, C: Clock> Client<S, C> {
                         return Err(Error::IssuanceUnknown);
                     }
                     enroll::ErrorCode::GrantExpired | enroll::ErrorCode::GrantRevoked
-                        if progress.issuance_id.is_none() =>
+                        if progress.registration.is_none() =>
                     {
                         self.end_grant(&p, fault.code)?;
                         return Err(crate::identity::enrollment_error(fault.code));
@@ -278,18 +285,11 @@ impl<S: Credentials, C: Clock> Client<S, C> {
             p.unknown = false;
             self.save(&p)?;
         }
-        let grant = p.grant.as_ref().ok_or(Error::Storage)?;
-        let candidate = p.candidate.as_ref().ok_or(Error::Storage)?;
+        let grant = p.grant.clone().ok_or(Error::Storage)?;
+        let candidate = p.candidate.clone().ok_or(Error::Storage)?;
         let key = p.key();
-        let (before, after, device) = crate::tls::device_validity(
-            &candidate.certificate_chain,
-            &key,
-            &self.secrets,
-            self.now()?,
-            trust,
-        )?;
-        if device != grant.device
-            || p.expected.is_some_and(|expected| expected != device)
+        let device = grant.device;
+        if p.expected.is_some_and(|expected| expected != device)
             || progress
                 .issuance_id
                 .is_some_and(|id| id != candidate.issuance_id)
@@ -303,17 +303,48 @@ impl<S: Credentials, C: Clock> Client<S, C> {
                     self.end_grant(&p, enroll::ErrorCode::GrantExpired)?;
                     return Err(Error::Expired);
                 }
+                let (before, after, certified) = match crate::tls::device_validity(
+                    &candidate.certificate_chain,
+                    &key,
+                    &self.secrets,
+                    self.now()?,
+                    trust,
+                ) {
+                    Err(Error::CertificateExpired) => {
+                        self.end_grant(&p, enroll::ErrorCode::GrantExpired)?;
+                        return Err(Error::Expired);
+                    }
+                    value => value?,
+                };
+                if certified != device {
+                    return Err(Error::Identity);
+                }
+                p.validated_lifetime = Some(after - before);
+                self.save(&p)?;
                 let peer = self.http(Some((&key, &candidate.certificate_chain)))?;
-                self.call::<h::DaActivate>(
-                    &peer,
-                    None,
-                    Some(&enroll::ActivationRequest {
-                        wire_version: 1,
-                        operation_id: p.activate,
-                        issuance_id: candidate.issuance_id,
-                    }),
-                )
-                .await?
+                match self
+                    .exchange::<h::DaActivate>(
+                        &peer,
+                        None,
+                        Some(&enroll::ActivationRequest {
+                            wire_version: 1,
+                            operation_id: p.activate,
+                            issuance_id: candidate.issuance_id,
+                        }),
+                    )
+                    .await?
+                {
+                    Ok(receipt) => receipt,
+                    Err(fault) => {
+                        if matches!(
+                            fault.code,
+                            enroll::ErrorCode::GrantExpired | enroll::ErrorCode::GrantRevoked
+                        ) {
+                            self.end_grant(&p, fault.code)?;
+                        }
+                        return Err(crate::identity::enrollment_error(fault.code));
+                    }
+                }
             }
         };
         if receipt.service_id != self.backend.instance
@@ -343,13 +374,13 @@ impl<S: Credentials, C: Clock> Client<S, C> {
                 receipt,
                 key,
                 chain: candidate.certificate_chain.clone(),
-                lifetime: after - before,
+                lifetime: p.validated_lifetime.ok_or(Error::Identity)?,
             },
         )?;
         write(
             &tx,
             &format!("grant/{}", grant.operation_id),
-            &crate::store::encode(grant)?,
+            &crate::store::encode(&grant)?,
         )?;
         write(&tx, "release", &release)?;
         write(&tx, "enrollment", &None::<Pending>)?;

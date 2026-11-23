@@ -395,7 +395,9 @@ fn prepare(
         None => match &old {
             Some(d) => (LocalAccess::from_deployment(d), d.modules.clone()),
             None => (
-                j.initial_access(r, lifecycle::initial_profile)?,
+                j.initial_access(r, || {
+                    lifecycle::initial_profile(candidate.defaults.mdm.enabled())
+                })?,
                 candidate.defaults.clone(),
             ),
         },

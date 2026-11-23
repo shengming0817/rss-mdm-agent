@@ -203,7 +203,8 @@ fn register_verified(
     }
     if !system {
         let subject = execution_ipc::host::current_subject().map_err(crate::error::app_error)?;
-        if !deployment.helper_work_roots.contains_key(&subject) {
+        if !deployment.modules.mdm.enabled() || !deployment.helper_work_roots.contains_key(&subject)
+        {
             return Err(Error::Identity);
         }
     }
@@ -239,7 +240,7 @@ fn register_verified(
         stop_endpoint(&endpoint)?;
         return Err(error);
     }
-    if system {
+    if system && deployment.modules.mdm.enabled() {
         let helper = plist_path(false);
         if helper.exists() {
             require_exit_budget(&read_job(false, binary, config)?)?;

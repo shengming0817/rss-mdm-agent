@@ -22,7 +22,13 @@ use std::{
 use uuid::Uuid;
 
 pub(crate) fn has_retained_identity(d: &Deployment) -> Result<bool, Error> {
-    Ok(d.da_root()?.try_exists()?)
+    let root = d.da_root()?;
+    match root.symlink_metadata() {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e.into()),
+        Ok(meta) if meta.is_dir() => Ok(std::fs::read_dir(root)?.next().transpose()?.is_some()),
+        Ok(_) => Err(Error::Storage),
+    }
 }
 pub(crate) fn preflight(d: &Deployment) -> Result<(), Error> {
     if let Ok(backend) = d.modules.da.backend() {
@@ -122,6 +128,7 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
     let (stop, mut stopped) = tokio::sync::oneshot::channel::<()>();
     let ready = Arc::new(AtomicBool::new(false));
     let available = ready.clone();
+    let root = d.da_root()?;
     let worker = thread::Builder::new()
         .name("device-access".into())
         .spawn(move || {
@@ -133,16 +140,22 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                 let work = async {
                     loop {
                         // Only explicit provisioning may initialize a DA identity namespace.
-                        if !has_retained_identity(&d)? {
-                            available.store(true, Ordering::Release);
-                            tokio::time::sleep(Duration::from_secs(2)).await;
-                            continue;
-                        }
-                        let result = match open(&d) {
-                            Ok(client) => {
+                        let result = match has_retained_identity(&d).and_then(|retained| {
+                            if retained {
+                                open(&d).map(Some)
+                            } else {
+                                Ok(None)
+                            }
+                        }) {
+                            Ok(None) => {
+                                available.store(true, Ordering::Release);
+                                tokio::time::sleep(Duration::from_secs(2)).await;
+                                continue;
+                            }
+                            Ok(Some(client)) => {
                                 available.store(true, Ordering::Release);
                                 let mut policy = policy::Machine::observe(
-                                    d.da_root()?,
+                                    root.clone(),
                                     #[cfg(windows)]
                                     crate::access_worker::root(&d.execution),
                                 )
@@ -200,23 +213,30 @@ impl Handler for Service {
             .register_helper(peer)
     }
     fn handle(&mut self, peer: &Peer, request: Request) -> Reply {
+        let da_ready = self.ready.load(Ordering::Acquire)
+            && self
+                .worker
+                .as_ref()
+                .is_some_and(|worker| !worker.is_finished());
         if let Some(mdm) = &mut self.mdm {
-            return mdm.handle(peer, request);
+            let mut reply = mdm.handle(peer, request);
+            if let Reply::ServiceStatus { value } = &mut reply {
+                if !da_ready {
+                    value.readiness = Readiness::NotReady;
+                }
+            }
+            return reply;
         }
         if peer.authenticate(&self.policy).is_err() {
             return Reply::Rejected;
         }
         match request {
             Request::ServiceStatus {} => Reply::ServiceStatus {
-                value: ServiceStatus::new(
-                    if self.ready.load(Ordering::Acquire)
-                        && self.worker.as_ref().is_some_and(|w| !w.is_finished())
-                    {
-                        Readiness::Ready
-                    } else {
-                        Readiness::NotReady
-                    },
-                ),
+                value: ServiceStatus::new(if da_ready {
+                    Readiness::Ready
+                } else {
+                    Readiness::NotReady
+                }),
             },
             _ => Reply::Rejected,
         }

@@ -240,6 +240,9 @@ fn register_verified(binary: &Path, config: &Path, deployment: &Deployment) -> R
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+    if !deployment.modules.mdm.enabled() {
+        return Ok(());
+    }
     let active = execution_ipc::host::active_user_session().ok().map(|v| v.0);
     for subject in deployment.helper_work_roots.keys() {
         task_register(subject, binary, config, active.as_ref() == Some(subject))?;
@@ -1006,7 +1009,7 @@ fn same_account(account: &str, subject: &str) -> Result<bool, Error> {
 fn task_register(subject: &str, binary: &Path, config: &Path, start: bool) -> Result<(), Error> {
     use ::windows::Win32::System::{TaskScheduler::*, Variant::VARIANT};
     let deployment = Deployment::load(config)?;
-    if !deployment.helper_work_roots.contains_key(subject) {
+    if !deployment.modules.mdm.enabled() || !deployment.helper_work_roots.contains_key(subject) {
         return Err(Error::Identity);
     }
     if let Some(task) = task_get(subject)? {

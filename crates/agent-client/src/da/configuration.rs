@@ -90,6 +90,7 @@ struct Current {
 pub(super) struct AppliedProof {
     pub(super) until: i64,
     sources: BTreeSet<String>,
+    signers: BTreeSet<String>,
     effective: Selection,
 }
 
@@ -107,6 +108,7 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         &self,
         http: &reqwest::Client,
         id: &wire::ReportIdentity,
+        consumer: &mut impl PolicyConsumer,
     ) -> Result<wire::ConfigurationTrust, Error> {
         let trust = self.call::<h::DaTrust>(http, None, None).await?;
         let digest = trust.installation_digest()?;
@@ -134,7 +136,25 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         let tx = self.journal.db.unchecked_transaction()?;
         write(&tx, "trust", &trust)?;
         write(&tx, "known-keys", &known)?;
+        let proof = read::<Option<AppliedProof>>(&tx, "applied-proof")?.flatten();
+        let invalidated = proof.is_some_and(|p| {
+            !p.signers.iter().all(|signer| {
+                trust.keys.iter().any(|key| {
+                    key.id == *signer
+                        && matches!(
+                            key.state,
+                            task_trust::KeyState::Active | task_trust::KeyState::VerifyOnly
+                        )
+                })
+            })
+        });
+        if invalidated {
+            Self::clear_proof(&tx)?;
+        }
         tx.commit()?;
+        if invalidated {
+            consumer.apply(None)?;
+        }
         let installed: wire::ConfigurationTrust =
             read(&self.journal.db, "trust")?.ok_or(Error::Storage)?;
         if installed.installation_digest()? != digest {
@@ -190,7 +210,7 @@ impl<S: Credentials, C: Clock> Client<S, C> {
             self.call::<h::DaPkiAck>(http, None, Some(&ack)).await?;
             write(&self.journal.db, "pki-confirmed", &ack.operation)?;
         }
-        let trust = self.install_trust(http, &id).await?;
+        let trust = self.install_trust(http, &id, consumer).await?;
         let value = self.call::<h::DaConfiguration>(http, None, None).await?;
         let current: Current = serde_json::from_value(value).map_err(|_| Error::Protocol)?;
         let result = self.configure(&id, &trust, current, snapshot, consumer);
@@ -285,10 +305,16 @@ impl<S: Credentials, C: Clock> Client<S, C> {
                 let receipt = match result {
                     Ok(v) => v,
                     Err(Error::Conflict) => {
-                        self.journal.db.execute(
-                            "UPDATE reports SET error='conflict' WHERE kind=?1 AND sequence=?2",
+                        let tx = self.journal.db.unchecked_transaction()?;
+                        tx.execute(
+                            "DELETE FROM reports WHERE kind=?1 AND error IS NOT NULL",
+                            [kind],
+                        )?;
+                        tx.execute(
+                            "UPDATE reports SET body=NULL,error='conflict' WHERE kind=?1 AND sequence=?2",
                             rusqlite::params![kind, sequence],
                         )?;
+                        tx.commit()?;
                         continue;
                     }
                     Err(e) => return Err(e),
@@ -300,11 +326,17 @@ impl<S: Credentials, C: Clock> Client<S, C> {
                 {
                     return Err(Error::Protocol);
                 }
-                // Preserve the exact receipt but release the full payload after acceptance.
-                self.journal.db.execute(
+                // Only the latest receipt is used by status. Pending operations retain their bodies.
+                let tx = self.journal.db.unchecked_transaction()?;
+                tx.execute(
+                    "DELETE FROM reports WHERE kind=?1 AND receipt IS NOT NULL",
+                    [kind],
+                )?;
+                tx.execute(
                     "UPDATE reports SET body=NULL,receipt=?1 WHERE kind=?2 AND sequence=?3",
                     rusqlite::params![crate::store::encode(&receipt)?, kind, sequence],
                 )?;
+                tx.commit()?;
             }
         }
         Ok(())
@@ -360,6 +392,7 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         let Some(proof) =
             read::<Option<AppliedProof>>(&self.journal.db, "applied-proof")?.flatten()
         else {
+            consumer.apply(None)?;
             return Ok(());
         };
         if !matches!(snapshot.state, SourceState::Missing | SourceState::Present)
@@ -420,6 +453,9 @@ impl<S: Credentials, C: Clock> Client<S, C> {
             None,
         )?;
         let source_ids = fingerprints(&snapshot)?;
+        let signers = std::iter::once(envelope.key_id.clone())
+            .chain(snapshot.sources.iter().map(|s| s.envelope.key_id.clone()))
+            .collect();
         let mut native = doc.native.clone();
         let authorized: BTreeSet<ConfigurationField> =
             serde_json::from_value(publication["managedFields"].clone())
@@ -427,7 +463,8 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         for source in &snapshot.sources {
             let managed = source.envelope.decode()?;
             if managed.managed_fields.contains(&ConfigurationField::Mac)
-                && (managed.id != doc.id || authorized.contains(&ConfigurationField::Mac))
+                && managed.id == doc.id
+                && authorized.contains(&ConfigurationField::Mac)
             {
                 native = managed.native;
             }
@@ -457,13 +494,16 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         let effective = match result {
             Ok(value) => value,
             Err(e) => {
-                consumer.apply(None)?;
-                write(&self.journal.db, "effective-digest", &None::<String>)?;
+                self.withdraw(consumer)?;
                 self.application(
                     id,
                     &doc,
                     &envelope,
-                    ApplicationState::Rejected,
+                    if e == Error::Unavailable {
+                        ApplicationState::Unknown
+                    } else {
+                        ApplicationState::Rejected
+                    },
                     &sources,
                     Some(diagnostic(&e)),
                 )?;
@@ -490,6 +530,7 @@ impl<S: Credentials, C: Clock> Client<S, C> {
             &Some(AppliedProof {
                 until,
                 sources: source_ids,
+                signers,
                 effective: selected.clone(),
             }),
         )?;
@@ -514,11 +555,19 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         }
     }
 
+    fn clear_proof(tx: &rusqlite::Connection) -> Result<(), Error> {
+        if read::<Option<String>>(tx, "effective-digest")?
+            .flatten()
+            .is_some()
+        {
+            tx.execute("DELETE FROM state WHERE name='app-stage/outcome'", [])?;
+        }
+        write(tx, "applied-proof", &None::<AppliedProof>)?;
+        write(tx, "effective-digest", &None::<String>)
+    }
     pub(super) fn withdraw(&self, consumer: &mut impl PolicyConsumer) -> Result<(), Error> {
         let tx = self.journal.db.unchecked_transaction()?;
-        write(&tx, "applied-proof", &None::<AppliedProof>)?;
-        write(&tx, "effective-digest", &None::<String>)?;
-        tx.execute("DELETE FROM state WHERE name IN ('app-stage/received','app-stage/validated','app-stage/outcome')",[])?;
+        Self::clear_proof(&tx)?;
         tx.commit()?;
         consumer.apply(None)?;
         Ok(())
@@ -572,8 +621,17 @@ impl<S: Credentials, C: Clock> Client<S, C> {
                 delivery: DeliveryPermission::ManagedMandatory,
                 state: SourceState::Present,
             });
+            if doc.id != backend.id {
+                // The selected publication only proves the current permissions of its own policy.
+                locks
+                    .entry(doc.id)
+                    .or_default()
+                    .extend(doc.managed_fields.iter().copied());
+                write(&self.journal.db, "locks", &locks)?;
+                return Err(Error::Unavailable);
+            }
             for field in &doc.managed_fields {
-                if doc.id == backend.id && !authorized.contains(field) {
+                if !authorized.contains(field) {
                     continue;
                 }
                 let value = match field {

@@ -75,10 +75,7 @@ fn validate(r: &Recovery, task: uuid::Uuid) -> Result<(), Error> {
     Ok(())
 }
 pub(crate) fn supported(d: &Deployment) -> bool {
-    if !d.modules.mdm.enabled()
-        || d.modules.da.enabled()
-        || crate::da_service::has_retained_identity(d).unwrap_or(true)
-    {
+    if !d.modules.mdm.enabled() || crate::da_service::has_retained_identity(d).unwrap_or(true) {
         return false;
     }
     Deployment::default_path()
@@ -97,7 +94,7 @@ fn prepare(d: &Deployment, permit: &UnmanagePermit, package_managed: bool) -> Re
         }
         return Ok(());
     }
-    if d.modules.da.enabled() || crate::da_service::has_retained_identity(d)? {
+    if crate::da_service::has_retained_identity(d)? {
         return Err(Error::Denied);
     }
     if !package_managed && !supported(d) {
@@ -259,7 +256,7 @@ fn execute(task: uuid::Uuid, package_entry: bool) -> Result<(), Error> {
         Ok(_) => {
             let current = Deployment::metadata(&config)?;
             current.require_mdm_assembly()?;
-            if current.modules.da.enabled() || crate::da_service::has_retained_identity(&current)? {
+            if crate::da_service::has_retained_identity(&current)? {
                 return Err(Error::Denied);
             }
             lifecycle::preserved(&r.deployment, &current)?;

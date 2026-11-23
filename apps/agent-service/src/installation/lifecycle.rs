@@ -493,8 +493,15 @@ pub(super) fn preflight_refresh(
     Deployment::load(next_config)?;
     preserved(old, next)?;
     #[cfg(target_os = "macos")]
-    if old.modules.mdm.enabled() {
-        crate::service::platform_sso::upgrade_preflight(old)?;
+    if old.modules.mdm.enabled() || old.platform_sso.is_some() {
+        if old.modules.mdm.enabled()
+            && next.modules.mdm.enabled()
+            && old.platform_sso.is_some()
+            && next.platform_sso.is_none()
+        {
+            return Err(Error::Configuration);
+        }
+        crate::service::platform_sso::upgrade_preflight(old, next.platform_sso.is_some())?;
     }
     if old.service.path.exists() {
         Deployment::load_persistent(config)?;
@@ -736,15 +743,15 @@ mod configuration_restart_tests {
     }
 }
 
-pub(super) fn initial_profile() -> Result<LocalAccess, Error> {
-    if execution_ipc::host::active_user_subject().is_err() {
-        // No interactive subject gains IPC access merely because a machine is being enrolled.
-        return Ok(LocalAccess {
-            subjects: vec![],
-            helper_work_roots: BTreeMap::new(),
-        });
+pub(super) fn initial_profile(mdm: bool) -> Result<LocalAccess, Error> {
+    let subject = execution_ipc::host::active_user_subject().ok();
+    if mdm && subject.is_some() {
+        return platform::interactive_profile();
     }
-    platform::interactive_profile()
+    Ok(LocalAccess {
+        subjects: subject.into_iter().collect(),
+        helper_work_roots: BTreeMap::new(),
+    })
 }
 pub(super) fn installation_lock(config: &Path, system: bool) -> Result<std::fs::File, Error> {
     let root = config.parent().ok_or(Error::Configuration)?;
@@ -886,7 +893,7 @@ fn apply_msi_package(candidate_path: &Path, config: &Path) -> Result<(), Error> 
     }
     let profile = match &old {
         Some(d) => LocalAccess::from_deployment(d),
-        None => initial_profile()?,
+        None => initial_profile(candidate.defaults.mdm.enabled())?,
     };
     platform::public_directory(config.parent().ok_or(Error::Configuration)?)?;
     let manifests = config

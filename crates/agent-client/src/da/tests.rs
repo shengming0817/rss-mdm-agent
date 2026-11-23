@@ -39,6 +39,8 @@ struct Server {
     origin: String,
     lose_activation: bool,
     lose_report: bool,
+    fail_trust_ack: bool,
+    expire_after_issue: bool,
 }
 async fn endpoint(
     State(state): State<Arc<Mutex<Server>>>,
@@ -73,7 +75,7 @@ async fn endpoint(
             );
             json!({"grant":grant,"issuanceId":s.candidate.as_ref().map(|v|v.issuance_id),"issuanceUnknown":false,"registration":s.registration})
         }
-        "certificates" => issue_candidate(&mut s, &grant, tenant, input),
+        "certificates" => return certificate_response(&mut s, &grant, tenant, input),
         "activate" => {
             let c = s.candidate.clone().unwrap();
             assert_eq!(
@@ -119,6 +121,13 @@ async fn endpoint(
                 "configuration-trust" => json!(s.trust),
                 "configuration-trust/acknowledgements" => {
                     assert_eq!(input["digest"], s.trust.installation_digest().unwrap());
+                    if s.fail_trust_ack {
+                        return (
+                            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                            Json(json!({"code":"service_unavailable","issuanceId":null})),
+                        )
+                            .into_response();
+                    }
                     return ().into_response();
                 }
                 "pki/acknowledgements" => return ().into_response(),
@@ -152,6 +161,26 @@ async fn endpoint(
         }
     };
     Json(output).into_response()
+}
+fn certificate_response(
+    s: &mut Server,
+    grant: &wire::Grant,
+    tenant: Uuid,
+    input: Value,
+) -> Response {
+    if !s.expire_after_issue {
+        return Json(issue_candidate(s, grant, tenant, input)).into_response();
+    }
+    let (status, code) = if s.candidate.is_some() {
+        (axum::http::StatusCode::FORBIDDEN, "grant_expired")
+    } else {
+        issue_candidate(s, grant, tenant, input);
+        (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "service_unavailable",
+        )
+    };
+    (status, Json(json!({"code":code,"issuanceId":null}))).into_response()
 }
 fn issue_candidate(s: &mut Server, grant: &wire::Grant, tenant: Uuid, input: Value) -> Value {
     let req: wire::CertificateRequest = serde_json::from_value(input).unwrap();
@@ -280,6 +309,8 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         origin,
         lose_activation: true,
         lose_report: true,
+        fail_trust_ack: false,
+        expire_after_issue: false,
     }));
     let listener = TlsListener {
         listener: socket,
@@ -368,7 +399,42 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
     assert!(secrets.key(&active.key).is_err());
     assert!(secrets.key(&renewed.key).is_ok());
     super::validate_keys(&root.path, &backend, install, &secrets).unwrap();
+    let rows: i64 = client
+        .journal
+        .db
+        .query_row(
+            "SELECT count(*) FROM reports WHERE receipt IS NOT NULL",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(rows, 2);
+    state.lock().unwrap().expire_after_issue = true;
+    client.start_renewal().unwrap();
+    client.drive(&mut consumer).await.unwrap();
+    assert!(client.pending().unwrap().is_some() && state.lock().unwrap().candidate.is_some());
+    client.drive(&mut consumer).await.unwrap();
+    assert!(client.pending().unwrap().is_none());
+    assert_eq!(
+        client.active().unwrap().unwrap().receipt.device,
+        renewed.receipt.device
+    );
+    let last_selection = consumer.0.clone();
+    {
+        let mut producer = state.lock().unwrap();
+        producer.trust.revision += 1;
+        producer.trust.keys[0].id = "replacement".into();
+        producer.fail_trust_ack = true;
+    }
+    assert!(client.drive(&mut consumer).await.is_err());
+    assert!(consumer.0.is_none());
     server.abort();
+    // Simulate a crash after durable invalidation but before the selected file was removed.
+    consumer.0 = last_selection;
+    drop(client);
+    let client = open();
+    assert!(client.drive(&mut consumer).await.is_err());
+    assert!(consumer.0.is_none());
     time.set(2_001_000_001);
     assert!(client.drive(&mut consumer).await.is_err());
     assert!(consumer.0.is_none());
@@ -377,6 +443,19 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         .unwrap()
         .effective_digest
         .is_none());
+    let op = Uuid::new_v4();
+    let recovery = client.prepare(op).unwrap();
+    let grant = wire::Grant {
+        operation_id: op,
+        device: renewed.receipt.device,
+        grant_id: Uuid::new_v4(),
+        expires_at: time.now().unwrap() + 3600,
+    };
+    let mut wrong = grant.clone();
+    wrong.device = rss_mdm_agent_wire::DeviceId::new_v4();
+    assert_eq!(client.import(wrong), Err(Error::Identity));
+    client.import(grant).unwrap();
+    assert_eq!(recovery.csr, client.prepare(op).unwrap().csr);
 }
 
 #[test]
@@ -544,5 +623,15 @@ fn field_locks_survive_disappearing_sources_and_reject_rollback_and_foreign_sign
     assert_eq!(
         run(&released, absent(), &json!({"managedFields":[]})).unwrap(),
         backend_config.content
+    );
+    let mut other = managed.clone();
+    other.id = Uuid::new_v4();
+    assert_eq!(
+        run(&released, snapshot(wrap(&other)), &published),
+        Err(Error::Unavailable)
+    );
+    assert_eq!(
+        run(&released, absent(), &published),
+        Err(Error::Unavailable)
     );
 }

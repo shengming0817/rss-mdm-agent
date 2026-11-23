@@ -70,6 +70,9 @@ impl PolicyConsumer for Machine {
     ) -> Result<Option<AccessConfiguration>, Error> {
         use platform_private_storage as fs;
         let active = self.root.join("selected-configuration.json");
+        if settings.is_none() && !active.try_exists()? {
+            return Ok(None);
+        }
         let bytes = serde_json::to_vec(&settings).map_err(|_| Error::Protocol)?;
         if fs::read(&active, 65536).ok().as_deref() != Some(&bytes) {
             let staged = self.root.join(format!("{}.pending", uuid::Uuid::new_v4()));

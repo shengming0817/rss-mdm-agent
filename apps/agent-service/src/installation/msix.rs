@@ -65,7 +65,7 @@ pub fn initialize() -> Result<Deployment, Error> {
     };
     let profile = match &old {
         Some(old) => LocalAccess::from_deployment(old),
-        None => super::lifecycle::initial_profile()?,
+        None => super::lifecycle::initial_profile(candidate.defaults.mdm.enabled())?,
     };
     let bytes = json(&candidate)?;
     let digest = hash(&bytes);

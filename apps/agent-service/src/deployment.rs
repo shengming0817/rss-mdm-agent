@@ -333,7 +333,7 @@ impl Deployment {
             Err(e) => return Err(e.into()),
         }
         #[cfg(target_os = "macos")]
-        crate::service::platform_sso::upgrade_preflight(self)?;
+        crate::service::platform_sso::upgrade_preflight(self, self.platform_sso.is_some())?;
 
         if root.join("execution-initialized").exists() && !root.join("execution.sqlite").exists() {
             return Err(Error::Storage);
