@@ -56,15 +56,31 @@ pub(crate) fn client_identity(
     cfg: &Config,
     identity: Option<Arc<CertifiedKey>>,
 ) -> Result<reqwest::Client, Error> {
+    transport(
+        cfg.ca_pem.as_deref(),
+        cfg.transport == Transport::Https,
+        cfg.limits.connect_timeout,
+        cfg.limits.read_timeout,
+        identity,
+    )
+}
+
+pub(crate) fn transport(
+    ca: Option<&[u8]>,
+    https: bool,
+    connect: std::time::Duration,
+    read: std::time::Duration,
+    identity: Option<Arc<CertifiedKey>>,
+) -> Result<reqwest::Client, Error> {
     let mut builder = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .no_proxy()
-        .connect_timeout(cfg.limits.connect_timeout)
-        .read_timeout(cfg.limits.read_timeout)
-        .https_only(cfg.transport == Transport::Https);
+        .connect_timeout(connect)
+        .read_timeout(read)
+        .https_only(https);
     let crypto = Arc::new(rustls::crypto::ring::default_provider());
     let mut roots = rustls::RootCertStore::empty();
-    if let Some(pem) = &cfg.ca_pem {
+    if let Some(pem) = ca {
         let text = std::str::from_utf8(pem).map_err(|_| Error::Configuration)?;
         let certificate =
             x509_cert::Certificate::from_pem(text).map_err(|_| Error::Configuration)?;
@@ -94,6 +110,36 @@ pub(crate) fn validity(
     now: i64,
     trust: &crate::trust::VerifiedTrust,
 ) -> Result<(i64, i64, rss_mdm_agent_wire::DeviceId), Error> {
+    if trust.document.purpose != rss_mdm_agent_wire::pki::Purpose::Agent
+        || cfg.service_id != trust.document.service_id
+        || cfg.tenant != trust.document.tenant
+    {
+        return Err(Error::Untrusted);
+    }
+    device_validity(chain, reference, provider, now, trust)
+}
+pub(crate) fn device_validity(
+    chain: &[String],
+    reference: &str,
+    provider: &impl IdentityProvider,
+    now: i64,
+    trust: &crate::trust::VerifiedTrust,
+) -> Result<(i64, i64, rss_mdm_agent_wire::DeviceId), Error> {
+    use rss_mdm_agent_wire::pki::Purpose;
+    let (subject, prefix) = match trust.document.purpose {
+        Purpose::Agent => (
+            "CN=rss-mdm-agent",
+            format!("urn:rss-mdm:agent:v1:{}:", trust.document.tenant),
+        ),
+        Purpose::DaDevice => (
+            "CN=rss-da-device",
+            format!(
+                "urn:rss:da:device:v1:{}:{}:",
+                trust.document.service_id, trust.document.tenant
+            ),
+        ),
+        _ => return Err(Error::Untrusted),
+    };
     use x509_cert::ext::pkix::{
         name::GeneralName, BasicConstraints, ExtendedKeyUsage, KeyUsage, KeyUsages, SubjectAltName,
     };
@@ -132,7 +178,7 @@ pub(crate) fn validity(
         || bc.1.path_len_constraint.is_some()
         || ku.1 != KeyUsage(KeyUsages::DigitalSignature.into())
         || eku.1 .0 != vec![der::asn1::ObjectIdentifier::new_unwrap("1.3.6.1.5.5.7.3.2")]
-        || t.subject.to_string() != "CN=rss-mdm-agent"
+        || t.subject.to_string() != subject
         || t.subject_public_key_info.algorithm.oid
             != der::asn1::ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.1")
     {
@@ -147,7 +193,6 @@ pub(crate) fn validity(
         [GeneralName::UniformResourceIdentifier(uri)] => uri.as_str(),
         _ => return Err(Error::Untrusted),
     };
-    let prefix = format!("urn:rss-mdm:agent:v1:{}:", cfg.tenant);
     let encoded = identity.strip_prefix(&prefix).ok_or(Error::Untrusted)?;
     let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(encoded)

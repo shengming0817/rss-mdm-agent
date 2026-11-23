@@ -47,6 +47,7 @@ mod config;
 mod content;
 mod transfer;
 pub use transfer::{TransferObservation, Transfers};
+pub mod da;
 mod native_content;
 /// Bounded verification of the standard native source documents, without execution authority.
 pub mod native_source;
