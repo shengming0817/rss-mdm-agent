@@ -12,6 +12,7 @@ pub(super) struct Pending {
     expected: Option<DeviceId>,
     csr: Option<String>,
     pub grant: Option<wire::Grant>,
+    issue_started: bool,
     candidate: Option<enroll::Candidate>,
     pub unknown: bool,
     pub issuance_id: Option<Uuid>,
@@ -39,6 +40,23 @@ impl<S: Credentials, C: Clock> Client<S, C> {
     pub(super) fn pending(&self) -> Result<Option<Pending>, Error> {
         Ok(read(&self.journal.db, "enrollment")?.flatten())
     }
+    /// An unsent grant can expire locally. Once dispatched, only the issuer can settle it.
+    pub(super) fn live_pending(&self) -> Result<Option<Pending>, Error> {
+        let Some(p) = self.pending()? else {
+            return Ok(None);
+        };
+        if !p.issue_started {
+            let now = self.now()?;
+            if p.grant
+                .as_ref()
+                .is_some_and(|grant| grant.expires_at <= now)
+            {
+                self.end_grant(&p, enroll::ErrorCode::GrantExpired)?;
+                return Ok(None);
+            }
+        }
+        Ok(Some(p))
+    }
     fn save(&self, p: &Pending) -> Result<(), Error> {
         write(&self.journal.db, "enrollment", &Some(p))
     }
@@ -46,7 +64,7 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         if operation.is_nil() {
             return Err(Error::Configuration);
         }
-        if let Some(p) = self.pending()? {
+        if let Some(p) = self.live_pending()? {
             if p.operation != operation || p.expected != expected {
                 return Err(Error::Conflict);
             }
@@ -64,6 +82,7 @@ impl<S: Credentials, C: Clock> Client<S, C> {
             expected,
             csr: None,
             grant: None,
+            issue_started: false,
             candidate: None,
             unknown: false,
             issuance_id: None,
@@ -82,15 +101,18 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         Ok(())
     }
     fn end_grant(&self, p: &Pending, reason: enroll::ErrorCode) -> Result<(), Error> {
-        let error = crate::identity::enrollment_error(reason);
         let tx = self.journal.db.unchecked_transaction()?;
-        write(&tx, &format!("registration/{}", p.operation), &(reason, p))?;
+        write(
+            &tx,
+            &format!("registration/{}", p.operation),
+            &(reason, &p.grant),
+        )?;
         let mut release: Vec<(String, bool)> = read(&tx, "release")?.unwrap_or_default();
         release.extend([(p.key(), true), (p.secret(), false)]);
         write(&tx, "release", &release)?;
         write(&tx, "enrollment", &None::<Pending>)?;
         tx.commit()?;
-        Err(error)
+        Ok(())
     }
     fn request(&self, p: &mut Pending) -> Result<wire::GrantRequest, Error> {
         let secret = self.secrets.create_secret(&p.secret())?;
@@ -142,11 +164,11 @@ impl<S: Credentials, C: Clock> Client<S, C> {
             if crate::store::encode(old)? != crate::store::encode(&grant)? {
                 return Err(Error::Conflict);
             }
-            return Ok(());
         }
-        if grant.expires_at <= self.now()? {
+        if !p.issue_started && grant.expires_at <= self.now()? {
             p.grant = Some(grant);
-            return self.end_grant(&p, enroll::ErrorCode::GrantExpired);
+            self.end_grant(&p, enroll::ErrorCode::GrantExpired)?;
+            return Err(Error::Expired);
         }
         p.grant = Some(grant);
         self.save(&p)
@@ -154,7 +176,9 @@ impl<S: Credentials, C: Clock> Client<S, C> {
     /// Reserve or resume a replacement credential for the active registration.
     pub fn start_renewal(&self) -> Result<Uuid, Error> {
         let active = self.active()?.ok_or(Error::Identity)?;
-        let operation = self.pending()?.map_or_else(Uuid::new_v4, |p| p.operation);
+        let operation = self
+            .live_pending()?
+            .map_or_else(Uuid::new_v4, |p| p.operation);
         self.begin(operation, Some(active.receipt.device))?;
         Ok(operation)
     }
@@ -216,6 +240,10 @@ impl<S: Credentials, C: Clock> Client<S, C> {
                 secret: self.secrets.resolve(&p.secret())?,
                 csr: p.csr.clone().ok_or(Error::Storage)?,
             };
+            if !p.issue_started {
+                p.issue_started = true;
+                self.save(&p)?;
+            }
             let candidate = match self
                 .exchange::<h::DaCertificate>(&http, None, Some(&request))
                 .await?
@@ -231,7 +259,8 @@ impl<S: Credentials, C: Clock> Client<S, C> {
                     enroll::ErrorCode::GrantExpired | enroll::ErrorCode::GrantRevoked
                         if progress.issuance_id.is_none() =>
                     {
-                        return self.end_grant(&p, fault.code);
+                        self.end_grant(&p, fault.code)?;
+                        return Err(crate::identity::enrollment_error(fault.code));
                     }
                     code => return Err(crate::identity::enrollment_error(code)),
                 },
@@ -271,7 +300,8 @@ impl<S: Credentials, C: Clock> Client<S, C> {
             Some(receipt) => receipt,
             None => {
                 if candidate.activate_before <= self.now()? {
-                    return self.end_grant(&p, enroll::ErrorCode::GrantExpired);
+                    self.end_grant(&p, enroll::ErrorCode::GrantExpired)?;
+                    return Err(Error::Expired);
                 }
                 let peer = self.http(Some((&key, &candidate.certificate_chain)))?;
                 self.call::<h::DaActivate>(

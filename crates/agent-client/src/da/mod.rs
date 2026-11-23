@@ -275,7 +275,8 @@ impl<S: Credentials, C: Clock> Client<S, C> {
     async fn maintain(&self, consumer: &mut impl PolicyConsumer) -> Result<(), Error> {
         let snapshot = consumer.managed_snapshot();
         self.check_local(&snapshot, consumer)?;
-        if self.active()?.is_none() && self.pending()?.is_none_or(|p| p.grant.is_none()) {
+        let pending = self.live_pending()?;
+        if self.active()?.is_none() && pending.is_none_or(|p| p.grant.is_none()) {
             return Ok(());
         }
         let pki = self.pki().await?;

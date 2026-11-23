@@ -318,14 +318,16 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         operation_id: id,
         grant_id: Uuid::new_v4(),
         device: rss_mdm_agent_wire::DeviceId::new_v4(),
-        expires_at: 2_000_010_000,
+        expires_at: 2_000_000_001,
     };
     state.lock().unwrap().grant = Some(grant.clone());
     first.import(grant.clone()).unwrap();
     assert!(first.drive(&mut consumer).await.is_err());
     assert!(state.lock().unwrap().registration.is_some());
     drop(first);
+    time.set(2_000_000_002);
     let second = open();
+    assert_eq!(second.prepare(Uuid::new_v4()).err(), Some(Error::Conflict));
     assert!(second.drive(&mut consumer).await.is_err());
     drop(second);
     let client = open();
@@ -388,7 +390,14 @@ fn expired_unsubmitted_grant_allows_new_authorization_without_reusing_its_key() 
         origin: "https://da.test".into(),
         ca_pem: String::from_utf8(fixture::ca()).unwrap(),
     };
-    let client = Client::open(&root.path, backend, Uuid::new_v4(), secrets.clone(), time).unwrap();
+    let client = Client::open(
+        &root.path,
+        backend,
+        Uuid::new_v4(),
+        secrets.clone(),
+        time.clone(),
+    )
+    .unwrap();
     let original = client.prepare(Uuid::new_v4()).unwrap();
     let expired = wire::Grant {
         grant_id: Uuid::new_v4(),
@@ -399,7 +408,17 @@ fn expired_unsubmitted_grant_allows_new_authorization_without_reusing_its_key() 
     assert_eq!(client.import(expired), Err(Error::Expired));
     client.release_settled().unwrap();
     assert!(client.prepare(original.operation_id).is_err());
-    assert!(client.prepare(Uuid::new_v4()).is_ok());
+    let next = client.prepare(Uuid::new_v4()).unwrap();
+    let valid = wire::Grant {
+        grant_id: Uuid::new_v4(),
+        operation_id: next.operation_id,
+        expires_at: 2_000_000_010,
+        device: rss_mdm_agent_wire::DeviceId::new_v4(),
+    };
+    client.import(valid).unwrap();
+    time.set(2_000_000_010);
+    let fresh = client.prepare(Uuid::new_v4()).unwrap();
+    assert_ne!(fresh.csr, next.csr);
 }
 #[test]
 fn field_locks_survive_disappearing_sources_and_reject_rollback_and_foreign_signatures() {
