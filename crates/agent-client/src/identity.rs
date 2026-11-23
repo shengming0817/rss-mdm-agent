@@ -121,13 +121,21 @@ pub(crate) fn enrollment_error(code: enroll::ErrorCode) -> Error {
 }
 /// Encode the fixed producer-compatible RSA PKCS#10 request using the platform signer.
 pub(crate) fn csr(provider: &impl IdentityProvider, reference: &str) -> Result<String, Error> {
+    csr_with_subject(provider, reference, Default::default())
+}
+
+pub(crate) fn csr_with_subject(
+    provider: &impl IdentityProvider,
+    reference: &str,
+    subject: x509_cert::name::Name,
+) -> Result<String, Error> {
     use base64::Engine;
     use der::{Decode, Encode};
     let key = provider.key(reference)?;
     let public = key.public_key().ok_or(Error::Identity)?;
     let info = x509_cert::request::CertReqInfo {
         version: x509_cert::request::Version::V1,
-        subject: Default::default(),
+        subject,
         public_key: spki::SubjectPublicKeyInfoOwned::from_der(public.as_ref())
             .map_err(|_| Error::Identity)?,
         attributes: Default::default(),

@@ -78,6 +78,7 @@ async fn endpoint(
             assert_eq!(req.grant_id, grant.grant_id);
             let csr =
                 x509_cert::request::CertReq::from_der(&STANDARD.decode(req.csr).unwrap()).unwrap();
+            assert_eq!(csr.info.subject.to_string(), "CN=rss-da-device");
             let san = format!(
                 "urn:rss:da:device:v1:{SERVICE_ID}:{tenant}:{}",
                 URL_SAFE_NO_PAD.encode(grant.device.to_string())

@@ -79,6 +79,7 @@ mod tests {
             let tmp = io.join(format!("{name}.staged"));
             files::write_new(&tmp, bytes).unwrap();
             files::publish_new(&tmp, &io.join(name)).unwrap();
+            std::fs::remove_file(tmp).unwrap();
         };
         publish(
             "request.json",

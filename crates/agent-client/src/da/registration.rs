@@ -94,7 +94,13 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         let secret = self.secrets.create_secret(&p.secret())?;
         if p.csr.is_none() {
             self.secrets.create_key(&p.key())?;
-            p.csr = Some(crate::identity::csr(&self.secrets, &p.key())?);
+            p.csr = Some(crate::identity::csr_with_subject(
+                &self.secrets,
+                &p.key(),
+                "CN=rss-da-device"
+                    .parse()
+                    .map_err(|_| Error::Configuration)?,
+            )?);
             self.save(p)?;
         }
         Ok(wire::GrantRequest {
