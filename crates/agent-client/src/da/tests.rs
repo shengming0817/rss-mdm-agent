@@ -46,6 +46,28 @@ struct Server {
     lose_renewal_reply: bool,
     expire_after_issue: bool,
 }
+fn account_event_response(s: &mut Server, input: Value) -> Response {
+    s.deliveries += 1;
+    let event: wire::AccountEvent = serde_json::from_value(input.clone()).unwrap();
+    assert_eq!(event.attempt_id, s.offer.attempt_id);
+    if let Some(old) = s.account_event.as_ref() {
+        assert_eq!(old, &input);
+    } else {
+        s.account_event = Some(input);
+        return (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"code":"service_unavailable"})),
+        )
+            .into_response();
+    }
+    Json(wire::AccountSettlement {
+        event_id: event.event_id,
+        issued_expires_at: None,
+        permit: None,
+        receipt: None,
+    })
+    .into_response()
+}
 async fn endpoint(
     State(state): State<Arc<Mutex<Server>>>,
     ConnectInfo(peer): ConnectInfo<TlsIdentity>,
@@ -113,25 +135,7 @@ async fn endpoint(
                 "account-operations/next" => json!(s.offer),
                 "credential-operations/next" => Value::Null,
                 path if path == format!("account-operations/{}/events", s.offer.task_id) => {
-                    s.deliveries += 1;
-                    let event: wire::AccountEvent = serde_json::from_value(input.clone()).unwrap();
-                    assert_eq!(event.attempt_id, s.offer.attempt_id);
-                    if let Some(old) = s.account_event.as_ref() {
-                        assert_eq!(old, &input);
-                    } else {
-                        s.account_event = Some(input);
-                        return (
-                            axum::http::StatusCode::SERVICE_UNAVAILABLE,
-                            Json(json!({"code":"service_unavailable"})),
-                        )
-                            .into_response();
-                    }
-                    json!(wire::AccountSettlement {
-                        event_id: event.event_id,
-                        issued_expires_at: None,
-                        permit: None,
-                        receipt: None
-                    })
+                    return account_event_response(&mut s, input);
                 }
                 "configuration-trust" => json!(s.trust),
                 "configuration-trust/acknowledgements" => {

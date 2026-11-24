@@ -602,10 +602,10 @@ impl<S: Credentials, C: Clock> Client<S, C> {
             write(&tx, &key, &(authority.revision, digest))?;
             if let Some(held) = locks.get_mut(&authority.policy) {
                 held.retain(|field| {
-                    !authority
+                    authority
                         .fields
                         .get(field)
-                        .is_some_and(|grant| !grant.authorized)
+                        .is_none_or(|grant| grant.authorized)
                 });
             }
         }
