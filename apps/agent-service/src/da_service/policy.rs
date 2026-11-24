@@ -82,7 +82,7 @@ impl PolicyConsumer for Machine {
     ) -> Result<Option<AccessConfiguration>, Error> {
         #[cfg(windows)]
         {
-            self.local_rss=settings.is_some_and(|target|target.settings.enabled && matches!(&target.settings.windows, rss_mdm_agent_wire::runtime::AccessWindowsConfiguration::RssFactor{accounts} if accounts.contains(&rss_mdm_agent_wire::runtime::AccessWindowsKind::Local)));
+            self.local_rss = false;
         }
         use platform_private_storage as fs;
         let active = self.root.join("selected-configuration.json");
@@ -103,6 +103,15 @@ impl PolicyConsumer for Machine {
         };
         if !matches!(self.state, SourceState::Missing | SourceState::Present) {
             return Ok(None);
+        }
+        #[cfg(windows)]
+        {
+            self.local_rss = target.settings.enabled
+                && target
+                    .settings
+                    .windows
+                    .accounts()
+                    .contains(&rss_mdm_agent_wire::runtime::AccessWindowsKind::Local);
         }
         #[cfg(target_os = "macos")]
         let confirmed =

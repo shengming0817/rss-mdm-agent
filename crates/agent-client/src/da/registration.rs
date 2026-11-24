@@ -21,10 +21,10 @@ pub(super) struct Pending {
     pub issuance_id: Option<Uuid>,
 }
 impl Pending {
-    pub(super) fn key(&self) -> String {
+    fn key(&self) -> String {
         format!("da-key-{}", self.operation)
     }
-    pub(super) fn secret(&self) -> String {
+    fn secret(&self) -> String {
         format!("da-secret-{}", self.operation)
     }
 }

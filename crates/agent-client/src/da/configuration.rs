@@ -571,7 +571,10 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         Ok(())
     }
     /// Record all applicable issuers atomically. Absence does not release an existing lock.
-    pub(super) fn observe_authorities(&self, authorities: &[wire::PolicyAuthority]) -> Result<(), Error> {
+    pub(super) fn observe_authorities(
+        &self,
+        authorities: &[wire::PolicyAuthority],
+    ) -> Result<(), Error> {
         let tx = self.journal.db.unchecked_transaction()?;
         let mut locks: Locks = read(&tx, "locks")?.unwrap_or_default();
         let mut seen = BTreeSet::new();

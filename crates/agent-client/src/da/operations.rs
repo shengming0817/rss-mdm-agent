@@ -45,6 +45,18 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         let Some(active) = self.active()? else {
             return Ok(None);
         };
+        if let Some(original) = read::<wire::RevocationReceipt>(&self.journal.db, "revocation")? {
+            let r = &active.receipt;
+            if (
+                original.service_id,
+                original.tenant,
+                original.device,
+                original.credential,
+            ) == (r.service_id, r.tenant, r.device, r.credential)
+            {
+                return Ok(Some(original));
+            }
+        }
         let http = self.http(Some((&active.key, &active.chain)))?;
         let response = Call::<h::DaRevocation>::new(&http, &self.origin, &[], None, None)?
             .timeout(Duration::from_secs(5))
@@ -98,12 +110,11 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         let tx = self.journal.db.unchecked_transaction()?;
         let mut release: Vec<(String, bool)> = read(&tx, "release")?.unwrap_or_default();
         release.push((active.key, true));
-        if let Some(p) = self.pending()? {
-            release.push((p.secret(), false));
-            release.push((p.key(), true));
-        }
         write(&tx, "release", &release)?;
-        tx.execute("DELETE FROM state WHERE name IN ('active','enrollment','applied-proof','effective-digest')",[])?;
+        tx.execute(
+            "DELETE FROM state WHERE name IN ('active','applied-proof','effective-digest')",
+            [],
+        )?;
         tx.commit()?;
         self.release_settled()
     }
@@ -141,6 +152,30 @@ impl Operations<'_> {
     }
     fn load<T: DeserializeOwned>(&self, item: &str) -> Result<Option<T>, Error> {
         read(self.db, &self.key(item))
+    }
+    fn finish_replay<T: Serialize, U>(
+        &self,
+        key: &str,
+        event: &T,
+        result: Result<U, Error>,
+    ) -> Result<(), Error> {
+        match result {
+            Ok(_) => Ok(()),
+            Err(reason @ (Error::Denied | Error::Conflict | Error::NotFound)) => {
+                // Keep the original rejected event. A withdrawn attempt must not starve cleanup.
+                let tx = self.db.unchecked_transaction()?;
+                let digest = crate::store::hash(&crate::store::encode(event)?);
+                write(
+                    &tx,
+                    &self.key(&format!("rejected/{key}/{digest}")),
+                    &(event, reason),
+                )?;
+                tx.execute("DELETE FROM state WHERE name=?1", [self.key(key)])?;
+                tx.commit()?;
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
     }
     /// Journal a server offer before the received event can be sent.
     pub async fn account(&self) -> Result<Option<wire::AccountOffer>, Error> {
@@ -190,7 +225,7 @@ impl Operations<'_> {
             definition_digest: o.definition_digest,
             event,
         };
-        self.save("account-pending", &Some((o.task_id, &body)))?;
+        self.save("account-pending", &(o.task_id, &body))?;
         self.send_account(o.task_id, &body).await
     }
     async fn send_account(
@@ -220,7 +255,11 @@ impl Operations<'_> {
     /// A previously sent result can settle even after it disappears from the claim queue.
     pub async fn replay_account(&self) -> Result<(), Error> {
         if let Some((task, body)) = self.load::<(Uuid, wire::AccountEvent)>("account-pending")? {
-            self.send_account(task, &body).await?;
+            self.finish_replay(
+                "account-pending",
+                &(task, &body),
+                self.send_account(task, &body).await,
+            )?;
         }
         Ok(())
     }
@@ -290,7 +329,11 @@ impl Operations<'_> {
         if let Some((id, event)) =
             self.load::<(Uuid, wire::CredentialEvent)>("credential-pending")?
         {
-            self.send_credential(id, &event).await?;
+            self.finish_replay(
+                "credential-pending",
+                &(id, &event),
+                self.send_credential(id, &event).await,
+            )?;
         }
         Ok(())
     }
