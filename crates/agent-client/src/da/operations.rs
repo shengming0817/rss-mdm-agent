@@ -13,6 +13,17 @@ pub enum RecoveryUseDisposition {
     RetryLater,
 }
 
+/// The original server event authorizing retirement of one exact DA attempt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AccountCompletion {
+    /// The server settled non-execution of this issued permit, without renewal.
+    NotStarted {
+        /// Expiry named by the original non-execution event.
+        expires_at: i64,
+    },
+    /// A native result or observed absence was accepted.
+    Observed,
+}
 /// An mTLS session bound to the current registration and its single writer.
 pub struct Operations<'a> {
     http: reqwest::Client,
@@ -301,23 +312,32 @@ impl Operations<'_> {
             )),
             &ack,
         )?;
-        if matches!(
-            &body.event,
-            wire::AccountObservation::CreateAbsent { .. }
-                | wire::AccountObservation::Result(w::AccessResult {
-                    effect: w::AccessEffect::Applied { .. } | w::AccessEffect::Unbound { .. },
-                    ..
+        let completion = match &body.event {
+            wire::AccountObservation::NotStarted { expires_at }
+                if ack.permit.is_none() && ack.issued_expires_at.is_none() =>
+            {
+                Some(AccountCompletion::NotStarted {
+                    expires_at: *expires_at,
                 })
-        ) || matches!(body.event, wire::AccountObservation::NotStarted { .. })
-            && ack.permit.is_none()
-            && ack.issued_expires_at.is_none()
-        {
+            }
+            wire::AccountObservation::CreateAbsent { .. }
+            | wire::AccountObservation::Result(w::AccessResult {
+                effect: w::AccessEffect::Applied { .. } | w::AccessEffect::Unbound { .. },
+                ..
+            }) => Some(AccountCompletion::Observed),
+            _ => None,
+        };
+        if let Some(completion) = completion {
             write(
                 &tx,
                 &self.key("last-account-settlement"),
                 &(task, body.attempt_id, &ack),
             )?;
-            write(&tx, &self.key("account-cleanup"), &(task, body.attempt_id))?;
+            write(
+                &tx,
+                &self.key("account-cleanup"),
+                &(task, body.attempt_id, completion),
+            )?;
         }
         tx.execute(
             "DELETE FROM state WHERE name=?1",
@@ -471,11 +491,11 @@ impl Operations<'_> {
     /// Resume local retirement only from a durably accepted original event.
     pub fn retire_account(
         &self,
-        clean: impl FnOnce(Uuid, Uuid) -> Result<(), Error>,
+        clean: impl FnOnce(Uuid, Uuid, AccountCompletion) -> Result<(), Error>,
     ) -> Result<(), Error> {
         let key = self.key("account-cleanup");
-        if let Some((id, attempt)) = read(self.db, &key)? {
-            clean(id, attempt)?;
+        if let Some((id, attempt, completion)) = read(self.db, &key)? {
+            clean(id, attempt, completion)?;
             let tx = self.db.unchecked_transaction()?;
             self.forget_account(&tx, id, attempt)?;
             tx.execute("DELETE FROM state WHERE name=?1", [key])?;

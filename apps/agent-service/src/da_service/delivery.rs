@@ -9,12 +9,7 @@ use rss_mdm_agent_wire::{
     runtime as w,
 };
 
-#[derive(Default, serde::Serialize, serde::Deserialize)]
-struct Attempt {
-    renew_from: Option<i64>,
-    started: bool,
-    permit: Option<w::AccessTaskSpec>,
-}
+use super::attempt::{self, Attempt};
 fn now() -> Result<i64, Error> {
     Ok((crate::wall()? / 1000) as i64)
 }
@@ -84,22 +79,16 @@ async fn account(
     enable: bool,
 ) -> Result<(), Error> {
     ops.replay_account().await?;
-    ops.retire_account(|id, attempt| {
-        let key = format!("{id}.{attempt}.da-attempt");
-        if let Some(record) = state::read_optional::<Attempt>(root, &key)? {
-            let t = record.permit.ok_or(Error::Storage)?;
-            if (t.task_id, t.attempt_id) != (id, attempt) {
-                return Err(Error::Identity);
-            }
-            access::retire_native(root, d.installation_id, Channel::Da, &t)?;
-            state::remove(root, &key)?;
-        }
-        Ok(())
+    ops.retire_account(|id, sequence, completion| {
+        attempt::retire(root, id, sequence, completion, |t| {
+            access::retire_native(root, d.installation_id, Channel::Da, t)
+        })?;
+        login.withdraw(id, sequence)
     })?;
     let Some(o) = ops.account(login.confirmed()?).await? else {
         return Ok(());
     };
-    let key = format!("{}.{}.da-attempt", o.task_id, o.attempt_id);
+    let key = attempt::key(o.task_id, o.attempt_id);
     let mut attempt: Attempt = state::read_optional(root, &key)?.unwrap_or_default();
     let event = attempt
         .renew_from

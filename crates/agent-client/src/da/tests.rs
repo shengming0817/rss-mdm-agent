@@ -30,6 +30,7 @@ impl Credentials for Secrets {
 struct Server {
     clock: Time,
     account_closed: bool,
+    issued_until: Option<i64>,
     offer: wire::AccountOffer,
     account_event: Option<Value>,
     deliveries: usize,
@@ -59,7 +60,9 @@ fn account_event_response(s: &mut Server, input: Value) -> Response {
         )
             .into_response();
     }
-    if matches!(event.event, wire::AccountObservation::NotStarted { .. }) {
+    if let wire::AccountObservation::NotStarted { expires_at } = event.event {
+        assert_eq!(s.issued_until, Some(expires_at));
+        assert!(s.clock.now().unwrap() > expires_at);
         return Json(wire::AccountSettlement {
             event_id: event.event_id,
             issued_expires_at: None,
@@ -71,6 +74,7 @@ fn account_event_response(s: &mut Server, input: Value) -> Response {
     if let Some(old) = s.account_event.as_ref() {
         assert_eq!(old, &input);
     } else {
+        s.issued_until = Some(s.clock.now().unwrap() + 300);
         s.account_event = Some(input);
         return (
             axum::http::StatusCode::SERVICE_UNAVAILABLE,
@@ -80,7 +84,7 @@ fn account_event_response(s: &mut Server, input: Value) -> Response {
     }
     Json(wire::AccountSettlement {
         event_id: event.event_id,
-        issued_expires_at: None,
+        issued_expires_at: s.issued_until,
         permit: None,
         receipt: None,
     })
@@ -374,9 +378,11 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         }],
     };
     let time = Time(Arc::new(AtomicI64::new(2_000_000_000)));
+    let account_clock = Time(Arc::new(AtomicI64::new(time.now().unwrap())));
     let state = Arc::new(Mutex::new(Server {
-        clock: time.clone(),
+        clock: account_clock.clone(),
         account_closed: false,
+        issued_until: None,
         offer: wire::AccountOffer {
             operation_id: Uuid::new_v4(),
             task_id: Uuid::new_v4(),
@@ -481,6 +487,8 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         .await
         .is_err());
     assert_eq!(state.lock().unwrap().deliveries, 1);
+    let expiry = state.lock().unwrap().issued_until.unwrap();
+    account_clock.set(expiry + 1);
     drop(ops);
     drop(client);
     let client = open();
@@ -489,6 +497,12 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
     assert_eq!(state.lock().unwrap().deliveries, 2);
     ops.replay_account().await.unwrap();
     assert_eq!(state.lock().unwrap().deliveries, 2);
+    let expired = ops
+        .account_event(&offer, wire::AccountObservation::Received)
+        .await
+        .unwrap();
+    assert!(expired.permit.is_none());
+    assert_eq!(expired.issued_expires_at, Some(expiry));
     let mut later = offer.clone();
     later.task_id = Uuid::new_v4();
     later.attempt_id = Uuid::new_v4();
@@ -506,19 +520,21 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
     let ack = ops
         .account_event(
             &offer,
-            wire::AccountObservation::NotStarted {
-                expires_at: time.now().unwrap() - 1,
-            },
+            wire::AccountObservation::NotStarted { expires_at: expiry },
         )
         .await
         .unwrap();
     assert!(ack.permit.is_none() && ack.issued_expires_at.is_none());
     state.lock().unwrap().offer = later.clone();
     assert_eq!(
-        ops.retire_account(|_, _| Err(Error::Storage)),
+        ops.retire_account(|_, _, _| Err(Error::Storage)),
         Err(Error::Storage)
     );
-    ops.retire_account(|task, attempt| {
+    ops.retire_account(|task, attempt, completion| {
+        assert_eq!(
+            completion,
+            AccountCompletion::NotStarted { expires_at: expiry }
+        );
         assert_eq!((task, attempt), (offer.task_id, offer.attempt_id));
         Ok(())
     })
@@ -558,7 +574,7 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         operation_id: Uuid::new_v4(),
         material: Uuid::new_v4(),
         version: 1,
-        used_at: time.now().unwrap() + 301,
+        used_at: account_clock.now().unwrap() + 301,
     };
     assert_eq!(
         ops.recovery_use(&usage).await.unwrap(),

@@ -58,6 +58,7 @@ struct Offer {
     password: Option<Zeroizing<String>>,
 }
 struct Check {
+    mdm_status_tried: bool,
     revision: u64,
     started: Instant,
     result: mpsc::Receiver<Result<(), Error>>,
@@ -161,11 +162,21 @@ impl Login {
             })
             .map_err(|_| Error::Capacity)?;
         s.checking = Some(Check {
+            mdm_status_tried: false,
             revision: s.revision,
             started: Instant::now(),
             result: rx,
         });
         Ok(false)
+    }
+    pub(super) fn first_status_probe(&self) -> bool {
+        let Ok(mut s) = self.state.lock() else {
+            return false;
+        };
+        let revision = s.revision;
+        s.checking.as_mut().is_some_and(|check| {
+            check.revision == revision && !std::mem::replace(&mut check.mdm_status_tried, true)
+        })
     }
     fn store(&self) -> Result<Store, Error> {
         Store::open(

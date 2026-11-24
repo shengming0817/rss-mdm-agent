@@ -68,7 +68,7 @@ impl Backend {
 mod configuration;
 mod operations;
 mod registration;
-pub use operations::{verify_employee, Operations, RecoveryUseDisposition};
+pub use operations::{verify_employee, AccountCompletion, Operations, RecoveryUseDisposition};
 pub use registration::validate_keys;
 mod storage;
 use crate::{

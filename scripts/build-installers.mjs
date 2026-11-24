@@ -83,16 +83,23 @@ const desktopConfiguration =
   (defaults.mdm?.state === "enabled" ? organizationConfiguration(root) : null);
 if (desktopConfiguration?.ca_pem !== undefined)
   desktopConfiguration.ca_pem = publicCa(desktopConfiguration.ca_pem);
-if (
-  desktopConfiguration &&
-  defaults.mdm?.state === "enabled" &&
-  desktopConfiguration.tenant?.toLowerCase() !== defaults.mdm.backend.tenant
-)
-  throw Error("Desktop and Agent must belong to the same tenant");
 const env = { ...process.env };
 delete env.RSS_BUILD_MDM_ORGANIZATION;
-if (desktopConfiguration)
+delete env.RSS_BUILD_EMPLOYEE_PORTAL;
+if (desktopConfiguration) {
+  const product = defaults.mdm?.state === "enabled" ? "mdm" : "da";
+  const owner = defaults[product].backend;
+  if (desktopConfiguration.tenant?.toLowerCase() !== owner.tenant)
+    throw Error("Desktop and browser issuer must belong to the same tenant");
   env.RSS_BUILD_MDM_ORGANIZATION = JSON.stringify(desktopConfiguration);
+  env.RSS_BUILD_EMPLOYEE_PORTAL = JSON.stringify({
+    product,
+    instance: owner.instance,
+    tenant: owner.tenant,
+    origin: desktopConfiguration.origin,
+    ca_pem: desktopConfiguration.ca_pem,
+  });
+}
 // The outer build runner retains the worktree/target locks for this entire package build.
 // pnpm descendants do not inherit their descriptors and must not claim a borrowed lease.
 delete env._AGENT_BUILD_LEASE;
