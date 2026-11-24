@@ -609,7 +609,7 @@ Windows Hello 和 macOS 平台登录因子由系统管理。
 
 macOS 的「修复本人注册」沿用原绑定和注册流程。管理员可从 `platform-sso inspect` 读取当前账号、签名定义摘要和本地效果，由已有部署观察发布者签发。账号、登录配置或原生注册尚待确认时，应用效果留空。
 
-macOS arm64 的 Safari 员工应用入口使用同一安装器的组织输入。部署方在顶层 `employeeApplication` 提供正式的 `relyingParty` 和固定 HTTPS `launchUrl`，并配置员工浏览器组织。已接入的应用在原浏览器事务中发起 Broker 挑战。用于该组织的 Apple SSO 配置需要覆盖其租户的 `/device-access/broker/complete` URL。应用向该地址发出原操作、挑战和 nonce 的完成请求，以空签名及空 accessToken 请求本机证明。用户先在桌面选择本人的已应用绑定；扩展需要当前 Secure Enclave 用户注册和 LoginManager 凭据。桌面选择有效 120 秒，退出或切换登录会话会使其失效。应用按自己的回调合同接收一次性交接，由其后端领取并复核会话。
+macOS arm64 的 Safari 员工应用入口使用同一安装器的组织输入。双模块共存时以顶层 `employeeIssuer`（`da` 或 `mdm`）选择签发方；DA 门户使用该模块受保护的浏览器源和 CA。部署方在顶层 `employeeApplication` 提供正式的 `relyingParty` 和固定 HTTPS `launchUrl`，并配置员工浏览器组织。已接入的应用在原浏览器事务中发起 Broker 挑战。用于该组织的 Apple SSO 配置需要覆盖其租户的 `/device-access/broker/complete` URL。应用向该地址发出原操作、挑战和 nonce 的完成请求，以空签名及空 accessToken 请求本机证明。用户先在桌面选择本人的已应用绑定；扩展需要当前 Secure Enclave 用户注册和 LoginManager 凭据。桌面选择有效 120 秒，退出或切换登录会话会使其失效。应用按自己的回调合同接收一次性交接，由其后端领取并复核会话。
 
 | 配置 | 本机核对入口 | 本次真实验收 |
 | --- | --- | --- |

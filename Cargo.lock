@@ -4810,6 +4810,7 @@ dependencies = [
  "execution-sqlite",
  "futures-util",
  "installation-security",
+ "jsonschema",
  "libc",
  "macos-passkey-provider",
  "native-process",

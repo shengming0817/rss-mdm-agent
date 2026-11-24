@@ -49,6 +49,9 @@ impl AccountRoutes {
         self.da.as_ref() == Some(generation)
             || self.mdm.as_ref().is_some_and(|(_, g)| g == generation)
     }
+    fn employee_route(&self, generation: &execution_contract::Id) -> bool {
+        self.da.as_ref() == Some(generation)
+    }
     fn reserve(&mut self) -> Result<u64, Error> {
         self.issued = self.issued.checked_add(1).ok_or(Error::Capacity)?;
         Ok(self.issued)
@@ -296,7 +299,7 @@ impl Endpoint {
             request,
             Request::PlatformSso { .. }
                 | Request::DeviceAccess {
-                    input: execution_ipc::device_access::Operation::MacStatus {},
+                    input: AccountOp::MacStatus {} | AccountOp::OpenApplication { .. },
                     ..
                 }
         ) {
@@ -352,18 +355,34 @@ impl Endpoint {
         let (Some(subject), Ok(binding)) = (subject, peer.session_binding()) else {
             return Some(Err(Reply::Rejected));
         };
-        if let Request::DeviceAccess {
-            context,
-            input:
-                AccountOp::Tasks {} | AccountOp::OwnBindings {} | AccountOp::OpenApplication { .. },
-            ..
-        } = request
-        {
-            if d.modules.mdm.enabled() {
-                match self.fence.routes.lock() {
-                    Ok(routes) if !routes.targets(&context.generation) => return None,
+        if let Request::DeviceAccess { context, input, .. } = request {
+            if d.modules.mdm.enabled()
+                && matches!(
+                    input,
+                    AccountOp::Tasks {}
+                        | AccountOp::OwnBindings {}
+                        | AccountOp::OpenApplication { .. }
+                )
+            {
+                let tasks = matches!(input, AccountOp::Tasks {});
+                let active = match self.fence.routes.lock() {
+                    Ok(routes) if tasks => routes.targets(&context.generation),
+                    Ok(routes) => routes.employee_route(&context.generation),
                     Err(_) => return Some(Err(Reply::Unavailable)),
-                    _ => (),
+                };
+                if !active
+                    || (!tasks
+                        && !crate::da_service::status(d)
+                            .ok()
+                            .flatten()
+                            .is_some_and(|s| s.credential == da::RegistrationState::Registered))
+                {
+                    // The PSSO owner was already resolved for a launch. No other issuer can sign for it.
+                    return if matches!(input, AccountOp::OpenApplication { .. }) {
+                        Some(Err(Reply::Unavailable))
+                    } else {
+                        None
+                    };
                 }
             }
         }
@@ -1246,10 +1265,12 @@ mod tests {
         routes.mdm_reply(delayed, &old, &bound(&old)).unwrap();
         assert!(routes.targets(&current));
         assert!(!routes.targets(&old));
+        assert!(!routes.employee_route(&current));
         assert!(routes.mdm_reply(rejected, &old, &bound(&current)).is_err());
         assert!(routes.targets(&current));
         routes.da = Some(old.clone());
         assert!(routes.targets(&current) && routes.targets(&old));
+        assert!(routes.employee_route(&old) && !routes.employee_route(&current));
     }
 
     #[test]

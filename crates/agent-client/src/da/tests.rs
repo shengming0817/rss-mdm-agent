@@ -1042,11 +1042,11 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
     time.set(renewed.validity.1 + 1);
     assert!(client.drive(&mut consumer).await.is_err());
     assert!(consumer.0.is_none());
-    assert!(inspect(&root.path, &backend, install, time.now().unwrap())
+    let status = inspect(&root.path, &backend, install, time.now().unwrap())
         .unwrap()
-        .unwrap()
-        .effective_digest
-        .is_none());
+        .unwrap();
+    assert!(status.effective_digest.is_none());
+    assert!(status.credential == RegistrationState::Expired);
     let op = Uuid::new_v4();
     client.prepare(op, Ok).unwrap();
     let grant = wire::Grant {

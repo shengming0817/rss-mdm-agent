@@ -991,6 +991,7 @@ export function checkTree(treeRoot = root, executable) {
         'execution-app = { path = "../../../crates/execution-app", features = ["test-support"] }',
         'execution-ipc = { path = "../../../crates/execution-ipc" }',
         'execution-interaction = { path = "../../../crates/execution-interaction" }',
+        "[dev-dependencies] jsonschema.workspace = true",
         "rusqlite.workspace = true",
         'execution-sqlite = { path = "../../../crates/execution-sqlite", features = ["test-support"] }',
         'execution-mcp = { path = "../../../crates/execution-mcp" }',
@@ -1030,23 +1031,25 @@ export function checkTree(treeRoot = root, executable) {
       ],
     ],
   ]) {
-    let dependencySection = false;
+    let section = "";
     const dependencies = [];
     for (const line of read(path)
       .split("\n")
       .map((s) => s.replace(/#.*$/, "").trim())
       .filter(Boolean)) {
       if (line.startsWith("[")) {
-        dependencySection = /dependencies/.test(line);
+        section = line;
         if (/patch|replace/.test(line))
           errors.push(`${path}: unexpected host dependency override`);
       } else if (
-        dependencySection &&
+        /dependencies/.test(section) &&
         (path !== "Cargo.toml" || /^tauri(?:-build)?\s*=/.test(line))
       ) {
         // Root workspace dependencies are shared declarations. Only the two
         // inherited desktop dependencies belong to this presentation boundary.
-        dependencies.push(line);
+        dependencies.push(
+          /^jsonschema\b/.test(line) ? `${section} ${line}` : line,
+        );
       }
     }
     if (

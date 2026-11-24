@@ -77,6 +77,7 @@ if (
         "modules",
         "desktop",
         "employeeApplication",
+        "employeeIssuer",
         "recoveryReturnTarget",
       ].includes(key),
   ) ||
@@ -87,10 +88,31 @@ const defaults = organization.modules;
 const desktopConfiguration =
   organization.desktop ??
   (defaults.mdm?.state === "enabled" ? organizationConfiguration(root) : null);
+const mdmEnabled = defaults.mdm?.state === "enabled";
+const daEnabled = defaults.da?.state === "enabled";
+const product = organization.employeeIssuer ?? (mdmEnabled ? "mdm" : "da");
+if (
+  !["mdm", "da"].includes(product) ||
+  (organization.employeeIssuer !== undefined &&
+    defaults[product]?.state !== "enabled")
+)
+  throw Error("Employee issuer must select an enabled DA or MDM module");
+if (
+  mdmEnabled &&
+  daEnabled &&
+  (organization.employeeApplication || organization.recoveryReturnTarget) &&
+  !organization.employeeIssuer
+)
+  throw Error("Select the employee issuer for the coinstalled modules");
+const owner = defaults[product]?.backend;
+const daBrowser = product === "da" ? owner?.browser : null;
+const issuer = daBrowser
+  ? { ...daBrowser, tenant: owner.tenant }
+  : desktopConfiguration;
 const recoveryReturnTarget = organization.recoveryReturnTarget;
 if (
   recoveryReturnTarget !== undefined &&
-  (!desktopConfiguration ||
+  (!issuer ||
     typeof recoveryReturnTarget !== "string" ||
     !/^[a-zA-Z0-9_.-]{1,128}$/.test(recoveryReturnTarget))
 ) {
@@ -101,7 +123,7 @@ if (
 const application = organization.employeeApplication;
 if (application !== undefined) {
   if (
-    !desktopConfiguration ||
+    !issuer ||
     !application ||
     typeof application !== "object" ||
     Object.keys(application).some(
@@ -120,28 +142,31 @@ if (application !== undefined) {
     url.protocol !== "https:" ||
     url.username ||
     url.password ||
-    url.search ||
-    url.hash
+    url.href.includes("?") ||
+    url.href.includes("#") ||
+    url.href.length > 2048
   )
     throw Error("Invalid employee application launch URL");
+  application.launchUrl = url.href;
 }
 if (desktopConfiguration?.ca_pem !== undefined)
   desktopConfiguration.ca_pem = publicCa(desktopConfiguration.ca_pem);
 const env = { ...process.env };
 delete env.RSS_BUILD_MDM_ORGANIZATION;
 delete env.RSS_BUILD_EMPLOYEE_PORTAL;
-if (desktopConfiguration) {
-  const product = defaults.mdm?.state === "enabled" ? "mdm" : "da";
-  const owner = defaults[product].backend;
-  if (desktopConfiguration.tenant?.toLowerCase() !== owner.tenant)
-    throw Error("Desktop and browser issuer must belong to the same tenant");
+if (desktopConfiguration)
   env.RSS_BUILD_MDM_ORGANIZATION = JSON.stringify(desktopConfiguration);
+if (issuer) {
+  if (!owner || issuer.tenant?.toLowerCase() !== owner.tenant)
+    throw Error(
+      "Employee browser issuer must belong to the selected module tenant",
+    );
   env.RSS_BUILD_EMPLOYEE_PORTAL = JSON.stringify({
     product,
     instance: owner.instance,
     tenant: owner.tenant,
-    origin: desktopConfiguration.origin,
-    ca_pem: desktopConfiguration.ca_pem,
+    origin: issuer.origin,
+    ca_pem: issuer.ca_pem == null ? undefined : publicCa(issuer.ca_pem),
     application,
     recovery_return_target: recoveryReturnTarget,
   });

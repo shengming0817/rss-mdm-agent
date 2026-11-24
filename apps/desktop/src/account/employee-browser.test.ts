@@ -91,3 +91,78 @@ it.each(["agent", "da"])(
     document.body.replaceChildren();
   },
 );
+
+it("uses the binary WebAuthn API when the JSON convenience methods are absent", async () => {
+  document.body.replaceChildren();
+  Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+    configurable: true,
+    value: vi.fn(),
+  });
+  const get = vi.fn(async ({ publicKey }) => {
+    expect(Array.from(publicKey.challenge)).toEqual([251, 255]);
+    expect(Array.from(publicKey.allowCredentials[0].id)).toEqual([1, 2]);
+    return {
+      type: "public-key",
+      id: "AQI",
+      rawId: new Uint8Array([1, 2]),
+      response: {
+        clientDataJSON: new Uint8Array([3]),
+        authenticatorData: new Uint8Array([4]),
+        signature: new Uint8Array([251, 255]),
+        userHandle: null,
+      },
+      getClientExtensionResults: () => ({}),
+    };
+  });
+  const finish = vi.fn();
+  const fetcher = async (url: string, options: RequestInit) => {
+    if (url.endsWith("/session"))
+      return Response.json({
+        identity: { principalId: "alice" },
+        csrfToken: "csrf",
+      });
+    if (url.endsWith("/step-up"))
+      return Response.json({
+        id: "challenge",
+        options: {
+          publicKey: {
+            challenge: "-_8",
+            allowCredentials: [{ type: "public-key", id: "AQI" }],
+          },
+        },
+      });
+    expect(url.endsWith("/webauthn/authenticate/finish")).toBe(true);
+    finish(JSON.parse(String(options.body)));
+    return Response.json({ expiresAt: 3 });
+  };
+  await new Function(
+    "window",
+    "document",
+    "location",
+    "fetch",
+    "navigator",
+    "return (" + source + ")",
+  )(window, document, { origin }, fetcher, { credentials: { get } })({
+    ...input,
+    returnTarget: null,
+  });
+  document.querySelector("button")!.click();
+  await vi.waitFor(() =>
+    expect(finish).toHaveBeenCalledWith({
+      id: "challenge",
+      response: {
+        type: "public-key",
+        id: "AQI",
+        rawId: "AQI",
+        response: {
+          clientDataJSON: "Aw",
+          authenticatorData: "BA",
+          signature: "-_8",
+          userHandle: null,
+        },
+        clientExtensionResults: {},
+      },
+    }),
+  );
+  document.body.replaceChildren();
+});

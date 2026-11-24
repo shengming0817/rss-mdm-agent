@@ -22,8 +22,18 @@ const labels = new Map(
     unknown: "执行状态未知",
   }),
 );
+const effects = new Map(
+  Object.entries({
+    applied: "本机已应用",
+    failed: "本机效果失败",
+    unknown: "本机效果未知",
+    unbound: "本机已解除绑定",
+    whfb_retired: "Hello 绑定已退役",
+    mac_account_created: "Mac 账号已创建",
+  }),
+);
 export function EmployeeRecovery({ port }: { port: DeviceAccessPort }) {
-  const [application, setApplication] = useState(false);
+  const [application, setApplication] = useState<string[]>([]);
   const [bindings, setBindings] = useState<AccessBindingStatus[]>([]);
   const [pending, setPending] = useState<Intent | null>(null);
   const [message, setMessage] = useState("");
@@ -37,7 +47,7 @@ export function EmployeeRecovery({ port }: { port: DeviceAccessPort }) {
       const reply = await port({ kind: "ownBindings" });
       if (reply.kind !== "ownBindings") throw Error();
       setBindings(reply.bindings);
-      setApplication(reply.applicationAvailable);
+      setApplication(reply.applicationBindings);
       setMessage(
         reply.bindings.length ? "" : "当前企业账号与本机账号没有可管理的绑定。",
       );
@@ -63,7 +73,7 @@ export function EmployeeRecovery({ port }: { port: DeviceAccessPort }) {
           : input.stage === "verify"
             ? "在验证窗口完成本人验证，然后返回此处提交。"
             : input.stage === "status" && receipt
-              ? `原操作修订 ${receipt.revision} · ${receipt.received ? "设备已接收" : "等待设备接收"} · ${labels.get(receipt.execution) ?? "执行状态未知"} · ${receipt.effectObserved ? "已收到本机效果回报" : "尚无本机效果回报"}${receipt.cancellation === "confirmed" ? " · 已取消" : receipt.cancellation === "requested" ? " · 等待取消" : ""}${receipt.cleanupPending ? " · 等待清理" : ""}`
+              ? `原操作修订 ${receipt.revision} · ${receipt.received ? "设备已接收" : "等待设备接收"} · ${labels.get(receipt.execution) ?? "执行状态未知"} · ${receipt.effectState ? (effects.get(receipt.effectState) ?? "本机效果未知") : "尚无本机效果回报"}${receipt.cancellation === "confirmed" ? " · 已取消" : receipt.cancellation === "requested" ? " · 等待取消" : ""}${receipt.cleanupPending ? " · 等待清理" : ""}`
               : "服务端已受理本次操作。刷新本人绑定查看本机应用状态。",
       );
     } catch (e) {
@@ -100,7 +110,7 @@ export function EmployeeRecovery({ port }: { port: DeviceAccessPort }) {
           b.appliedRevision === b.revision && b.effect?.state === "applied"
             ? "本机已回报应用"
             : b.effect?.state === "failed"
-              ? "本机回报失败"
+              ? "最近一次本机回报失败，当前修订的应用仍待确认"
               : "等待本机确认";
         const open = (change: Intent["change"]) =>
           void act({
@@ -133,7 +143,7 @@ export function EmployeeRecovery({ port }: { port: DeviceAccessPort }) {
               </p>
             )}
             <div className="rss-account-actions">
-              {application && b.account?.platform === "macos" && (
+              {application.includes(b.id) && (
                 <Button
                   disabled={busy}
                   onClick={async () => {
@@ -160,11 +170,17 @@ export function EmployeeRecovery({ port }: { port: DeviceAccessPort }) {
                 </Button>
               )}
               {rss && (
-                <Button disabled={busy} onClick={() => open("reset_factors")}>
+                <Button
+                  disabled={busy || !!pending}
+                  onClick={() => open("reset_factors")}
+                >
                   更换或重置验证器
                 </Button>
               )}
-              <Button disabled={busy} onClick={() => open("repair_binding")}>
+              <Button
+                disabled={busy || !!pending}
+                onClick={() => open("repair_binding")}
+              >
                 修复本人注册
               </Button>
             </div>

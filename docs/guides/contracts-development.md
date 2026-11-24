@@ -18,7 +18,7 @@ Schema 描述结构，不能替代动态预算、可信主体验证或 provider 
 
 来源和改写边界见[执行契约来源](../reference/contracts-extraction.md)与[AI Runtime 来源](../reference/ai-runtime.md)。
 
-更新 wire 和 Cargo.lock 时，从同一生产者 revision 取得两个 listener 的 HTTP 合同。当前固定导出的文件名、再生命令与 SHA-256 见[生产者 PR 1712](https://dev.azure.com/shengming0923/rss/_git/rss-mdm/pullrequest/1712?discussionId=21906)。将核对过摘要的两个导出按发布包布局保存为 `rss-mdm-http.json`、`rss-da-http.json`，连同含 repository、revision 和逐文件 sha256 的 `manifest.json` 打包。运行 `python3 scripts/update-agent-http-contract.py <合同ZIP路径>` 导入；常规构建和 CI 使用本仓快照。
+更新 wire 和 Cargo.lock 时，从同一生产者 revision 取得两个 listener 的 HTTP 合同。两个产品导出均包含员工浏览器操作。当前锁定提交为 `df060faa52329898e8f978d6f1fd9a90a3ace3f6`，各导出及本仓投影的摘要见 [http-v1-source.json](../../tests/agent-protocol/http-v1-source.json)。固定 [HTTP 合同 ZIP](https://dev.azure.com/shengming0923/e9379e8d-e99e-40d2-a224-87b58eff9c3f/_apis/wit/attachments/f7366b8b-2244-412d-a4fc-12a4500d9121?fileName=rss-mdm-contract-df060faa52329898e8f978d6f1fd9a90a3ace3f6.zip) 来自[生产者 PR 1738](https://dev.azure.com/shengming0923/rss/_git/rss-mdm/pullrequest/1738)。将核对过摘要的两个导出按发布包布局保存为 `rss-mdm-http.json`、`rss-da-http.json`，连同含 repository、revision 和逐文件 sha256 的 `manifest.json` 打包。运行 `python3 scripts/update-agent-http-contract.py <合同ZIP路径>` 导入；常规构建和 CI 使用本仓快照。
 
 私库读取使用系统 Git credential helper 或受保护构建凭据；可通过 `CARGO_NET_GIT_FETCH_WITH_CLI=true` 使用 Git helper，不在 manifest 或日志中写凭据。`node scripts/check-agent-dependencies.mjs` 核对完整依赖闭包，常规 `make ci` 已包含该检查。Agent 继续拥有验签、身份绑定、防重放、本机权限与预算；网络解码成功不授予本机执行权限。
 

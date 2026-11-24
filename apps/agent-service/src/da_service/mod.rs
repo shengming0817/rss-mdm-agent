@@ -140,7 +140,7 @@ pub(crate) fn renew(d: &Deployment) -> Result<(), Error> {
 pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
     #[cfg(windows)]
     if let Err(e) = crate::access_component::prepare_store(&d) {
-        return Ok(Deployment::startup_diagnostic(d.clients.clone(), e));
+        return Ok(d.startup_diagnostic(e));
     }
     if !d.modules.da.enabled() {
         return d.mdm_owner();
@@ -195,11 +195,6 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                             }
                             Ok(Some(client)) => {
                                 available.store(true, Ordering::Release);
-                                #[cfg(windows)]
-                                {
-                                    worker_login.registered.store(client.registered()?, Ordering::Release);
-                                    worker_login.read_directory(&client).await?;
-                                }
                                 let mut policy = policy::Machine::observe(
                                     root.clone(),
                                     #[cfg(windows)]
@@ -210,6 +205,11 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                                 .await;
                                 policy.deployment = Some(d.clone());
                                 async {
+                                #[cfg(windows)]
+                                {
+                                    worker_login.registered.store(client.registered()?, Ordering::Release);
+                                    worker_login.read_directory(&client).await?;
+                                }
                                     #[cfg(not(target_os="macos"))]
                                     let result = client.drive(&mut policy).await;
                                     #[cfg(target_os="macos")]
@@ -267,6 +267,11 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                                 Err(e)
                             }
                         };
+                        if result.is_err() {
+                            available.store(false, Ordering::Release);
+                            #[cfg(windows)]
+                            worker_login.registered.store(false, Ordering::Release);
+                        }
                         let delay = match result {
                             Ok(()) => 30,
                             Err(Error::Conflict) => 2,
@@ -326,7 +331,8 @@ fn settle_mac_request(
         request,
         Request::BindContext { .. }
             | Request::DeviceAccess {
-                input: execution_ipc::device_access::Operation::Tasks {},
+                input: execution_ipc::device_access::Operation::Tasks {}
+                    | execution_ipc::device_access::Operation::OwnBindings {},
                 ..
             }
     ) {
@@ -336,7 +342,23 @@ fn settle_mac_request(
     };
     Box::new(move || {
         let result = native();
+        use execution_ipc::device_access::Response;
         match (other.map(|wait| wait()), result) {
+            (
+                Some(
+                    mdm @ Reply::DeviceAccess {
+                        value: Response::OwnBindings { .. },
+                    },
+                ),
+                da,
+            ) => {
+                if matches!(&da, Reply::DeviceAccess{value:Response::OwnBindings{bindings,..}} if !bindings.is_empty())
+                {
+                    da
+                } else {
+                    mdm
+                }
+            }
             (Some(bound @ Reply::ContextBound { .. }), _) => bound,
             (
                 Some(Reply::DeviceAccess {

@@ -67,22 +67,18 @@ impl Deployment {
         crate::da_service::assemble(self)
     }
     pub(crate) fn mdm_owner(self) -> Result<Box<dyn execution_ipc::host::Handler>, Error> {
-        let policy = self.clients.clone();
         match self
             .preflight()
-            .and_then(|_| crate::registration::RegistrationOwner::new(self))
+            .and_then(|_| crate::registration::RegistrationOwner::new(self.clone()))
         {
             Ok(owner) => Ok(Box::new(owner)),
-            Err(error) => Ok(Self::startup_diagnostic(policy, error)),
+            Err(error) => Ok(self.startup_diagnostic(error)),
         }
     }
-    pub(crate) fn startup_diagnostic(
-        policy: PeerPolicy,
-        error: Error,
-    ) -> Box<dyn execution_ipc::host::Handler> {
+    pub(crate) fn startup_diagnostic(self, error: Error) -> Box<dyn execution_ipc::host::Handler> {
         execution_ipc::record_startup_failure(startup_failure(error));
         Box::new(Diagnostic {
-            policy,
+            deployment: self,
             readiness: execution_ipc::host::Readiness::NotReady,
         })
     }
@@ -699,12 +695,12 @@ pub(crate) fn never_initialized(root: &Path) -> Result<bool, Error> {
 }
 
 struct Diagnostic {
-    policy: PeerPolicy,
+    deployment: Deployment,
     readiness: execution_ipc::host::Readiness,
 }
 impl execution_ipc::host::Handler for Diagnostic {
     fn peer_policy(&self) -> Option<PeerPolicy> {
-        Some(self.policy.clone())
+        Some(self.deployment.clients.clone())
     }
     fn handle(
         &mut self,
@@ -712,16 +708,18 @@ impl execution_ipc::host::Handler for Diagnostic {
         request: execution_ipc::host::Request,
     ) -> execution_ipc::host::Reply {
         use execution_ipc::host::{Reply, Request, ServiceStatus};
-        let Ok(subject) = peer.authenticate(&self.policy) else {
+        let Ok(subject) = peer.authenticate(&self.deployment.clients) else {
             return Reply::Rejected;
         };
         match request {
             Request::DeviceOverview {} if peer.session_binding().is_ok() => {
                 crate::device_overview::read(&subject, peer.session(), None)
             }
-            Request::ServiceStatus {} => Reply::ServiceStatus {
-                value: ServiceStatus::new(self.readiness.clone()),
-            },
+            Request::ServiceStatus {} => {
+                let mut value = ServiceStatus::new(self.readiness.clone());
+                value.installation = crate::installation::observation(&self.deployment);
+                Reply::ServiceStatus { value }
+            }
             _ => Reply::Rejected,
         }
     }

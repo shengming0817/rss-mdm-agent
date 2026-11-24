@@ -316,22 +316,31 @@ pub(super) fn binding(d: &Deployment) -> Result<Option<(Uuid, Uuid)>, Error> {
     Ok(binding.map(|b| (b.device_id.into_uuid(), b.epoch)))
 }
 
-fn latest_record(config: &Path) -> Option<Record> {
-    let journal = Journal::new(config).ok()?;
-    let current = match journal.read(&journal.active()).ok()? {
+fn latest_record(config: &Path) -> Result<Option<Record>, Error> {
+    let journal = Journal::new(config)?;
+    let current = match journal.read(&journal.active())? {
         Some(record) => record,
         None => {
             let bytes =
-                platform_private_storage::read(&journal.root.join("last-operation"), 16).ok()?;
-            let operation = Uuid::from_slice(&bytes).ok()?;
-            let record = journal.read(&journal.file(operation, "result")).ok()??;
+                match platform_private_storage::read(&journal.root.join("last-operation"), 16) {
+                    Ok(bytes) => bytes,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                    Err(e) => return Err(e.into()),
+                };
+            let operation = Uuid::from_slice(&bytes).map_err(|_| Error::Storage)?;
+            let record = journal
+                .read(&journal.file(operation, "result"))?
+                .ok_or(Error::Storage)?;
             if record.operation != operation {
-                return None;
+                return Err(Error::Identity);
             }
             record
         }
     };
-    (current.config == config).then_some(current)
+    if current.config != config {
+        return Err(Error::Identity);
+    }
+    Ok(Some(current))
 }
 
 /// Both logical channels are shipped in the same authenticated service executable.
@@ -357,11 +366,18 @@ pub(crate) fn observe_modules(
         installed,
         enabled: Some(enabled),
     };
-    let record = latest_record(config).filter(|r| r.installation == d.installation_id);
-    let failure = record
-        .as_ref()
-        .and_then(|r| r.failure)
-        .map(|e| e.to_string());
+    let lookup = latest_record(config);
+    let diagnostic = lookup.as_ref().err().map(|e| e.to_string());
+    let record = lookup
+        .ok()
+        .flatten()
+        .filter(|r| r.installation == d.installation_id);
+    let failure = diagnostic.or_else(|| {
+        record
+            .as_ref()
+            .and_then(|r| r.failure)
+            .map(|e| e.to_string())
+    });
     let application = match record.map(|r| r.phase) {
         Some(Phase::Received) => ModuleApplication::Received,
         Some(Phase::Applied) => ModuleApplication::Applied,
@@ -381,7 +397,7 @@ pub(crate) fn observe_modules(
 
 pub(super) fn module_status(config: &Path) -> Result<(), Error> {
     if optional(config)?.is_none() {
-        if let Some(record) = latest_record(config) {
+        if let Some(record) = latest_record(config)? {
             record.report()?;
         }
         return Ok(());
@@ -569,7 +585,7 @@ fn prepare(
     Ok(())
 }
 
-fn same_runtime(old: &Deployment, next: &Deployment) -> bool {
+pub(super) fn same_runtime(old: &Deployment, next: &Deployment) -> bool {
     old.modules.mdm == next.modules.mdm
         && old.modules.da == next.modules.da
         && old.clients.subjects == next.clients.subjects
@@ -1118,12 +1134,15 @@ mod tests {
         platform_private_storage::directory(&journal.root).unwrap();
         let mut r = record(Phase::Received);
         r.config = config.clone();
-        assert!(latest_record(&config).is_none());
+        assert!(latest_record(&config).unwrap().is_none());
         r.input = Some("original profile".into());
         r.profile_digest = Some(hash(r.input.as_ref().unwrap().as_bytes()));
         journal.save(&r).unwrap();
         let recovered = journal.read(&journal.active()).unwrap().unwrap();
-        assert_eq!(latest_record(&config).unwrap().operation, r.operation);
+        assert_eq!(
+            latest_record(&config).unwrap().unwrap().operation,
+            r.operation
+        );
         assert_eq!(recovered.input, r.input);
         assert_eq!(recovered.profile_digest, r.profile_digest);
         r.input = None;
@@ -1137,10 +1156,10 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(
-            latest_record(&config).unwrap().result(),
+            latest_record(&config).unwrap().unwrap().result(),
             Err(Error::Unsupported)
         );
-        assert!(latest_record(&config.with_file_name("other.json")).is_none());
+        assert!(latest_record(&config.with_file_name("other.json")).is_err());
         assert_eq!(archived.result(), Err(Error::Unsupported));
         assert!(archived.input.is_none());
     }

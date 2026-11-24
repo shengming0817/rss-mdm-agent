@@ -1981,7 +1981,7 @@ export type Response =
       /**
        * A fixed employee application was installed for this issuer.
        */
-      applicationAvailable: boolean;
+      applicationBindings: string[];
       /**
        * Device registration owning these binding operations.
        */
@@ -2692,7 +2692,7 @@ export interface Progress {
   execution: string;
   cancellation: string;
   cleanupPending: boolean;
-  effectObserved: boolean;
+  effectState: string | null;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema

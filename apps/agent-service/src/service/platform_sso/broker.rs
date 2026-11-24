@@ -40,6 +40,18 @@ impl Selection {
 }
 static SELECTED: Mutex<Option<Selection>> = Mutex::new(None);
 
+pub(crate) fn eligible(b: &access::AccessBindingStatus) -> bool {
+    !b.revoked
+        && b.configuration.enabled
+        && b.configuration
+            .mac
+            .as_ref()
+            .is_some_and(|m| m.authentication == w::AuthenticationMode::SecureEnclave)
+        && b.applied_revision == Some(b.revision)
+        && matches!(b.account, Some(access::AccessAccount::Macos { .. }))
+        && matches!(&b.effect,Some(access::AccessEffect::Applied{account,..}) if Some(account)==b.account.as_ref())
+}
+
 pub(crate) fn select(
     directory: EmployeeReply,
     binding: Uuid,
@@ -53,14 +65,12 @@ pub(crate) fn select(
     else {
         return Err(Error::Identity);
     };
-    if !bindings.iter().any(|b| b.id == binding && b.configuration.enabled
-        && b.applied_revision == Some(b.revision) && matches!(&b.effect,Some(access::AccessEffect::Applied{account,..}) if Some(account)==b.account.as_ref())
-        && matches!(b.account, Some(access::AccessAccount::Macos{..}))) || !current() {
+    if !bindings.iter().any(|b| b.id == binding && eligible(b)) || !current() {
         return Err(Error::Denied);
     }
-    let portal = EmployeePortal::configured(employee.tenant_id, employee.instance_id, None)
-        .map_err(|_| Error::Configuration)?
-        .ok_or(Error::Configuration)?;
+    let portal =
+        EmployeePortal::installed_for(employee.tenant_id, Some(employee.instance_id), None)
+            .ok_or(Error::Configuration)?;
     let launch_url = portal
         .application
         .as_ref()

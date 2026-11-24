@@ -281,9 +281,11 @@ fn configured_ca(
     Ok(config.ca_pem.map(String::into_bytes))
 }
 fn organization_ca(organization: &Organization) -> Result<Option<Vec<u8>>> {
-    if let Some(portal) = execution_ipc::device_access::EmployeePortal::installed().filter(|p| {
-        p.origin == organization.origin && p.tenant.to_string() == organization.tenant_id
-    }) {
+    if let Some(portal) = execution_ipc::device_access::EmployeePortal::installed_for(
+        Uuid::parse_str(&organization.tenant_id).map_err(|_| invalid())?,
+        None,
+        Some(&organization.origin),
+    ) {
         return Ok(portal.ca_pem.map(String::into_bytes));
     }
     let config = serde_json::from_str(include_str!(concat!(
@@ -382,16 +384,18 @@ impl EnterpriseSession {
             return Err(failure(Stage::Authorization, Reason::Contract));
         }
         let mut value = value;
-        value["effectObserved"] = json!(!value["effect"].is_null());
+        value["effectState"] = value["effect"]["state"].clone();
         serde_json::from_value(value).map_err(|_| failure(Stage::Authorization, Reason::Contract))
     }
     pub(super) fn employee_return_target(&self) -> Option<String> {
         let tenant = Uuid::parse_str(&self.organization.tenant_id).ok()?;
         let instance = Uuid::parse_str(&self.instance).ok()?;
-        execution_ipc::device_access::EmployeePortal::configured(tenant, instance, None)
-            .ok()?
-            .filter(|p| p.origin == self.organization.origin)?
-            .recovery_return_target
+        execution_ipc::device_access::EmployeePortal::installed_for(
+            tenant,
+            Some(instance),
+            Some(&self.organization.origin),
+        )?
+        .recovery_return_target
     }
     pub(super) fn native_session(
         &self,
@@ -599,12 +603,12 @@ impl EnterpriseSession {
         self.accept_identity(&value, true)?;
         // The dedicated DA browser mounts the Identity SDK session route. Task authorization is
         // returned by its authenticated device listener, independently of employee login.
-        if let Some(portal) =
-            execution_ipc::device_access::EmployeePortal::installed().filter(|p| {
-                p.dedicated()
-                    && p.origin == self.organization.origin
-                    && p.tenant.to_string() == self.organization.tenant_id
-            })
+        if let Some(portal) = execution_ipc::device_access::EmployeePortal::installed_for(
+            Uuid::parse_str(&self.organization.tenant_id).map_err(|_| invalid())?,
+            None,
+            Some(&self.organization.origin),
+        )
+        .filter(|p| p.dedicated())
         {
             let instance = portal.instance.to_string();
             if !self.instance.is_empty() && self.instance != instance {
@@ -1178,9 +1182,25 @@ pub(super) mod http_tests {
         let mut wrong = identity();
         wrong["identity"]["principalId"] = json!(Uuid::new_v4());
         let instance = access()["instanceId"].clone();
-        let (org, requests) = server(vec![(200,identity()),(200,identity()),(200,access()),(200,wrong),(200,identity()),
-            (200,json!({"id":binding,"principal":PRINCIPAL,"device":device,"instance":instance,"operationId":operation})),
-            (404,json!({})),(200,json!({"bindingId":binding,"operationId":operation,"revision":3,"received":true,"execution":"failed","cancellation":"none","cleanupPending":false,"effect":{"state":"failed"}}))]).await;
+        let account =
+            json!({"platform":"windows","sid":"S-1-5-21-1-2-3-1001","authority":{"kind":"local"}});
+        let receipt = json!({"id":binding,"principal":PRINCIPAL,"device":device,"instance":instance,"operationId":operation,
+            "bindingGeneration":1,"factorGeneration":2,"revision":3,"serverState":"active","accountDisposition":"keep",
+            "account":account,"accountIntent":{"kind":"existing","account":account},"createdByRss":false,"policy":Uuid::new_v4(),"policyVersion":Uuid::new_v4(),
+            "desired":{"enabled":true,"selfEnrollment":true,"mac":null,"role":null,"windows":{"kind":"rss_factor","accounts":["local"]}},
+            "receivedRevision":null,"appliedRevision":null,"effect":null});
+        let execution = json!({"bindingId":binding,"operationId":operation,"revision":3,"received":true,"taskId":Uuid::new_v4(),"execution":"succeeded","cancellation":"none","cleanupPending":false,"effect":{"state":"failed","reason":"native_failure"}});
+        let (org, requests) = server(vec![
+            (200, identity()),
+            (200, identity()),
+            (200, access()),
+            (200, wrong),
+            (200, identity()),
+            (200, receipt.clone()),
+            (404, json!({})),
+            (200, execution.clone()),
+        ])
+        .await;
         let session = EnterpriseSession::login_with_client(
             Client::new(),
             org,
@@ -1210,8 +1230,8 @@ pub(super) mod http_tests {
             .employee_operation(device, binding, operation)
             .await
             .unwrap();
-        assert!(progress.received && progress.effect_observed);
-        assert_eq!(progress.execution, "failed");
+        assert!(progress.received && progress.effect_state.as_deref() == Some("failed"));
+        assert_eq!(progress.execution, "succeeded");
         let requests = requests.await.unwrap();
         assert!(requests[5].starts_with(&format!(
             "PUT /api/v1/tenants/{TENANT}/devices/{device}/device-access/bindings/{binding} "
@@ -1219,6 +1239,50 @@ pub(super) mod http_tests {
         assert!(requests[5].contains(cookie));
         assert!(requests[6].contains(&format!("/operations/{operation}/execution ")));
         assert_eq!(requests[6].lines().next(), requests[7].lines().next());
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../tests/agent-protocol/http-v1.json");
+        let contract: Value = serde_json::from_slice(&std::fs::read(root).unwrap()).unwrap();
+        let sent: Value =
+            serde_json::from_str(requests[5].split_once("\r\n\r\n").unwrap().1).unwrap();
+        for host in ["agent", "da"] {
+            for (request, response) in [(&requests[5], &receipt), (&requests[7], &execution)] {
+                let first = request
+                    .lines()
+                    .next()
+                    .unwrap()
+                    .split_whitespace()
+                    .collect::<Vec<_>>();
+                let path = first[1]
+                    .replace(TENANT, "{tenant}")
+                    .replace(&device.to_string(), "{device}")
+                    .replace(&binding.to_string(), "{id}")
+                    .replace(&operation.to_string(), "{id}");
+                let endpoint = contract["employeeBrowser"][host]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|r| r["method"] == first[0] && r["path"] == path)
+                    .unwrap();
+                let verify = |schema: &Value, value: &Value| {
+                    let schema =
+                        &contract["schemas"][schema["schema"]["schemaId"].as_str().unwrap()];
+                    jsonschema::validator_for(schema)
+                        .unwrap()
+                        .validate(value)
+                        .unwrap();
+                };
+                if first[0] == "PUT" {
+                    verify(&endpoint["request"]["body"], &sent);
+                }
+                let success = endpoint["responses"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|r| r["status"] == 200)
+                    .unwrap();
+                verify(&success["body"], response);
+            }
+        }
     }
     #[tokio::test]
     async fn native_registration_authorization_sends_stable_intent_only_to_the_user_api() {

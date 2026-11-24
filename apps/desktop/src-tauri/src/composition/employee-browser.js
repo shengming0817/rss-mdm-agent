@@ -81,6 +81,18 @@ async function employeeBrowser(input) {
     };
     controls.append(b);
   }
+  // WebAuthn Level 2 binary credential API; wire format follows webauthn-rs-proto auth.rs.
+  function bytes(encoded) {
+    return Uint8Array.from(
+      atob(encoded.replace(/-/g, "+").replace(/_/g, "/")),
+      (c) => c.charCodeAt(0),
+    );
+  }
+  function encoded(buffer) {
+    let raw = "";
+    for (const byte of new Uint8Array(buffer)) raw += String.fromCharCode(byte);
+    return btoa(raw).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
   try {
     await session();
     message.textContent = "选择本人验证方式。验证通过后，返回桌面提交原操作。";
@@ -93,14 +105,34 @@ async function employeeBrowser(input) {
         token,
       );
       try {
-        const publicKey = PublicKeyCredential.parseRequestOptionsFromJSON(
-          challenge.options.publicKey,
-        );
-        const credential = await navigator.credentials.get({ publicKey });
+        const options = challenge.options.publicKey;
+        const publicKey = {
+          ...options,
+          challenge: bytes(options.challenge),
+          allowCredentials: options.allowCredentials?.map((c) => ({
+            ...c,
+            id: bytes(c.id),
+          })),
+        };
+        const c = await navigator.credentials.get({ publicKey });
+        if (!c || c.type !== "public-key") throw Error();
+        const r = c.response;
+        const response = {
+          id: c.id,
+          type: c.type,
+          rawId: encoded(c.rawId),
+          response: {
+            authenticatorData: encoded(r.authenticatorData),
+            clientDataJSON: encoded(r.clientDataJSON),
+            signature: encoded(r.signature),
+            userHandle: r.userHandle ? encoded(r.userHandle) : null,
+          },
+          clientExtensionResults: c.getClientExtensionResults(),
+        };
         await request(
           identity + "/webauthn/authenticate/finish",
           "POST",
-          { id: challenge.id, response: credential.toJSON() },
+          { id: challenge.id, response },
           token,
         );
       } catch (error) {

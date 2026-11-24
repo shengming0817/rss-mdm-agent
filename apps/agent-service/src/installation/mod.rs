@@ -4,10 +4,22 @@ mod apply;
 fn current_deployment(d: &Deployment) -> Option<(PathBuf, Deployment)> {
     let path = Deployment::default_path().ok()?;
     let current = Deployment::metadata(&path).ok()?;
-    (current.installation_id == d.installation_id
+    matches_running(d, &current).then_some((path, current))
+}
+fn matches_running(d: &Deployment, current: &Deployment) -> bool {
+    current.installation_id == d.installation_id
         && current.installation_artifact == d.installation_artifact
-        && current.modules == d.modules)
-        .then_some((path, current))
+        && apply::same_runtime(current, d)
+}
+#[cfg(test)]
+#[test]
+fn observation_keeps_a_revision_only_update_and_rejects_a_replacement_installation() {
+    let old = crate::deployment::tests::deployment();
+    let mut latest = old.clone();
+    latest.modules.revision += 1;
+    assert!(matches_running(&old, &latest));
+    latest.installation_id = uuid::Uuid::new_v4();
+    assert!(!matches_running(&old, &latest));
 }
 pub(crate) fn module_facts(d: &Deployment) -> Option<rss_mdm_agent_wire::da::ClientModules> {
     let (path, current) = current_deployment(d)?;
@@ -42,8 +54,13 @@ pub(crate) fn observation(d: &Deployment) -> Option<execution_ipc::host::Install
     let mdm_registration = mdm_registration(&current, observed_at);
     let da_registration = if current.modules.da.enabled() {
         match crate::da_service::status(&current) {
-            Ok(Some(s)) if s.registration.is_some() => R::Registered,
-            Ok(Some(s)) if s.revocation.is_some() => R::Revoked,
+            Ok(Some(s)) => match s.credential {
+                agent_client::da::RegistrationState::Registered => R::Registered,
+                agent_client::da::RegistrationState::Expired => R::Expired,
+                agent_client::da::RegistrationState::Revoked => R::Revoked,
+                agent_client::da::RegistrationState::Unregistered => R::Unregistered,
+                agent_client::da::RegistrationState::Unknown => R::Unknown,
+            },
             Ok(_) => R::Unregistered,
             Err(_) => R::Unknown,
         }

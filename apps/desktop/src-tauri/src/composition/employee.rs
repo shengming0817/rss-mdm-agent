@@ -10,14 +10,14 @@ use sha2::{Digest, Sha256};
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 use uuid::Uuid;
 
-#[derive(Clone, Copy, Deserialize, Serialize, schemars::JsonSchema)]
+#[derive(Clone, Copy, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Change {
     ResetFactors,
     RepairBinding,
 }
 
-#[derive(Clone, Copy, Deserialize, Serialize, schemars::JsonSchema)]
+#[derive(Clone, Copy, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum Stage {
     Open,
@@ -36,10 +36,10 @@ pub struct Progress {
     pub execution: String,
     pub cancellation: String,
     pub cleanup_pending: bool,
-    pub effect_observed: bool,
+    pub effect_state: Option<String>,
 }
 
-#[derive(Deserialize, Serialize, schemars::JsonSchema)]
+#[derive(Clone, Copy, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Input {
     pub binding: Uuid,
@@ -56,8 +56,24 @@ pub enum Output {
     Progress { value: Progress },
 }
 
+#[derive(Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct Saved {
+    intent: Input,
+    device: Uuid,
+    operation: Uuid,
+}
+impl Saved {
+    fn matches(&self, input: Input) -> bool {
+        self.intent
+            == Input {
+                stage: Stage::Open,
+                ..input
+            }
+    }
+}
 // This file contains only a retry coordinate. Every action resolves fresh credentials and device ownership.
-fn read_intent(path: &std::path::Path) -> Result<Option<Input>> {
+fn read_intent(path: &std::path::Path) -> Result<Option<Saved>> {
     match platform_private_storage::read(path, 1024) {
         Ok(bytes) => serde_json::from_slice(&bytes)
             .map(Some)
@@ -66,7 +82,14 @@ fn read_intent(path: &std::path::Path) -> Result<Option<Input>> {
         Err(_) => Err(error("storage", "无法读取本次操作记录")),
     }
 }
-fn save_intent(path: &std::path::Path, input: &Input) -> Result<()> {
+fn save_intent(path: &std::path::Path, input: &Saved) -> Result<()> {
+    if let Some(existing) = read_intent(path)? {
+        return if existing == *input {
+            Ok(())
+        } else {
+            Err(error("operation_pending", "请先查询或清除上一笔操作"))
+        };
+    }
     let temp = path.with_extension(format!("{}.tmp", Uuid::new_v4()));
     let bytes = serde_json::to_vec(input).map_err(|_| error("storage", "无法保存本次操作记录"))?;
     let result = platform_private_storage::write_new(&temp, &bytes)
@@ -110,15 +133,24 @@ pub async fn dispatch<R: tauri::Runtime>(
     let Some(input) = input else {
         let _guard = state.employee_guard(&generation).await?;
         return Ok(Output::Stored {
-            intent: read_intent(&path)?,
+            intent: read_intent(&path)?.map(|s| s.intent),
         });
     };
     let label = format!(
         "employee-{}",
         Uuid::parse_str(&generation).map_err(|_| denied())?
     );
-    if matches!(input.stage, Stage::Close) {
+    if matches!(input.stage, Stage::Close | Stage::Status) {
         let _guard = state.employee_guard(&generation).await?;
+        let saved = read_intent(&path)?
+            .filter(|s| s.matches(input))
+            .ok_or_else(denied)?;
+        if matches!(input.stage, Stage::Status) {
+            return session
+                .employee_operation(saved.device, saved.intent.binding, saved.operation)
+                .await
+                .map(|value| Output::Progress { value });
+        }
         match std::fs::remove_file(&path) {
             Ok(()) => (),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
@@ -146,12 +178,10 @@ pub async fn dispatch<R: tauri::Runtime>(
         input.revision,
         input.change,
     );
-    let status = matches!(input.stage, Stage::Status);
-    if input.revision < 1 || (!status && b.revision != input.revision && op != b.operation_id) {
+    if input.revision < 1 || (b.revision != input.revision && op != b.operation_id) {
         return Err(denied());
     }
-    if !status
-        && matches!(input.change, Change::ResetFactors)
+    if matches!(input.change, Change::ResetFactors)
         && !(matches!(
             b.account,
             Some(wire::AccessAccount::Windows {
@@ -166,11 +196,18 @@ pub async fn dispatch<R: tauri::Runtime>(
         return Err(error("factor", "此登录机制由系统或身份提供方管理"));
     }
     let change = serde_json::json!({"operationId":op,"expectedRevision":input.revision,"action":{"kind":input.change}});
-    if status {
-        return session
-            .employee_operation(device.into_uuid(), b.id, op)
-            .await
-            .map(|value| Output::Progress { value });
+    let saved = Saved {
+        intent: Input {
+            stage: Stage::Open,
+            ..input
+        },
+        device: device.into_uuid(),
+        operation: op,
+    };
+    if matches!(input.stage, Stage::Open) {
+        save_intent(&path, &saved)?;
+    } else if read_intent(&path)?.as_ref() != Some(&saved) {
+        return Err(denied());
     }
     let origin_url = url::Url::parse(origin).map_err(|_| denied())?;
     let window = match app.get_webview_window(&label) {
@@ -201,7 +238,6 @@ pub async fn dispatch<R: tauri::Runtime>(
     };
     window.set_focus().map_err(|_| unavailable())?;
     if matches!(input.stage, Stage::Open) {
-        save_intent(&path, &input)?;
         return Ok(Output::Done);
     }
     if window.url().map_err(|_| unavailable())?.origin() != origin_url.origin() {
@@ -268,20 +304,29 @@ mod tests {
         platform_private_storage::directory(&root).unwrap();
         let path = root.join("actor.json");
         let binding = Uuid::new_v4();
-        for revision in [3, 4] {
-            save_intent(
-                &path,
-                &Input {
-                    binding,
-                    revision,
-                    change: Change::ResetFactors,
-                    stage: Stage::Open,
-                },
-            )
-            .unwrap();
-            let recovered = read_intent(&path).unwrap().unwrap();
-            assert_eq!((recovered.binding, recovered.revision), (binding, revision));
-        }
+        let mut saved = Saved {
+            intent: Input {
+                binding,
+                revision: 3,
+                change: Change::ResetFactors,
+                stage: Stage::Open,
+            },
+            device: Uuid::new_v4(),
+            operation: Uuid::new_v4(),
+        };
+        save_intent(&path, &saved).unwrap();
+        save_intent(&path, &saved).unwrap();
+        saved.intent.revision = 4;
+        assert!(save_intent(&path, &saved).is_err());
+        let original = read_intent(&path).unwrap().unwrap();
+        assert_eq!(
+            (
+                original.intent.revision,
+                original.device,
+                original.operation
+            ),
+            (3, saved.device, saved.operation)
+        );
         assert!(read_intent(&root.join("other.json")).unwrap().is_none());
         std::fs::remove_dir_all(root).unwrap();
     }

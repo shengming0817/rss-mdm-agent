@@ -300,23 +300,31 @@ pub(crate) fn own_bindings(
     user: &w::SelfServiceUser,
 ) -> Result<execution_ipc::device_access::Response, Error> {
     let account = native_account(subject)?;
-    let application_available = cfg!(all(target_os = "macos", target_arch = "aarch64"))
-        && execution_ipc::device_access::EmployeePortal::configured(
-            user.tenant_id,
-            user.instance_id,
-            None,
-        )
-        .ok()
-        .flatten()
-        .is_some_and(|p| p.application.is_some());
+    let bindings: Vec<_> = directory
+        .bindings
+        .into_iter()
+        .filter(|b| !b.revoked && b.account.as_ref() == Some(&account))
+        .collect();
+    let portal = execution_ipc::device_access::EmployeePortal::installed_for(
+        user.tenant_id,
+        Some(user.instance_id),
+        None,
+    );
+    let application_bindings = if cfg!(all(target_os = "macos", target_arch = "aarch64"))
+        && portal.is_some_and(|p| p.application.is_some())
+    {
+        bindings
+            .iter()
+            .filter(|b| super::platform_sso::broker::eligible(b))
+            .map(|b| b.id)
+            .collect()
+    } else {
+        Vec::new()
+    };
     Ok(execution_ipc::device_access::Response::OwnBindings {
-        application_available,
+        application_bindings,
         device: directory.device_id,
-        bindings: directory
-            .bindings
-            .into_iter()
-            .filter(|b| !b.revoked && b.account.as_ref() == Some(&account))
-            .collect(),
+        bindings,
     })
 }
 

@@ -13,7 +13,7 @@ it("does not offer a mutation when the native session has no matching binding", 
     kind: "ownBindings" as const,
     bindings: [],
     device: "3a0ea62c-fa31-4ba0-a8c5-b744543192bc",
-    applicationAvailable: false,
+    applicationBindings: [],
   }));
   render(<EmployeeRecovery port={port} />);
   fireEvent.click(screen.getByText("刷新本人绑定"));
@@ -42,7 +42,7 @@ it("resumes the original reset after restart even when the server has no receipt
       port={vi.fn().mockResolvedValue({
         kind: "ownBindings",
         bindings: [],
-        applicationAvailable: false,
+        applicationBindings: [],
       })}
     />,
   );
