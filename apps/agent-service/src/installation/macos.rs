@@ -48,6 +48,10 @@ pub(super) fn operation_status(config: &Path, id: uuid::Uuid) -> Result<(), Erro
         .parent()
         .ok_or(Error::Configuration)?
         .join("install-operations");
+    if let Some(status) = unmanage::observed_status(config, id)? {
+        println!("{status}");
+        return Ok(());
+    }
     for suffix in ["psso-result", "retirement.json"] {
         let path = dir.join(format!("{id}.{suffix}"));
         if path.try_exists()? {
@@ -595,13 +599,28 @@ pub(super) fn launch_unmanage(deployment: &Deployment, task: uuid::Uuid) -> Resu
     }
     Ok(())
 }
+pub(super) fn carrier_gone(deployment: &Deployment, task: uuid::Uuid) -> Result<bool, Error> {
+    let cleanup =
+        Path::new("/Library/LaunchDaemons").join(format!("{LABEL}.unmanage.{task}.cleanup.plist"));
+    for path in [
+        unmanage_binary(deployment, task)?,
+        unmanage_job(task),
+        cleanup,
+    ] {
+        match std::fs::symlink_metadata(path) {
+            Ok(_) => return Ok(false),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(true)
+}
 pub(super) fn finish_unmanage(deployment: &Deployment, task: uuid::Uuid) -> Result<bool, Error> {
     let carrier = unmanage_binary(deployment, task)?;
     let original = unmanage_job(task);
     let label = format!("{LABEL}.unmanage.{task}.cleanup");
     let cleanup = Path::new("/Library/LaunchDaemons").join(format!("{label}.plist"));
-    let absent = |p: &Path| matches!(std::fs::symlink_metadata(p),Err(e) if e.kind()==std::io::ErrorKind::NotFound);
-    if absent(&carrier) && absent(&original) && absent(&cleanup) {
+    if carrier_gone(deployment, task)? {
         return Ok(true);
     }
     // ref: launchd.plist(5) ProgramArguments / KeepAlive SuccessfulExit.
@@ -632,7 +651,7 @@ pub(super) fn finish_unmanage(deployment: &Deployment, task: uuid::Uuid) -> Resu
         )?;
     }
     for _ in 0..10 {
-        if absent(&carrier) && absent(&original) && absent(&cleanup) {
+        if carrier_gone(deployment, task)? {
             return Ok(true);
         }
         std::thread::sleep(Duration::from_millis(100));

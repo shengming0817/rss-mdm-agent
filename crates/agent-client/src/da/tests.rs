@@ -16,7 +16,7 @@ use base64::{
 };
 use der::{Decode, Encode};
 use ring::signature::{Ed25519KeyPair, KeyPair};
-use rss_mdm_agent_wire::runtime::AccessConfiguration;
+use rss_mdm_agent_wire::runtime::{self as w, AccessConfiguration};
 use serde_json::{json, Value};
 use std::sync::{atomic::AtomicI64, Mutex};
 use wire::{ApplicationState, DeliveryPermission, Health, SourceState};
@@ -29,6 +29,7 @@ impl Credentials for Secrets {
 }
 struct Server {
     clock: Time,
+    mac_mode: rss_mdm_agent_wire::platform_sso::AuthenticationMode,
     account_closed: bool,
     issued_until: Option<i64>,
     offer: wire::AccountOffer,
@@ -110,6 +111,36 @@ fn windows_operation(s: &mut Server, route: &str, input: &Value) -> Option<Respo
         _ => return None,
     })
 }
+fn fixture_mac_binding(s: &Server) -> w::AccessBindingStatus {
+    use rss_mdm_agent_wire::platform_sso as mac;
+    let mode = s.mac_mode;
+    w::AccessBindingStatus {
+        id: s.offer.binding_id,
+        binding_generation: 1,
+        factor_generation: 1,
+        revision: 1,
+        revoked: false,
+        account_disposition: w::AccessAccountDisposition::Keep,
+        account: Some(w::AccessAccount::Macos {
+            generated_uid: s.offer.operation_id,
+        }),
+        configuration: w::AccessConfiguration {
+            windows: w::AccessWindowsConfiguration::Disabled,
+            mac: Some(mac::LoginConfiguration {
+                authentication: mode,
+                password_provider: (mode == mac::AuthenticationMode::Password)
+                    .then_some(s.offer.operation_id),
+                ..Default::default()
+            }),
+            role: None,
+            self_enrollment: false,
+            enabled: true,
+        },
+        received_revision: None,
+        applied_revision: None,
+        effect: None,
+    }
+}
 fn mac_operation(
     s: &Server,
     route: &str,
@@ -126,7 +157,12 @@ fn mac_operation(
             json!({"deviceRegistered":false,"userRegistered":false,"loginReady":false,"applicationObserved":true,"profileObserved":true,"deviceSource":null,"userSource":null,"passwordExchange":null,"hardwareAttested":false,"registrationTrust":"da_device_pop"})
         }
         "platform-sso/bootstrap" => json!(psso::BootstrapResponse {
-            id: source,
+            id: if input["kind"] == "user" {
+                assert_eq!(input["bindingId"], source.to_string());
+                s.offer.attempt_id
+            } else {
+                source
+            },
             nonce: "test-nonce".into(),
             expires_at: s.clock.now().unwrap() + 60,
             source_id: source,
@@ -139,7 +175,11 @@ fn mac_operation(
             registered: true,
             source_id: source,
             source_version: 1,
-            kind: psso::Kind::Device,
+            kind: if input["challengeId"] == s.offer.attempt_id.to_string() {
+                psso::Kind::User
+            } else {
+                psso::Kind::Device
+            },
             registration_trust: psso::RegistrationTrust::DaDevicePop,
             hardware_attested: false
         }),
@@ -209,7 +249,7 @@ async fn endpoint(
                     assert_eq!(headers["x-rss-user-session"], "a".repeat(64));
                     return (
                         [("cache-control", "no-store")],
-                        Json(json!({"policies":[],"nextCursor":null,"bindings":[]})),
+                        Json(json!({"policies":[],"nextCursor":null,"bindings":[fixture_mac_binding(&s)]})),
                     )
                         .into_response();
                 }
@@ -453,6 +493,7 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
     let account_clock = Time(Arc::new(AtomicI64::new(time.now().unwrap())));
     let state = Arc::new(Mutex::new(Server {
         clock: account_clock.clone(),
+        mac_mode: rss_mdm_agent_wire::platform_sso::AuthenticationMode::SecureEnclave,
         account_closed: false,
         issued_until: None,
         offer: wire::AccountOffer {
@@ -553,12 +594,6 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
     );
     assert!(inspect(&root.path, &backend, Uuid::new_v4(), time.now().unwrap()).is_err());
     let ops = client.operations().unwrap();
-    assert!(ops
-        .mac_bindings(&"a".repeat(64))
-        .await
-        .unwrap()
-        .bindings
-        .is_empty());
     let mac_binding = state.lock().unwrap().offer.binding_id;
     assert_eq!(
         ops.psso_status(Some(mac_binding))
@@ -589,7 +624,7 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
             operation_id: Uuid::new_v4(),
             challenge_id: challenge.id,
             signing_key: Some(key.clone()),
-            encryption_key: key,
+            encryption_key: key.clone(),
             proof: "fixture.proof.signature".into()
         })
         .await
@@ -597,6 +632,36 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         .unwrap()
         .registered
     );
+    for mode in [
+        mac::AuthenticationMode::SecureEnclave,
+        mac::AuthenticationMode::Password,
+    ] {
+        state.lock().unwrap().mac_mode = mode;
+        let directory = ops.mac_bindings(&"a".repeat(64)).await.unwrap();
+        let b = &directory.bindings[0];
+        assert_eq!(b.configuration.mac.as_ref().unwrap().authentication, mode);
+        let user = ops
+            .psso_bootstrap(&mac::Bootstrap {
+                operation_id: Uuid::new_v4(),
+                kind: mac::Kind::User,
+                binding_id: Some(b.id),
+                binding_generation: Some(b.binding_generation),
+            })
+            .await
+            .unwrap();
+        let receipt = ops
+            .psso_register(&mac::Registration {
+                operation_id: Uuid::new_v4(),
+                challenge_id: user.id,
+                signing_key: (mode == mac::AuthenticationMode::SecureEnclave).then(|| key.clone()),
+                encryption_key: key.clone(),
+                proof: "fixture.proof.signature".into(),
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(receipt.kind, mac::Kind::User);
+    }
     assert!(ops.psso_revoke(mac_binding, 1).await.unwrap().revoked);
     let offer = ops.account(None).await.unwrap().unwrap();
     assert!(ops
@@ -806,6 +871,11 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
 
 #[test]
 fn mac_uninstall_requires_the_released_operation_of_this_installation() {
+    for renewal_dispatched in [false, true] {
+        check_mac_uninstall(renewal_dispatched);
+    }
+}
+fn check_mac_uninstall(renewal_dispatched: bool) {
     let root = Root::new();
     let backend = Backend {
         browser: None,
@@ -852,7 +922,38 @@ fn mac_uninstall_requires_the_released_operation_of_this_installation() {
     .unwrap();
     write(&client.journal.db, "revocation", &withdrawal).unwrap();
     assert!(retired_receipt(&root.path, &backend, install, op).is_err());
+    assert_eq!(
+        mac_assigned(&root.path, &backend, install, 2_000_000_000).unwrap_err(),
+        Error::Untrusted
+    );
+    let id = wire::ReportIdentity {
+        service_id: withdrawal.service_id,
+        tenant: withdrawal.tenant,
+        device_id: withdrawal.device,
+    };
+    write(&client.journal.db, "clock", &2_000_000_000_i64).unwrap();
+    write(
+        &client.journal.db,
+        "mac-unassigned",
+        &(id, 2_000_000_030_i64),
+    )
+    .unwrap();
+    assert_eq!(
+        mac_assigned(&root.path, &backend, install, 2_000_000_000).unwrap(),
+        Some(false)
+    );
+    assert!(mac_assigned(&root.path, &backend, install, 2_000_000_030).is_err());
+    let renewal = client.start_renewal().unwrap();
+    let pending = client.pending().unwrap().unwrap();
+    assert_eq!(pending.operation, renewal);
+    let mut pending = serde_json::to_value(pending).unwrap();
+    pending["renewal_dispatched"] = json!(renewal_dispatched);
+    write(&client.journal.db, "enrollment", &Some(pending)).unwrap();
     client.retire(&withdrawal).unwrap();
+    assert_eq!(
+        mac_assigned(&root.path, &backend, install, 2_000_000_001).unwrap(),
+        None
+    );
     assert_eq!(
         retired_receipt(&root.path, &backend, install, op).unwrap(),
         withdrawal

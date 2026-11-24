@@ -98,10 +98,23 @@ pub fn mac_assigned(
         return Ok(None);
     };
     let tx = db.transaction()?;
-    let active = read::<super::registration::Active>(&tx, "active")?.ok_or(Error::Identity)?;
-    let proof = read::<Option<AppliedProof>>(&tx, "applied-proof")?
-        .flatten()
-        .ok_or(Error::Untrusted)?;
+    let Some(active) = read::<super::registration::Active>(&tx, "active")? else {
+        return Ok(None);
+    };
+    let Some(proof) = read::<Option<AppliedProof>>(&tx, "applied-proof")?.flatten() else {
+        let absent = read::<(wire::ReportIdentity, i64)>(&tx, "mac-unassigned")?;
+        return if absent.is_some_and(|(id, until)| {
+            now > 0
+                && now < until
+                && (id.service_id, id.tenant, id.device_id)
+                    == (backend.instance, backend.tenant, active.receipt.device)
+        }) && read::<i64>(&tx, "clock")?.is_some_and(|t| t <= now)
+        {
+            Ok(Some(false))
+        } else {
+            Err(Error::Untrusted)
+        };
+    };
     if now <= 0
         || now >= proof.until
         || read::<i64>(&tx, "clock")?.is_none_or(|last| last > now)
@@ -463,6 +476,11 @@ impl<S: Credentials, C: Clock> Client<S, C> {
                 && snapshot.state == SourceState::Missing
                 && matches!(current.state, SourceState::Missing | SourceState::Withdrawn)
             {
+                write(
+                    &self.journal.db,
+                    "mac-unassigned",
+                    &(id, self.now()?.saturating_add(30)),
+                )?;
                 Ok(())
             } else {
                 Err(Error::Unavailable)
@@ -599,6 +617,7 @@ impl<S: Credentials, C: Clock> Client<S, C> {
     }
 
     fn clear_proof(tx: &rusqlite::Connection) -> Result<(), Error> {
+        tx.execute("DELETE FROM state WHERE name='mac-unassigned'", [])?;
         if read::<Option<String>>(tx, "effective-digest")?
             .flatten()
             .is_some()

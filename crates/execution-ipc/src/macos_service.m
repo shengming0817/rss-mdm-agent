@@ -183,7 +183,7 @@ int64_t rss_execution_helper_session(uint32_t uid) {
         return latest?(int64_t)latest.session:-1;
     }
 }
-int rss_execution_helper_query(const uint8_t *request,size_t length,uint32_t uid,uint32_t session,uint8_t *output,size_t *capacity,const char *requirement) {
+int rss_execution_helper_query(const uint8_t *request,size_t length,uint32_t uid,uint32_t session,uint8_t *output,size_t *capacity,const char *requirement,uint32_t timeout_ms) {
     if(geteuid()!=0||length>RSS_FRAME_LIMIT||!requirement)return -1;
     @autoreleasepool {
         NSMutableDictionary *values=rss_helpers();NSString *key=rss_helper_key(uid,session);
@@ -198,10 +198,11 @@ int rss_execution_helper_query(const uint8_t *request,size_t length,uint32_t uid
         connection.interruptionHandler=^{finish(nil);};connection.invalidationHandler=^{finish(nil);};[connection resume];
         id<RSSExecution> remote=[connection remoteObjectProxyWithErrorHandler:^(NSError *error){(void)error;finish(nil);}];
         [remote execute:[NSData dataWithBytes:request length:length] reply:^(NSData *bytes){finish(bytes);}];
-        dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC));
+        long timedOut=dispatch_semaphore_wait(done,dispatch_time(DISPATCH_TIME_NOW,(int64_t)timeout_ms*NSEC_PER_MSEC));
         @synchronized(lock){
             finished=YES;BOOL peerOk=connection.effectiveUserIdentifier==uid&&(uint32_t)connection.auditSessionIdentifier==session&&(uint32_t)connection.processIdentifier==entry.pid;
             [connection invalidate];
+            if(timedOut)return -1;
             if(!result||!peerOk||result.length>*capacity){
                 fprintf(stderr,"RSS_HELPER_ENDPOINT_INVALID uid=%u session=%u\n",uid,session);
                 @synchronized(values){if(values[key]==entry)[values removeObjectForKey:key];}

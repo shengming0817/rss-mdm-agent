@@ -188,6 +188,34 @@ pub enum Reply {
     /// Outcome cannot be confirmed; query the original attempt.
     Unavailable,
 }
+#[cfg(target_os = "macos")]
+/// Read only the pinned GUI helper's login-keychain status within the native request budget.
+pub fn keychain_until(
+    policy: &host::PeerPolicy,
+    subject: &str,
+    session: u32,
+    binding: &Id,
+    deadline: std::time::Instant,
+) -> Result<crate::device_access::KeychainStatus, Error> {
+    crate::macos_identity::verify_console(subject, session, binding)?;
+    let bytes = serde_json::to_vec(&Envelope {
+        version: VERSION,
+        command: Command::MacKeychain,
+    })
+    .map_err(|_| Error::InvalidInput)?;
+    let reply = crate::macos_service::query_helper_until(
+        &bytes,
+        subject.parse().map_err(|_| Error::Unbound)?,
+        session,
+        policy,
+        deadline,
+    )?;
+    crate::macos_identity::verify_console(subject, session, binding)?;
+    match serde_json::from_slice(&reply).map_err(|_| Error::InvalidInput)? {
+        Reply::MacKeychain(v) => Ok(v),
+        _ => Err(Error::Unavailable),
+    }
+}
 /// Observed login and private work directory of a pinned helper; no enterprise permission.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

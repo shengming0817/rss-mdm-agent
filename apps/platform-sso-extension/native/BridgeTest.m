@@ -73,6 +73,7 @@ int main(void) { @autoreleasepool {
     RSSCompleteRetirement(defaults,@"deviceRegistration",@"first-inflight");
     assert(![defaults dictionaryForKey:@"inflight"] && !RSSPendingRetirements(defaults).count);
     assert(RSSBeginSave(defaults,@"deviceRegistration",@"device-v1"));
+    assert(RSSCommitSave(defaults,@"deviceRegistration",@"device-v1"));
     RSSSetInflight(defaults,@"deviceRegistration",@"device-v2");
     RSSQueueInflight(defaults);assert(RSSPendingRetirements(defaults).count==1);
     RSSQueueRetirements(defaults);assert(RSSPendingRetirements(defaults).count==2);
@@ -93,6 +94,11 @@ int main(void) { @autoreleasepool {
     assert(!RSSObservationCurrent(defaults,@"registration",@"new-callback-user"));
     RSSQueueCancelledRegistration(defaults,@"registration",@"valid-old-user");
     assert(!RSSObservationCurrent(defaults,@"registration",@"valid-old-user"));
+    assert(RSSBeginSave(defaults,@"registration",@"replacement"));
+    assert([[reopened stringForKey:@"registration"] isEqual:@"valid-old-user"]);
+    assert([[reopened dictionaryForKey:@"saving"][@"registration"] isEqual:@"replacement"]);
+    assert(RSSCommitSave(defaults,@"registration",@"replacement"));
+    assert([[reopened stringForKey:@"registration"] isEqual:@"replacement"]);
     [defaults removePersistentDomainForName:suite];
     CFRelease(publicKeyRef);CFRelease(key);puts("Platform SSO native ABI and signature test passed; no system registration exercised");
 } return 0; }

@@ -478,7 +478,7 @@ Password 用户注册不登记用户签名密钥：注册与浏览器证明由�
 
 组件的 `inspect` 显示当前绑定、独立系统事实及可获得的托管状态。远端退休和本机清理完成后，可用注册时的 operation UUID 调用 `--installation operation-status --operation <UUID>` 查询；授权卸载会把完成回执保留到载荷以外。DA 注册先被撤销时，回执保存该撤销操作，独立 PSSO 来源的远端状态仍可能未知；本机清理单独核对。仅 DA、从未注册 MDM 的安装先由管理员撤销 DA 注册，待设备确认精确凭据已释放及原生清理完成，再由本机管理员调用固定服务的 `--installation uninstall --operation <DA撤销UUID> --binary <已安装服务绝对路径>`。可用同一 UUID 查询安装结果。维修停用和恢复不会更改本地账号密码、删除钥匙串或轮换 PRK。
 
-使用 `node scripts/native-candidate.mjs freeze` 固定包含扩展和安装包的候选，再运行 `python3 scripts/service/verify-execution-macos.py --binary <服务> --backend <探针> --candidate <候选JSON> --output <证据目录> --psso-preflight`。固定扩展和 PKG 后，在目标 OS／架构上核对候选与文件摘要。预检通过时仍为 `systemAccepted:false`，各系统旅程保持 `notExecuted`。生产签名授权、公证、包内映像、实际安装副本和系统识别由部署方独立核对。
+使用 `node scripts/native-candidate.mjs freeze --service <服务> --cli <CLI> --backend <探针> --desktop <桌面程序> --platform-sso <扩展可执行文件> --installer <PKG> --output <候选JSON>` 固定包含扩展和安装包的候选，再运行 `python3 scripts/service/verify-execution-macos.py --binary <服务> --backend <探针> --candidate <候选JSON> --output <证据目录> --psso-preflight`。固定扩展和 PKG 后，在目标 OS／架构上核对候选与文件摘要。预检通过时仍为 `systemAccepted:false`，各系统旅程保持 `notExecuted`。生产签名授权、公证、包内映像、实际安装副本和系统识别由部署方独立核对。
 
 受管测试机按同一候选依次验收：匹配 Team／容器／扩展的 MDM profile 与 AASA → 系统设备注册 → 两种用户模式 → 真实登录与指定应用 SSO → 上游改密、本地离线改密、重新联网与冲突 → 登录钥匙串实际访问 → 双用户切换 → 登录窗口、锁屏和 FileVault 冷启动 → Agent／Desktop 停止 → 修复、升级中断与注销卸载。分别记录系统回调、source/version、绑定代际、实际操作及结果；禁止用 `app-sso --messages` 的样本密钥证明硬件持钥，也不将含令牌或密码的原始诊断输出写入证据。没有实际执行的场景保持 notExecuted；真实平台支持由独立平台验收取证，本轮实现与本地 CI 不代替这些证据。
 

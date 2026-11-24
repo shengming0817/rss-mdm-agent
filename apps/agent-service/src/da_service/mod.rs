@@ -302,20 +302,21 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
 #[cfg(target_os = "macos")]
 fn settle_mac_request(
     request: Request,
-    native: impl FnOnce() -> Reply,
+    native: impl FnOnce() -> Reply + Send + 'static,
     mdm: impl FnOnce(Request) -> Option<Reply>,
-) -> Reply {
-    // BindContext serves both independently authorized products. A native callback has only one issuer.
+) -> execution_ipc::host::DeferredReply {
     let other = if matches!(request, Request::BindContext { .. }) {
         mdm(request)
     } else {
         None
     };
-    let result = native();
-    match other {
-        Some(bound @ Reply::ContextBound { .. }) => bound,
-        _ => result,
-    }
+    Box::new(move || {
+        let result = native();
+        match other {
+            Some(bound @ Reply::ContextBound { .. }) => bound,
+            _ => result,
+        }
+    })
 }
 #[cfg(all(test, target_os = "macos"))]
 #[test]
@@ -337,14 +338,14 @@ fn shared_login_preserves_mdm_context_and_native_rejection_never_retries_with_md
             })
         },
     );
-    assert!(matches!(bound, Reply::ContextBound { .. }));
+    assert!(matches!(bound(), Reply::ContextBound { .. }));
     let callback = Request::PlatformSso {
         input: execution_ipc::platform_sso::Operation::Status {
             scope: rss_mdm_agent_wire::platform_sso::Kind::Device,
         },
     };
     assert!(matches!(
-        settle_mac_request(callback, || Reply::Rejected, |_| panic!("second issuer")),
+        settle_mac_request(callback, || Reply::Rejected, |_| panic!("second issuer"))(),
         Reply::Rejected
     ));
 }
@@ -359,59 +360,28 @@ struct Service {
     stop: Option<tokio::sync::oneshot::Sender<()>>,
     worker: Option<thread::JoinHandle<Result<(), Error>>>,
 }
-impl Handler for Service {
-    fn session_fence(&self) -> Option<Arc<dyn SessionFence>> {
-        #[cfg(windows)]
-        {
-            Some(self.login.clone())
-        }
-        #[cfg(target_os = "macos")]
-        {
-            Some(self.endpoint.fence.clone())
-        }
-        #[cfg(not(any(windows, target_os = "macos")))]
-        {
-            self.mdm.as_ref().and_then(|owner| owner.session_fence())
-        }
+#[cfg(target_os = "macos")]
+impl Service {
+    fn begin_native(
+        &mut self,
+        peer: &Peer,
+        request: &Request,
+    ) -> Option<execution_ipc::host::DeferredReply> {
+        let pending = self.endpoint.start(peer, request)?;
+        Some(settle_mac_request(
+            request.clone(),
+            move || pending.map_or_else(|e| e, |call| call.wait()),
+            |r| self.mdm.as_mut().map(|m| m.handle(peer, r)),
+        ))
     }
-    fn peer_policy(&self) -> Option<PeerPolicy> {
-        let policy = self
-            .mdm
-            .as_ref()
-            .and_then(|h| h.peer_policy())
-            .unwrap_or_else(|| self.policy.clone());
-        #[cfg(target_os = "macos")]
-        let policy = {
-            let mut policy = policy;
-            self.endpoint.policy(&mut policy);
-            policy
-        };
-        Some(policy)
-    }
-    fn register_helper(&mut self, peer: &Peer) -> Result<(), execution_app::Error> {
-        #[cfg(target_os = "macos")]
-        if self.mdm.is_none() {
-            return self.endpoint.helper(peer);
-        }
-        self.mdm
-            .as_mut()
-            .ok_or(execution_app::Error::Denied)?
-            .register_helper(peer)
-    }
-    fn handle(&mut self, peer: &Peer, request: Request) -> Reply {
+}
+impl Service {
+    fn handle_immediate(&mut self, peer: &Peer, request: Request) -> Reply {
         let da_ready = self.ready.load(Ordering::Acquire)
             && self
                 .worker
                 .as_ref()
                 .is_some_and(|worker| !worker.is_finished());
-        #[cfg(target_os = "macos")]
-        if let Some(pending) = self.endpoint.start(peer, &request) {
-            return settle_mac_request(
-                request,
-                || pending.map_or_else(|e| e, |call| call.wait()),
-                |r| self.mdm.as_mut().map(|m| m.handle(peer, r)),
-            );
-        }
         #[cfg(windows)]
         if let Some(reply) = self.login.handle(peer, &request) {
             use execution_ipc::device_access::Response;
@@ -481,6 +451,66 @@ impl Handler for Service {
             },
             _ => Reply::Rejected,
         }
+    }
+}
+impl Handler for Service {
+    #[cfg(target_os = "macos")]
+    fn deferred_reply(
+        &mut self,
+        peer: &Peer,
+        bytes: &[u8],
+    ) -> Option<execution_ipc::host::DeferredReply> {
+        let request = execution_ipc::host::decode_request(bytes)?;
+        if let Some(wait) = self.begin_native(peer, &request) {
+            return Some(wait);
+        }
+        let reply = self.handle_immediate(peer, request);
+        Some(Box::new(move || reply))
+    }
+    fn session_fence(&self) -> Option<Arc<dyn SessionFence>> {
+        #[cfg(windows)]
+        {
+            Some(self.login.clone())
+        }
+        #[cfg(target_os = "macos")]
+        {
+            Some(self.endpoint.fence.clone())
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
+        {
+            self.mdm.as_ref().and_then(|owner| owner.session_fence())
+        }
+    }
+    fn peer_policy(&self) -> Option<PeerPolicy> {
+        let policy = self
+            .mdm
+            .as_ref()
+            .and_then(|h| h.peer_policy())
+            .unwrap_or_else(|| self.policy.clone());
+        #[cfg(target_os = "macos")]
+        let policy = {
+            let mut policy = policy;
+            self.endpoint.policy(&mut policy);
+            policy
+        };
+        Some(policy)
+    }
+    fn register_helper(&mut self, peer: &Peer) -> Result<(), execution_app::Error> {
+        #[cfg(target_os = "macos")]
+        if self.mdm.is_none() {
+            return self.endpoint.helper(peer);
+        }
+        self.mdm
+            .as_mut()
+            .ok_or(execution_app::Error::Denied)?
+            .register_helper(peer)
+    }
+    fn handle(&mut self, peer: &Peer, request: Request) -> Reply {
+        #[cfg(target_os = "macos")]
+        if let Some(wait) = self.begin_native(peer, &request) {
+            return wait();
+        }
+        self.handle_immediate(peer, request)
     }
     fn tick(&mut self) -> Result<(), execution_app::Error> {
         if let Some(mdm) = &mut self.mdm {

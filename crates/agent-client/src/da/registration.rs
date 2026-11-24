@@ -110,6 +110,32 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         tx.commit()?;
         Ok(p)
     }
+    /// No signed grant or certificate request was received for this reservation. With the
+    /// parent credential revoked it can no longer obtain issuance permission.
+    pub(super) fn close_unissued_renewal(
+        &self,
+        tx: &rusqlite::Connection,
+        device: DeviceId,
+        release: &mut Vec<(String, bool)>,
+    ) -> Result<(), Error> {
+        if let Some(p) = self.pending()?.filter(|p| {
+            p.expected == Some(device)
+                && p.grant.is_none()
+                && !p.issue_started
+                && p.candidate.is_none()
+                && p.issuance_id.is_none()
+                && !p.unknown
+        }) {
+            write(
+                tx,
+                &format!("registration/{}", p.operation),
+                &(enroll::ErrorCode::CredentialRevoked, &p.grant),
+            )?;
+            release.extend([(p.key(), true), (p.secret(), false)]);
+            write(tx, "enrollment", &None::<Pending>)?;
+        }
+        Ok(())
+    }
     pub(super) fn release_settled(&self) -> Result<(), Error> {
         let jobs: Vec<(String, bool)> = read(&self.journal.db, "release")?.unwrap_or_default();
         for (reference, key) in &jobs {

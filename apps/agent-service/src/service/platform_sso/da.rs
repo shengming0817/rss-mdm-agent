@@ -11,11 +11,11 @@ use std::{
     time::Duration,
 };
 
-pub(super) fn mdm_assigned(d: &Deployment, root: &Path) -> Result<bool, Error> {
+pub(super) fn mdm_assigned(d: &Deployment) -> Result<bool, Error> {
     if !d.modules.da.enabled() {
         return Ok(true);
     }
-    if !d.modules.mdm.enabled() || has_authority(root, w::RegistrationTrust::DaDevicePop)? {
+    if !d.modules.mdm.enabled() {
         return Ok(false);
     }
     match da::mac_assigned(
@@ -25,7 +25,7 @@ pub(super) fn mdm_assigned(d: &Deployment, root: &Path) -> Result<bool, Error> {
         SystemClock::new()?.now()?,
     ) {
         Ok(None | Some(false)) => Ok(true),
-        Ok(Some(true)) | Err(Error::Untrusted | Error::Identity) => Ok(false),
+        Ok(Some(true)) => Ok(false),
         Err(e) => Err(e),
     }
 }
@@ -103,7 +103,7 @@ impl Endpoint {
                 rx,
                 fence,
                 state: State::default(),
-                employee: None,
+                bound: None,
             },
         )
     }
@@ -184,7 +184,7 @@ impl Endpoint {
                 return Ok(c.context.authority == w::RegistrationTrust::MdmBootstrapPop);
             }
         }
-        mdm_assigned(d, &root)
+        Ok(configured_owner(d)?.0 == w::RegistrationTrust::MdmBootstrapPop)
     }
     pub fn start(&self, peer: &Peer, request: &Request) -> Option<Result<Pending, Reply>> {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(4);
@@ -262,7 +262,8 @@ impl Endpoint {
     }
 }
 
-struct BoundEmployee {
+struct BoundContext {
+    principal: Option<Uuid>,
     subject: String,
     session: u32,
     binding: execution_contract::Id,
@@ -270,7 +271,23 @@ struct BoundEmployee {
     epoch: u64,
     expires: u64,
 }
-impl BoundEmployee {
+impl BoundContext {
+    fn refreshes(
+        &self,
+        command: &Command,
+        value: &execution_ipc::host::NativeContextSession,
+        expected: &execution_contract::Id,
+        now: u64,
+    ) -> bool {
+        self.subject == command.subject
+            && Some(&self.binding) == command.binding.as_ref()
+            && &self.generation == expected
+            && &value.generation == expected
+            && self.principal == value.user().map(|u| u.principal_id)
+            && self.expires > now
+            && self.session == command.session
+            && self.epoch == command.fence_epoch
+    }
     fn permits(
         &self,
         cmd: &Command,
@@ -296,7 +313,7 @@ pub(crate) struct Worker {
     pub rx: tokio::sync::mpsc::Receiver<Work>,
     fence: Arc<Fence>,
     state: State,
-    employee: Option<BoundEmployee>,
+    bound: Option<BoundContext>,
 }
 impl Worker {
     pub async fn handle(&mut self, d: &Deployment, client: &Client, work: Work) {
@@ -309,7 +326,6 @@ impl Worker {
             client,
             root: crate::access_worker::root(&d.execution),
             state: &mut self.state,
-            inventory: Default::default(),
         };
         let result = tokio::time::timeout_at(deadline, async {
             platform_private_storage::directory(&d.execution.material_root)?;
@@ -320,29 +336,31 @@ impl Worker {
                     .await
                     .map(|value| Reply::PlatformSso { value }),
                 Some(Request::BindContext { value, expected }) => {
-                    if expected.as_ref().is_some_and(|id| {
-                        !self.employee.as_ref().is_some_and(|e| {
-                            e.subject == command.subject
-                                && Some(&e.binding) == command.binding.as_ref()
-                                && &e.generation == id
-                                && &value.generation == id
-                                && e.epoch == command.fence_epoch
-                        })
-                    }) {
+                    if let Some(generation) = expected {
+                        let bound = self.bound.as_ref().ok_or(Error::Identity)?;
+                        if !bound.refreshes(&command, value, generation, crate::wall()?) {
+                            return Err(Error::Identity);
+                        }
+                    }
+                    self.bound = None;
+                    let expires = owner.bind(&command, value, &self.fence).await?;
+
+                    let epoch = self.fence.epoch.lock().map_err(|_| Error::Unavailable)?;
+                    if *epoch != command.fence_epoch
+                        || command.reply.is_closed()
+                        || expires <= crate::wall()?
+                    {
                         return Err(Error::Identity);
                     }
-                    self.employee = None;
-                    let expires = owner.bind(&command, value, &self.fence).await?;
-                    if value.user().is_some() {
-                        self.employee = Some(BoundEmployee {
-                            subject: command.subject.clone(),
-                            session: command.session,
-                            binding: command.binding.clone().ok_or(Error::Identity)?,
-                            generation: value.generation.clone(),
-                            epoch: command.fence_epoch,
-                            expires,
-                        });
-                    }
+                    self.bound = Some(BoundContext {
+                        principal: value.user().map(|u| u.principal_id),
+                        subject: command.subject.clone(),
+                        session: command.session,
+                        binding: command.binding.clone().ok_or(Error::Identity)?,
+                        generation: value.generation.clone(),
+                        epoch: command.fence_epoch,
+                        expires,
+                    });
                     Ok(Reply::ContextBound {
                         value: execution_contract::NativeContextRef {
                             id: value.generation.clone(),
@@ -355,7 +373,11 @@ impl Worker {
                     input: execution_ipc::device_access::Operation::MacStatus {},
                     ..
                 }) => {
-                    let e = self.employee.as_ref().ok_or(Error::Identity)?;
+                    let e = self
+                        .bound
+                        .as_ref()
+                        .filter(|c| c.principal.is_some())
+                        .ok_or(Error::Identity)?;
                     if !e.permits(&command, context, &self.fence) {
                         return Err(Error::Identity);
                     }
@@ -365,10 +387,23 @@ impl Worker {
                             d.platform_sso.as_ref().is_some_and(|c| c.verify().is_ok()),
                         )
                         .await?;
-                    if let Ok(peer) = d.helpers().connect_peer(&e.subject, e.session, &e.binding) {
-                        if let Ok(execution_ipc::helper::Reply::MacKeychain(v)) =
-                            peer.exchange(execution_ipc::helper::Command::MacKeychain)
-                        {
+                    if let Some(mut pins) = d
+                        .helper_policy()
+                        .filter(|p| p.subjects.contains(&e.subject))
+                    {
+                        let (subject, session, binding) =
+                            (e.subject.clone(), e.session, e.binding.clone());
+                        pins.subjects = vec![subject.clone()];
+                        let sample = tokio::task::spawn_blocking(move || {
+                            execution_ipc::helper::keychain_until(
+                                &pins,
+                                &subject,
+                                session,
+                                &binding,
+                                deadline.into_std(),
+                            )
+                        });
+                        if let Ok(Ok(v)) = sample.await {
                             status.login_keychain = v;
                         }
                     }
@@ -401,7 +436,6 @@ impl Worker {
             client,
             root,
             state: &mut self.state,
-            inventory: Default::default(),
         }
         .retry_retirement()
         .await;
@@ -458,12 +492,11 @@ struct Da<'a> {
     client: &'a Client,
     root: PathBuf,
     state: &'a mut State,
-    inventory: tokio::sync::OnceCell<Machine>,
 }
 impl Da<'_> {
     async fn selected(&self) -> Result<da::Selection, Error> {
         let root = self.d.da_root()?;
-        let machine = self.inventory.get_or_init(|| Machine::observe(root)).await;
+        let machine = Machine::observe(root).await;
         let selected = self
             .client
             .platform_configuration(&machine.managed_snapshot())?;
@@ -491,9 +524,6 @@ impl Da<'_> {
         value: &execution_ipc::host::NativeContextSession,
         fence: &Fence,
     ) -> Result<u64, Error> {
-        let Some(employee) = value.user() else {
-            return Ok(value.expires_at_unix_ms);
-        };
         let binding = command.binding.as_ref().ok_or(Error::Denied)?;
         let verify = || {
             execution_ipc::macos_identity::verify_console(
@@ -504,6 +534,9 @@ impl Da<'_> {
             .map_err(|_| Error::Identity)
         };
         verify()?;
+        let Some(employee) = value.user() else {
+            return Ok(value.expires_at_unix_ms);
+        };
         let issuer = self
             .d
             .modules
@@ -528,70 +561,90 @@ impl Da<'_> {
             operations.mac_bindings(proof),
             self.selected()
         )?;
-        let _lock = state::lock(&self.root)?;
-        let old = state::read_optional::<::platform_sso::LocalBinding>(
-            &self.root,
-            &binding_name(&account)?,
-        )?;
-        if let Some(mut old) = old.filter(|b| {
-            b.authority == w::RegistrationTrust::DaDevicePop
-                && b.installation == selected.identity.service_id
-                && b.tenant == selected.identity.tenant
-                && b.device_id == selected.identity.device_id
-        }) {
-            if let Some(revoked) = directory.bindings.iter().find(|b| {
-                b.id == old.binding
-                    && b.revoked
-                    && b.revision >= old.revision
-                    && b.binding_generation >= old.binding_generation
-            }) {
-                old.enabled = false;
-                old.revision = revoked.revision;
-                old.binding_generation = revoked.binding_generation;
-                save_binding(&self.root, &old)?;
-            }
-        }
-        let mut bindings = directory.bindings.iter().filter(|b| {
-            !b.revoked && b.account == Some(wire::AccessAccount::Macos { generated_uid: uid })
-        });
-        let found = bindings.next().ok_or(Error::NotFound)?;
-        if bindings.next().is_some()
-            || found.configuration.mac != selected.settings.mac
-            || !found.configuration.enabled
-            || found.binding_generation < 1
-            || found.revision < 1
-            || found.id.is_nil()
-        {
-            return Err(Error::Conflict);
-        }
-        verify()?;
         let epoch = fence.epoch.lock().map_err(|_| Error::Unavailable)?;
-        if *epoch != command.fence_epoch
-            || command.reply.is_closed()
-            || value.expires_at_unix_ms <= crate::wall()?
-            || expires <= (crate::wall()? / 1000) as i64
-        {
-            return Err(Error::Identity);
-        }
-        save_binding(
+        admit_existing(
             &self.root,
-            &::platform_sso::LocalBinding {
-                authority: w::RegistrationTrust::DaDevicePop,
-                installation: selected.identity.service_id,
-                tenant: selected.identity.tenant,
-                device_id: selected.identity.device_id,
-                binding: found.id,
-                binding_generation: found.binding_generation,
-                revision: found.revision,
-                generated_uid: account,
-                enabled: true,
-                configuration: found.configuration.mac.clone().ok_or(Error::Unsupported)?,
+            account,
+            uid,
+            &selected.identity,
+            &selected.settings,
+            &directory,
+            || {
+                verify()?;
+
+                if *epoch != command.fence_epoch
+                    || command.reply.is_closed()
+                    || value.expires_at_unix_ms <= crate::wall()?
+                    || expires <= (crate::wall()? / 1000) as i64
+                {
+                    return Err(Error::Identity);
+                }
+                Ok(())
             },
         )?;
         Ok(value
             .expires_at_unix_ms
             .min((expires as u64).saturating_mul(1000)))
     }
+}
+fn admit_existing(
+    root: &Path,
+    account: String,
+    uid: Uuid,
+    id: &rss_mdm_agent_wire::da::ReportIdentity,
+    settings: &wire::AccessConfiguration,
+    directory: &wire::AccessDirectory,
+    recheck: impl FnOnce() -> Result<(), Error>,
+) -> Result<(), Error> {
+    let _lock = state::lock(root)?;
+    let old = state::read_optional::<::platform_sso::LocalBinding>(root, &binding_name(&account)?)?;
+    if let Some(mut old) = old.filter(|b| {
+        b.authority == w::RegistrationTrust::DaDevicePop
+            && b.installation == id.service_id
+            && b.tenant == id.tenant
+            && b.device_id == id.device_id
+    }) {
+        if let Some(revoked) = directory.bindings.iter().find(|b| {
+            b.id == old.binding
+                && b.revoked
+                && b.revision >= old.revision
+                && b.binding_generation >= old.binding_generation
+        }) {
+            old.enabled = false;
+            old.revision = revoked.revision;
+            old.binding_generation = revoked.binding_generation;
+            save_binding(root, &old)?;
+        }
+    }
+    let mut bindings = directory.bindings.iter().filter(|b| {
+        !b.revoked && b.account == Some(wire::AccessAccount::Macos { generated_uid: uid })
+    });
+    let found = bindings.next().ok_or(Error::NotFound)?;
+    if bindings.next().is_some()
+        || found.configuration.mac != settings.mac
+        || !found.configuration.enabled
+        || found.binding_generation < 1
+        || found.revision < 1
+        || found.id.is_nil()
+    {
+        return Err(Error::Conflict);
+    }
+    recheck()?;
+    save_binding(
+        root,
+        &::platform_sso::LocalBinding {
+            authority: w::RegistrationTrust::DaDevicePop,
+            installation: id.service_id,
+            tenant: id.tenant,
+            device_id: id.device_id,
+            binding: found.id,
+            binding_generation: found.binding_generation,
+            revision: found.revision,
+            generated_uid: account,
+            enabled: true,
+            configuration: found.configuration.mac.clone().ok_or(Error::Unsupported)?,
+        },
+    )
 }
 impl Owner for Da<'_> {
     fn root(&self) -> &Path {
@@ -619,6 +672,7 @@ impl Owner for Da<'_> {
         cmd: &Command,
         kind: w::Kind,
         require_enabled: bool,
+        mode: Option<w::AuthenticationMode>,
     ) -> Result<::platform_sso::Context, Error> {
         if !require_enabled {
             if let Some(Request::PlatformSso {
@@ -686,19 +740,8 @@ impl Owner for Da<'_> {
             },
             require_enabled,
         )?;
-        if let (
-            Some(target),
-            Some(Request::PlatformSso {
-                input: Operation::Bootstrap { authentication, .. },
-            }),
-        ) = (&selected, cmd.request.as_operation())
-        {
-            if !target
-                .settings
-                .mac
-                .as_ref()
-                .is_some_and(|settings| settings.authentication == *authentication)
-            {
+        if let (Some(target), Some(expected)) = (&selected, mode) {
+            if target.settings.mac.as_ref().map(|v| v.authentication) != Some(expected) {
                 return Err(Error::Untrusted);
             }
         }
@@ -721,5 +764,177 @@ impl Owner for Da<'_> {
     }
     async fn revoke(&mut self, id: Uuid, version: i64) -> Result<w::RevocationReceipt, Error> {
         self.client.operations()?.psso_revoke(id, version).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn component_and_callbacks_follow_retained_authority_on_mixed_installations() {
+        use crate::installation::Module;
+        let temp = crate::protocol_test_support::Root::new();
+        let mut d = crate::deployment::tests::deployment();
+        d.state_root = temp.path.join("state");
+        d.execution.material_root = temp.path.join("materials");
+        let mut c = super::super::tests::coordinate();
+        let mdm = d.mdm().unwrap();
+        c.context.installation = mdm.instance;
+        c.context.tenant = mdm.tenant;
+        let da = da::Backend {
+            origin: "https://da.example".into(),
+            browser: None,
+            ca_pem: mdm.ca_pem.clone(),
+            tenant: Uuid::new_v4(),
+            instance: Uuid::new_v4(),
+        };
+        d.modules.da = Module::Enabled {
+            backend: da.clone(),
+        };
+        let root = crate::access_worker::root(&d.execution);
+        assert_eq!(
+            configured_owner(&d).unwrap().0,
+            w::RegistrationTrust::MdmBootstrapPop
+        );
+        component_state(&d, "inspect").unwrap();
+        assert!(!root.exists());
+        component_state(&d, "disable").unwrap();
+        assert!(matches!(
+            enabled(&root, c.context.installation),
+            Err(Error::Denied)
+        ));
+        state::write(&root, &c.file("source").unwrap(), &c).unwrap();
+        assert_eq!(
+            configured_owner(&d).unwrap().0,
+            w::RegistrationTrust::MdmBootstrapPop
+        );
+        let mut other = c.clone();
+        other.context.authority = w::RegistrationTrust::DaDevicePop;
+        other.context.tenant = da.tenant;
+        other.context.installation = da.instance;
+        state::write(&root, &other.file("registering").unwrap(), &other).unwrap();
+        assert!(matches!(configured_owner(&d), Err(Error::Conflict)));
+        state::remove(&root, &c.file("source").unwrap()).unwrap();
+        assert_eq!(
+            configured_owner(&d).unwrap().0,
+            w::RegistrationTrust::DaDevicePop
+        );
+        d.modules.mdm = Module::Disabled;
+        assert_eq!(
+            configured_owner(&d).unwrap().0,
+            w::RegistrationTrust::DaDevicePop
+        );
+    }
+    #[test]
+    fn device_context_refresh_is_fenced_by_logout_and_session_change() {
+        let id = execution_contract::Id::new("generation").unwrap();
+        let binding = execution_contract::Id::new("session-binding").unwrap();
+        let value = execution_ipc::host::NativeContextSession::device(id.clone());
+        let (reply, _rx) = tokio::sync::oneshot::channel();
+        let mut cmd = Command {
+            request: LocalRequest::operation(Request::BindContext {
+                value: value.clone(),
+                expected: Some(id.clone()),
+            }),
+            subject: "501".into(),
+            session: 7,
+            binding: Some(binding.clone()),
+            reply,
+            fence_epoch: 1,
+        };
+        let bound = BoundContext {
+            principal: None,
+            subject: cmd.subject.clone(),
+            session: cmd.session,
+            binding,
+            generation: id.clone(),
+            epoch: cmd.fence_epoch,
+            expires: 99,
+        };
+        assert!(bound.refreshes(&cmd, &value, &id, 98));
+        assert!(!bound.refreshes(&cmd, &value, &id, 99));
+        cmd.fence_epoch += 1;
+        assert!(!bound.refreshes(&cmd, &value, &id, 98));
+        cmd.fence_epoch -= 1;
+        cmd.session += 1;
+        assert!(!bound.refreshes(&cmd, &value, &id, 98));
+    }
+    #[tokio::test]
+    async fn both_native_modes_require_one_live_binding_and_a_current_console() {
+        let id = rss_mdm_agent_wire::da::ReportIdentity {
+            service_id: Uuid::new_v4(),
+            tenant: Uuid::new_v4(),
+            device_id: rss_mdm_agent_wire::DeviceId::new_v4(),
+        };
+        let uid = Uuid::new_v4();
+        for mode in [
+            w::AuthenticationMode::SecureEnclave,
+            w::AuthenticationMode::Password,
+        ] {
+            let root = crate::protocol_test_support::Root::new();
+            let mut config = w::LoginConfiguration {
+                authentication: mode,
+                ..Default::default()
+            };
+            if mode == w::AuthenticationMode::Password {
+                config.password_provider = Some(Uuid::new_v4());
+            }
+            let settings = wire::AccessConfiguration {
+                windows: wire::AccessWindowsConfiguration::Disabled,
+                mac: Some(config),
+                role: None,
+                self_enrollment: false,
+                enabled: true,
+            };
+            let binding = wire::AccessBindingStatus {
+                account_disposition: wire::AccessAccountDisposition::Keep,
+                id: Uuid::new_v4(),
+                binding_generation: 1,
+                factor_generation: 1,
+                revision: 1,
+                revoked: false,
+                account: Some(wire::AccessAccount::Macos { generated_uid: uid }),
+                configuration: settings.clone(),
+                received_revision: None,
+                applied_revision: None,
+                effect: None,
+            };
+            let mut directory = wire::AccessDirectory {
+                policies: vec![],
+                next_cursor: None,
+                bindings: vec![binding.clone()],
+            };
+            let admit = |d: &wire::AccessDirectory, current: bool| {
+                admit_existing(&root.path, uid.to_string(), uid, &id, &settings, d, || {
+                    if current {
+                        Ok(())
+                    } else {
+                        Err(Error::Identity)
+                    }
+                })
+            };
+            assert_eq!(admit(&directory, false), Err(Error::Identity));
+            directory.bindings.push(binding.clone());
+            assert_eq!(admit(&directory, true), Err(Error::Conflict));
+            directory.bindings.pop();
+            admit(&directory, true).unwrap();
+            let name = binding_name(&uid.to_string()).unwrap();
+            let saved: ::platform_sso::LocalBinding =
+                state::read_optional(&root.path, &name).unwrap().unwrap();
+            assert_eq!(
+                (saved.binding, saved.configuration.authentication),
+                (binding.id, mode)
+            );
+            super::super::tests::authorization::register_saved_account(&root.path, &saved).await;
+            directory.bindings[0].revoked = true;
+            directory.bindings[0].revision += 1;
+            assert_eq!(admit(&directory, true), Err(Error::Unavailable));
+            assert!(
+                !state::read_optional::<::platform_sso::LocalBinding>(&root.path, &name)
+                    .unwrap()
+                    .unwrap()
+                    .enabled
+            );
+        }
     }
 }

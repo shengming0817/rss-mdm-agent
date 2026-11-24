@@ -296,6 +296,27 @@ fn cleanup(
         phase = next;
     }
 }
+#[cfg(target_os = "macos")]
+fn verify_da_state(
+    deployment: &Deployment,
+    phase: Phase,
+    receipt: &rss_mdm_agent_wire::da::RevocationReceipt,
+) -> Result<(), Error> {
+    // After credential removal this operation owns the validated receipt; the DA journal may already be partly deleted.
+    if matches!(
+        phase,
+        Phase::Prepared | Phase::Stopped | Phase::PayloadRemoved
+    ) && agent_client::da::retired_receipt(
+        &deployment.da_root()?,
+        deployment.modules.da.backend()?,
+        deployment.installation_id,
+        receipt.operation_id,
+    )? != *receipt
+    {
+        return Err(Error::Identity);
+    }
+    Ok(())
+}
 fn execute(task: uuid::Uuid, package_entry: bool) -> Result<(), Error> {
     let mut r = load(task)?;
     if r.phase == Phase::Finished && r.carrier_released {
@@ -328,16 +349,11 @@ fn execute(task: uuid::Uuid, package_entry: bool) -> Result<(), Error> {
                 if !crate::deployment::never_initialized(&current.state_root)? {
                     return Err(Error::Denied);
                 }
-                // The carrier owns a validated receipt after the channel directory itself was removed.
-                if r.phase != Phase::CredentialsRemoved
-                    && r.phase != Phase::StateRemoved
-                    && r.phase != Phase::Finished
-                    && &released_da(&current, task)? != receipt
-                {
-                    return Err(Error::Identity);
-                }
+                verify_da_state(&current, r.phase, receipt)?;
             }
-            if crate::da_service::has_retained_identity(&current)? {
+            if matches!(r.permit, RemovalPermit::Mdm(_))
+                && crate::da_service::has_retained_identity(&current)?
+            {
                 return Err(Error::Denied);
             }
             lifecycle::preserved(&r.deployment, &current)?;
@@ -462,7 +478,14 @@ fn execute(task: uuid::Uuid, package_entry: bool) -> Result<(), Error> {
     // after its checkpoint must still retry the exact carrier, never repeat deletion.
     outcome::phase("retirement-carrier")?;
     let reclaimed = platform::finish_unmanage(&deployment, task);
-    r.carrier_released = reclaimed.is_ok();
+    #[cfg(target_os = "macos")]
+    {
+        r.carrier_released = reclaimed.as_ref().is_ok_and(|gone| *gone);
+    }
+    #[cfg(windows)]
+    {
+        r.carrier_released = reclaimed.is_ok();
+    }
     if reclaimed.as_ref().is_ok_and(|gone| *gone)
         && !package_managed
         && r.credentials_complete == Some(true)
@@ -481,6 +504,51 @@ fn execute(task: uuid::Uuid, package_entry: bool) -> Result<(), Error> {
     }
     reclaimed.map(|_| ())
 }
+#[cfg(target_os = "macos")]
+fn observed_state(
+    phase: Phase,
+    gone: bool,
+    credentials_complete: Option<bool>,
+    package_managed: bool,
+) -> &'static str {
+    if phase != Phase::Finished || !gone {
+        "pending"
+    } else if credentials_complete == Some(true) && !package_managed {
+        "completed"
+    } else {
+        "unknown"
+    }
+}
+#[cfg(target_os = "macos")]
+pub(super) fn observed_status(
+    config: &Path,
+    id: uuid::Uuid,
+) -> Result<Option<serde_json::Value>, Error> {
+    let dir = config
+        .parent()
+        .ok_or(Error::Configuration)?
+        .join("install-operations");
+    let path = dir.join(format!("{id}.retirement-work.json"));
+    if !path.try_exists()? {
+        return Ok(None);
+    }
+    let r: Recovery = serde_json::from_slice(
+        &installation_security::read_protected(&path).map_err(|_| Error::Identity)?,
+    )
+    .map_err(|_| Error::Storage)?;
+    validate(&r, id)?;
+    let removed = matches!(
+        r.phase,
+        Phase::PayloadRemoved | Phase::CredentialsRemoved | Phase::StateRemoved | Phase::Finished
+    );
+    let gone = r.carrier_released
+        || (r.phase == Phase::Finished && platform::carrier_gone(&r.deployment, id)?);
+    let state = observed_state(r.phase, gone, r.credentials_complete, r.package_managed);
+    Ok(Some(
+        serde_json::json!({"operation":id,"state":state,"phase":r.phase,"payloadRemoved":removed,"credentialsComplete":r.credentials_complete,"carrierReleased":gone,"acknowledged":r.acknowledged}),
+    ))
+}
+
 pub(super) fn run(task: uuid::Uuid, binary: &Path) -> Result<(), Error> {
     if !path(task)?.exists() {
         let d = Deployment::metadata(&Deployment::default_path()?)?;
@@ -521,8 +589,10 @@ pub(super) fn run(task: uuid::Uuid, binary: &Path) -> Result<(), Error> {
     let result = execute(task, false);
     if let Err(error) = result {
         outcome::failed(error);
-    } else {
+    } else if load(task)?.outcome == Some(UnmanageOutcome::Completed) {
         outcome::succeeded();
+    } else {
+        outcome::unknown();
     }
     outcome::terminal();
     publish(
@@ -536,6 +606,54 @@ pub(super) fn run(task: uuid::Uuid, binary: &Path) -> Result<(), Error> {
 mod tests {
     use super::*;
     use std::cell::Cell;
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn partial_da_journal_removal_replays_the_credential_checkpoint() {
+        use rss_mdm_agent_wire::da::RevocationReceipt;
+        let temp = crate::protocol_test_support::Root::new();
+        let mut deployment = crate::deployment::tests::deployment();
+        deployment.state_root = temp.path.join("state");
+        let backend = agent_client::da::Backend {
+            origin: "https://fixture.example".into(),
+            browser: None,
+            ca_pem: String::new(),
+            instance: uuid::Uuid::new_v4(),
+            tenant: uuid::Uuid::new_v4(),
+        };
+        let receipt = RevocationReceipt {
+            service_id: backend.instance,
+            tenant: backend.tenant,
+            device: rss_mdm_agent_wire::DeviceId::new_v4(),
+            credential: uuid::Uuid::new_v4(),
+            operation_id: uuid::Uuid::new_v4(),
+        };
+        deployment.modules.mdm = Module::Disabled;
+        deployment.modules.da = Module::Enabled { backend };
+        let root = deployment.da_root().unwrap();
+        platform_private_storage::directory(root.parent().unwrap()).unwrap();
+        platform_private_storage::directory(&root).unwrap();
+        std::fs::write(root.join("journal-fragment"), b"partial").unwrap();
+        assert!(verify_da_state(&deployment, Phase::PayloadRemoved, &receipt).is_err());
+        verify_da_state(&deployment, Phase::CredentialsRemoved, &receipt).unwrap();
+        remove_tree(&root).unwrap();
+        verify_da_state(&deployment, Phase::CredentialsRemoved, &receipt).unwrap();
+        assert_eq!(
+            observed_state(Phase::Prepared, false, None, false),
+            "pending"
+        );
+        assert_eq!(
+            observed_state(Phase::Finished, false, Some(true), false),
+            "pending"
+        );
+        assert_eq!(
+            observed_state(Phase::Finished, true, Some(false), false),
+            "unknown"
+        );
+        assert_eq!(
+            observed_state(Phase::Finished, true, Some(true), false),
+            "completed"
+        );
+    }
     #[test]
     fn retirement_cleanup_replays_lost_checkpoints_and_never_skips_failed_effects() {
         let phases = [

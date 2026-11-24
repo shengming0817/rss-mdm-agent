@@ -138,6 +138,7 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         }
         let tx = self.journal.db.unchecked_transaction()?;
         let mut release: Vec<(String, bool)> = read(&tx, "release")?.unwrap_or_default();
+        self.close_unissued_renewal(&tx, active.receipt.device, &mut release)?;
         release.push((active.key, true));
         write(&tx, "release", &release)?;
         write(&tx, "retired-registration", receipt)?;

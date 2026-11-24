@@ -107,7 +107,8 @@ static NSString *nativeConfiguration(ASAuthorizationProviderExtensionLoginManage
                         saved=!error && [manager saveLoginConfiguration:config error:&error];
                     }
                 }
-                if(saved)RSSSetInflight(NSUserDefaults.standardUserDefaults,user?@"registration":@"deviceRegistration",nil);
+                if(saved)saved=RSSCommitSave(NSUserDefaults.standardUserDefaults,user?@"registration":@"deviceRegistration",field(handle,RSSMetadata));
+                else if(result==0 && [[NSUserDefaults.standardUserDefaults dictionaryForKey:@"saving"][self.registrationScope] isEqual:field(handle,RSSMetadata)]) RSSSetSaving(NSUserDefaults.standardUserDefaults,user?@"registration":@"deviceRegistration",nil);
                 ASAuthorizationProviderExtensionRegistrationResult outcome=saved?ASAuthorizationProviderExtensionRegistrationResultSuccess:ASAuthorizationProviderExtensionRegistrationResultFailed;
                 if(beginStatus==1)outcome=ASAuthorizationProviderExtensionRegistrationResultUserInterfaceRequired;
                 [self finishRegistration:generation result:outcome];
@@ -153,7 +154,7 @@ static NSString *nativeConfiguration(ASAuthorizationProviderExtensionLoginManage
     if(!manager){completion(NO);return;}
     BOOL device=manager.isDeviceRegistered,user=manager.isUserRegistered;
     NSString *actual=nativeConfiguration(manager);
-    NSMutableSet<NSString *> *attempted=[NSMutableSet set];
+    NSMutableSet<NSString *> *attempted=[NSMutableSet setWithArray:[NSUserDefaults.standardUserDefaults dictionaryForKey:@"saving"].allValues ?: @[]];
     for(NSString *scope in RSSRegistrationScopes()) { NSString *metadata=[NSUserDefaults.standardUserDefaults stringForKey:scope];if(metadata)[attempted addObject:metadata]; }
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0), ^{
         NSMutableArray<NSString *> *completed=[NSMutableArray array];
