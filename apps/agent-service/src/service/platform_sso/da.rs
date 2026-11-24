@@ -37,11 +37,34 @@ pub(super) fn mdm_assigned(d: &Deployment) -> Result<bool, Error> {
 type Client = da::Client<DeviceSecrets, SystemClock>;
 
 /// Logout fences a directory lookup even while its HTTPS response is outstanding.
+#[derive(Default)]
+struct AccountRoutes {
+    active: Option<execution_contract::Id>,
+    candidate: Option<execution_contract::Id>,
+}
+impl AccountRoutes {
+    fn targets(&self, generation: &execution_contract::Id) -> bool {
+        self.active.as_ref() == Some(generation) || self.candidate.as_ref() == Some(generation)
+    }
+    fn proposed(&mut self, generation: &execution_contract::Id) {
+        if self.active.as_ref() != Some(generation) {
+            self.candidate = Some(generation.clone());
+        }
+    }
+    fn commit(&mut self, generation: &execution_contract::Id) {
+        self.active = Some(generation.clone());
+        if self.candidate.as_ref() == Some(generation) {
+            self.candidate = None;
+        }
+    }
+}
+
 pub(crate) struct Fence {
     policy: PeerPolicy,
     epoch: Arc<Mutex<u64>>,
     pub accounts: Arc<Setup>,
     active: Mutex<std::sync::Weak<Session>>,
+    routes: Mutex<AccountRoutes>,
     other: Option<Arc<dyn SessionFence>>,
 }
 impl SessionFence for Fence {
@@ -97,7 +120,6 @@ pub(crate) struct Endpoint {
     pub fence: Arc<Fence>,
     sender: tokio::sync::mpsc::Sender<Work>,
     deployment: Deployment,
-    account_context: Mutex<Option<execution_contract::Id>>,
 }
 impl Endpoint {
     pub fn new(d: &Deployment, other: Option<Arc<dyn SessionFence>>) -> (Self, Worker) {
@@ -107,12 +129,12 @@ impl Endpoint {
             epoch: Arc::new(Mutex::new(0)),
             accounts: Arc::default(),
             active: Mutex::default(),
+            routes: Mutex::default(),
             other,
         });
         (
             Self {
                 deployment: d.clone(),
-                account_context: Mutex::default(),
                 fence: fence.clone(),
                 sender,
             },
@@ -279,22 +301,16 @@ impl Endpoint {
             return Some(Err(Reply::Rejected));
         };
         if d.modules.mdm.enabled() {
-            let Ok(mut owner) = self.account_context.lock() else {
+            let Ok(mut routes) = self.fence.routes.lock() else {
                 return Some(Err(Reply::Unavailable));
             };
             match request {
-                Request::BindContext { value, expected }
-                    if expected.is_none()
-                        || owner.is_none()
-                        || owner.as_ref() == expected.as_ref() =>
-                {
-                    *owner = Some(value.generation.clone());
-                }
+                Request::BindContext { value, .. } => routes.proposed(&value.generation),
                 Request::DeviceAccess {
                     context,
                     input: AccountOp::Tasks {},
                     ..
-                } if owner.as_ref() != Some(&context.generation) => return None,
+                } if !routes.targets(&context.generation) => return None,
                 _ => (),
             }
         }
@@ -422,13 +438,21 @@ impl Worker {
                         b.refreshes(&command, value, &value.generation, now)
                             && b.current.same(value.credential())
                     });
-                    let mut prior = self.bound.take();
-                    if !same {
-                        drop(prior.take());
-                        self.fence.accounts.clear_input()?;
-                    }
-                    let expires = owner.bind(&command, value, &self.fence).await?;
-
+                    let expires = match owner.bind(&command, value, &self.fence).await {
+                        Ok(v) => v,
+                        Err(e) => {
+                            if same
+                                && matches!(
+                                    e,
+                                    Error::Denied | Error::Expired | Error::CredentialRevoked
+                                )
+                            {
+                                self.bound = None;
+                                self.fence.accounts.clear_input()?;
+                            }
+                            return Err(e);
+                        }
+                    };
                     let epoch = self.fence.epoch.lock().map_err(|_| Error::Unavailable)?;
                     if *epoch != command.fence_epoch
                         || command.reply.is_closed()
@@ -436,16 +460,16 @@ impl Worker {
                     {
                         return Err(Error::Identity);
                     }
-                    self.bound = Some(if let Some(mut bound) = prior {
+                    if same {
+                        let bound = self.bound.as_mut().ok_or(Error::Identity)?;
                         bound.current.extend(expires)?;
                         bound.expires = expires;
-                        bound
                     } else {
                         let current = Session::new(expires, value.credential().cloned());
                         *self.fence.active.lock().map_err(|_| Error::Unavailable)? =
                             Arc::downgrade(&current);
                         current.observe_deadline();
-                        BoundContext {
+                        self.bound = Some(BoundContext {
                             current,
                             principal: value.user().map(|u| u.principal_id),
                             subject: command.subject.clone(),
@@ -454,8 +478,13 @@ impl Worker {
                             generation: value.generation.clone(),
                             epoch: command.fence_epoch,
                             expires,
-                        }
-                    });
+                        });
+                    }
+                    self.fence
+                        .routes
+                        .lock()
+                        .map_err(|_| Error::Unavailable)?
+                        .commit(&value.generation);
                     Ok(Reply::ContextBound {
                         value: execution_contract::NativeContextRef {
                             id: value.generation.clone(),
@@ -467,6 +496,7 @@ impl Worker {
                     context,
                     input: input @ (AccountOp::Tasks {} | AccountOp::PrepareMac { .. }),
                     mac_password,
+                    mac_confirmation,
                     ..
                 }) => {
                     let bound = self.bound.as_ref().ok_or(Error::Identity)?;
@@ -486,27 +516,31 @@ impl Worker {
                         console: execution_ipc::macos_identity::verify_console,
                         expires: bound.expires,
                     };
+                    let capture = || {
+                        let mut pins = d
+                            .helper_policy()
+                            .filter(|p| p.subjects.contains(&bound.subject))
+                            .ok_or(Error::Identity)?;
+                        let subject = bound.subject.clone();
+                        let session = bound.session;
+                        let binding = bound.binding.clone();
+                        pins.subjects = vec![subject.clone()];
+                        Presence::capture(move || {
+                            execution_ipc::helper::presence(&pins, &subject, session, &binding)
+                                .map_err(|_| Error::Identity)
+                        })
+                    };
                     let value = match input {
                         AccountOp::Tasks {} => AccountReply::Tasks {
-                            tasks: self.fence.accounts.tasks(&employee)?,
+                            tasks: self.fence.accounts.tasks(&employee, capture)?,
                         },
                         AccountOp::PrepareMac { task, attempt } => {
-                            let mut pins = d
-                                .helper_policy()
-                                .filter(|p| p.subjects.contains(&bound.subject))
-                                .ok_or(Error::Identity)?;
-                            let subject = bound.subject.clone();
-                            let session = bound.session;
-                            let binding = bound.binding.clone();
-                            pins.subjects = vec![subject.clone()];
-                            employee.presence = Some(Presence::capture(move || {
-                                execution_ipc::helper::presence(&pins, &subject, session, &binding)
-                                    .map_err(|_| Error::Identity)
-                            })?);
+                            employee.presence = Some(capture()?);
                             self.fence.accounts.prepare(
                                 (*task, *attempt),
                                 employee,
                                 mac_password.as_ref().ok_or(Error::Denied)?,
+                                mac_confirmation.as_ref().ok_or(Error::Denied)?,
                             )?;
                             AccountReply::Prepared {}
                         }
@@ -585,7 +619,12 @@ impl Worker {
             }
         }
     }
-    pub async fn maintenance(&mut self, d: &Deployment, client: &Client) -> Result<(), Error> {
+    pub async fn maintenance(
+        &mut self,
+        d: &Deployment,
+        client: &Client,
+        retirement: &mut State,
+    ) -> Result<(), Error> {
         let root = crate::access_worker::root(&d.execution);
         if let Some(r) = self.during(d, client, client.revocation()).await? {
             self.bound = None;
@@ -593,21 +632,13 @@ impl Worker {
             withdraw_sources(&root, &r)?;
             return client.retire(&r);
         }
-        let interruption = {
-            let mut owner = Da {
-                d,
-                client,
-                root,
-                state: &mut self.state,
-            };
-            tokio::select! {biased;
-                _=owner.retry_retirement()=>None,
-                cmd=self.rx.recv()=>cmd,
-            }
+        let mut owner = Da {
+            d,
+            client,
+            root,
+            state: retirement,
         };
-        if let Some(cmd) = interruption {
-            self.handle(d, client, cmd).await;
-        }
+        self.during(d, client, owner.retry_retirement()).await;
         Ok(())
     }
 }
@@ -1092,6 +1123,19 @@ mod tests {
             assert!(!root.join(DA_WITHDRAWAL).exists());
             assert_eq!(enabled(&root, owner.0, owner.1), Err(Error::Denied));
         }
+    }
+    #[test]
+    fn rejected_candidate_keeps_the_committed_mixed_route() {
+        let mut routes = AccountRoutes::default();
+        let a = execution_contract::Id::new("active").unwrap();
+        let b = execution_contract::Id::new("other").unwrap();
+        routes.commit(&a);
+        routes.proposed(&b);
+        assert!(routes.targets(&a));
+        assert!(routes.targets(&b));
+        routes.commit(&b);
+        assert!(!routes.targets(&a));
+        assert!(routes.targets(&b));
     }
     #[test]
     fn device_context_refresh_is_fenced_by_logout_and_session_change() {

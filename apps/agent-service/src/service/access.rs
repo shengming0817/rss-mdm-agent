@@ -408,6 +408,7 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
             Op::PrepareMac { task, attempt } => {
                 let Some(execution_ipc::host::Request::DeviceAccess {
                     mac_password: Some(password),
+                    mac_confirmation: None,
                     ..
                 }) = command.request.as_operation()
                 else {
@@ -569,6 +570,7 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
                 {
                     if let Ok(task) = self.access_task(id, &user, &owner.subject) {
                         tasks.push(SetupTask {
+                            mac_confirmation: None,
                             task: id,
                             attempt: task.attempt_id,
                             binding: task.binding_id,

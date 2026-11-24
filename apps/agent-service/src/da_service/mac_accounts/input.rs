@@ -11,12 +11,17 @@ struct Active {
 }
 pub(crate) struct Session {
     active: Mutex<Option<Active>>,
+    confirmation_key: ring::hmac::Key,
     changed: Arc<tokio::sync::Notify>,
 }
 impl Session {
     pub fn new(expires: u64, proof: Option<Zeroizing<String>>) -> Arc<Self> {
         Arc::new(Self {
             active: Mutex::new(Some(Active { expires, proof })),
+            confirmation_key: ring::hmac::Key::new(
+                ring::hmac::HMAC_SHA256,
+                Uuid::new_v4().as_bytes(),
+            ),
             changed: Arc::default(),
         })
     }
@@ -79,6 +84,22 @@ impl Presence {
             generation: read()?,
             read: Arc::new(read),
         })
+    }
+    fn subject(&self, t: &w::AccessTaskSpec) -> Result<Vec<u8>, Error> {
+        serde_json::to_vec(&(self.generation, t)).map_err(|_| Error::Protocol)
+    }
+    fn ticket(&self, t: &w::AccessTaskSpec, session: &Session) -> Result<[u8; 32], Error> {
+        let signature = ring::hmac::sign(&session.confirmation_key, &self.subject(t)?);
+        signature.as_ref().try_into().map_err(|_| Error::Protocol)
+    }
+    fn verify(
+        &self,
+        t: &w::AccessTaskSpec,
+        session: &Session,
+        ticket: &[u8; 32],
+    ) -> Result<(), Error> {
+        ring::hmac::verify(&session.confirmation_key, &self.subject(t)?, ticket)
+            .map_err(|_| Error::Denied)
     }
     fn current(&self) -> bool {
         (self.read)() == Ok(self.generation)
@@ -184,33 +205,54 @@ impl Setup {
             .offers
             .contains_key(&id))
     }
-    pub fn tasks(&self, e: &Employee) -> Result<Vec<SetupTask>, Error> {
+    pub fn tasks(
+        &self,
+        e: &Employee,
+        capture: impl FnOnce() -> Result<Presence, Error>,
+    ) -> Result<Vec<SetupTask>, Error> {
         let now = seconds()?;
-        let s = self.state.lock().map_err(|_| Error::Storage)?;
-        Ok(s.offers
+        let offers: Vec<_> = self
+            .state
+            .lock()
+            .map_err(|_| Error::Storage)?
+            .offers
             .values()
             .filter(|t| t.expires_at > now && e.permits(t))
-            .filter_map(|t| {
+            .cloned()
+            .collect();
+        if offers.is_empty() {
+            return Ok(vec![]);
+        }
+        let gui = capture()?;
+        offers
+            .into_iter()
+            .map(|t| {
                 let w::AccessAction::Create { name, .. } = &t.action else {
-                    return None;
+                    return Err(Error::Protocol);
                 };
-                Some(SetupTask {
+                Ok(SetupTask {
                     task: t.task_id,
                     attempt: t.attempt_id,
                     binding: t.binding_id,
                     create_name: Some(name.clone()),
+                    mac_confirmation: Some(gui.ticket(&t, &e.current)?),
                 })
             })
-            .collect())
+            .collect()
     }
     pub fn prepare(
         self: &Arc<Self>,
         id: Ids,
         e: Employee,
         password: &Zeroizing<String>,
+        confirmation: &[u8; 32],
     ) -> Result<(), Error> {
         let mut s = self.state.lock().map_err(|_| Error::Storage)?;
         let t = s.offers.get(&id).ok_or(Error::NotFound)?;
+        e.presence
+            .as_ref()
+            .ok_or(Error::Identity)?
+            .verify(t, &e.current, confirmation)?;
         if !e.permits(t)
             || t.expires_at <= seconds()?
             || e.presence.is_none()
@@ -375,8 +417,9 @@ mod tests {
         e.presence = Some(Presence::capture(move || Ok(*probe.lock().unwrap())).unwrap());
         let setup = Arc::new(Setup::default());
         setup.offer(&t).unwrap();
+        let ticket = e.presence.as_ref().unwrap().ticket(&t, &e.current).unwrap();
         let pw = Zeroizing::new("test".into());
-        setup.prepare(ids(&t), e.clone(), &pw).unwrap();
+        setup.prepare(ids(&t), e.clone(), &pw, &ticket).unwrap();
         let mut input = NativeInput {
             setup: &setup,
             task: &t,
@@ -387,7 +430,8 @@ mod tests {
         assert!(input.send(&mut Vec::new()).is_err());
         assert!(setup.confirmed().unwrap().is_none());
         let e = employee(&t);
-        setup.prepare(ids(&t), e.clone(), &pw).unwrap();
+        let ticket = e.presence.as_ref().unwrap().ticket(&t, &e.current).unwrap();
+        setup.prepare(ids(&t), e.clone(), &pw, &ticket).unwrap();
         setup.state.lock().unwrap().input.as_mut().unwrap().until = continuous().unwrap();
         let mut input = NativeInput {
             setup: &setup,
@@ -400,6 +444,53 @@ mod tests {
         assert!(e.current.active.lock().unwrap().is_none());
     }
     #[tokio::test]
+    async fn pre_dialog_receipt_cannot_follow_a_lock_switch_or_a_new_attempt() {
+        let task = super::super::tests::task();
+        let setup = Arc::new(Setup::default());
+        setup.offer(&task).unwrap();
+        let mut employee = employee(&task);
+        let epoch = Arc::new(Mutex::new(Uuid::new_v4()));
+        let sample = || {
+            let source = epoch.clone();
+            Presence::capture(move || Ok(*source.lock().unwrap()))
+        };
+        let preflight = setup.tasks(&employee, sample).unwrap().pop().unwrap();
+        let ticket = preflight.mac_confirmation.unwrap();
+        *epoch.lock().unwrap() = Uuid::new_v4(); // lock/unlock during the native dialog
+        employee.presence = Some(sample().unwrap());
+        let secret = Zeroizing::new("native-only".into());
+        assert_eq!(
+            setup.prepare(ids(&task), employee.clone(), &secret, &ticket),
+            Err(Error::Denied)
+        );
+        assert!(setup.confirmed().unwrap().is_none());
+        let fresh = setup
+            .tasks(&employee, sample)
+            .unwrap()
+            .pop()
+            .unwrap()
+            .mac_confirmation
+            .unwrap();
+        let mut replacement = task.clone();
+        replacement.attempt_id = Uuid::new_v4();
+        setup.offer(&replacement).unwrap();
+        assert_eq!(
+            setup.prepare(ids(&replacement), employee.clone(), &secret, &fresh),
+            Err(Error::Denied)
+        );
+        let current = setup
+            .tasks(&employee, sample)
+            .unwrap()
+            .pop()
+            .unwrap()
+            .mac_confirmation
+            .unwrap();
+        setup
+            .prepare(ids(&replacement), employee, &secret, &current)
+            .unwrap();
+    }
+
+    #[tokio::test]
     async fn employee_confirmation_is_exclusive_and_fenced_at_native_submission() {
         let t = super::super::tests::task();
         let mut second = t.clone();
@@ -407,20 +498,39 @@ mod tests {
         second.attempt_id = Uuid::new_v4();
         let setup = Arc::new(Setup::default());
         let e = employee(&t);
+        let ticket = e.presence.as_ref().unwrap().ticket(&t, &e.current).unwrap();
         let pw = Zeroizing::new("private-test-input".into());
         setup.offer(&t).unwrap();
         setup.offer(&second).unwrap();
-        assert_eq!(setup.tasks(&e).unwrap().len(), 2);
+        assert_eq!(
+            setup
+                .tasks(&e, || Ok(e.presence.clone().unwrap()))
+                .unwrap()
+                .len(),
+            2
+        );
         let mut foreign = e.clone();
         foreign.principal = Uuid::new_v4();
-        assert!(setup.tasks(&foreign).unwrap().is_empty());
-        assert!(setup.prepare(ids(&t), foreign, &pw).is_err());
         assert!(setup
-            .prepare((t.task_id, second.attempt_id), e.clone(), &pw)
+            .tasks(&foreign, || panic!("foreign task"))
+            .unwrap()
+            .is_empty());
+        assert!(setup.prepare(ids(&t), foreign, &pw, &ticket).is_err());
+        assert!(setup
+            .prepare((t.task_id, second.attempt_id), e.clone(), &pw, &ticket)
             .is_err());
-        setup.prepare(ids(&t), e.clone(), &pw).unwrap();
+        setup.prepare(ids(&t), e.clone(), &pw, &ticket).unwrap();
         assert_eq!(
-            setup.prepare(ids(&second), e.clone(), &pw),
+            setup.prepare(
+                ids(&second),
+                e.clone(),
+                &pw,
+                &e.presence
+                    .as_ref()
+                    .unwrap()
+                    .ticket(&second, &e.current)
+                    .unwrap()
+            ),
             Err(Error::Conflict)
         );
         let mut native = NativeInput {
@@ -435,7 +545,7 @@ mod tests {
         native.send(&mut bytes).unwrap();
         assert_eq!(bytes, b"private-test-input\n");
         assert!(native.send(&mut bytes).is_err());
-        setup.prepare(ids(&t), e.clone(), &pw).unwrap();
+        setup.prepare(ids(&t), e.clone(), &pw, &ticket).unwrap();
         native.admit(|| Ok(())).unwrap();
         *e.epoch.lock().unwrap() += 1;
         assert!(native.send(&mut Vec::new()).is_err());

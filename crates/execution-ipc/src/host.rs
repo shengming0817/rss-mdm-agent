@@ -761,6 +761,9 @@ pub enum Request {
         /// One-shot input supplied by the native password dialog for the selected Mac attempt.
         #[serde(skip_serializing_if = "Option::is_none")]
         mac_password: Option<zeroize::Zeroizing<String>>,
+        /// Receipt taken by the native desktop before opening the DA confirmation dialog.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        mac_confirmation: Option<[u8; 32]>,
     },
     /// Typed local software intent, without a remote task or caller-selected command.
     LocalSoftware {

@@ -527,10 +527,14 @@ impl ExecutionHandle {
         use execution_ipc::device_access::Operation;
         let context = self.context_ref()?;
         #[cfg(target_os = "macos")]
+        let mut confirmation = None;
+        #[cfg(not(target_os = "macos"))]
+        let confirmation = None;
+        #[cfg(target_os = "macos")]
         let password = {
             let prompt = if let Operation::PrepareMac { task, attempt } = &input {
                 let tasks = self
-                    .send_device_access(&context, &Operation::Tasks {}, None)
+                    .send_device_access(&context, &Operation::Tasks {}, None, None)
                     .await?;
                 let execution_ipc::device_access::Response::Tasks { tasks } = tasks else {
                     return Err(bad(Error::Denied));
@@ -542,6 +546,7 @@ impl ExecutionHandle {
                 if matches.next().is_some() {
                     return Err(bad(Error::Denied));
                 }
+                confirmation = selected.mac_confirmation;
                 Some(selected.create_name.map_or_else(
                     || "输入当前本地账号的密码".to_string(),
                     |name| format!("为本地账号 {name} 设置密码"),
@@ -584,8 +589,15 @@ impl ExecutionHandle {
         if self.context_ref()? != context {
             return Err(bad(Error::Unbound));
         }
-        self.send_device_access(&context, &input, password.as_ref())
-            .await
+        let mut response = self
+            .send_device_access(&context, &input, password.as_ref(), confirmation)
+            .await?;
+        if let execution_ipc::device_access::Response::Tasks { tasks } = &mut response {
+            for task in tasks {
+                task.mac_confirmation = None;
+            }
+        }
+        Ok(response)
     }
 
     async fn send_device_access(
@@ -593,6 +605,7 @@ impl ExecutionHandle {
         context: &execution_contract::NativeContextRef,
         input: &execution_ipc::device_access::Operation,
         password: Option<&zeroize::Zeroizing<String>>,
+        mac_confirmation: Option<[u8; 32]>,
     ) -> ui::Result<execution_ipc::device_access::Response> {
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
             loop {
@@ -602,6 +615,7 @@ impl ExecutionHandle {
                         origin: self.origin.clone(),
                         input: input.clone(),
                         mac_password: password.cloned(),
+                        mac_confirmation,
                     })
                     .await
                     .map_err(bad)?;

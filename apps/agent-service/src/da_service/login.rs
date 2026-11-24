@@ -355,6 +355,7 @@ impl Login {
                 context,
                 origin: ClientOrigin::Desktop {},
                 mac_password: None,
+                mac_confirmation: None,
                 input,
             } => self
                 .access(peer, &subject, context, input)
@@ -505,6 +506,7 @@ impl Login {
                     .map(|o| &o.task)
                     .filter(|t| e.permits(t))
                     .map(|t| SetupTask {
+                        mac_confirmation: None,
                         task: t.task_id,
                         attempt: t.attempt_id,
                         binding: t.binding_id,

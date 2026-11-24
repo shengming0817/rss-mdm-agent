@@ -60,6 +60,11 @@ pub enum Operation {
 #[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SetupTask {
+    /// Native-only receipt for the listed DA permit and unlocked GUI. Tauri consumes
+    /// and strips this field before returning the employee's display projection.
+    #[schemars(skip)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mac_confirmation: Option<[u8; 32]>,
     /// Exact backend task.
     pub task: Uuid,
     /// Frozen attempt offered to this employee.

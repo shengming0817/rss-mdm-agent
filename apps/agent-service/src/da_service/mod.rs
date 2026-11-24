@@ -174,6 +174,8 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                 .map_err(|_| Error::Unavailable)?;
             runtime.block_on(async move {
                 let work = async {
+                    #[cfg(target_os="macos")]
+                    let mut retirement=crate::service::platform_sso::State::default();
                     loop {
                         // Only explicit provisioning may initialize a DA identity namespace.
                         let result = match channel_initialized(&d).and_then(|retained| {
@@ -205,7 +207,7 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                                     let result=native.during(&d,&client,client.drive(&mut policy)).await;
                                     #[cfg(target_os="macos")]
                                     {
-                                        native.maintenance(&d,&client).await?;
+                                        native.maintenance(&d,&client,&mut retirement).await?;
                                         if client.registered()? {
                                             let setup=native.accounts();
                                             let operations=native.during(&d,&client,mac_accounts::drive(&d,&client,&setup)).await;
@@ -391,10 +393,12 @@ fn account_tasks_merge_after_enqueue_and_a_denied_da_input_is_never_forwarded() 
         origin: execution_ipc::host::ClientOrigin::Desktop {},
         input,
         mac_password: None,
+        mac_confirmation: None,
     };
     let tasks = || Reply::DeviceAccess {
         value: Response::Tasks {
             tasks: vec![SetupTask {
+                mac_confirmation: None,
                 task: Uuid::new_v4(),
                 attempt: Uuid::new_v4(),
                 binding: Uuid::new_v4(),
