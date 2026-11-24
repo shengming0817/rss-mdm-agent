@@ -121,7 +121,11 @@ impl Journal {
             return Err(Error::Denied);
         }
         match creation::create(&self.root, spec, account_name, || {
-            setup.take(spec, employee)
+            Ok(input::NativeInput {
+                setup,
+                task: spec,
+                employee,
+            })
         }) {
             Ok(Outcome::Created(a)) => Ok(Step::Created(a)),
             Ok(Outcome::NameConflict) => {
@@ -197,6 +201,22 @@ impl Journal {
         done: da::AccountCompletion,
     ) -> Result<(), Error> {
         let _lock = state::lock(&self.native)?;
+        if done == da::AccountCompletion::Rejected {
+            let key = attempt::key(id, attempt_id);
+            if let Some(record) = state::read_optional::<attempt::Attempt>(&self.root, &key)? {
+                if !record.started {
+                    if let Some(t) = record.permit {
+                        if self.saved(&t)?.is_some()
+                            || self.root.join(access::name(&t, "creation")).try_exists()?
+                        {
+                            return Ok(());
+                        }
+                    }
+                    state::remove(&self.root, &key)?;
+                }
+            }
+            return Ok(());
+        }
         attempt::retire(&self.root, id, attempt_id, done, |t| {
             state::remove(&self.root, &access::name(t, "creation"))?;
             state::remove(&self.root, &access::name(t, "result"))
@@ -233,7 +253,7 @@ fn keep(
                 reason: w::AccessFailure::AccountChanged,
             });
         }
-        if b.enabled {
+        if b.enabled || b.revision != t.revision || b.binding_generation != t.binding_generation {
             if !mutate || t.expires_at <= seconds()? {
                 return Ok(w::AccessEffect::Unknown);
             }
@@ -270,12 +290,9 @@ fn apply_role(
     employee: &Employee,
 ) -> Result<(), Error> {
     let _lock = state::lock(native)?;
-    if employee.permits(t) && seconds()? < t.expires_at {
-        let account = macos::inspect(uid, false)?;
-        // Creation is already durable. Regardless of the setter's outcome, report the
-        // subsequently observed native role on this original attempt.
-        let _ = macos::change_role(&account, Some(role));
-    }
+    let account = macos::inspect(uid, false)?;
+    // A read-back still reports the real role if native policy refused this change.
+    employee.admit(t, || macos::change_role(&account, Some(role)).map(|_| ()))?;
     Ok(())
 }
 
@@ -390,7 +407,7 @@ pub(crate) async fn drive(
             } = &t.action
             {
                 setup.offer(t)?;
-                let Some((_, employee)) = input.filter(|(confirmed, _)| confirmed == t) else {
+                let Some((_, mut employee)) = input.filter(|(confirmed, _)| confirmed == t) else {
                     return Ok(());
                 };
                 employee.verify(t).await?;
@@ -430,11 +447,11 @@ pub(crate) async fn drive(
                 new
             } else {
                 // Only the explicit disposition permit can change this DA-owned binding.
-                let may_start = !record.started && permit.is_some();
+                let may_start = permit.is_some();
                 let spec = t.clone();
                 let native = journal.native.clone();
                 let service = registration.service_id;
-                if may_start {
+                if may_start && !record.started {
                     record.started = true;
                     state::write(&journal.root, &key, &record)?;
                 }
@@ -505,6 +522,47 @@ pub(crate) mod tests {
         }
     }
 
+    #[test]
+    fn keep_requires_the_completed_generation_even_after_the_original_marked_start() {
+        let root = std::env::temp_dir().join(format!("rss-da-keep-{}", Uuid::new_v4()));
+        platform_private_storage::directory(&root).unwrap();
+        let mut t = task();
+        t.revision = 2;
+        t.binding_generation = 2;
+        let uid = Uuid::new_v4();
+        let service = Uuid::new_v4();
+        t.action = w::AccessAction::Unbind {
+            account: w::AccessAccount::Macos { generated_uid: uid },
+            disposition: w::AccessAccountDisposition::Keep,
+        };
+        let b = platform_sso::LocalBinding {
+            authority: rss_mdm_agent_wire::platform_sso::RegistrationTrust::DaDevicePop,
+            installation: service,
+            tenant: t.tenant_id,
+            device_id: t.device_id,
+            binding: t.binding_id,
+            binding_generation: 1,
+            revision: 1,
+            generated_uid: uid.to_string(),
+            enabled: false,
+            configuration: Default::default(),
+        };
+        let key = crate::service::platform_sso::binding_name(&uid.to_string()).unwrap();
+        state::write(&root, &key, &b).unwrap();
+        assert_eq!(
+            keep(&root, service, &t, false).unwrap(),
+            w::AccessEffect::Unknown
+        );
+        assert!(matches!(
+            keep(&root, service, &t, true).unwrap(),
+            w::AccessEffect::Unbound { .. }
+        ));
+        assert!(matches!(
+            keep(&root, service, &t, false).unwrap(),
+            w::AccessEffect::Unbound { .. }
+        ));
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn renewed_start_changes_only_deadlines_and_remains_bound_to_the_original_device() {
         let t = task();

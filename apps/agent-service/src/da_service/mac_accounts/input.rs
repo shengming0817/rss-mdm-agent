@@ -15,24 +15,36 @@ pub(crate) struct Employee {
     pub binding: Id,
     pub epoch: Arc<Mutex<u64>>,
     pub generation: u64,
-    pub current: Arc<AtomicBool>,
+    pub current: Arc<Mutex<Option<u64>>>,
+    pub console: fn(&str, u32, &Id) -> Result<(), execution_app::Error>,
     pub expires: u64,
 }
 impl Employee {
-    pub(super) fn permits(&self, task: &w::AccessTaskSpec) -> bool {
-        (self.portal.tenant, self.portal.instance, self.principal)
-            == (task.tenant_id, task.instance_id, task.principal_id)
-            && self.current.load(Ordering::Acquire)
-            && crate::wall().is_ok_and(|now| now < self.expires)
-            && self.epoch.lock().is_ok_and(|e| *e == self.generation)
-            && execution_ipc::macos_identity::verify_console(
-                &self.subject,
-                self.session,
-                &self.binding,
-            )
-            .is_ok()
+    pub(super) fn admit<T>(
+        &self,
+        task: &w::AccessTaskSpec,
+        action: impl FnOnce() -> Result<T, Error>,
+    ) -> Result<T, Error> {
+        let epoch = self.epoch.lock().map_err(|_| Error::Unavailable)?;
+        let current = self.current.lock().map_err(|_| Error::Unavailable)?;
+        let now = crate::wall()?;
+        if *epoch != self.generation
+            || current.is_none_or(|until| now >= until)
+            || now >= self.expires
+            || (now / 1000) as i64 >= task.expires_at.min(task.deadline)
+            || (self.portal.tenant, self.portal.instance, self.principal)
+                != (task.tenant_id, task.instance_id, task.principal_id)
+            || (self.console)(&self.subject, self.session, &self.binding).is_err()
+        {
+            return Err(Error::Identity);
+        }
+        // Logout takes epoch, replacement takes current. Keep both through the actual native write.
+        action()
     }
-    pub(super) async fn verify(&self, t: &w::AccessTaskSpec) -> Result<(), Error> {
+    pub(super) fn permits(&self, task: &w::AccessTaskSpec) -> bool {
+        self.admit(task, || Ok(())).is_ok()
+    }
+    pub(super) async fn verify(&mut self, t: &w::AccessTaskSpec) -> Result<(), Error> {
         if !self.permits(t) {
             return Err(Error::Identity);
         }
@@ -44,6 +56,9 @@ impl Employee {
             &self.proof,
         )
         .await?;
+        self.expires = self
+            .expires
+            .min((expires.max(0) as u64).saturating_mul(1000));
         if expires <= seconds()? || !self.permits(t) {
             return Err(Error::Identity);
         }
@@ -109,6 +124,12 @@ impl Setup {
             || password.chars().any(char::is_control)
         {
             return Err(Error::Denied);
+        }
+        if s.input
+            .as_ref()
+            .is_some_and(|i| i.until > std::time::Instant::now() && i.owner.permits(&i.task))
+        {
+            return Err(Error::Conflict);
         }
         let until = std::time::Instant::now() + Duration::from_secs(30);
         s.input = Some(Input {
@@ -179,21 +200,114 @@ impl Setup {
         }
         Ok(s.input.as_ref().map(|i| (i.task.clone(), i.owner.clone())))
     }
-    pub(super) fn take(
+}
+
+pub(super) struct NativeInput<'a> {
+    pub setup: &'a Setup,
+    pub task: &'a w::AccessTaskSpec,
+    pub employee: &'a Employee,
+}
+impl NativeInput<'_> {
+    fn with_input<T>(
         &self,
-        t: &w::AccessTaskSpec,
-        owner: &Employee,
-    ) -> Result<Zeroizing<String>, Error> {
-        let mut s = self.state.lock().map_err(|_| Error::Storage)?;
-        let i = s.input.as_ref().ok_or(Error::Denied)?;
-        if i.task != *t
-            || !Arc::ptr_eq(&owner.current, &i.owner.current)
-            || i.until <= std::time::Instant::now()
-            || !i.owner.permits(t)
-            || seconds()? >= t.expires_at
-        {
-            return Err(Error::Denied);
+        use_input: impl FnOnce(&mut Option<Input>) -> Result<T, Error>,
+    ) -> Result<T, Error> {
+        let mut state = self.setup.state.lock().map_err(|_| Error::Storage)?;
+        self.employee.admit(self.task, || {
+            let i = state.input.as_ref().ok_or(Error::Denied)?;
+            if i.task != *self.task
+                || !Arc::ptr_eq(&self.employee.current, &i.owner.current)
+                || i.until <= std::time::Instant::now()
+            {
+                return Err(Error::Denied);
+            }
+            use_input(&mut state.input)
+        })
+    }
+}
+impl creation::Credential for NativeInput<'_> {
+    fn admit<T>(&self, action: impl FnOnce() -> Result<T, Error>) -> Result<T, Error> {
+        self.with_input(|_| action())
+    }
+    fn send(&mut self, sink: &mut dyn std::io::Write) -> Result<(), Error> {
+        self.with_input(|slot| {
+            let input = slot.take().ok_or(Error::Denied)?;
+            sink.write_all(input.bytes.as_bytes())?;
+            sink.write_all(b"\n")?;
+            Ok(())
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::access_worker::macos::creation::Credential;
+
+    fn employee(t: &w::AccessTaskSpec) -> Employee {
+        let expiry = crate::wall().unwrap() + 60_000;
+        Employee {
+            portal: EmployeePortal::configured(
+                t.tenant_id,
+                t.instance_id,
+                Some(("https://employee.example", None)),
+            )
+            .unwrap()
+            .unwrap(),
+            principal: t.principal_id,
+            proof: Zeroizing::new("fixture".into()),
+            subject: "501".into(),
+            session: 1,
+            binding: Id::new("console").unwrap(),
+            epoch: Arc::new(Mutex::new(1)),
+            generation: 1,
+            current: Arc::new(Mutex::new(Some(expiry))),
+            expires: expiry,
+            console: |_, _, _| Ok(()),
         }
-        Ok(s.input.take().ok_or(Error::Denied)?.bytes)
+    }
+    #[tokio::test]
+    async fn employee_confirmation_is_exclusive_and_fenced_at_native_submission() {
+        let t = super::super::tests::task();
+        let mut second = t.clone();
+        second.task_id = Uuid::new_v4();
+        second.attempt_id = Uuid::new_v4();
+        let setup = Arc::new(Setup::default());
+        let e = employee(&t);
+        let pw = Zeroizing::new("private-test-input".into());
+        setup.offer(&t).unwrap();
+        setup.offer(&second).unwrap();
+        assert_eq!(setup.tasks(&e).unwrap().len(), 2);
+        let mut foreign = e.clone();
+        foreign.principal = Uuid::new_v4();
+        assert!(setup.tasks(&foreign).unwrap().is_empty());
+        assert!(setup.prepare(ids(&t), foreign, &pw).is_err());
+        assert!(setup
+            .prepare((t.task_id, second.attempt_id), e.clone(), &pw)
+            .is_err());
+        setup.prepare(ids(&t), e.clone(), &pw).unwrap();
+        assert_eq!(
+            setup.prepare(ids(&second), e.clone(), &pw),
+            Err(Error::Conflict)
+        );
+        let mut native = NativeInput {
+            setup: &setup,
+            task: &t,
+            employee: &e,
+        };
+        native.admit(|| Ok(())).unwrap();
+        // A same-login refresh updates the lifetime of this same confirmation.
+        *e.current.lock().unwrap() = Some(crate::wall().unwrap() + 31_000);
+        let mut bytes = Vec::new();
+        native.send(&mut bytes).unwrap();
+        assert_eq!(bytes, b"private-test-input\n");
+        assert!(native.send(&mut bytes).is_err());
+        setup.prepare(ids(&t), e.clone(), &pw).unwrap();
+        native.admit(|| Ok(())).unwrap();
+        *e.epoch.lock().unwrap() += 1;
+        assert!(native.send(&mut Vec::new()).is_err());
+        assert!(native
+            .admit::<()>(|| panic!("native write after logout"))
+            .is_err_and(|err| err == Error::Identity));
     }
 }

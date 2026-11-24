@@ -9,7 +9,6 @@ use crate::deployment::Deployment;
 use agent_client::da::{self, PolicyConsumer};
 use execution_ipc::device_access::{Operation as AccountOp, Response as AccountReply};
 use execution_ipc::host::{Peer, PeerPolicy, SessionFence};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -302,7 +301,7 @@ impl Endpoint {
 
 struct BoundContext {
     credential: Option<zeroize::Zeroizing<String>>,
-    current: Arc<AtomicBool>,
+    current: Arc<Mutex<Option<u64>>>,
     principal: Option<Uuid>,
     subject: String,
     session: u32,
@@ -313,7 +312,9 @@ struct BoundContext {
 }
 impl Drop for BoundContext {
     fn drop(&mut self) {
-        self.current.store(false, Ordering::Release);
+        if let Ok(mut expiry) = self.current.lock() {
+            *expiry = None;
+        }
     }
 }
 impl BoundContext {
@@ -384,14 +385,31 @@ impl Worker {
                     .await
                     .map(|value| Reply::PlatformSso { value }),
                 Some(Request::BindContext { value, expected }) => {
+                    let mut prior = self.bound.take();
                     if let Some(generation) = expected {
-                        let bound = self.bound.as_ref().ok_or(Error::Identity)?;
-                        if !bound.refreshes(&command, value, generation, crate::wall()?) {
+                        if !prior.as_ref().is_some_and(|b| {
+                            b.refreshes(
+                                &command,
+                                value,
+                                generation,
+                                crate::wall().unwrap_or(u64::MAX),
+                            )
+                        }) {
                             return Err(Error::Identity);
                         }
                     }
-                    self.fence.accounts.clear_input()?;
-                    self.bound = None;
+                    let same = prior.as_ref().is_some_and(|b| {
+                        b.refreshes(
+                            &command,
+                            value,
+                            &value.generation,
+                            crate::wall().unwrap_or(u64::MAX),
+                        ) && b.credential.as_ref() == value.credential()
+                    });
+                    if !same {
+                        drop(prior.take());
+                        self.fence.accounts.clear_input()?;
+                    }
                     let expires = owner.bind(&command, value, &self.fence).await?;
 
                     let epoch = self.fence.epoch.lock().map_err(|_| Error::Unavailable)?;
@@ -401,16 +419,22 @@ impl Worker {
                     {
                         return Err(Error::Identity);
                     }
-                    self.bound = Some(BoundContext {
-                        credential: value.credential().cloned(),
-                        current: Arc::new(AtomicBool::new(true)),
-                        principal: value.user().map(|u| u.principal_id),
-                        subject: command.subject.clone(),
-                        session: command.session,
-                        binding: command.binding.clone().ok_or(Error::Identity)?,
-                        generation: value.generation.clone(),
-                        epoch: command.fence_epoch,
-                        expires,
+                    self.bound = Some(if let Some(mut bound) = prior {
+                        *bound.current.lock().map_err(|_| Error::Unavailable)? = Some(expires);
+                        bound.expires = expires;
+                        bound
+                    } else {
+                        BoundContext {
+                            credential: value.credential().cloned(),
+                            current: Arc::new(Mutex::new(Some(expires))),
+                            principal: value.user().map(|u| u.principal_id),
+                            subject: command.subject.clone(),
+                            session: command.session,
+                            binding: command.binding.clone().ok_or(Error::Identity)?,
+                            generation: value.generation.clone(),
+                            epoch: command.fence_epoch,
+                            expires,
+                        }
                     });
                     Ok(Reply::ContextBound {
                         value: execution_contract::NativeContextRef {
@@ -439,6 +463,7 @@ impl Worker {
                         epoch: self.fence.epoch.clone(),
                         generation: bound.epoch,
                         current: bound.current.clone(),
+                        console: execution_ipc::macos_identity::verify_console,
                         expires: bound.expires,
                     };
                     let value = match input {
@@ -1034,7 +1059,7 @@ mod tests {
         };
         let bound = BoundContext {
             credential: None,
-            current: Arc::new(AtomicBool::new(true)),
+            current: Arc::new(Mutex::new(Some(99))),
             principal: None,
             subject: cmd.subject.clone(),
             session: cmd.session,

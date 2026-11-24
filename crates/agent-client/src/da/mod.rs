@@ -69,7 +69,9 @@ mod configuration;
 mod operations;
 mod platform_sso;
 mod registration;
-pub use operations::{verify_employee, AccountCompletion, Operations, RecoveryUseDisposition};
+pub use operations::{
+    verify_employee, AccountCompletion, Operations, RecoveryUseDisposition, RejectedMacAccount,
+};
 pub use registration::validate_keys;
 mod storage;
 use crate::{
@@ -135,6 +137,8 @@ pub struct Status {
     pub credential_settlement: Option<(Uuid, Uuid, wire::CredentialSettlement)>,
     /// Last rejected account event and its exact attempt.
     pub rejected_account_event: Option<(Uuid, Uuid, Uuid, Error)>,
+    /// Original Mac operation and any result that could not be settled.
+    pub rejected_mac_account: Option<RejectedMacAccount>,
     /// Last definitively rejected offline use for this registration.
     pub rejected_recovery_use: Option<(Uuid, Error)>,
 }
@@ -169,6 +173,10 @@ pub fn inspect(
             .transpose()?
             .flatten(),
         credential_settlement: delivery_key("last-credential-settlement")
+            .map(|k| read(&c, &k))
+            .transpose()?
+            .flatten(),
+        rejected_mac_account: delivery_key("last-rejected-mac")
             .map(|k| read(&c, &k))
             .transpose()?
             .flatten(),

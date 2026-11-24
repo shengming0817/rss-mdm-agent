@@ -62,14 +62,40 @@ fn tool(
     password: Option<&str>,
     seconds: u64,
 ) -> Result<Zeroizing<Vec<u8>>, Error> {
-    terminal_tool(program, args, password, seconds, |_| Ok(()))
+    struct Prompt<'a>(&'a str);
+    impl TerminalInput for Prompt<'_> {
+        fn start(&mut self, spawn: &mut dyn FnMut() -> Result<u32, Error>) -> Result<(), Error> {
+            spawn().map(|_| ())
+        }
+        fn send(&mut self, sink: &mut dyn Write) -> Result<(), Error> {
+            write_password(self.0, sink)
+        }
+    }
+    let mut prompt = password.map(Prompt);
+    terminal_tool(
+        program,
+        args,
+        prompt.as_mut().map(|p| p as &mut dyn TerminalInput),
+        seconds,
+    )
+}
+trait TerminalInput {
+    fn start(&mut self, spawn: &mut dyn FnMut() -> Result<u32, Error>) -> Result<(), Error>;
+    fn send(&mut self, sink: &mut dyn Write) -> Result<(), Error>;
+}
+fn write_password(password: &str, sink: &mut dyn Write) -> Result<(), Error> {
+    if password.is_empty() || password.len() > 1024 || password.chars().any(char::is_control) {
+        return Err(Error::Denied);
+    }
+    sink.write_all(password.as_bytes())?;
+    sink.write_all(b"\n")?;
+    Ok(())
 }
 fn terminal_tool(
     program: &str,
     args: &[&str],
-    password: Option<&str>,
+    mut password: Option<&mut dyn TerminalInput>,
     seconds: u64,
-    spawned: impl FnOnce(u32) -> Result<(), Error>,
 ) -> Result<Zeroizing<Vec<u8>>, Error> {
     let mut master = -1;
     let mut slave = -1;
@@ -131,8 +157,20 @@ fn terminal_tool(
             }
         }
     }
-    let mut child = Child(command.spawn()?);
-    spawned(child.id())?;
+    let mut launched = None;
+    let mut spawn = || {
+        let process = Child(command.spawn()?);
+        let id = process.id();
+        launched = Some(process);
+        Ok(id)
+    };
+    match password.as_deref_mut() {
+        Some(auth) => auth.start(&mut spawn)?,
+        None => {
+            spawn()?;
+        }
+    }
+    let mut child = launched.ok_or(Error::Protocol)?;
     if unsafe { libc::fcntl(master.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) } < 0 {
         let _ = child.kill();
         let _ = child.wait();
@@ -160,9 +198,10 @@ fn terminal_tool(
                 .any(|v| v.eq_ignore_ascii_case(b"password"))
             && output.trim_ascii_end().last() == Some(&b':')
         {
-            let password = password.ok_or(Error::Protocol)?;
-            master.write_all(password.as_bytes())?;
-            master.write_all(b"\n")?;
+            password
+                .as_deref_mut()
+                .ok_or(Error::Protocol)?
+                .send(&mut master)?;
             sent = true;
         }
         if let Some(status) = child.try_wait()? {

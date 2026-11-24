@@ -32,6 +32,7 @@ struct Server {
     mac_mode: rss_mdm_agent_wire::platform_sso::AuthenticationMode,
     mac_offer: Option<wire::AccountOffer>,
     mac_report: Option<Value>,
+    reject_mac: bool,
     account_closed: bool,
     issued_until: Option<i64>,
     offer: wire::AccountOffer,
@@ -255,6 +256,13 @@ async fn endpoint(
             {
                 let event: wire::AccountEvent = serde_json::from_value(input.clone()).unwrap();
                 assert_eq!(event.attempt_id, s.mac_offer.as_ref().unwrap().attempt_id);
+                if s.reject_mac {
+                    return (
+                        axum::http::StatusCode::CONFLICT,
+                        Json(json!({"code":"operation_conflict"})),
+                    )
+                        .into_response();
+                }
                 if matches!(
                     event.event,
                     wire::AccountObservation::Result(w::AccessResult {
@@ -538,6 +546,7 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         mac_mode: rss_mdm_agent_wire::platform_sso::AuthenticationMode::SecureEnclave,
         mac_offer: None,
         mac_report: None,
+        reject_mac: false,
         account_closed: false,
         issued_until: None,
         offer: wire::AccountOffer {
@@ -879,6 +888,46 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         .await
         .unwrap()
         .is_none());
+    let rejected = wire::AccountOffer {
+        attempt_id: Uuid::new_v4(),
+        ..mac_offer
+    };
+    {
+        let mut server = state.lock().unwrap();
+        server.mac_offer = Some(rejected.clone());
+        server.reject_mac = true;
+    }
+    let candidate = ops
+        .account(w::TaskPlatform::Macos, None)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(candidate, rejected);
+    assert!(ops
+        .account_event(&candidate, wire::AccountObservation::Received)
+        .await
+        .is_err());
+    ops.replay_account().await.unwrap();
+    ops.retire_account(|id, attempt, done| {
+        assert_eq!(
+            (id, attempt, done),
+            (
+                rejected.task_id,
+                rejected.attempt_id,
+                AccountCompletion::Rejected
+            )
+        );
+        Ok(())
+    })
+    .unwrap();
+    let failed = inspect(&root.path, &backend, install, time.now().unwrap())
+        .unwrap()
+        .unwrap()
+        .rejected_mac_account
+        .unwrap();
+    assert_eq!(failed.offer, rejected);
+    assert_eq!(failed.reason, Error::Conflict);
+    state.lock().unwrap().mac_offer = None;
     let mut usage = rss_mdm_agent_wire::runtime::AccessRecoveryUse {
         operation_id: Uuid::new_v4(),
         material: Uuid::new_v4(),

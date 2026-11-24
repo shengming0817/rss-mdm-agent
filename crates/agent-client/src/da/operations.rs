@@ -23,6 +23,20 @@ pub enum AccountCompletion {
     },
     /// A native result or observed absence was accepted.
     Observed,
+    /// Definitive protocol rejection. Quarantine native evidence that could still describe a real effect.
+    Rejected,
+}
+/// Secret-free evidence for the most recently rejected original Mac operation.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct RejectedMacAccount {
+    /// Exact delivery returned by this registration.
+    pub offer: wire::AccountOffer,
+    /// Original event rejected by the device listener.
+    pub event_id: Uuid,
+    /// Native evidence in the rejected result, when the event reported an effect.
+    pub result: Option<wire::AccountResult>,
+    /// Definitive rejection returned by the server.
+    pub reason: Error,
 }
 /// An mTLS session bound to the current registration and its single writer.
 pub struct Operations<'a> {
@@ -239,14 +253,12 @@ impl Operations<'_> {
         platform: w::TaskPlatform,
         confirmed: Option<(Uuid, Uuid)>,
     ) -> Result<Option<wire::AccountOffer>, Error> {
-        let query = match platform {
-            w::TaskPlatform::Macos => Some("platform=macos"),
-            w::TaskPlatform::Windows => None,
+        let call = Call::<h::DaAccountNext>::new(&self.http, self.origin, &[], None, None)?;
+        let call = match platform {
+            w::TaskPlatform::Macos => call.query(&wire::AccountClaim { platform }),
+            w::TaskPlatform::Windows => call,
         };
-        let response = Call::<h::DaAccountNext>::new(&self.http, self.origin, &[], query, None)?
-            .timeout(Duration::from_secs(5))
-            .send()
-            .await?;
+        let response = call.timeout(Duration::from_secs(5)).send().await?;
         let offer: Option<wire::AccountOffer> = Self::decode(response).await?;
         if let Some(o) = &offer {
             if [o.operation_id, o.task_id, o.attempt_id, o.binding_id]
@@ -410,7 +422,33 @@ impl Operations<'_> {
                         &self.key("last-rejected-account"),
                         &(task, body.attempt_id, body.event_id, reason),
                     )?;
-                    self.forget_account(&tx, task, body.attempt_id)?;
+                    let offered = self
+                        .load::<RetainedOffer>(&format!("offer/{task}/{}", body.attempt_id))?
+                        .ok_or(Error::Storage)?;
+                    if offered.platform == w::TaskPlatform::Macos {
+                        let evidence = RejectedMacAccount {
+                            offer: offered.offer,
+                            event_id: body.event_id,
+                            reason,
+                            result: match &body.event {
+                                wire::AccountObservation::Result(r) => Some(r.clone()),
+                                _ => None,
+                            },
+                        };
+                        write(
+                            &tx,
+                            &self.key(&format!("rejected-mac/{task}/{}", body.attempt_id)),
+                            &evidence,
+                        )?;
+                        write(&tx, &self.key("last-rejected-mac"), &evidence)?;
+                        write(
+                            &tx,
+                            &self.key("account-cleanup"),
+                            &(task, body.attempt_id, AccountCompletion::Rejected),
+                        )?;
+                    } else {
+                        self.forget_account(&tx, task, body.attempt_id)?;
+                    }
                     tx.execute(
                         "DELETE FROM state WHERE name=?1",
                         [self.key("account-pending")],
@@ -548,7 +586,19 @@ impl Operations<'_> {
         if let Some((id, attempt, completion)) = read(self.db, &key)? {
             clean(id, attempt, completion)?;
             let tx = self.db.unchecked_transaction()?;
-            self.forget_account(&tx, id, attempt)?;
+            if completion == AccountCompletion::Rejected {
+                // The server can reoffer the exact attempt. Preserve event identity for that case.
+                tx.execute(
+                    "DELETE FROM state WHERE name=?1",
+                    [self.key(&format!("offer/{id}/{attempt}"))],
+                )?;
+            } else {
+                self.forget_account(&tx, id, attempt)?;
+                tx.execute(
+                    "DELETE FROM state WHERE name=?1",
+                    [self.key(&format!("rejected-mac/{id}/{attempt}"))],
+                )?;
+            }
             tx.execute("DELETE FROM state WHERE name=?1", [key])?;
             tx.commit()?;
         }

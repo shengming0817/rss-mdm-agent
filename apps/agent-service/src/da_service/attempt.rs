@@ -32,6 +32,7 @@ pub(super) fn retire(
             true
         }
         da::AccountCompletion::Observed => false,
+        da::AccountCompletion::Rejected => return Err(Error::Conflict),
     };
     if let Some(t) = record.permit {
         if (t.task_id, t.attempt_id) != (id, sequence) {

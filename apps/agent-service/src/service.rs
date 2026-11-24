@@ -2167,6 +2167,18 @@ impl ServiceHandle {
         session: u32,
         binding: Option<execution_contract::Id>,
     ) -> execution_ipc::host::Reply {
+        let Some(receiver) = self.enqueue(request, subject, session, binding) else {
+            return execution_ipc::host::Reply::Unavailable;
+        };
+        Self::wait_reply(receiver)
+    }
+    fn enqueue(
+        &self,
+        request: LocalRequest,
+        subject: String,
+        session: u32,
+        binding: Option<execution_contract::Id>,
+    ) -> Option<tokio::sync::oneshot::Receiver<execution_ipc::host::Reply>> {
         let (reply, receiver) = tokio::sync::oneshot::channel();
         if self
             .sender
@@ -2187,8 +2199,32 @@ impl ServiceHandle {
             })
             .is_err()
         {
-            return execution_ipc::host::Reply::Unavailable;
+            return None;
         }
+        Some(receiver)
+    }
+    #[cfg(target_os = "macos")]
+    pub(crate) fn shared_desktop_reply(
+        &self,
+        peer: &execution_ipc::host::Peer,
+        request: execution_ipc::host::Request,
+    ) -> execution_ipc::host::DeferredReply {
+        use execution_ipc::host::Reply;
+        let (Ok(subject), Ok(binding)) = (peer.authenticate(&self.policy), peer.session_binding())
+        else {
+            return Box::new(|| Reply::Rejected);
+        };
+        let reply = self.enqueue(
+            LocalRequest::operation(request),
+            subject,
+            peer.session(),
+            Some(binding),
+        );
+        Box::new(move || reply.map_or(Reply::Unavailable, Self::wait_reply))
+    }
+    fn wait_reply(
+        receiver: tokio::sync::oneshot::Receiver<execution_ipc::host::Reply>,
+    ) -> execution_ipc::host::Reply {
         let runtime = match tokio::runtime::Builder::new_current_thread()
             .enable_time()
             .build()

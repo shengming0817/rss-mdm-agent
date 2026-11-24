@@ -122,6 +122,26 @@ impl RegistrationOwner {
     }
 }
 impl Handler for RegistrationOwner {
+    #[cfg(target_os = "macos")]
+    fn deferred_reply(
+        &mut self,
+        peer: &Peer,
+        bytes: &[u8],
+    ) -> Option<execution_ipc::host::DeferredReply> {
+        let request = execution_ipc::host::decode_request(bytes)?;
+        if matches!(
+            request,
+            Request::BindContext { .. }
+                | Request::DeviceAccess {
+                    input: execution_ipc::device_access::Operation::Tasks {},
+                    ..
+                }
+        ) {
+            Some(self.owner.shared_desktop_reply(peer, request))
+        } else {
+            None
+        }
+    }
     fn session_fence(&self) -> Option<std::sync::Arc<dyn execution_ipc::host::SessionFence>> {
         self.owner.session_fence()
     }
