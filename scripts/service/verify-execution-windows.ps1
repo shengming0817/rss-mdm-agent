@@ -119,7 +119,7 @@ public static class RssPasskeyRecoveryProbe {
                 service=(Measure-CandidateFile $Installed $Frozen.binaries.service.sha256)
                 provider=(Measure-CandidateFile $ProviderDll $Frozen.binaries.windowsLogin.sha256)
                 installer=(Measure-CandidateFile $Frozen.installer.path $Frozen.installer.sha256)
-                health='pending';interactiveLogin='unverified';modules=@{mdm=$InstalledConfig.modules.mdm.mode;da=$InstalledConfig.modules.da.mode}
+                health='pending';interactiveLogin='unverified';modules=@{mdm=$InstalledConfig.modules.mdm.state;da=$InstalledConfig.modules.da.state}
             }
             & $Installed --device-access-component health
             if ($LASTEXITCODE -ne 0) { throw 'Device Access component health failed' }
