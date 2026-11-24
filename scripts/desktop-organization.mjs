@@ -137,11 +137,24 @@ export function employeePortalConfiguration(
     throw Error(
       "Employee browser issuer must belong to the selected module tenant",
     );
+  const url = new URL(issuer.origin);
+  const host = url.hostname.replace(/\.+$/, "");
+  if (
+    url.protocol !== "https:" ||
+    !host ||
+    url.username ||
+    url.password ||
+    url.pathname !== "/" ||
+    url.href.includes("?") ||
+    url.href.includes("#")
+  )
+    throw Error("Employee issuer requires a public HTTPS origin");
+  url.hostname = host;
   return {
     product,
     instance: owner.instance,
     tenant: owner.tenant,
-    origin: issuer.origin,
+    origin: url.origin,
     ca_pem: issuer.ca_pem == null ? undefined : publicCa(issuer.ca_pem),
     application,
     recovery_return_target: recoveryReturnTarget,

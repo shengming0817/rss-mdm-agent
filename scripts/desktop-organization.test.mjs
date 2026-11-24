@@ -379,7 +379,7 @@ test("DA-only and coinstalled packages use the selected DA issuer for macOS PSSO
     backend: {
       instance: "da-1",
       tenant,
-      browser: { origin: "https://da.example.test" },
+      browser: { origin: "https://DA.Example.Test.:443/" },
     },
   };
   const mdm = { state: "enabled", backend: { instance: "mdm-1", tenant } };
@@ -399,10 +399,29 @@ test("DA-only and coinstalled packages use the selected DA issuer for macOS PSSO
     });
     assert.deepEqual(artifact, {
       binary: "extension-binary",
-      origin: da.backend.browser.origin,
+      origin: "https://da.example.test",
     });
-    assert.equal(portal.origin, da.backend.browser.origin);
+    assert.equal(portal.origin, artifact.origin);
     assert.equal(portal.instance, da.backend.instance);
     assert.equal(portal.product, "da");
+  }
+});
+
+test("employee issuer rejects non-origin URLs before packaging", () => {
+  for (const origin of [
+    "https://da.example.test/path",
+    "https://da.example.test/?",
+    "https://da.example.test/#",
+    "http://da.example.test",
+    "https://user@da.example.test",
+    "https://.",
+  ]) {
+    const backend = { tenant: "tenant", instance: "da", browser: { origin } };
+    assert.throws(() =>
+      employeePortalConfiguration(
+        { modules: { da: { state: "enabled", backend } } },
+        null,
+      ),
+    );
   }
 });
