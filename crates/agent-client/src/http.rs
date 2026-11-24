@@ -89,7 +89,7 @@ operations! {
     DaPkiAck: POST "/api/v1/da/pki/acknowledgements" [200] None, pki::Acknowledgement => ();
     DaTrust: GET "/api/v1/da/configuration-trust" [200] Some("application/json"), () => da::ConfigurationTrust;
     DaTrustAck: POST "/api/v1/da/configuration-trust/acknowledgements" [200] None, task_trust::Acknowledgement => ();
-    DaConfiguration: GET "/api/v1/da/configuration" [200] Some("application/json"), () => serde_json::Value;
+    DaConfiguration: GET "/api/v1/da/configuration" [200] Some("application/json"), () => da::CurrentConfiguration;
     DaStatus: POST "/api/v1/da/status-reports" [200] Some("application/json"), da::StatusReport => serde_json::Value;
     DaApplication: POST "/api/v1/da/configuration-reports" [200] Some("application/json"), da::ApplicationReport => serde_json::Value;
     Grant: POST "/api/v1/agent/enroll/requests" [200] Some("application/json"), e::GrantRequest => e::GrantReceipt;

@@ -79,13 +79,6 @@ fn verify(
     Ok(config)
 }
 
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Current {
-    state: SourceState,
-    publication: Option<serde_json::Value>,
-    artifact: Option<wire::SignedConfiguration>,
-}
 #[derive(Serialize, Deserialize)]
 pub(super) struct AppliedProof {
     pub(super) until: i64,
@@ -211,8 +204,7 @@ impl<S: Credentials, C: Clock> Client<S, C> {
             write(&self.journal.db, "pki-confirmed", &ack.operation)?;
         }
         let trust = self.install_trust(http, &id, consumer).await?;
-        let value = self.call::<h::DaConfiguration>(http, None, None).await?;
-        let current: Current = serde_json::from_value(value).map_err(|_| Error::Protocol)?;
+        let current = self.call::<h::DaConfiguration>(http, None, None).await?;
         let result = self.configure(&id, &trust, current, snapshot, consumer);
         if matches!(
             result,
@@ -410,10 +402,14 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         &self,
         id: &wire::ReportIdentity,
         trust: &wire::ConfigurationTrust,
-        current: Current,
+        current: wire::CurrentConfiguration,
         snapshot: ManagedSnapshot,
         consumer: &mut impl PolicyConsumer,
     ) -> Result<(), Error> {
+        if &current.identity != id {
+            return Err(Error::Identity);
+        }
+        self.observe_authorities(&current.authorities)?;
         let Some(envelope) = current.artifact else {
             self.withdraw(consumer)?;
             let locks: Locks = read(&self.journal.db, "locks")?.unwrap_or_default();
@@ -430,10 +426,18 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         let doc = verify(&envelope, trust, id, self.now()?, DeliveryPermission::Da)?;
         let publication = current.publication.ok_or(Error::Protocol)?;
         if current.state != SourceState::Present
-            || publication["id"] != doc.id.to_string()
-            || publication["version"] != doc.version.to_string()
-            || publication["revision"].as_u64() != Some(doc.revision)
-            || publication["enabled"] != true
+            || publication.id != doc.id
+            || publication.version != doc.version
+            || u64::try_from(publication.revision).ok() != Some(doc.revision)
+            || !publication.enabled
+            || publication.configuration != doc.content
+            || !current.authorities.iter().any(|authority| {
+                authority.enabled
+                    && authority.policy == doc.id
+                    && authority.revision == doc.revision
+                    && authority.version == doc.version
+            })
+            || matches!(publication.target, wire::Target::Device { device } if device != id.device_id)
         {
             return Err(Error::Conflict);
         }
@@ -456,19 +460,6 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         let signers = std::iter::once(envelope.key_id.clone())
             .chain(snapshot.sources.iter().map(|s| s.envelope.key_id.clone()))
             .collect();
-        let mut native = doc.native.clone();
-        let authorized: BTreeSet<ConfigurationField> =
-            serde_json::from_value(publication["managedFields"].clone())
-                .map_err(|_| Error::Protocol)?;
-        for source in &snapshot.sources {
-            let managed = source.envelope.decode()?;
-            if managed.managed_fields.contains(&ConfigurationField::Mac)
-                && managed.id == doc.id
-                && authorized.contains(&ConfigurationField::Mac)
-            {
-                native = managed.native;
-            }
-        }
         let mut until = doc.expires_at;
         for source in &snapshot.sources {
             until = until.min(source.envelope.decode()?.expires_at);
@@ -490,8 +481,15 @@ impl<S: Credentials, C: Clock> Client<S, C> {
             &pki,
         )?;
         until = until.min(pki.expires).min(cert_until);
-        let result = self.resolve(id, trust, &doc, &publication, snapshot, &mut sources);
-        let effective = match result {
+        let result = self.resolve(
+            id,
+            trust,
+            &doc,
+            &current.authorities,
+            snapshot,
+            &mut sources,
+        );
+        let (effective, native) = match result {
             Ok(value) => value,
             Err(e) => {
                 self.withdraw(consumer)?;
@@ -572,15 +570,56 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         consumer.apply(None)?;
         Ok(())
     }
+    /// Record all applicable issuers atomically. Absence does not release an existing lock.
+    fn observe_authorities(&self, authorities: &[wire::PolicyAuthority]) -> Result<(), Error> {
+        let tx = self.journal.db.unchecked_transaction()?;
+        let mut locks: Locks = read(&tx, "locks")?.unwrap_or_default();
+        let mut seen = BTreeSet::new();
+        for authority in authorities {
+            if authority.policy.is_nil()
+                || authority.version.is_nil()
+                || authority.revision == 0
+                || !seen.insert(authority.policy)
+                || authority
+                    .fields
+                    .values()
+                    .any(|field| field.revision == 0 || field.revision > authority.revision)
+            {
+                return Err(Error::Protocol);
+            }
+            let key = format!("authority/{}", authority.policy);
+            let digest = crate::store::hash(&crate::store::encode(authority)?);
+            if let Some((revision, previous)) = read::<(u64, String)>(&tx, &key)? {
+                if authority.revision < revision
+                    || (authority.revision == revision && digest != previous)
+                {
+                    return Err(Error::Conflict);
+                }
+            }
+            write(&tx, &key, &(authority.revision, digest))?;
+            if let Some(held) = locks.get_mut(&authority.policy) {
+                held.retain(|field| {
+                    !authority
+                        .fields
+                        .get(field)
+                        .is_some_and(|grant| !grant.authorized)
+                });
+            }
+        }
+        locks.retain(|_, held| !held.is_empty());
+        write(&tx, "locks", &locks)?;
+        tx.commit()?;
+        Ok(())
+    }
     pub(super) fn resolve(
         &self,
         id: &wire::ReportIdentity,
         trust: &wire::ConfigurationTrust,
         backend: &wire::Configuration,
-        publication: &serde_json::Value,
+        authorities: &[wire::PolicyAuthority],
         snapshot: ManagedSnapshot,
         sources: &mut Vec<wire::ReportedSource>,
-    ) -> Result<AccessConfiguration, Error> {
+    ) -> Result<(AccessConfiguration, wire::NativeExpectation), Error> {
         let key = format!("publication/{}", backend.id);
         if let Some((revision, version)) = read::<(u64, Uuid)>(&self.journal.db, &key)? {
             if revision > backend.revision
@@ -590,15 +629,8 @@ impl<S: Credentials, C: Clock> Client<S, C> {
             }
         }
         write(&self.journal.db, &key, &(backend.revision, backend.version))?;
-        let authorized: BTreeSet<ConfigurationField> =
-            serde_json::from_value(publication["managedFields"].clone())
-                .map_err(|_| Error::Protocol)?;
         let mut locks: Locks = read(&self.journal.db, "locks")?.unwrap_or_default();
-        if let Some(held) = locks.get_mut(&backend.id) {
-            held.retain(|field| authorized.contains(field));
-        }
-        locks.retain(|_, v| !v.is_empty());
-        write(&self.journal.db, "locks", &locks)?;
+        let mut native = backend.native.clone();
         if !matches!(snapshot.state, SourceState::Missing | SourceState::Present)
             || snapshot.sources.len() > 15
         {
@@ -621,18 +653,30 @@ impl<S: Credentials, C: Clock> Client<S, C> {
                 delivery: DeliveryPermission::ManagedMandatory,
                 state: SourceState::Present,
             });
-            if doc.id != backend.id {
-                // The selected publication only proves the current permissions of its own policy.
+            let Some(authority) = authorities
+                .iter()
+                .find(|authority| authority.policy == doc.id)
+            else {
                 locks
                     .entry(doc.id)
                     .or_default()
                     .extend(doc.managed_fields.iter().copied());
                 write(&self.journal.db, "locks", &locks)?;
                 return Err(Error::Unavailable);
-            }
+            };
             for field in &doc.managed_fields {
-                if !authorized.contains(field) {
+                if !authority.covers_managed_field(&doc, *field) {
+                    if authority
+                        .fields
+                        .get(field)
+                        .is_some_and(|grant| grant.authorized)
+                    {
+                        return Err(Error::Conflict);
+                    }
                     continue;
+                }
+                if !authority.enabled {
+                    return Err(Error::Unavailable);
                 }
                 let value = match field {
                     ConfigurationField::Mac => crate::store::encode(&(
@@ -669,7 +713,10 @@ impl<S: Credentials, C: Clock> Client<S, C> {
                     return Err(Error::Conflict);
                 }
                 match field {
-                    ConfigurationField::Mac => effective.mac = doc.content.mac.clone(),
+                    ConfigurationField::Mac => {
+                        effective.mac = doc.content.mac.clone();
+                        native = doc.native.clone();
+                    }
                     ConfigurationField::Windows => effective.windows = doc.content.windows.clone(),
                 }
             }
@@ -682,7 +729,7 @@ impl<S: Credentials, C: Clock> Client<S, C> {
             return Err(Error::Unavailable);
         }
         effective.validate()?;
-        Ok(effective)
+        Ok((effective, native))
     }
 }
 fn diagnostic(error: &Error) -> wire::Diagnostic {

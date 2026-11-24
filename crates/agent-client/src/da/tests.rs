@@ -122,7 +122,7 @@ async fn endpoint(
                 "pki/acknowledgements" => return ().into_response(),
                 "configuration" => {
                     let d = s.config.decode().unwrap();
-                    json!({"state":"present","artifact":s.config,"publication":{"id":d.id,"version":d.version,"revision":d.revision,"enabled":true,"managedFields":[],"configuration":d.content,"target":{"kind":"tenant_default"}}})
+                    json!({"identity":{"serviceId":SERVICE_ID,"tenant":tenant,"deviceId":grant.device},"authorities":[{"policy":d.id,"version":d.version,"revision":d.revision,"enabled":true,"fields":{}}],"state":"present","artifact":s.config,"publication":{"id":d.id,"version":d.version,"revision":d.revision,"enabled":true,"managedFields":[],"configuration":d.content,"target":{"kind":"tenant_default"}}})
                 }
                 "status-reports" | "configuration-reports" => {
                     let seq = input["sequence"].as_i64().unwrap();
@@ -606,9 +606,26 @@ fn field_locks_survive_disappearing_sources_and_reject_rollback_and_foreign_sign
         state: SourceState::Missing,
         sources: vec![],
     };
-    let published = json!({"managedFields":["windows"]});
-    let run = |doc: &wire::Configuration, input, publication: &Value| {
-        client.resolve(&identity, &trust, doc, publication, input, &mut vec![])
+    let authority = |doc: &wire::Configuration, authorized| wire::PolicyAuthority {
+        policy: doc.id,
+        version: doc.version,
+        enabled: true,
+        revision: doc.revision,
+        fields: [(
+            Field::Windows,
+            wire::FieldAuthority {
+                authorized,
+                revision: if authorized { 1 } else { doc.revision },
+            },
+        )]
+        .into(),
+    };
+    let published = [authority(&backend_config, true)];
+    let run = |doc: &wire::Configuration, input, policies: &[wire::PolicyAuthority]| {
+        client.observe_authorities(policies)?;
+        client
+            .resolve(&identity, &trust, doc, policies, input, &mut vec![])
+            .map(|(settings, _)| settings)
     };
     let selected = run(&backend_config, snapshot(wrap(&managed)), &published).unwrap();
     assert_eq!(selected.windows, managed.content.windows);
@@ -662,17 +679,18 @@ fn field_locks_survive_disappearing_sources_and_reject_rollback_and_foreign_sign
     released.revision += 1;
     released.version = Uuid::new_v4();
     assert_eq!(
-        run(&released, absent(), &json!({"managedFields":[]})).unwrap(),
+        run(&released, absent(), &[authority(&released, false)]).unwrap(),
         backend_config.content
     );
     let mut other = managed.clone();
     other.id = Uuid::new_v4();
+    let policies = [authority(&released, false), authority(&other, true)];
     assert_eq!(
-        run(&released, snapshot(wrap(&other)), &published),
-        Err(Error::Unavailable)
+        run(&released, snapshot(wrap(&other)), &policies)
+            .unwrap()
+            .windows,
+        other.content.windows
     );
-    assert_eq!(
-        run(&released, absent(), &published),
-        Err(Error::Unavailable)
-    );
+    assert_eq!(run(&released, absent(), &policies), Err(Error::Unavailable));
+    assert_eq!(run(&released, absent(), &published), Err(Error::Conflict));
 }
