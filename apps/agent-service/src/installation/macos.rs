@@ -43,8 +43,40 @@ pub(super) fn dispatch(_: &[OsString]) -> Result<bool, Error> {
     }
     Ok(false)
 }
-pub(super) fn operation_status(_: uuid::Uuid) -> Result<(), Error> {
-    Err(Error::Unsupported)
+pub(super) fn operation_status(id: uuid::Uuid) -> Result<(), Error> {
+    let config = Deployment::default_path()?;
+    let dir = config
+        .parent()
+        .ok_or(Error::Configuration)?
+        .join("install-operations");
+    for suffix in ["psso-result", "retirement.json"] {
+        let path = dir.join(format!("{id}.{suffix}"));
+        if path.try_exists()? {
+            let bytes =
+                installation_security::read_protected(&path).map_err(|_| Error::Identity)?;
+            let value: serde_json::Value =
+                serde_json::from_slice(&bytes).map_err(|_| Error::Storage)?;
+            println!("{value}");
+            return Ok(());
+        }
+    }
+    if config.try_exists()? {
+        let d = Deployment::metadata(&config)?;
+        let root = crate::access_worker::root(&d.execution);
+        if root.try_exists()? {
+            if let Some(receipt) = crate::credential_worker::state::read_optional::<
+                crate::service::platform_sso::CleanupReceipt,
+            >(&root, &format!("{id}.psso-result"))?
+            {
+                println!(
+                    "{}",
+                    serde_json::to_string(&receipt).map_err(|_| Error::Storage)?
+                );
+                return Ok(());
+            }
+        }
+    }
+    Err(Error::NotFound)
 }
 pub(super) fn public_directory(path: &Path) -> Result<(), Error> {
     if !path.is_absolute() {
@@ -203,7 +235,8 @@ fn register_verified(
     }
     if !system {
         let subject = execution_ipc::host::current_subject().map_err(crate::error::app_error)?;
-        if !deployment.modules.mdm.enabled() || !deployment.helper_work_roots.contains_key(&subject)
+        if !deployment.requires_user_helper()
+            || !deployment.helper_work_roots.contains_key(&subject)
         {
             return Err(Error::Identity);
         }
@@ -240,7 +273,7 @@ fn register_verified(
         stop_endpoint(&endpoint)?;
         return Err(error);
     }
-    if system && deployment.modules.mdm.enabled() {
+    if system && deployment.requires_user_helper() {
         let helper = plist_path(false);
         if helper.exists() {
             require_exit_budget(&read_job(false, binary, config)?)?;

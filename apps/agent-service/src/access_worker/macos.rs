@@ -174,7 +174,7 @@ struct Creation {
     task: w::AccessTaskSpec,
     generated_uid: Option<String>,
 }
-fn facts(account: &NativeAccount) -> w::AccessMacFacts {
+pub(crate) fn facts(account: &NativeAccount) -> w::AccessMacFacts {
     let secure_token = match account.secure_token {
         1 => Observation::Present,
         0 => Observation::NeedsAdministrator,
@@ -447,6 +447,7 @@ fn apply(input: &Input) -> Result<Effect, Error> {
     crate::service::platform_sso::save_binding(
         &input.root,
         &platform_sso::LocalBinding {
+            authority: rss_mdm_agent_wire::platform_sso::RegistrationTrust::MdmBootstrapPop,
             installation: input.installation,
             tenant: task.tenant_id,
             device_id: task.device_id,
@@ -555,6 +556,7 @@ pub(crate) fn refresh_with(
                 }
             }
             let next = platform_sso::LocalBinding {
+                authority: rss_mdm_agent_wire::platform_sso::RegistrationTrust::MdmBootstrapPop,
                 installation,
                 tenant: task.tenant_id,
                 device_id: task.device_id,

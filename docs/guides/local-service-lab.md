@@ -450,6 +450,10 @@ Desktop 只能请求当前已核验控制台用户的系统登录选项及刷新
 
 部署的可选 `platform_sso` 配置仅包含固定扩展 artifact 和配置中的 console HTTPS `origin`。真实安装的受保护映像通过路径、SHA-256、CDHash 与精确平台核对后公布能力，无 Apple Team/发布者证书前置。扩展通过既有 XPC 服务调用有限注册操作，其实际进程身份不能调用 Desktop、AI 或通用执行入口。普通认证由系统直接处理，Desktop 可以退出。
 
+仅 DA 的 Mac 先完成独立 DA 注册。部署方配置匹配候选的扩展、关联域和托管策略，并使用预置的部署证据签发方提交实际部署观测。管理员按已有本地账号的 GeneratedUID 建立绑定，员工在配置的企业门户登录 Desktop。系统服务从 DA 设备接口取得该员工在此设备上的绑定，并核对当前控制台会话；随后 Apple 系统可在 Desktop 退出后发起注册。设备、用户注册和指定应用会话分别取证。登录窗口的建号另由部署方案负责。
+
+DA 与 MDM 共存时，PSSO 按当前配置和保留的来源选择一个通道；来源冲突会阻止新注册。DA 业务拒绝时，原操作只能沿原通道恢复。FileVault 密钥由配置描述文件指定的托管方持有。仅 DA 安装无法读取第三方托管回执时，管理员应到该托管方核对恢复材料。
+
 Mac 设备访问页面复用员工确认及签名任务。已有账号按真实控制台会话和 GeneratedUID 关联；建号及角色变更必须由后台授权任务发起。Mac 路径不使用 Windows TOTP。密码只经短暂本机受控输入进入固定系统工具，Secure Token 需要合格管理员的系统交互授权；页面准备完成不代表账号任务或系统注册成功。Secure Token、volume ownership、FileVault 资格分别回读，无法证明的状态保持未知。解绑保留账号、数据及既有 Secure Token。
 
 P6 可由 root 对固定安装的 Agent 调用：
@@ -472,9 +476,9 @@ Password 用户注册不登记用户签名密钥：注册与浏览器证明由�
 
 模式或配置切换先禁用原绑定、退休精确用户源，等待原生清理确认后发布新配置；其他用户及共享设备源不由该用户切换清理。网络返回后重新核对当前绑定。未决注册、撤销与清理保留，不能用删除记录恢复“正常”。卸载在停止服务前检查 PSSO 清理；未完成时保留服务和扩展供恢复。
 
-本轮本机格式直接替换，无历史迁移或双读。升级预检拒绝旧绑定／注册记录；已有旧格式安装须用原候选完成原生注销和退管清理，再安装新候选并重新注册。禁止手工删库或改写记录版本。当前格式的升级保留未决恢复和撤销记录；不得通过回退旧候选复活旧凭据。
+组件的 `inspect` 显示当前绑定、独立系统事实及可获得的托管状态。远端退休和本机清理完成后，可用注册时的 operation UUID 调用 `--installation operation-status --operation <UUID>` 查询；授权卸载会把完成回执保留到载荷以外。DA 注册先被撤销时，回执保存该撤销操作，独立 PSSO 来源的远端状态仍可能未知；本机清理单独核对。维修停用和恢复不会更改本地账号密码、删除钥匙串或轮换 PRK。
 
-正式平台预检复用现有候选与旅程入口：`native-candidate.mjs freeze` 可增加 `--platform-sso <扩展可执行文件>` 和 `--installer <公证PKG>`，与 service／backend／desktop 一起冻结。执行 `verify-execution-macos.py --binary <服务> --backend <后端探针> --candidate <固定候选JSON> --output <证据目录> --psso-preflight`，只读核对实际 OS、签名团队及固定安装包公证。预检输出 `psso-preflight.json`，状态保持 blocked、`systemAccepted:false`，不执行安装或注册，也不证明包内映像与独立冻结映像一致；真实安装后须按候选摘要核对实际组件。
+项目预检沿用 `native-candidate.mjs freeze` 及 `verify-execution-macos.py --psso-preflight`。固定扩展和 PKG 后，在目标 OS／架构上核对候选与文件摘要。预检通过时仍为 `systemAccepted:false`，各系统旅程保持 `notExecuted`。生产签名授权、公证、包内映像、实际安装副本和系统识别由部署方独立核对。
 
 受管测试机按同一候选依次验收：匹配 Team／容器／扩展的 MDM profile 与 AASA → 系统设备注册 → 两种用户模式 → 真实登录与指定应用 SSO → 上游改密、本地离线改密、重新联网与冲突 → 登录钥匙串实际访问 → 双用户切换 → 登录窗口、锁屏和 FileVault 冷启动 → Agent／Desktop 停止 → 修复、升级中断与注销卸载。分别记录系统回调、source/version、绑定代际、实际操作及结果；禁止用 `app-sso --messages` 的样本密钥证明硬件持钥，也不将含令牌或密码的原始诊断输出写入证据。没有实际执行的场景保持 notExecuted；真实平台支持由独立平台验收取证，本轮实现与本地 CI 不代替这些证据。
 

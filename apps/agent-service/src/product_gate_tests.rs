@@ -2486,8 +2486,8 @@ async fn psso_drain_recovers_expired_trust_without_reopening_business_admission(
     platform_private_storage::directory(&root).unwrap();
     let source = uuid::Uuid::new_v4();
     crate::credential_worker::state::write(&root, "device.psso-source", &serde_json::json!({
-        "clientId": source, "authentication": "secure_enclave", "callbackGeneration": 1,
-        "context": { "tenant": c.service.client.configuration().tenant,
+        "operation": uuid::Uuid::new_v4(), "clientId": source, "authentication": "secure_enclave", "callbackGeneration": 1,
+        "context": { "authority":"mdm_bootstrap_pop", "tenant": c.service.client.configuration().tenant,
             "deviceId": registration.device_id, "installation": c.service.core.access.installation,
             "origin": c.service.client.configuration().origin.origin().ascii_serialization(),
             "kind": "device", "binding": null, "bindingGeneration": null, "generatedUid": null,

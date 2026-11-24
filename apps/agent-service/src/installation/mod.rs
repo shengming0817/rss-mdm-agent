@@ -405,6 +405,26 @@ fn read_image(path: &Path, digest: &str) -> Result<Vec<u8>, Error> {
     }
     Ok(bytes)
 }
+pub(crate) fn preserve_psso_result(
+    operation: uuid::Uuid,
+    result: &crate::service::platform_sso::CleanupReceipt,
+) -> Result<(), Error> {
+    let config = Deployment::default_path()?;
+    let dir = config
+        .parent()
+        .ok_or(Error::Configuration)?
+        .join("install-operations");
+    platform::public_directory(&dir)?;
+    let path = dir.join(format!("{operation}.psso-result"));
+    let bytes = json(result)?;
+    if path.try_exists()? {
+        if installation_security::read_protected(&path).map_err(|_| Error::Identity)? != bytes {
+            return Err(Error::Conflict);
+        }
+        return Ok(());
+    }
+    publish_new(&path, &bytes)
+}
 fn json<T: Serialize>(value: &T) -> Result<Vec<u8>, Error> {
     serde_json::to_vec(value).map_err(|_| Error::Configuration)
 }

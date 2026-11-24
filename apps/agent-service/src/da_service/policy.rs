@@ -24,6 +24,10 @@ pub(crate) struct Machine {
     inventory: Option<plist::Value>,
 }
 impl Machine {
+    #[cfg(target_os = "macos")]
+    pub(crate) fn matches_platform(&self, target: &Selection) -> Result<bool, Error> {
+        super::macos::readback(self.inventory.as_ref().ok_or(Error::Unavailable)?, target)
+    }
     pub(crate) async fn observe(
         root: PathBuf,
         #[cfg(windows)] native_root: PathBuf,
@@ -114,8 +118,7 @@ impl PolicyConsumer for Machine {
                     .contains(&rss_mdm_agent_wire::runtime::AccessWindowsKind::Local);
         }
         #[cfg(target_os = "macos")]
-        let confirmed =
-            super::macos::readback(self.inventory.as_ref().ok_or(Error::Unavailable)?, target)?;
+        let confirmed = self.matches_platform(target)?;
         #[cfg(windows)]
         let confirmed = super::windows::readback(&self.native_root, self.installation, target)?;
         #[cfg(not(any(windows, target_os = "macos")))]

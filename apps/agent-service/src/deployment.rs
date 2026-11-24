@@ -203,7 +203,9 @@ impl Deployment {
     }
     /// Construct only the current configured login's mechanism; this never opens device storage.
     pub fn user_helper(&self) -> Result<execution_runner::helper::Helper, Error> {
-        self.mdm()?;
+        if !self.requires_user_helper() {
+            return Err(Error::Unsupported);
+        }
         self.service
             .verify(&std::env::current_exe()?)
             .map_err(|_| Error::Identity)?;
@@ -316,6 +318,8 @@ impl Deployment {
     }
     /// Check every existing database before any secret, directory, lock or material initialization.
     pub(crate) fn preflight(&self) -> Result<(), Error> {
+        #[cfg(target_os = "macos")]
+        crate::service::platform_sso::upgrade_preflight(self, self.platform_sso.is_some())?;
         if !self.modules.mdm.enabled() {
             return Ok(());
         }
@@ -338,8 +342,6 @@ impl Deployment {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
             Err(e) => return Err(e.into()),
         }
-        #[cfg(target_os = "macos")]
-        crate::service::platform_sso::upgrade_preflight(self, self.platform_sso.is_some())?;
 
         if root.join("execution-initialized").exists() && !root.join("execution.sqlite").exists() {
             return Err(Error::Storage);
@@ -459,6 +461,12 @@ impl Deployment {
             platform_private_storage::write_new(&marker, self.namespace()?.as_bytes())?;
         }
         Ok(service)
+    }
+    pub(crate) fn requires_user_helper(&self) -> bool {
+        self.modules.mdm.enabled()
+            || (cfg!(target_os = "macos")
+                && self.modules.da.enabled()
+                && self.platform_sso.is_some())
     }
     pub(crate) fn helper_policy(&self) -> Option<PeerPolicy> {
         if self.helper_work_roots.is_empty() {
