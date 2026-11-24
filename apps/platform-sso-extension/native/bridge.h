@@ -10,6 +10,7 @@ const char *rss_psso_field(const RSSPSSOHandle *, uint32_t);
 void rss_psso_free(RSSPSSOHandle *);
 char *rss_psso_browser(uint32_t, const uint8_t *, const char *, const char *, const char *, const char *, const char *, RSSPSSOSigner, void *);
 void rss_psso_string_free(char *);
-int32_t rss_psso_observe(const char *, const char *, bool, bool);
+enum { RSSSaved, RSSCleanup, RSSNotSaved };
+int32_t rss_psso_observe(const char *, const char *, bool, bool, uint32_t);
 int32_t rss_psso_unregister(const char *);
 enum { RSSClient, RSSIssuer, RSSAudience, RSSNonce, RSSToken, RSSJwks, RSSLoginName, RSSMetadata, RSSLoginType, RSSAssertionType };

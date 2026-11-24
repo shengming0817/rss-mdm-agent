@@ -7,16 +7,6 @@ static NSDictionary<NSString *,NSString *> *RSSPendingRetirements(NSUserDefaults
 static BOOL RSSObservationCurrent(NSUserDefaults *defaults,NSString *scope,NSString *metadata) {
     return [[defaults stringForKey:scope] isEqual:metadata] && !RSSPendingRetirements(defaults)[metadata];
 }
-static void RSSQueueInflight(NSUserDefaults *defaults) {
-    NSMutableDictionary *pending=[RSSPendingRetirements(defaults) mutableCopy];
-    NSDictionary *inflight=[defaults dictionaryForKey:@"inflight"];
-    for(NSString *scope in RSSRegistrationScopes()) {
-        if(inflight[scope])pending[inflight[scope]]=scope;
-        NSString *saving=[defaults dictionaryForKey:@"saving"][scope];
-        if(saving)pending[saving]=scope;
-    }
-    if(pending.count)[defaults setObject:pending forKey:@"retirements"];
-}
 // Cancellation belongs to one callback's published registration, not its previously saved scope.
 static BOOL RSSQueueCancelledRegistration(NSUserDefaults *defaults,NSString *scope,NSString *metadata) {
     if(!scope || !metadata)return NO;
@@ -49,6 +39,20 @@ static BOOL RSSSetSaving(NSUserDefaults *defaults, NSString *scope, NSString *me
     if(metadata)saving[scope]=metadata;else[saving removeObjectForKey:scope];
     if(saving.count)[defaults setObject:saving forKey:@"saving"];else[defaults removeObjectForKey:@"saving"];
     return [defaults synchronize];
+}
+static void RSSQueueInflight(NSUserDefaults *defaults) {
+    NSMutableDictionary *pending=[RSSPendingRetirements(defaults) mutableCopy];
+    for(NSString *scope in RSSRegistrationScopes()) {
+        NSString *current=[defaults stringForKey:scope];
+        NSString *inflight=[defaults dictionaryForKey:@"inflight"][scope];
+        NSString *saving=[defaults dictionaryForKey:@"saving"][scope];
+        // Only a successful Apple save can publish this attempt as current. Finish a lost local checkpoint.
+        if(inflight && [current isEqual:inflight])RSSSetInflight(defaults,scope,nil);
+        else if(inflight)pending[inflight]=scope;
+        if(saving && [current isEqual:saving])RSSSetSaving(defaults,scope,nil);
+        else if(saving)pending[saving]=scope;
+    }
+    if(pending.count)[defaults setObject:pending forKey:@"retirements"];
 }
 static BOOL RSSBeginSave(NSUserDefaults *defaults,NSString *scope,NSString *metadata) {
     return RSSSetSaving(defaults,scope,metadata);

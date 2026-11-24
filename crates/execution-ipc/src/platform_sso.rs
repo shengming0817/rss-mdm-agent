@@ -2,6 +2,17 @@
 use rss_mdm_agent_wire::platform_sso as w;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+/// Which system save the reporting extension can attribute to this registration attempt.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NativeSave {
+    /// The extension committed this configuration after a successful Apple save.
+    Saved,
+    /// Cleanup is inspecting a current or interrupted system save.
+    Cleanup,
+    /// The attempt was never saved, or Apple returned a definite save failure.
+    NotSaved,
+}
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(
     tag = "kind",
@@ -27,11 +38,17 @@ pub enum Operation {
     },
     /// Inspect server state for the exact current native account.
     Status {
+        /// Original registration operation shared by the native extension and service.
+        operation: Uuid,
         #[doc = "Device or current native user scope."]
         scope: w::Kind,
     },
     /// Report observations from the system-provided LoginManager.
     Observe {
+        /// The extension published this exact configuration after Apple accepted its save.
+        save: NativeSave,
+        /// Original registration operation shared by the native extension and service.
+        operation: Uuid,
         /// Exact callback generation retained with the registered source.
         callback_generation: u64,
         /// Actual system LoginManager readback; never populated from bootstrap expectations.
@@ -49,6 +66,8 @@ pub enum Operation {
     },
     /// Revoke the current user's source after configuration removal.
     Unregister {
+        /// Original registration operation shared by the native extension and service.
+        operation: Uuid,
         /// System device or native user teardown scope.
         scope: w::Kind,
         /// Exact native registration being retired; cannot select a newer source version.

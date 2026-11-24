@@ -60,7 +60,7 @@ static NSString *nativeConfiguration(ASAuthorizationProviderExtensionLoginManage
     ASAuthorizationProviderExtensionAuthenticationMethod method=manager.authenticationMethod;
     if(method!=ASAuthorizationProviderExtensionAuthenticationMethodPassword && method!=ASAuthorizationProviderExtensionAuthenticationMethodUserSecureEnclaveKey){completion(ASAuthorizationProviderExtensionRegistrationResultFailedNoRetry);return;}
     if (self.registrationCompletion || self.authorization) { completion(ASAuthorizationProviderExtensionRegistrationResultFailed);return; }
-    if([NSUserDefaults.standardUserDefaults dictionaryForKey:@"inflight"].count)RSSQueueInflight(NSUserDefaults.standardUserDefaults);
+    RSSQueueInflight(NSUserDefaults.standardUserDefaults);
     if(RSSPendingRetirements(NSUserDefaults.standardUserDefaults).count) {
         [self retireUsing:manager completion:^(BOOL done){ (void)done; }];
         completion(ASAuthorizationProviderExtensionRegistrationResultFailed);return;
@@ -130,7 +130,7 @@ static NSString *nativeConfiguration(ASAuthorizationProviderExtensionLoginManage
 - (void)observeMetadata:(NSString *)metadata scope:(NSString *)scope configuration:(NSString *)actual device:(BOOL)device user:(BOOL)user generation:(NSUInteger)generation remaining:(NSUInteger)remaining {
     if(generation!=self.observationGeneration || !remaining || !RSSObservationCurrent(NSUserDefaults.standardUserDefaults,scope,metadata))return;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0), ^{
-        if(rss_psso_observe(metadata.UTF8String,actual.UTF8String,device,user)==0)return;
+        if(rss_psso_observe(metadata.UTF8String,actual.UTF8String,device,user,RSSSaved)==0)return;
         // Retry this actual snapshot and source generation, never reconstruct expected facts.
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),dispatch_get_main_queue(), ^{
             [self observeMetadata:metadata scope:scope configuration:actual device:device user:user generation:generation remaining:remaining-1];
@@ -160,7 +160,7 @@ static NSString *nativeConfiguration(ASAuthorizationProviderExtensionLoginManage
         NSMutableArray<NSString *> *completed=[NSMutableArray array];
         for(NSString *metadata in pending) {
             NSString *scope=pending[metadata];
-            BOOL observed=rss_psso_observe(metadata.UTF8String,actual.UTF8String,device,user)==0;
+            BOOL observed=rss_psso_observe(metadata.UTF8String,actual.UTF8String,device,user,[attempted containsObject:metadata]?RSSCleanup:RSSNotSaved)==0;
             BOOL retired=rss_psso_unregister(metadata.UTF8String)==0;
             BOOL nativeCleared=![attempted containsObject:metadata] || (!user && (![scope isEqual:@"deviceRegistration"] || !device));
             if(retired && nativeCleared && (observed || ![attempted containsObject:metadata]))[completed addObject:metadata];

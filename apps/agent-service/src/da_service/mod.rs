@@ -341,6 +341,7 @@ fn shared_login_preserves_mdm_context_and_native_rejection_never_retries_with_md
     assert!(matches!(bound(), Reply::ContextBound { .. }));
     let callback = Request::PlatformSso {
         input: execution_ipc::platform_sso::Operation::Status {
+            operation: uuid::Uuid::new_v4(),
             scope: rss_mdm_agent_wire::platform_sso::Kind::Device,
         },
     };

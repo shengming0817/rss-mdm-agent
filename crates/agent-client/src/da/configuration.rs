@@ -87,6 +87,9 @@ pub(super) struct AppliedProof {
     effective: Selection,
 }
 
+// The service starts its next successful poll after 30 seconds plus request time.
+const UNASSIGNED_LIFETIME_SECONDS: i64 = 120;
+
 /// Inspect the signed platform assignment and registration together before routing a mixed installation.
 pub fn mac_assigned(
     root: &std::path::Path,
@@ -456,7 +459,7 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         }
         Ok(proof.effective)
     }
-    fn configure(
+    pub(super) fn configure(
         &self,
         id: &wire::ReportIdentity,
         trust: &wire::ConfigurationTrust,
@@ -469,23 +472,37 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         }
         self.observe_authorities(&current.authorities)?;
         let Some(envelope) = current.artifact else {
-            self.withdraw(consumer)?;
             let locks: Locks = read(&self.journal.db, "locks")?.unwrap_or_default();
-            return if locks.is_empty()
-                && snapshot.sources.is_empty()
-                && snapshot.state == SourceState::Missing
-                && matches!(current.state, SourceState::Missing | SourceState::Withdrawn)
+            if !locks.is_empty()
+                || !snapshot.sources.is_empty()
+                || snapshot.state != SourceState::Missing
+                || !matches!(current.state, SourceState::Missing | SourceState::Withdrawn)
             {
-                write(
-                    &self.journal.db,
-                    "mac-unassigned",
-                    &(id, self.now()?.saturating_add(30)),
-                )?;
-                Ok(())
+                self.withdraw(consumer)?;
+                return Err(Error::Unavailable);
+            }
+            // Preserve the last bounded confirmation while refreshing the same absence. A change away
+            // from an applied assignment clears the old proof before the native withdrawal.
+            let previous = read::<(wire::ReportIdentity, i64)>(&self.journal.db, "mac-unassigned")?;
+            if previous.is_some_and(|(prior, _)| prior == *id) {
+                if let Err(e) = consumer.apply(None) {
+                    self.journal
+                        .db
+                        .execute("DELETE FROM state WHERE name='mac-unassigned'", [])?;
+                    return Err(e);
+                }
             } else {
-                Err(Error::Unavailable)
-            };
+                self.withdraw(consumer)?;
+            }
+            return write(
+                &self.journal.db,
+                "mac-unassigned",
+                &(id, self.now()?.saturating_add(UNASSIGNED_LIFETIME_SECONDS)),
+            );
         };
+        self.journal
+            .db
+            .execute("DELETE FROM state WHERE name='mac-unassigned'", [])?;
         let doc = verify(&envelope, trust, id, self.now()?, DeliveryPermission::Da)?;
         let publication = current.publication.ok_or(Error::Protocol)?;
         if current.state != SourceState::Present

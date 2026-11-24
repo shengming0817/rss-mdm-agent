@@ -931,18 +931,37 @@ fn check_mac_uninstall(renewal_dispatched: bool) {
         tenant: withdrawal.tenant,
         device_id: withdrawal.device,
     };
-    write(&client.journal.db, "clock", &2_000_000_000_i64).unwrap();
-    write(
-        &client.journal.db,
-        "mac-unassigned",
-        &(id, 2_000_000_030_i64),
-    )
-    .unwrap();
-    assert_eq!(
-        mac_assigned(&root.path, &backend, install, 2_000_000_000).unwrap(),
-        Some(false)
-    );
-    assert!(mac_assigned(&root.path, &backend, install, 2_000_000_030).is_err());
+    let mut consumer = Consumer(None);
+    let trust = wire::ConfigurationTrust {
+        service_id: id.service_id,
+        tenant: id.tenant,
+        revision: 1,
+        keys: vec![],
+    };
+    let current = || wire::CurrentConfiguration {
+        identity: id.clone(),
+        state: SourceState::Missing,
+        publication: None,
+        artifact: None,
+        authorities: vec![],
+    };
+    for now in [2_000_000_000, 2_000_000_045] {
+        client.clock.set(now);
+        client
+            .configure(
+                &id,
+                &trust,
+                current(),
+                consumer.managed_snapshot(),
+                &mut consumer,
+            )
+            .unwrap();
+        assert_eq!(
+            mac_assigned(&root.path, &backend, install, now + 45).unwrap(),
+            Some(false)
+        );
+    }
+    assert!(mac_assigned(&root.path, &backend, install, 2_000_000_165).is_err());
     let renewal = client.start_renewal().unwrap();
     let pending = client.pending().unwrap().unwrap();
     assert_eq!(pending.operation, renewal);
@@ -950,6 +969,9 @@ fn check_mac_uninstall(renewal_dispatched: bool) {
     pending["renewal_dispatched"] = json!(renewal_dispatched);
     write(&client.journal.db, "enrollment", &Some(pending)).unwrap();
     client.retire(&withdrawal).unwrap();
+    assert!(read::<Value>(&client.journal.db, "mac-unassigned")
+        .unwrap()
+        .is_none());
     assert_eq!(
         mac_assigned(&root.path, &backend, install, 2_000_000_001).unwrap(),
         None

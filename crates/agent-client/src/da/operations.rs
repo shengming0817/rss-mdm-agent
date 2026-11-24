@@ -143,7 +143,7 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         write(&tx, "release", &release)?;
         write(&tx, "retired-registration", receipt)?;
         tx.execute(
-            "DELETE FROM state WHERE name IN ('active','applied-proof','effective-digest')",
+            "DELETE FROM state WHERE name IN ('active','applied-proof','effective-digest','mac-unassigned')",
             [],
         )?;
         tx.commit()?;

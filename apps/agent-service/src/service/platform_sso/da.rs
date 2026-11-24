@@ -153,23 +153,20 @@ impl Endpoint {
         if let Request::PlatformSso {
             input:
                 Operation::Unregister {
+                    scope,
                     source,
                     source_version,
-                    ..
+                    operation,
                 }
                 | Operation::Observe {
+                    scope,
                     source,
                     source_version,
+                    operation,
                     ..
                 },
         } = request
         {
-            let scope = match request {
-                Request::PlatformSso {
-                    input: Operation::Observe { scope, .. } | Operation::Unregister { scope, .. },
-                } => *scope,
-                _ => unreachable!(),
-            };
             let account = match scope {
                 w::Kind::Device => "device".to_owned(),
                 w::Kind::User => crate::account_identity::generated_uid(
@@ -177,6 +174,25 @@ impl Endpoint {
                 )?
                 .ok_or(Error::Identity)?,
             };
+            if let Some(attempt) = attempt_record(&root, *operation)? {
+                let c = &attempt.coordinate;
+                if c.context.kind != *scope
+                    || c.context.generated_uid.as_deref().unwrap_or("device") != account
+                    || c.source != *source
+                    || c.source_version != *source_version
+                    || !supports_owner(
+                        d,
+                        (
+                            c.context.authority,
+                            c.context.installation,
+                            c.context.tenant,
+                        ),
+                    )
+                {
+                    return Err(Error::Identity);
+                }
+                return Ok(c.context.authority == w::RegistrationTrust::MdmBootstrapPop);
+            }
             if let Some(r) = retired_by_source(&root, &account, *source, *source_version)? {
                 return Ok(r.coordinate.context.authority == w::RegistrationTrust::MdmBootstrapPop);
             }
@@ -481,8 +497,19 @@ pub(super) fn withdraw_sources(
                 )?;
             }
         }
-        if !sweep_retirement(root, r.service_id)? {
+        if !sweep_retirement(root, r.service_id, Some(r))? {
             return Err(Error::Unavailable);
+        }
+    }
+    if root.try_exists()? {
+        let _lock = state::lock(root)?;
+        settle_prepared(root, r.service_id, Some(r))?;
+        release_bindings(root, r.service_id, Some(r))?;
+        // The old issuer's completed withdrawal must not disable the next installation authority.
+        if state::read_optional::<Disabled>(root, "platform-sso.disabled")?
+            .is_some_and(|d| d.installation == r.service_id)
+        {
+            state::remove(root, "platform-sso.disabled")?;
         }
     }
     Ok(())
@@ -818,6 +845,25 @@ mod tests {
         assert_eq!(
             configured_owner(&d).unwrap().0,
             w::RegistrationTrust::DaDevicePop
+        );
+        state::remove(&root, &other.file("registering").unwrap()).unwrap();
+        let mut local = super::super::tests::binding();
+        local.authority = other.context.authority;
+        local.installation = da.instance;
+        local.tenant = da.tenant;
+        local.device_id = other.context.device_id;
+        save_binding(&root, &local).unwrap();
+        let withdrawal = rss_mdm_agent_wire::da::RevocationReceipt {
+            service_id: da.instance,
+            tenant: da.tenant,
+            device: local.device_id,
+            credential: Uuid::new_v4(),
+            operation_id: Uuid::new_v4(),
+        };
+        withdraw_sources(&root, &withdrawal).unwrap();
+        assert_eq!(
+            configured_owner(&d).unwrap().0,
+            w::RegistrationTrust::MdmBootstrapPop
         );
         d.modules.mdm = Module::Disabled;
         assert_eq!(

@@ -2500,7 +2500,7 @@ async fn psso_drain_recovers_expired_trust_without_reopening_business_admission(
         &serde_json::json!({
             "source": source, "sourceVersion": 1, "bindingGeneration": null, "observedAt": 1,
             "callbackGeneration": 1, "subject": "501", "session": 1, "sessionBinding": null, "configuration": null,
-            "deviceRegistered": false, "userRegistered": false
+            "save":"cleanup","deviceRegistered": false, "userRegistered": false
         }),
     )
     .unwrap();

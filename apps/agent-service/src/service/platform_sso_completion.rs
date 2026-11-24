@@ -37,6 +37,8 @@ fn readback(c: &Coordinate) -> ::platform_sso::NativeConfiguration {
 }
 fn observation(c: &Coordinate, actual: ::platform_sso::NativeConfiguration) -> Operation {
     Operation::Observe {
+        operation: c.operation,
+        save: execution_ipc::platform_sso::NativeSave::Saved,
         scope: w::Kind::User,
         callback_generation: c.callback_generation,
         configuration: Some(Box::new(actual)),

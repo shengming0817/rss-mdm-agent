@@ -9,7 +9,6 @@ use std::{
     ffi::{c_char, c_void, CStr, CString},
     panic::{catch_unwind, AssertUnwindSafe},
 };
-use uuid::Uuid;
 
 pub struct Handle {
     client: ServiceClient,
@@ -161,12 +160,12 @@ pub unsafe extern "C" fn rss_psso_register(
         if sign.ok_or(())?(context,input.as_ptr(),input.len(),signature.as_mut_ptr()) != 0 { return Err(()); }
         let proof = platform_sso::signed(&input,&signature).map_err(|_| ())?;
         let result = request(&handle.client, Operation::Register { input: Box::new(w::Registration {
-            operation_id: Uuid::new_v4(), challenge_id: handle.challenge.id,
+            operation_id: handle.registration.operation, challenge_id: handle.challenge.id,
             signing_key: handle.registration.signing_key.clone(), encryption_key: handle.registration.encryption_key.clone(), proof,
         })});
         if matches!(result, Ok(Response::Registered { ref receipt }) if handle.registration.accepts(receipt)) { return Ok(()); }
         // A transport error is an unknown outcome. Never replay a consumed registration challenge.
-        match request(&handle.client, Operation::Status { scope: handle.registration.context.kind })? {
+        match request(&handle.client, Operation::Status { operation:handle.registration.operation, scope: handle.registration.context.kind })? {
             Response::Status { value } if handle.registration.recovered(&value) => Ok(()), _ => Err(()),
         }
     })).ok().and_then(Result::ok).map_or(-1, |_| 0)
@@ -265,6 +264,7 @@ pub unsafe extern "C" fn rss_psso_observe(
     configuration: *const c_char,
     device: bool,
     user: bool,
+    save: u32,
 ) -> i32 {
     catch_unwind(AssertUnwindSafe(|| -> Result<(), ()> {
         let registration: Registration = serde_json::from_str(text(metadata)?).map_err(|_| ())?;
@@ -272,6 +272,13 @@ pub unsafe extern "C" fn rss_psso_observe(
         request(
             &client,
             Operation::Observe {
+                operation: registration.operation,
+                save: match save {
+                    0 => execution_ipc::platform_sso::NativeSave::Saved,
+                    1 => execution_ipc::platform_sso::NativeSave::Cleanup,
+                    2 => execution_ipc::platform_sso::NativeSave::NotSaved,
+                    _ => return Err(()),
+                },
                 callback_generation: registration.callback_generation,
                 configuration: serde_json::from_str(text(configuration)?).map_err(|_| ())?,
                 scope: registration.context.kind,
@@ -298,6 +305,7 @@ pub unsafe extern "C" fn rss_psso_unregister(metadata: *const c_char) -> i32 {
         match request(
             &client,
             Operation::Unregister {
+                operation: registration.operation,
                 scope: registration.context.kind,
                 source: registration.source_id,
                 source_version: registration.source_version,

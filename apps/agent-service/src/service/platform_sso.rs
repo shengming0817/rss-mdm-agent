@@ -3,7 +3,7 @@ use super::*;
 use crate::credential_worker::state;
 use execution_ipc::{
     host::{Reply, Request},
-    platform_sso::{Operation, Response},
+    platform_sso::{NativeSave, Operation, Response},
 };
 use rss_mdm_agent_wire::platform_sso as w;
 use serde::{Deserialize, Serialize};
@@ -421,6 +421,29 @@ pub(crate) trait Owner {
                 context
                     .check_bootstrap(&challenge, (crate::wall()? / 1000) as i64)
                     .map_err(|_| Error::Untrusted)?;
+                let coordinate = Coordinate {
+                    operation: challenge.id,
+                    client_id: challenge.client_id,
+                    authentication: *authentication,
+                    callback_generation: *callback_generation,
+                    context: context.clone(),
+                    source: challenge.source_id,
+                    source_version: challenge.source_version,
+                };
+                {
+                    let _lock = state::lock(self.root())?;
+                    if attempt_record(self.root(), coordinate.operation)?.is_some() {
+                        return Err(Error::Conflict);
+                    }
+                    state::write(
+                        self.root(),
+                        &attempt_name(coordinate.operation),
+                        &Attempt {
+                            coordinate,
+                            phase: AttemptPhase::Prepared,
+                        },
+                    )?;
+                }
                 self.state().pending.insert(
                     challenge.id,
                     Pending {
@@ -441,7 +464,8 @@ pub(crate) trait Owner {
                     .pending
                     .remove(&input.challenge_id)
                     .ok_or(Error::Identity)?;
-                if pending.subject != command.subject
+                if input.operation_id != input.challenge_id
+                    || pending.subject != command.subject
                     || pending.session != command.session
                     || pending.session_binding != command.binding
                     || pending.challenge.expires_at <= (crate::wall()? / 1000) as i64
@@ -489,7 +513,18 @@ pub(crate) trait Owner {
                     if retirement_requested(self.root(), &coordinate)? {
                         return Err(Error::Denied);
                     }
-                    state::write(self.root(), &coordinate.file("registering")?, &coordinate)?;
+                    let prepared = attempt_record(self.root(), coordinate.operation)?
+                        .ok_or(Error::Identity)?;
+                    if prepared.coordinate != coordinate || prepared.phase != AttemptPhase::Prepared
+                    {
+                        return Err(Error::Denied);
+                    }
+                    let registering = coordinate.file("registering")?;
+                    if state::read_optional::<Coordinate>(self.root(), &registering)?.is_some() {
+                        return Err(Error::Conflict);
+                    }
+                    state::write(self.root(), &registering, &coordinate)?;
+                    state::remove(self.root(), &attempt_name(coordinate.operation))?;
                 }
                 let receipt = self.register(input).await?;
                 let Some(receipt) = receipt else {
@@ -525,7 +560,7 @@ pub(crate) trait Owner {
                 }
                 Ok(Response::Registered { receipt })
             }
-            Operation::Status { scope } => {
+            Operation::Status { scope, operation } => {
                 let context = self.context(command, *scope, true, None).await?;
                 let value = self.status(context.binding).await?;
                 if value.registration_trust != context.authority || value.hardware_attested {
@@ -541,6 +576,9 @@ pub(crate) trait Owner {
                     // cannot reconstruct the expected native configuration.
                     let coordinate =
                         retained_coordinate(self.root(), &context, source.id, source.version)?;
+                    if coordinate.operation != *operation {
+                        return Err(Error::Identity);
+                    }
                     if self
                         .context(command, *scope, true, Some(coordinate.authentication))
                         .await?
@@ -570,6 +608,7 @@ pub(crate) trait Owner {
                 Ok(Response::Observed {})
             }
             Operation::Unregister {
+                operation,
                 scope,
                 source,
                 source_version,
@@ -577,7 +616,10 @@ pub(crate) trait Owner {
                 let context = self.context(command, *scope, false, None).await?;
                 let coordinate =
                     retained_coordinate(self.root(), &context, *source, *source_version)?;
-                if coordinate.source.is_nil() || coordinate.source_version < 1 {
+                if coordinate.operation != *operation
+                    || coordinate.source.is_nil()
+                    || coordinate.source_version < 1
+                {
                     return Err(Error::Identity);
                 }
                 // Remove any not-yet-submitted challenge first. Register and Unregister share this
@@ -598,10 +640,14 @@ pub(crate) trait Owner {
         }
     }
     async fn retire_coordinate(&mut self, coordinate: &Coordinate) -> Result<Response, Error> {
-        if let Some(RemoteRetirement::RegistrationWithdrawn { .. }) =
-            resolution(self.root(), coordinate)?
-        {
-            return Ok(Response::RegistrationWithdrawn {});
+        match resolution(self.root(), coordinate)? {
+            Some(RemoteRetirement::NotSubmitted | RemoteRetirement::RegistrationRejected) => {
+                return Ok(Response::Retired {})
+            }
+            Some(RemoteRetirement::RegistrationWithdrawn { .. }) => {
+                return Ok(Response::RegistrationWithdrawn {})
+            }
+            _ => (),
         }
         if self.identity()?
             != (
@@ -711,6 +757,8 @@ fn record_observation(
     session_binding: Option<&execution_contract::Id>,
 ) -> Result<(), Error> {
     let Operation::Observe {
+        operation,
+        save,
         callback_generation,
         configuration,
         source,
@@ -736,7 +784,8 @@ fn record_observation(
             "previous-observation",
         ),
     };
-    if !retained.same_owner(context)
+    if retained.operation != *operation
+        || !retained.same_owner(context)
         || retained.source != *source
         || retained.source_version != *source_version
         || retained.callback_generation != *callback_generation
@@ -744,6 +793,7 @@ fn record_observation(
         return Err(Error::Identity);
     }
     let observation = NativeObservation {
+        save: *save,
         source: *source,
         source_version: *source_version,
         binding_generation: retained.context.binding_generation,
@@ -754,6 +804,7 @@ fn record_observation(
         session_binding: session_binding.cloned(),
         configuration: configuration
             .as_ref()
+            .filter(|_| *save == NativeSave::Saved)
             .map(|actual| {
                 actual.matches(
                     &retained.context,
@@ -842,12 +893,12 @@ impl<S: IdentityProvider> DeviceService<S> {
         if has_authority(&root, w::RegistrationTrust::DaDevicePop)? {
             return Ok(false);
         }
-        sweep_retirement(&root, self.core.access.installation)?;
+        sweep_retirement(&root, self.core.access.installation, None)?;
         while let Ok(command) = commands.try_recv() {
             self.core.handle(command);
         }
         self.drive_platform_sso(commands).await?;
-        let complete = sweep_retirement(&root, self.core.access.installation)?;
+        let complete = sweep_retirement(&root, self.core.access.installation, None)?;
         if !complete {
             // Cleanup may outlive trust/CRL validity. Keep the existing PKI owner's bounded
             // recovery running without reopening business admission or new registration.
@@ -858,9 +909,14 @@ impl<S: IdentityProvider> DeviceService<S> {
     }
 }
 /// The existing owner lock serializes retirement with registering and late completion.
-fn sweep_retirement(root: &std::path::Path, installation: Uuid) -> Result<bool, Error> {
+fn sweep_retirement(
+    root: &std::path::Path,
+    installation: Uuid,
+    withdrawal: Option<&rss_mdm_agent_wire::da::RevocationReceipt>,
+) -> Result<bool, Error> {
     let _lock = state::lock(root)?;
     state::write(root, "platform-sso.disabled", &Disabled { installation })?;
+    settle_prepared(root, installation, withdrawal)?;
     let mut complete = true;
     let mut count = 0;
     for entry in std::fs::read_dir(root)? {
@@ -908,11 +964,15 @@ fn sweep_retirement(root: &std::path::Path, installation: Uuid) -> Result<bool, 
         }
     }
     if complete {
-        release_bindings(root, installation)?;
+        release_bindings(root, installation, withdrawal)?;
     }
     Ok(complete)
 }
-fn release_bindings(root: &Path, installation: Uuid) -> Result<(), Error> {
+fn release_bindings(
+    root: &Path,
+    installation: Uuid,
+    withdrawal: Option<&rss_mdm_agent_wire::da::RevocationReceipt>,
+) -> Result<(), Error> {
     for entry in std::fs::read_dir(root)? {
         let name = entry?
             .file_name()
@@ -926,7 +986,12 @@ fn release_bindings(root: &Path, installation: Uuid) -> Result<(), Error> {
         if binding_name(&b.generated_uid)? != name {
             return Err(Error::Identity);
         }
-        if b.installation == installation {
+        if b.installation == installation
+            && withdrawal.is_none_or(|r| {
+                (b.authority, b.tenant, b.device_id)
+                    == (w::RegistrationTrust::DaDevicePop, r.tenant, r.device)
+            })
+        {
             state::remove(root, &name)?;
         }
     }
@@ -939,14 +1004,16 @@ fn native_cleared(c: &Coordinate, in_flight: bool, native: Option<&NativeObserva
                 && n.source_version == c.source_version
                 && n.binding_generation == c.context.binding_generation
                 && n.callback_generation == c.callback_generation
-                && !n.user_registered
-                && (c.context.kind == w::Kind::User || !n.device_registered)
+                && (n.save == NativeSave::NotSaved
+                    || !n.user_registered
+                        && (c.context.kind == w::Kind::User || !n.device_registered))
         })
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct NativeObservation {
+    save: NativeSave,
     callback_generation: u64,
     subject: String,
     session: u32,
@@ -1074,6 +1141,7 @@ pub(crate) struct Coordinate {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 enum RemoteRetirement {
+    NotSubmitted,
     RegistrationRejected,
     Revoked,
     Superseded,
@@ -1083,6 +1151,107 @@ enum RemoteRetirement {
         credential: Uuid,
     },
 }
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum AttemptPhase {
+    Prepared,
+    NotSubmitted,
+    Rejected,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Attempt {
+    coordinate: Coordinate,
+    phase: AttemptPhase,
+}
+fn attempt_name(operation: Uuid) -> String {
+    format!("{operation}.psso-attempt")
+}
+// Called with the state lock. Only a durable submission authorizes remote work after a restart.
+fn settle_prepared(
+    root: &Path,
+    installation: Uuid,
+    withdrawal: Option<&rss_mdm_agent_wire::da::RevocationReceipt>,
+) -> Result<(), Error> {
+    for entry in std::fs::read_dir(root)? {
+        let name = entry?
+            .file_name()
+            .into_string()
+            .map_err(|_| Error::Storage)?;
+        let Some(id) = name.strip_suffix(".psso-attempt") else {
+            continue;
+        };
+        let operation = Uuid::parse_str(id).map_err(|_| Error::Identity)?;
+        let Some(a) = attempt_record(root, operation)? else {
+            continue;
+        };
+        let c = &a.coordinate;
+        if c.context.installation != installation
+            || withdrawal.is_some_and(|r| {
+                (c.context.authority, c.context.tenant, c.context.device_id)
+                    != (w::RegistrationTrust::DaDevicePop, r.tenant, r.device)
+            })
+        {
+            continue;
+        }
+        let pending =
+            state::read_optional::<Coordinate>(root, &c.file("registering")?)?.as_ref() == Some(c);
+        match a.phase {
+            AttemptPhase::Prepared if pending => state::remove(root, &name)?,
+            AttemptPhase::Prepared => finish_attempt(root, c, AttemptPhase::NotSubmitted)?,
+            phase
+                if pending
+                    || state::read_optional::<CleanupReceipt>(
+                        root,
+                        &format!("{operation}.psso-result"),
+                    )?
+                    .is_none() =>
+            {
+                finish_attempt(root, c, phase)?
+            }
+            _ => (),
+        }
+    }
+    Ok(())
+}
+fn attempt_record(root: &Path, operation: Uuid) -> Result<Option<Attempt>, Error> {
+    let value: Option<Attempt> = state::read_optional(root, &attempt_name(operation))?;
+    if value
+        .as_ref()
+        .is_some_and(|a| a.coordinate.operation != operation)
+    {
+        return Err(Error::Identity);
+    }
+    Ok(value)
+}
+// A refusal belongs to a single challenge. A later challenge may receive the same source version.
+fn finish_attempt(root: &Path, c: &Coordinate, phase: AttemptPhase) -> Result<(), Error> {
+    let result = match phase {
+        AttemptPhase::NotSubmitted => RemoteRetirement::NotSubmitted,
+        AttemptPhase::Rejected => RemoteRetirement::RegistrationRejected,
+        AttemptPhase::Prepared => return Err(Error::Protocol),
+    };
+    state::write(
+        root,
+        &attempt_name(c.operation),
+        &Attempt {
+            coordinate: c.clone(),
+            phase,
+        },
+    )?;
+    state::write(
+        root,
+        &format!("{}.psso-result", c.operation),
+        &cleanup_receipt(c, true, Some(result), true),
+    )?;
+    for suffix in ["registering", "retire"] {
+        let name = c.file(suffix)?;
+        if state::read_optional::<Coordinate>(root, &name)?.as_ref() == Some(c) {
+            state::remove(root, &name)?;
+        }
+    }
+    Ok(())
+}
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Retired {
@@ -1090,6 +1259,16 @@ struct Retired {
     result: RemoteRetirement,
 }
 fn resolution(root: &Path, c: &Coordinate) -> Result<Option<RemoteRetirement>, Error> {
+    if let Some(a) = attempt_record(root, c.operation)? {
+        if a.coordinate != *c {
+            return Err(Error::Identity);
+        }
+        match a.phase {
+            AttemptPhase::NotSubmitted => return Ok(Some(RemoteRetirement::NotSubmitted)),
+            AttemptPhase::Rejected => return Ok(Some(RemoteRetirement::RegistrationRejected)),
+            AttemptPhase::Prepared => (),
+        }
+    }
     let record: Option<Retired> = state::read_optional(root, &c.file("retired")?)?;
     record
         .map(|r| {
@@ -1270,18 +1449,20 @@ fn replay_cleanup(
     cmd: &Command,
     owner: (w::RegistrationTrust, Uuid, Uuid),
 ) -> Result<Option<Response>, Error> {
-    let (kind, id, version) = match op {
+    let (kind, id, version, operation) = match op {
         Operation::Observe {
             scope,
             source,
             source_version,
+            operation,
             ..
         }
         | Operation::Unregister {
             scope,
             source,
             source_version,
-        } => (*scope, *source, *source_version),
+            operation,
+        } => (*scope, *source, *source_version, *operation),
         _ => return Ok(None),
     };
     let account = match kind {
@@ -1291,10 +1472,53 @@ fn replay_cleanup(
         }
         _ => return Err(Error::Identity),
     };
+    let _lock = state::lock(root)?;
+    if let Some(attempt) = attempt_record(root, operation)? {
+        let c = &attempt.coordinate;
+        if c.source != id
+            || c.source_version != version
+            || c.context.kind != kind
+            || c.context.generated_uid.as_deref().unwrap_or("device") != account
+            || (
+                c.context.authority,
+                c.context.installation,
+                c.context.tenant,
+            ) != owner
+        {
+            return Err(Error::Identity);
+        }
+        if let Operation::Observe {
+            callback_generation,
+            ..
+        } = op
+        {
+            if *callback_generation != c.callback_generation {
+                return Err(Error::Identity);
+            }
+        }
+        let pending = state::read_optional::<Coordinate>(root, &c.file("registering")?)?;
+        // The write-ahead submission wins if the service stopped between the two writes.
+        if attempt.phase != AttemptPhase::Prepared || pending.as_ref() != Some(c) {
+            if matches!(op, Operation::Observe { .. }) {
+                return Ok(Some(Response::Observed {}));
+            }
+            let phase = if attempt.phase == AttemptPhase::Prepared {
+                AttemptPhase::NotSubmitted
+            } else {
+                attempt.phase
+            };
+            finish_attempt(root, c, phase)?;
+            return Ok(Some(Response::Retired {}));
+        }
+        state::remove(root, &attempt_name(operation))?;
+    }
     let Some(r) = retired_by_source(root, &account, id, version)? else {
         return Ok(None);
     };
     let c = &r.coordinate;
+    if c.operation != operation {
+        return Err(Error::Identity);
+    }
     if (
         c.context.authority,
         c.context.installation,
@@ -1334,9 +1558,9 @@ fn replay_cleanup(
         }
         Operation::Unregister { .. } => Ok(Some(match r.result {
             RemoteRetirement::RegistrationWithdrawn { .. } => Response::RegistrationWithdrawn {},
-            RemoteRetirement::Superseded | RemoteRetirement::RegistrationRejected => {
-                Response::Retired {}
-            }
+            RemoteRetirement::Superseded
+            | RemoteRetirement::RegistrationRejected
+            | RemoteRetirement::NotSubmitted => Response::Retired {},
             RemoteRetirement::Revoked => Response::Revoked {
                 receipt: w::RevocationReceipt {
                     source_id: id,
@@ -1512,6 +1736,17 @@ pub(crate) fn upgrade_preflight(
             if binding.enabled && !has_extension {
                 return Err(Error::Unavailable);
             }
+        } else if let Some(id) = name.strip_suffix(".psso-attempt") {
+            let id = Uuid::parse_str(id).map_err(|_| Error::Identity)?;
+            let attempt = attempt_record(&root, id)?.ok_or(Error::Storage)?;
+            attempt
+                .coordinate
+                .context
+                .validate()
+                .map_err(|_| Error::Identity)?;
+            if !has_extension && attempt.phase == AttemptPhase::Prepared {
+                return Err(Error::Unavailable);
+            }
         } else if [
             ".psso-source",
             ".psso-registering",
@@ -1648,6 +1883,7 @@ pub(crate) fn uninstall_preflight(deployment: &crate::deployment::Deployment) ->
             installation: configured_owner(deployment)?.1,
         },
     )?;
+    settle_prepared(&root, configured_owner(deployment)?.1, None)?;
     for entry in std::fs::read_dir(&root)? {
         let name = entry?
             .file_name()
@@ -1740,6 +1976,9 @@ fn component_state(deployment: &crate::deployment::Deployment, action: &str) -> 
         platform_private_storage::directory(&root)?;
     }
     let _lock = state::lock(&root)?;
+    if matches!(action, "retire" | "cleanup") {
+        settle_prepared(&root, instance, None)?;
+    }
     let mut coordinates = Vec::new();
     for entry in std::fs::read_dir(&root)? {
         let name = entry?
@@ -1847,7 +2086,7 @@ fn component_state(deployment: &crate::deployment::Deployment, action: &str) -> 
         for (coordinate, in_flight) in &coordinates {
             clear_coordinate(&root, coordinate, *in_flight)?;
         }
-        release_bindings(&root, instance)?;
+        release_bindings(&root, instance, None)?;
     }
     let disabled = match enabled(&root, instance) {
         Ok(()) => false,
@@ -1922,15 +2161,7 @@ fn settle_rejected_registration(
     if state::read_optional::<Coordinate>(root, &coordinate.file("registering")?)?.as_ref()
         == Some(coordinate)
     {
-        state::write(
-            root,
-            &coordinate.file("retired")?,
-            &Retired {
-                coordinate: coordinate.clone(),
-                result: RemoteRetirement::RegistrationRejected,
-            },
-        )?;
-        clear_coordinate(root, coordinate, true)?;
+        finish_attempt(root, coordinate, AttemptPhase::Rejected)?;
     }
     Ok(())
 }
@@ -2032,7 +2263,7 @@ mod tests {
             source_version: 1,
         }
     }
-    fn binding() -> ::platform_sso::LocalBinding {
+    pub(super) fn binding() -> ::platform_sso::LocalBinding {
         let c = coordinate().context;
         ::platform_sso::LocalBinding {
             authority: rss_mdm_agent_wire::platform_sso::RegistrationTrust::MdmBootstrapPop,
@@ -2068,11 +2299,11 @@ mod tests {
             ),
             Err(Error::Conflict)
         );
-        assert!(!sweep_retirement(&root, id.1).unwrap());
+        assert!(!sweep_retirement(&root, id.1, None).unwrap());
         finish_retirement(&root, &c, RemoteRetirement::Revoked).unwrap();
         // Simulate interruption between publishing the result and removing its journal entry.
         state::write(&root, &c.file("retire").unwrap(), &c).unwrap();
-        assert!(sweep_retirement(&root, id.1).unwrap());
+        assert!(sweep_retirement(&root, id.1, None).unwrap());
         let receipt: CleanupReceipt =
             state::read_optional(&root, &format!("{}.psso-result", c.operation))
                 .unwrap()
@@ -2118,6 +2349,8 @@ mod tests {
             Err(Error::Unavailable)
         );
         let observe = Operation::Observe {
+            operation: c.operation,
+            save: NativeSave::Cleanup,
             scope: c.context.kind,
             source: c.source,
             source_version: c.source_version,
@@ -2144,6 +2377,7 @@ mod tests {
             Ok(Some(Response::Observed {}))
         ));
         let unregister = Operation::Unregister {
+            operation: c.operation,
             scope: c.context.kind,
             source: c.source,
             source_version: c.source_version,
@@ -2193,6 +2427,8 @@ mod tests {
             new.operation
         );
         let observation = |c: &Coordinate, configuration| Operation::Observe {
+            operation: c.operation,
+            save: NativeSave::Saved,
             scope: c.context.kind,
             source: c.source,
             source_version: c.source_version,
@@ -2231,6 +2467,24 @@ mod tests {
             login_request_values: vec![("platform_sso_version".into(), "1.0".into())],
             login_user_name: Some(new.source.to_string()),
         };
+        let mut cleanup_observation = observation(&new, Some(Box::new(actual.clone())));
+        if let Operation::Observe { save, .. } = &mut cleanup_observation {
+            *save = NativeSave::NotSaved;
+        }
+        record_observation(
+            &root.path,
+            &new.context,
+            &cleanup_observation,
+            "501",
+            1,
+            None,
+        )
+        .unwrap();
+        assert!(resolution(&root.path, &old).unwrap().is_none());
+        assert!(
+            state::read_optional::<Coordinate>(&root.path, &old.file("previous").unwrap()).unwrap()
+                == Some(old.clone())
+        );
         record_observation(
             &root.path,
             &new.context,
@@ -2290,7 +2544,7 @@ mod tests {
             &serde_json::json!({
                 "source": c.source, "sourceVersion": c.source_version, "bindingGeneration": 1,
                 "callbackGeneration": 1, "subject": "501", "session": 1, "sessionBinding": null, "configuration": null,
-                "observedAt": 10, "deviceRegistered": true, "userRegistered": false
+                "save":"cleanup","observedAt": 10, "deviceRegistered": true, "userRegistered": false
             }),
         )
         .unwrap();
@@ -2337,21 +2591,21 @@ mod tests {
         platform_private_storage::directory(&root).unwrap();
         let c = coordinate();
         state::write(&root, &c.file("source").unwrap(), &c).unwrap();
-        assert!(!sweep_retirement(&root, c.context.installation).unwrap());
+        assert!(!sweep_retirement(&root, c.context.installation, None).unwrap());
         assert_eq!(enabled(&root, c.context.installation), Err(Error::Denied));
         finish_retirement(&root, &c, RemoteRetirement::Revoked).unwrap();
-        assert!(!sweep_retirement(&root, c.context.installation).unwrap());
+        assert!(!sweep_retirement(&root, c.context.installation, None).unwrap());
         state::write(
             &root,
             &c.file("observation").unwrap(),
             &serde_json::json!({
                 "source": c.source, "sourceVersion": c.source_version, "bindingGeneration": 1,
                 "callbackGeneration": 1, "subject": "501", "session": 1, "sessionBinding": null, "configuration": null,
-                "observedAt": 10, "deviceRegistered": true, "userRegistered": false
+                "save":"cleanup","observedAt": 10, "deviceRegistered": true, "userRegistered": false
             }),
         )
         .unwrap();
-        assert!(sweep_retirement(&root, c.context.installation).unwrap());
+        assert!(sweep_retirement(&root, c.context.installation, None).unwrap());
         assert!(
             state::read_optional::<Retired>(&root, &c.file("retired").unwrap())
                 .unwrap()
@@ -2366,6 +2620,7 @@ mod tests {
         })));
         assert!(cleanup_operation(Some(&Request::PlatformSso {
             input: Operation::Unregister {
+                operation: c.operation,
                 scope: w::Kind::User,
                 source: c.source,
                 source_version: 1

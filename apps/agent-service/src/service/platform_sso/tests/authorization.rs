@@ -8,6 +8,7 @@ struct PolicyOwner<'a> {
     selected: Option<w::AuthenticationMode>,
     withdraw_on_bootstrap: bool,
     switch_on_register: bool,
+    reject: bool,
 }
 impl Owner for PolicyOwner<'_> {
     fn state(&mut self) -> &mut State {
@@ -45,7 +46,7 @@ impl Owner for PolicyOwner<'_> {
         }
         let c = &self.coordinate;
         Ok(w::BootstrapResponse {
-            id: Uuid::new_v4(),
+            id: c.operation,
             nonce: "fixture".into(),
             expires_at: (crate::wall()? / 1000) as i64 + 30,
             source_id: c.source,
@@ -59,6 +60,9 @@ impl Owner for PolicyOwner<'_> {
         &mut self,
         _: &w::Registration,
     ) -> Result<Option<w::RegistrationReceipt>, Error> {
+        if self.reject {
+            return Ok(None);
+        }
         if self.switch_on_register {
             self.selected = Some(w::AuthenticationMode::Password);
         }
@@ -112,6 +116,7 @@ pub(in crate::service::platform_sso) async fn register_saved_account(
         selected: Some(mode),
         withdraw_on_bootstrap: false,
         switch_on_register: false,
+        reject: false,
     };
     let begin = command(Operation::Bootstrap {
         scope: w::Kind::User,
@@ -152,14 +157,7 @@ pub(in crate::service::platform_sso) async fn register_saved_account(
 #[tokio::test]
 async fn device_policy_is_checked_at_submission_and_after_both_remote_responses() {
     let root = crate::protocol_test_support::Root::new();
-    let mut c = coordinate();
-    c.context.authority = w::RegistrationTrust::DaDevicePop;
-    c.context.kind = w::Kind::Device;
-    c.context.generated_uid = None;
-    c.context.binding = None;
-    c.context.binding_generation = None;
-    c.context.binding_revision = 0;
-    c.context.configuration = None;
+    let c = device_coordinate();
     let mut owner = PolicyOwner {
         root: &root.path,
         state: State::default(),
@@ -167,6 +165,7 @@ async fn device_policy_is_checked_at_submission_and_after_both_remote_responses(
         selected: Some(c.authentication),
         withdraw_on_bootstrap: true,
         switch_on_register: true,
+        reject: false,
     };
     let bootstrap = |authentication| {
         command(Operation::Bootstrap {
@@ -221,4 +220,116 @@ async fn device_policy_is_checked_at_submission_and_after_both_remote_responses(
         state::read_optional::<Coordinate>(&root.path, &c.file("retire").unwrap()).unwrap()
             == Some(c)
     );
+}
+
+fn device_coordinate() -> Coordinate {
+    let mut c = coordinate();
+    c.context.authority = w::RegistrationTrust::DaDevicePop;
+    c.context.kind = w::Kind::Device;
+    c.context.generated_uid = None;
+    c.context.binding = None;
+    c.context.binding_generation = None;
+    c.context.binding_revision = 0;
+    c.context.configuration = None;
+    c
+}
+
+#[tokio::test]
+async fn unsubmitted_and_rejected_attempts_replay_after_a_new_challenge_reuses_the_source_version()
+{
+    for rejected in [false, true] {
+        let root = crate::protocol_test_support::Root::new();
+        let c = device_coordinate();
+        let mut owner = PolicyOwner {
+            root: &root.path,
+            state: State::default(),
+            coordinate: c.clone(),
+            selected: Some(c.authentication),
+            withdraw_on_bootstrap: false,
+            switch_on_register: false,
+            reject: rejected,
+        };
+        let begin = || {
+            command(Operation::Bootstrap {
+                scope: c.context.kind,
+                authentication: c.authentication,
+                callback_generation: c.callback_generation,
+            })
+        };
+        let register = |id| {
+            let key = w::PublicKey {
+                kty: "EC".into(),
+                crv: "P-256".into(),
+                x: "fixture".into(),
+                y: "fixture".into(),
+            };
+            command(Operation::Register {
+                input: Box::new(w::Registration {
+                    operation_id: id,
+                    challenge_id: id,
+                    signing_key: Some(key.clone()),
+                    encryption_key: key,
+                    proof: "fixture".into(),
+                }),
+            })
+        };
+        let cleanup = || {
+            command(Operation::Unregister {
+                scope: c.context.kind,
+                source: c.source,
+                source_version: c.source_version,
+                operation: c.operation,
+            })
+        };
+        assert!(matches!(
+            owner.platform_sso(&begin()).await,
+            Ok(Response::Bootstrap { .. })
+        ));
+        if !rejected {
+            owner.selected = Some(w::AuthenticationMode::Password);
+        }
+        assert!(owner.platform_sso(&register(c.operation)).await.is_err());
+        owner.state = State::default();
+        assert!(matches!(
+            owner.platform_sso(&cleanup()).await,
+            Ok(Response::Retired {})
+        ));
+        let receipt = state::read_optional::<CleanupReceipt>(
+            &root.path,
+            &format!("{}.psso-result", c.operation),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            receipt.remote,
+            Some(if rejected {
+                RemoteRetirement::RegistrationRejected
+            } else {
+                RemoteRetirement::NotSubmitted
+            })
+        );
+        let next = Uuid::new_v4();
+        owner.coordinate.operation = next;
+        owner.reject = false;
+        owner.selected = Some(c.authentication);
+        assert!(matches!(
+            owner.platform_sso(&begin()).await,
+            Ok(Response::Bootstrap { .. })
+        ));
+        assert!(matches!(
+            owner.platform_sso(&register(next)).await,
+            Ok(Response::Registered { .. })
+        ));
+        assert!(matches!(
+            owner.platform_sso(&cleanup()).await,
+            Ok(Response::Retired {})
+        ));
+        assert_eq!(
+            state::read_optional::<Coordinate>(&root.path, &c.file("source").unwrap())
+                .unwrap()
+                .unwrap()
+                .operation,
+            next
+        );
+    }
 }

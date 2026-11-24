@@ -102,6 +102,7 @@ impl Context {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Registration {
+    pub operation: Uuid,
     pub callback_generation: u64,
     pub context: Context,
     pub source_id: Uuid,
@@ -143,6 +144,7 @@ impl Registration {
             };
         encryption_key.key_id().map_err(|_| Error::Protocol)?;
         Ok(Self {
+            operation: response.id,
             callback_generation,
             context,
             source_id: response.source_id,
@@ -156,7 +158,8 @@ impl Registration {
     }
     pub fn proof(&self, challenge: &w::BootstrapResponse, now: i64) -> Result<String, Error> {
         self.context.check_bootstrap(challenge, now)?;
-        if self.source_id != challenge.source_id
+        if self.operation != challenge.id
+            || self.source_id != challenge.source_id
             || self.source_version != challenge.source_version
             || self.client_id != challenge.client_id
         {
