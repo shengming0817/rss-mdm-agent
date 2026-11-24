@@ -7,6 +7,7 @@
     "phase": "connected",
     "status": {
       "build": "0.1.0",
+      "installation": null,
       "platform": "macos",
       "protocol": 11,
       "readiness": { "phase": "notReady" },
@@ -17,6 +18,7 @@
     "phase": "connected",
     "status": {
       "build": "0.1.0",
+      "installation": null,
       "platform": "macos",
       "protocol": 11,
       "readiness": { "phase": "ready" },

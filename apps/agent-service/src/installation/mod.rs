@@ -1,6 +1,20 @@
 //! One installation owner; packages and lab harnesses only invoke this boundary.
 //! ref: tauri tauri-cli-v2.11.2 crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi.
 mod apply;
+pub(crate) fn observation(d: &Deployment) -> Option<execution_ipc::host::InstallationObservation> {
+    let path = Deployment::default_path().ok()?;
+    let current = Deployment::metadata(&path).ok()?;
+    if current.installation_id != d.installation_id
+        || current.installation_artifact != d.installation_artifact
+        || current.modules != d.modules
+    {
+        return None;
+    }
+    Some(execution_ipc::host::InstallationObservation {
+        observed_at: SystemClock::new().ok()?.now().ok()?,
+        modules: apply::observe_modules(&path, &current),
+    })
+}
 pub use apply::{apply_authorized_profile, AuthorizedProfile};
 mod lifecycle;
 mod profile;

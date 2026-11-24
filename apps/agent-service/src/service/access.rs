@@ -294,6 +294,21 @@ fn console(subject: &str, session: u32, binding: &execution_contract::Id) -> Res
         Err(Error::Unsupported)
     }
 }
+pub(crate) fn own_bindings(
+    directory: w::AccessDirectory,
+    subject: &str,
+) -> Result<execution_ipc::device_access::Response, Error> {
+    let account = native_account(subject)?;
+    Ok(execution_ipc::device_access::Response::OwnBindings {
+        device: directory.device_id,
+        bindings: directory
+            .bindings
+            .into_iter()
+            .filter(|b| !b.revoked && b.account.as_ref() == Some(&account))
+            .collect(),
+    })
+}
+
 fn native_account(subject: &str) -> Result<w::AccessAccount, Error> {
     #[cfg(windows)]
     {
@@ -388,7 +403,7 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
         #[cfg(windows)]
         if !matches!(
             input,
-            Op::WindowsStatus {} | Op::Directory { .. } | Op::Tasks {}
+            Op::WindowsStatus {} | Op::OwnBindings {} | Op::Directory { .. } | Op::Tasks {}
         ) {
             let native = device_access::windows::account::inspect(&owner.subject)
                 .map_err(|_| Error::Identity)?;
@@ -495,6 +510,16 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
                 }
                 #[cfg(not(windows))]
                 return Err(Error::Unsupported);
+            }
+            Op::OwnBindings {} => {
+                let directory = super::network(
+                    self.client.access_directory(&proof, None),
+                    &mut self.core,
+                    commands,
+                )
+                .await?;
+                owner.validate(&self.core.access.fences)?;
+                own_bindings(directory, &owner.subject)?
             }
             Op::Directory { cursor } => Out::Directory(
                 super::network(

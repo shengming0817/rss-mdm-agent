@@ -13,6 +13,7 @@ use std::path::PathBuf;
 pub(crate) struct Machine {
     #[cfg(windows)]
     pub(super) local_rss: bool,
+    pub(super) deployment: Option<crate::deployment::Deployment>,
     root: PathBuf,
     #[cfg(windows)]
     native_root: PathBuf,
@@ -51,6 +52,7 @@ impl Machine {
         Self {
             #[cfg(windows)]
             local_rss: false,
+            deployment: None,
             root,
             #[cfg(windows)]
             native_root,
@@ -64,6 +66,13 @@ impl Machine {
     }
 }
 impl PolicyConsumer for Machine {
+    fn modules(&self) -> rss_mdm_agent_wire::da::ClientModules {
+        self.deployment
+            .as_ref()
+            .and_then(crate::installation::observation)
+            .map(|v| v.modules)
+            .unwrap_or_default()
+    }
     fn managed_snapshot(&self) -> ManagedSnapshot {
         ManagedSnapshot {
             state: self.state,

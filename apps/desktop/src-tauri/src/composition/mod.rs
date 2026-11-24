@@ -1,4 +1,5 @@
 //! Desktop IPC and AI composition; execution belongs to the installed system service.
+pub mod employee;
 pub mod execution;
 pub mod ipc;
 pub mod lifecycle;

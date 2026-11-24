@@ -165,6 +165,7 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
     let ready = Arc::new(AtomicBool::new(false));
     let available = ready.clone();
     let root = d.da_root()?;
+    let installation = d.clone();
     let worker = thread::Builder::new()
         .name("device-access".into())
         .spawn(move || {
@@ -192,6 +193,8 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                             }
                             Ok(Some(client)) => {
                                 available.store(true, Ordering::Release);
+                                #[cfg(windows)]
+                                worker_login.read_directory(&client).await?;
                                 let mut policy = policy::Machine::observe(
                                     root.clone(),
                                     #[cfg(windows)]
@@ -200,6 +203,7 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                                     d.installation_id,
                                 )
                                 .await;
+                                policy.deployment = Some(d.clone());
                                 async {
                                     #[cfg(not(target_os="macos"))]
                                     let result = client.drive(&mut policy).await;
@@ -292,6 +296,7 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
             })
         })?;
     Ok(Box::new(Service {
+        installation,
         mdm,
         #[cfg(target_os = "macos")]
         endpoint,
@@ -438,6 +443,7 @@ fn account_tasks_merge_after_enqueue_and_a_denied_da_input_is_never_forwarded() 
     ));
 }
 struct Service {
+    installation: Deployment,
     #[cfg(target_os = "macos")]
     endpoint: native::Endpoint,
     #[cfg(windows)]
@@ -542,13 +548,15 @@ impl Service {
             return Reply::Rejected;
         }
         match request {
-            Request::ServiceStatus {} => Reply::ServiceStatus {
-                value: ServiceStatus::new(if da_ready {
+            Request::ServiceStatus {} => {
+                let mut value = ServiceStatus::new(if da_ready {
                     Readiness::Ready
                 } else {
                     Readiness::NotReady
-                }),
-            },
+                });
+                value.installation = crate::installation::observation(&self.installation);
+                Reply::ServiceStatus { value }
+            }
             _ => Reply::Rejected,
         }
     }

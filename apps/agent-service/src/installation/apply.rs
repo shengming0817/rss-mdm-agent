@@ -253,6 +253,10 @@ impl Journal {
                 self.save(record)?;
             }
         }
+        // Publish the lookup before archiving. While this runs, readers still see active().
+        let staged = self.root.join(format!("{}.tmp", Uuid::new_v4()));
+        platform_private_storage::write_new(&staged, record.operation.as_bytes())?;
+        platform_private_storage::replace(&staged, &self.root.join("last-operation"))?;
         // Atomically move the terminal checkpoint to immutable per-operation history.
         platform_private_storage::replace(&self.active(), &self.file(record.operation, "result"))?;
         if record.phase == Phase::Applied && self.recovery_identity().try_exists()? {
@@ -308,6 +312,62 @@ fn binding(d: &Deployment) -> Result<Option<(Uuid, Uuid)>, Error> {
     Ok(binding.map(|b| (b.device_id.into_uuid(), b.epoch)))
 }
 
+fn latest_record(config: &Path, deployment: &Deployment) -> Option<Record> {
+    let journal = Journal::new(config).ok()?;
+    let current = match journal.read(&journal.active()).ok()? {
+        Some(record) => record,
+        None => {
+            let bytes =
+                platform_private_storage::read(&journal.root.join("last-operation"), 16).ok()?;
+            let operation = Uuid::from_slice(&bytes).ok()?;
+            let record = journal.read(&journal.file(operation, "result")).ok()??;
+            if record.operation != operation {
+                return None;
+            }
+            record
+        }
+    };
+    (current.installation == deployment.installation_id && current.config == config)
+        .then_some(current)
+}
+
+/// Both logical channels are shipped in the same authenticated service executable.
+/// CP and PSSO availability are observed separately by the native owners.
+pub(crate) fn observe_modules(
+    config: &Path,
+    d: &Deployment,
+) -> rss_mdm_agent_wire::da::ClientModules {
+    use rss_mdm_agent_wire::da::{ClientModules, ModuleApplication, ModuleObservation};
+    let installed = Candidate::retained(config, d).ok().and_then(|candidate| {
+        candidate.validate_trust().ok()?;
+        match std::fs::symlink_metadata(&candidate.service.path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(false),
+            Ok(_) => candidate
+                .service
+                .verify(&candidate.service.path)
+                .ok()
+                .map(|_| true),
+            Err(_) => None,
+        }
+    });
+    let module = |enabled| ModuleObservation {
+        installed,
+        enabled: Some(enabled),
+    };
+    let application = match latest_record(config, d).map(|r| r.phase) {
+        Some(Phase::Received) => ModuleApplication::Received,
+        Some(Phase::Applied) => ModuleApplication::Applied,
+        Some(Phase::Rejected) => ModuleApplication::Rejected,
+        Some(_) => ModuleApplication::Pending,
+        None => ModuleApplication::Unknown,
+    };
+    ClientModules {
+        da: module(d.modules.da.enabled()),
+        mdm: module(d.modules.mdm.enabled()),
+        application,
+    }
+}
+
 pub(super) fn module_status(config: &Path) -> Result<(), Error> {
     if optional(config)?.is_none() {
         let j = Journal::new(config)?;
@@ -317,18 +377,14 @@ pub(super) fn module_status(config: &Path) -> Result<(), Error> {
         return Ok(());
     }
     let deployment = Deployment::metadata(config)?;
-    let manifest = config
-        .parent()
-        .ok_or(Error::Configuration)?
-        .join("install-manifests")
-        .join(format!("{}.json", deployment.installation_artifact));
-    let available = if config != Deployment::default_path()? && !manifest.try_exists()? {
-        None
-    } else {
-        Some(Candidate::retained(config, &deployment)?.assembly)
-    };
-    let observed = binding(&deployment);
-    let registered = observed.as_ref().ok().map(|value| value.is_some());
+    let modules = observe_modules(config, &deployment);
+    let registered = deployment
+        .modules
+        .mdm
+        .enabled()
+        .then(|| binding(&deployment).ok())
+        .flatten()
+        .map(|v| v.is_some());
     let da = crate::da_service::status(&deployment);
     let j = Journal::new(config)?;
     let pending = j
@@ -336,8 +392,7 @@ pub(super) fn module_status(config: &Path) -> Result<(), Error> {
         .filter(|r| !r.terminal())
         .map(|r| r.operation);
     outcome::details(serde_json::json!({
-        "available": available,
-        "enabled": { "mdm":deployment.modules.mdm.enabled(), "da":deployment.modules.da.enabled() },
+        "modules":modules,"observedAt":SystemClock::new()?.now()?,
         "daEmployeePortalOrigin":deployment.modules.employee_portal()?.map(|p|p.origin),
         "mdmRegistered":registered,"da":da.as_ref().ok().and_then(|state|state.as_ref()),"daError":da.as_ref().err(),"pendingOperation":pending,
         "revision":deployment.modules.revision,

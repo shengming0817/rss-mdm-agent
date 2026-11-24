@@ -24,10 +24,22 @@ pub enum Readiness {
     /// Existing state must be inspected; it must not be reset or re-registered.
     NotReady,
 }
+/// Non-authorizing observations sampled by the protected installation service.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct InstallationObservation {
+    /// Device observation time, UTC seconds.
+    pub observed_at: i64,
+    /// Installed shared service, administrator selection and profile operation outcome.
+    pub modules: rss_mdm_agent_wire::da::ClientModules,
+}
+
 /// Safe statement from the authenticated production owner.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceStatus {
+    /// Installation owner readback, absent when observation is unavailable.
+    pub installation: Option<InstallationObservation>,
     /// Bounded local telemetry health; diagnostic values grant no authority.
     pub telemetry: Option<serde_json::Value>,
     /// Actual binary build version.
@@ -46,6 +58,7 @@ impl ServiceStatus {
             build: env!("CARGO_PKG_VERSION").into(),
             protocol: IPC_VERSION,
             telemetry: None,
+            installation: None,
             platform: std::env::consts::OS.into(),
             readiness,
         }

@@ -25,6 +25,8 @@ pub enum Operation {
     WindowsStatus {},
     /// Open the current user's native sign-in settings; never accepts a URL, PIN or account.
     OpenWindowsHello {},
+    /// Existing bindings for both the authenticated enterprise employee and the current OS account.
+    OwnBindings {},
     /// Discover eligible first-enrollment policies and own binding states.
     Directory {
         /// Policy cursor.
@@ -97,6 +99,13 @@ pub enum Response {
         operation: Uuid,
         /// Expiry in UTC seconds.
         expires_at: i64,
+    },
+    /// Device and bindings from the authenticated device directory, filtered by native identity.
+    OwnBindings {
+        /// Device registration owning these binding operations.
+        device: rss_mdm_agent_wire::DeviceId,
+        /// Bindings on the current stable native account.
+        bindings: Vec<w::AccessBindingStatus>,
     },
     /// Confirmed desired binding; not evidence of Applied.
     Binding(Box<w::AccessBindingStatus>),

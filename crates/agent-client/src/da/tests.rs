@@ -118,6 +118,8 @@ fn fixture_mac_binding(s: &Server) -> w::AccessBindingStatus {
     use rss_mdm_agent_wire::platform_sso as mac;
     let mode = s.mac_mode;
     w::AccessBindingStatus {
+        operation_id: s.offer.operation_id,
+        definition_digest: [3; 32],
         id: s.offer.binding_id,
         binding_generation: 1,
         factor_generation: 1,
@@ -316,7 +318,7 @@ async fn endpoint(
                     assert_eq!(headers["x-rss-user-session"], "a".repeat(64));
                     return (
                         [("cache-control", "no-store")],
-                        Json(json!({"policies":[],"nextCursor":null,"bindings":[fixture_mac_binding(&s)]})),
+                        Json(json!({"deviceId":s.registration.as_ref().unwrap().device,"policies":[],"nextCursor":null,"bindings":[fixture_mac_binding(&s)]})),
                     )
                         .into_response();
                 }
@@ -489,6 +491,9 @@ async fn contract_exchange(
 }
 struct Consumer(Option<AccessConfiguration>);
 impl PolicyConsumer for Consumer {
+    fn modules(&self) -> wire::ClientModules {
+        wire::ClientModules::default()
+    }
     fn managed_snapshot(&self) -> ManagedSnapshot {
         ManagedSnapshot {
             state: SourceState::Missing,
@@ -707,7 +712,7 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         mac::AuthenticationMode::Password,
     ] {
         state.lock().unwrap().mac_mode = mode;
-        let directory = ops.mac_bindings(&"a".repeat(64)).await.unwrap();
+        let directory = ops.employee_bindings(&"a".repeat(64)).await.unwrap();
         let b = &directory.bindings[0];
         assert_eq!(b.configuration.mac.as_ref().unwrap().authentication, mode);
         let user = ops

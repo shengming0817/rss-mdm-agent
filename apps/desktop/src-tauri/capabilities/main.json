@@ -10,6 +10,7 @@
     "allow-query-directory",
     "allow-data-read",
     "allow-device-access",
+    "allow-employee-change",
     "allow-query-submit",
     "allow-query-status",
     "core:window:allow-start-dragging",

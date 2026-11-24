@@ -310,6 +310,13 @@ fn enterprise_client(ca: Option<Vec<u8>>) -> Result<Client> {
 }
 
 impl EnterpriseSession {
+    pub(super) fn employee_scope(&self) -> (&str, &str, &str) {
+        (
+            &self.organization.origin,
+            &self.organization.tenant_id,
+            &self.principal,
+        )
+    }
     pub(super) fn native_session(
         &self,
         generation: &str,

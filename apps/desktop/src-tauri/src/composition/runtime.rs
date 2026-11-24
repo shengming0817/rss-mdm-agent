@@ -148,6 +148,15 @@ impl DesktopRuntime {
         }
         self.host.launch(&self.execution, self.master.clone()).await
     }
+    pub(super) fn employee_session(
+        &self,
+        generation: &str,
+    ) -> ui::Result<super::account::EnterpriseSession> {
+        self.current_locked(generation)?;
+        self.identity
+            .session()?
+            .ok_or_else(|| ui::error("employee_login", "请先登录企业账号"))
+    }
     pub fn current(&self, generation: &str) -> ui::Result<ai_session_contract::UserContext> {
         self.current_locked(generation)
     }

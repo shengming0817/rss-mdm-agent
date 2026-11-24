@@ -201,6 +201,17 @@ function ServiceStatus({
       mismatch: "版本或主体不匹配",
       connected: "已连接",
     };
+  const sample =
+    state.service?.phase === "connected"
+      ? state.service.status.installation
+      : null;
+  const applied = {
+    unknown: "结果未知",
+    received: "已受理",
+    pending: "处理中",
+    applied: "已应用",
+    rejected: "已拒绝",
+  };
   return (
     <>
       <div className="rss-setting-row">
@@ -216,6 +227,36 @@ function ServiceStatus({
           {state.service ? labels[state.service.phase] : "尚未读取"}
         </Tag>
       </div>
+      {sample && (
+        <div className="rss-setting-row">
+          <span>
+            <strong>本机模块</strong>
+            {(["da", "mdm"] as const).map((key) => {
+              const value = sample.modules[key];
+              return (
+                <small key={key}>
+                  {key === "da" ? "设备访问" : "设备管理"} ·{" "}
+                  {value.installed === true
+                    ? "已安装"
+                    : value.installed === false
+                      ? "缺少组件"
+                      : "安装状态未知"}{" "}
+                  ·{" "}
+                  {value.enabled === true
+                    ? "已启用"
+                    : value.enabled === false
+                      ? "未启用"
+                      : "启用状态未知"}
+                </small>
+              );
+            })}
+            <small>
+              安装配置{applied[sample.modules.application]} · 系统服务于{" "}
+              {new Date(sample.observedAt * 1000).toLocaleString()} 读取
+            </small>
+          </span>
+        </div>
+      )}
       {state.serviceError && (
         <Alert type="warning" title={state.serviceError} />
       )}

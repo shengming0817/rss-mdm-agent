@@ -3946,7 +3946,10 @@ async fn full_report_queue_after_restart_drains_before_retrying_native_observati
         latest["body"]["values"][0]["value"]["value"]["value"],
         service.core.mdm.state.as_str()
     );
-    assert_eq!(service.core.mdm_reported, Some(service.core.mdm.state));
+    assert_eq!(
+        service.core.mdm_reported.map(|(_, _, state, _)| state),
+        Some(service.core.mdm.state)
+    );
 }
 
 #[tokio::test]

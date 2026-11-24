@@ -117,6 +117,7 @@ fn main() {
             "query_directory",
             "data_read",
             "device_access",
+            "employee_change",
             "query_submit",
             "query_status",
             "self_service_observe_software",

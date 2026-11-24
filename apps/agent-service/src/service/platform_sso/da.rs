@@ -326,7 +326,7 @@ impl Endpoint {
             },
             Request::DeviceAccess {
                 origin: execution_ipc::host::ClientOrigin::Desktop {},
-                input: AccountOp::MacStatus {} | AccountOp::Tasks {},
+                input: AccountOp::MacStatus {} | AccountOp::Tasks {} | AccountOp::OwnBindings {},
                 ..
             } => peer.authenticate(&d.registration_clients).ok(),
             Request::BindContext { value, .. } => {
@@ -350,7 +350,7 @@ impl Endpoint {
         };
         if let Request::DeviceAccess {
             context,
-            input: AccountOp::Tasks {},
+            input: AccountOp::Tasks {} | AccountOp::OwnBindings {},
             ..
         } = request
         {
@@ -595,6 +595,24 @@ impl Worker {
                 }
                 Some(Request::DeviceAccess {
                     context,
+                    input: AccountOp::OwnBindings {},
+                    ..
+                }) => {
+                    let bound = self.bound.as_ref().ok_or(Error::Identity)?;
+                    if bound.principal.is_none() || !bound.permits(&command, context, &self.fence) {
+                        return Err(Error::Identity);
+                    }
+                    let proof = bound.current.credential()?;
+                    let directory = client.operations()?.employee_bindings(&proof).await?;
+                    if !bound.permits(&command, context, &self.fence) {
+                        return Err(Error::Identity);
+                    }
+                    Ok(Reply::DeviceAccess {
+                        value: crate::service::access::own_bindings(directory, &command.subject)?,
+                    })
+                }
+                Some(Request::DeviceAccess {
+                    context,
                     input: execution_ipc::device_access::Operation::MacStatus {},
                     ..
                 }) => {
@@ -830,7 +848,7 @@ impl Da<'_> {
                 }
                 let operations = self.client.operations()?;
                 let (directory, selected) =
-                    tokio::try_join!(operations.mac_bindings(proof), self.selected())?;
+                    tokio::try_join!(operations.employee_bindings(proof), self.selected())?;
                 Ok::<_, Error>(Some((directory, selected)))
             })
         );
@@ -881,6 +899,9 @@ fn admit_existing(
     directory: &wire::AccessDirectory,
     recheck: impl FnOnce() -> Result<(), Error>,
 ) -> Result<(), Error> {
+    if directory.device_id != id.device_id {
+        return Err(Error::Identity);
+    }
     let _lock = state::lock(root)?;
     let old = state::read_optional::<::platform_sso::LocalBinding>(root, &binding_name(&account)?)?;
     if let Some(mut old) = old.filter(|b| {
@@ -1260,6 +1281,8 @@ mod tests {
                 enabled: true,
             };
             let binding = wire::AccessBindingStatus {
+                operation_id: Uuid::new_v4(),
+                definition_digest: [4; 32],
                 account_disposition: wire::AccessAccountDisposition::Keep,
                 id: Uuid::new_v4(),
                 binding_generation: 1,
@@ -1273,6 +1296,7 @@ mod tests {
                 effect: None,
             };
             let mut directory = wire::AccessDirectory {
+                device_id: id.device_id,
                 policies: vec![],
                 next_cursor: None,
                 bindings: vec![binding.clone()],

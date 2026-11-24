@@ -49,6 +49,11 @@ struct State {
     employee: Option<Employee>,
     offers: BTreeMap<Uuid, Offer>,
     checking: Option<Check>,
+    directory: Option<(Instant, mpsc::Receiver<Result<w::AccessDirectory, Error>>)>,
+    lookup: Option<(
+        Employee,
+        mpsc::SyncSender<Result<w::AccessDirectory, Error>>,
+    )>,
     mdm_tasks: Option<(u64, Instant, Vec<SetupTask>)>,
 }
 struct Offer {
@@ -74,6 +79,8 @@ impl State {
             o.password = None;
         }
         self.checking = None;
+        self.directory = None;
+        self.lookup = None;
     }
     fn logout(&mut self) {
         self.clear_setup();
@@ -164,6 +171,25 @@ impl Login {
             result: rx,
         });
         Ok(false)
+    }
+    /// All device HTTP uses the active DA worker and its current certificate.
+    pub(super) async fn read_directory(
+        &self,
+        client: &da::Client<DeviceSecrets, SystemClock>,
+    ) -> Result<(), Error> {
+        let job = self.state.lock().map_err(|_| Error::Storage)?.lookup.take();
+        if let Some((employee, sender)) = job {
+            let result = async {
+                Self::verify(self.portal.as_ref(), &employee).await?;
+                client
+                    .operations()?
+                    .employee_bindings(&employee.credential)
+                    .await
+            }
+            .await;
+            let _ = sender.send(result);
+        }
+        Ok(())
     }
     fn store(&self) -> Result<Store, Error> {
         Store::open(
@@ -440,6 +466,7 @@ impl Login {
         if !matches!(
             input,
             Operation::Tasks {}
+                | Operation::OwnBindings {}
                 | Operation::WindowsStatus {}
                 | Operation::Prepare { .. }
                 | Operation::ConfirmFactor { .. }
@@ -456,6 +483,29 @@ impl Login {
             || !e.current()
         {
             return Ok(None);
+        }
+        if matches!(input, Operation::OwnBindings {}) {
+            if let Some((start, rx)) = &s.directory {
+                if start.elapsed() < Duration::from_secs(5) {
+                    match rx.try_recv() {
+                        Ok(result) => {
+                            s.directory = None;
+                            return Ok(Some(Reply::DeviceAccess {
+                                value: crate::service::access::own_bindings(result?, subject)?,
+                            }));
+                        }
+                        Err(mpsc::TryRecvError::Empty) => {
+                            return Ok(Some(Reply::DaVerificationPending {}))
+                        }
+                        Err(mpsc::TryRecvError::Disconnected) => return Err(Error::Unavailable),
+                    }
+                }
+            }
+            let (tx, rx) = mpsc::sync_channel(1);
+            s.lookup = Some((e, tx));
+            s.directory = Some((Instant::now(), rx));
+            self.wake.notify_one();
+            return Ok(Some(Reply::DaVerificationPending {}));
         }
         let root = crate::access_worker::root(&self.deployment.execution);
         let installation = self.deployment.installation_id;
