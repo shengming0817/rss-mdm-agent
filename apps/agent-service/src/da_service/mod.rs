@@ -122,6 +122,8 @@ pub(crate) fn renew(d: &Deployment) -> Result<(), Error> {
 }
 
 pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
+    #[cfg(windows)]
+    crate::access_component::prepare(&d)?;
     if !d.modules.da.enabled() {
         return d.mdm_owner();
     }
@@ -164,6 +166,8 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                                     root.clone(),
                                     #[cfg(windows)]
                                     crate::access_worker::root(&d.execution),
+                                    #[cfg(windows)]
+                                    d.installation_id,
                                 )
                                 .await;
                                 client.drive(&mut policy).await

@@ -208,17 +208,42 @@ pub(crate) fn remove_for(deployment: &crate::deployment::Deployment) -> Result<(
     let config = device_access::windows::installation().map_err(|_| Error::Identity)?;
     crate::access_worker::verify_installation(
         &crate::access_worker::root(&deployment.execution),
-        deployment.mdm()?.instance,
+        deployment.installation_id,
         &config.root,
         config.id,
     )?;
     device_access::Store::open(&config.root, config.id)
         .map_err(|_| Error::Storage)?
-        .retire_registration()
+        .retire_registration(device_access::Channel::Mdm)
         .map_err(|_| Error::Storage)?;
     delete(&provider())?;
     delete(&class())?;
     delete(CONFIG_KEY)
+}
+
+/// Open the single installation-bound login store before either delivery owner starts.
+pub(crate) fn prepare(deployment: &crate::deployment::Deployment) -> Result<(), Error> {
+    let root = crate::access_worker::root(&deployment.execution);
+    if root.try_exists()? {
+        device_access::Store::open(&root, deployment.installation_id)
+            .map_err(|_| Error::Storage)?;
+    } else {
+        if exists(CONFIG_KEY)?
+            || deployment
+                .state_root
+                .join("execution-initialized")
+                .try_exists()?
+            || crate::da_service::has_retained_identity(deployment)?
+        {
+            return Err(Error::Storage);
+        }
+        execution_runner::staging::initialize(&deployment.execution.material_root)
+            .map_err(crate::error::app_error)?;
+        platform_private_storage::directory(&root)?;
+        device_access::Store::create(&root, deployment.installation_id)
+            .map_err(|_| Error::Storage)?;
+    }
+    install_for(deployment, false)
 }
 
 /// Both unattended installation and explicit repair consume the same frozen candidate.
@@ -237,7 +262,7 @@ pub(crate) fn install_for(
         };
     };
     let root = crate::access_worker::root(&deployment.execution);
-    device_access::Store::open(&root, deployment.mdm()?.instance).map_err(|_| Error::Storage)?;
+    device_access::Store::open(&root, deployment.installation_id).map_err(|_| Error::Storage)?;
     if !repair && exists(CONFIG_KEY)? {
         match get(CONFIG_KEY, "MaintenanceDisabled")?.as_str() {
             "1" => return Ok(()),
@@ -257,7 +282,7 @@ pub(crate) fn install_for(
     if let Some(old) = &old {
         crate::access_worker::verify_installation(
             &root,
-            deployment.mdm()?.instance,
+            deployment.installation_id,
             &old.root,
             old.id,
         )?;
@@ -265,7 +290,7 @@ pub(crate) fn install_for(
     let unchanged = old.is_some() && get(CONFIG_KEY, "ImageSha256")? == digest;
     let config = Installation {
         root,
-        id: deployment.mdm()?.instance,
+        id: deployment.installation_id,
         installed_boot: if unchanged {
             old.as_ref().ok_or(Error::Identity)?.installed_boot
         } else {
@@ -300,7 +325,7 @@ pub(crate) fn preflight(deployment: &crate::deployment::Deployment) -> Result<()
     }
     device_access::Store::validate_existing(
         &crate::access_worker::root(&deployment.execution),
-        deployment.mdm()?.instance,
+        deployment.installation_id,
     )
     .map_err(|_| Error::Storage)?;
     Ok(())

@@ -376,13 +376,19 @@ impl Store {
         Ok(facts)
     }
 }
-pub(super) fn retire_all(conn: &Connection) -> Result<(), Error> {
+pub(super) fn retire_all(
+    conn: &Connection,
+    registration: Option<&Registration>,
+) -> Result<(), Error> {
     let sids = conn
         .prepare("SELECT sid FROM hello_bindings")?
         .query_map([], |r| r.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;
     for sid in sids {
         let mut value = load_hello(conn, &sid)?.ok_or(Error::Invalid)?;
+        if registration.is_some_and(|r| *r != value.authority.registration()) {
+            continue;
+        }
         registration::record_revocation(conn, &value.authority, value.revision)?;
         value.retired = true;
         value.enabled = false;

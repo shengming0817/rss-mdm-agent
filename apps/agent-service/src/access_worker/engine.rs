@@ -103,7 +103,7 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
         account: account @ Account::Windows { .. },
     } = &task.action
     {
-        store.revoke_task(task).map_err(storage)?;
+        store.revoke_task(input.channel, task).map_err(storage)?;
         return Ok(match native.dispose(account, *disposition) {
             Ok(()) => Effect::Unbound {
                 disposition: *disposition,
@@ -112,7 +112,7 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
             Err(reason) => Effect::Failed { reason },
         });
     }
-    store.admit_task(task).map_err(storage)?;
+    store.admit_task(input.channel, task).map_err(storage)?;
     // Require already confirmed setup before touching an OS account.
     if matches!(task.windows, Some(Plan::Initialize { .. })) {
         store.candidate(task.task_id, native).map_err(storage)?;
@@ -186,7 +186,7 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
         Plan::Preserve { facts } => {
             store
                 .configure(
-                    &authority(task, &sid, native)?,
+                    &authority(input.channel, task, &sid, native)?,
                     task.revision,
                     configuration.enabled,
                     facts,
@@ -254,7 +254,7 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
             };
             store
                 .activate(
-                    authority(task, &sid, native)?,
+                    authority(input.channel, task, &sid, native)?,
                     task.revision,
                     configuration.enabled,
                     task.task_id,
@@ -281,7 +281,7 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
     let role = native.inspect(&sid).map_err(|_| Error::Unavailable)?;
     if configuration.role.is_some_and(|expected| expected != role)
         || store
-            .facts(&authority(task, &sid, native)?)
+            .facts(&authority(input.channel, task, &sid, native)?)
             .map_err(storage)?
             != facts
     {

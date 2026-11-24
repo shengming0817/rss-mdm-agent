@@ -218,11 +218,7 @@ fn verify(native: &super::NativeWindows, record: &HelloRecord) -> Result<(), Fai
         &crate::deployment::Deployment::default_path().map_err(|_| Failure::NativeFailure)?,
     )
     .map_err(|_| Failure::NativeFailure)?;
-    if deployment
-        .mdm()
-        .map_err(|_| Failure::NativeFailure)?
-        .instance
-        != native.installation
+    if deployment.installation_id != native.installation
         || super::super::root(&deployment.execution) != native.root
     {
         return Err(Failure::AccountChanged);

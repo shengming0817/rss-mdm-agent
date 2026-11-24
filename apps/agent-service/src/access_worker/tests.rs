@@ -234,6 +234,7 @@ fn fixture(create: bool) -> (Root, Input, Fake, Vec<u8>, String) {
     };
     task.validate().unwrap();
     let input = Input {
+        channel: device_access::Channel::Mdm,
         task,
         root: root.0.clone(),
         installation: Uuid::new_v4(),
@@ -245,7 +246,11 @@ fn fixture(create: bool) -> (Root, Input, Fake, Vec<u8>, String) {
     };
     let mut store = Store::create(&root.0, input.installation).unwrap();
     store
-        .bind_registration(authority(&input.task, SID, &native).unwrap().registration())
+        .bind_registration(
+            authority(input.channel, &input.task, SID, &native)
+                .unwrap()
+                .registration(),
+        )
         .unwrap();
     native.registered = Some((input.root.clone(), input.installation));
     let mut candidate = device_access::Candidate::generate().unwrap();
@@ -325,7 +330,7 @@ fn initialize_preserve_and_unbind_use_real_factor_state_and_exact_ack() {
     assert_eq!(
         store
             .verify(
-                &authority(&input.task, SID, &native).unwrap(),
+                &authority(input.channel, &input.task, SID, &native).unwrap(),
                 device_access::Factor::Totp(&otp(&secret, native.clock.utc)),
                 native.clock,
                 &native
@@ -339,7 +344,7 @@ fn initialize_preserve_and_unbind_use_real_factor_state_and_exact_ack() {
     assert_eq!(
         store
             .verify(
-                &authority(&input.task, SID, &native).unwrap(),
+                &authority(input.channel, &input.task, SID, &native).unwrap(),
                 device_access::Factor::Totp(&next),
                 native.clock,
                 &native
@@ -369,7 +374,7 @@ fn initialize_preserve_and_unbind_use_real_factor_state_and_exact_ack() {
     assert_eq!(
         store
             .verify(
-                &authority(&input.task, SID, &native).unwrap(),
+                &authority(input.channel, &input.task, SID, &native).unwrap(),
                 device_access::Factor::Totp(&next),
                 native.clock,
                 &native
@@ -398,7 +403,7 @@ fn initialize_preserve_and_unbind_use_real_factor_state_and_exact_ack() {
     assert_eq!(
         store
             .verify(
-                &authority(&input.task, SID, &native).unwrap(),
+                &authority(input.channel, &input.task, SID, &native).unwrap(),
                 device_access::Factor::Recovery(&recovery),
                 native.clock,
                 &native
@@ -648,6 +653,7 @@ fn unbind_before_initialize_blocks_late_account_creation() {
         disposition: w::AccessAccountDisposition::Keep,
     };
     let removal = Input {
+        channel: device_access::Channel::Mdm,
         task: unlink,
         root: input.root.clone(),
         installation: input.installation,
@@ -693,7 +699,7 @@ fn uncertain_os_disposition_cannot_restore_revoked_factors() {
     assert_eq!(
         store
             .verify(
-                &authority(&input.task, SID, &native).unwrap(),
+                &authority(input.channel, &input.task, SID, &native).unwrap(),
                 device_access::Factor::Recovery(&recovery),
                 native.clock,
                 &native
@@ -758,7 +764,7 @@ fn disabling_factors_does_not_require_an_interactive_role_observation() {
     assert_eq!(
         store
             .verify(
-                &authority(&input.task, SID, &native).unwrap(),
+                &authority(input.channel, &input.task, SID, &native).unwrap(),
                 device_access::Factor::Recovery(&recovery),
                 native.clock,
                 &native

@@ -14,13 +14,19 @@ pub(crate) struct Machine {
     root: PathBuf,
     #[cfg(windows)]
     native_root: PathBuf,
+    #[cfg(windows)]
+    installation: uuid::Uuid,
     source: Option<Vec<ManagedSource>>,
     state: SourceState,
     #[cfg(target_os = "macos")]
     inventory: Option<plist::Value>,
 }
 impl Machine {
-    pub(crate) async fn observe(root: PathBuf, #[cfg(windows)] native_root: PathBuf) -> Self {
+    pub(crate) async fn observe(
+        root: PathBuf,
+        #[cfg(windows)] native_root: PathBuf,
+        #[cfg(windows)] installation: uuid::Uuid,
+    ) -> Self {
         #[cfg(target_os = "macos")]
         let inventory = inventory().await;
         #[cfg(target_os = "macos")]
@@ -40,6 +46,8 @@ impl Machine {
             root,
             #[cfg(windows)]
             native_root,
+            #[cfg(windows)]
+            installation,
             source: sources.ok(),
             #[cfg(target_os = "macos")]
             inventory: inventory.ok(),
@@ -92,7 +100,7 @@ impl PolicyConsumer for Machine {
         let confirmed =
             super::macos::readback(self.inventory.as_ref().ok_or(Error::Unavailable)?, target)?;
         #[cfg(windows)]
-        let confirmed = super::windows::readback(&self.native_root, target)?;
+        let confirmed = super::windows::readback(&self.native_root, self.installation, target)?;
         #[cfg(not(any(windows, target_os = "macos")))]
         let confirmed = false;
         Ok(confirmed.then(|| target.settings.clone()))

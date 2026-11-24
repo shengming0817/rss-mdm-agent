@@ -329,7 +329,7 @@ impl Deployment {
         agent_client::telemetry::validate_existing(&root.join("communication"), &network)?;
         let access = crate::access_worker::root(&self.execution);
         match access.join("device-access.sqlite").symlink_metadata() {
-            Ok(_) => device_access::Store::validate_existing(&access, self.mdm()?.instance)
+            Ok(_) => device_access::Store::validate_existing(&access, self.installation_id)
                 .map_err(|_| Error::Schema)?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
             Err(e) => return Err(e.into()),
@@ -449,8 +449,6 @@ impl Deployment {
             self.helpers(),
             self.installation_id,
         )?;
-        #[cfg(windows)]
-        crate::access_component::install_for(self, false)?;
         service.installation = Some(self.clone());
         let marker = self.state_root.join("execution-initialized");
         if !marker.exists() {
@@ -493,7 +491,7 @@ impl Deployment {
             // identity when the otherwise equivalent origin omits the trailing slash.
             platform_private_storage::validate(&self.execution.work_root)?;
             #[cfg(windows)]
-            validate_access_storage(&self.execution, self.mdm()?.instance)?;
+            validate_access_storage(&self.execution, self.installation_id)?;
         }
         Ok(())
     }

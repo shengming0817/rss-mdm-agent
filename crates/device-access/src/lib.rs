@@ -14,7 +14,7 @@ use zeroize::Zeroizing;
 pub mod hello;
 mod registration;
 mod storage;
-pub use registration::Registration;
+pub use registration::{Channel, Registration};
 
 /// Canonical Entra object coordinate encoded in a Windows cloud SID; not proof of its issuer.
 pub fn entra_object_id(sid: &str) -> Option<Uuid> {
@@ -95,6 +95,7 @@ impl Clock {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Authority {
+    pub channel: Channel,
     pub instance: Uuid,
     pub principal: Uuid,
     pub source: rss_mdm_agent_wire::runtime::AccessWindowsAuthority,
@@ -551,7 +552,8 @@ impl Store {
                 return Ok(());
             }
             if !old.revoked
-                && (old.authority.tenant != record.authority.tenant
+                && (old.authority.channel != record.authority.channel
+                    || old.authority.tenant != record.authority.tenant
                     || old.authority.device != record.authority.device
                     || old.authority.instance != record.authority.instance
                     || old.authority.principal != record.authority.principal
@@ -723,8 +725,12 @@ impl Store {
                         used_at: clock.utc,
                     };
                     tx.execute(
-                        "INSERT INTO recovery_uses VALUES(?1,?2)",
-                        params![event.operation_id.to_string(), encode(&event)?],
+                        "INSERT INTO recovery_uses VALUES(?1,?3,?2)",
+                        params![
+                            event.operation_id.to_string(),
+                            encode(&event)?,
+                            encode(&record.authority.registration())?
+                        ],
                     )?;
                 }
                 Decision::Accepted
@@ -750,20 +756,24 @@ impl Store {
         tx.commit()?;
         Ok(decision)
     }
-    pub fn recovery_uses(&self) -> Result<Vec<AccessRecoveryUse>, Error> {
+    pub fn recovery_uses(&self, owner: &Registration) -> Result<Vec<AccessRecoveryUse>, Error> {
         self.check_files()?;
         let mut query = self
             .conn
-            .prepare("SELECT body FROM recovery_uses ORDER BY rowid LIMIT 128")?;
-        let rows = query.query_map([], |r| r.get::<_, Vec<u8>>(0))?;
+            .prepare("SELECT body FROM recovery_uses WHERE owner=?1 ORDER BY rowid LIMIT 128")?;
+        let rows = query.query_map([encode(owner)?], |r| r.get::<_, Vec<u8>>(0))?;
         rows.map(|r| serde_json::from_slice(&r?).map_err(|_| Error::Invalid))
             .collect()
     }
-    pub fn acknowledge_recovery_use(&mut self, operation: Uuid) -> Result<(), Error> {
+    pub fn acknowledge_recovery_use(
+        &mut self,
+        owner: &Registration,
+        operation: Uuid,
+    ) -> Result<(), Error> {
         self.check_files()?;
         self.conn.execute(
-            "DELETE FROM recovery_uses WHERE id=?1",
-            [operation.to_string()],
+            "DELETE FROM recovery_uses WHERE id=?1 AND owner=?2",
+            params![operation.to_string(), encode(owner)?],
         )?;
         Ok(())
     }

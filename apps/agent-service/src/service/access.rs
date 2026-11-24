@@ -26,16 +26,21 @@ fn sync_registration<S: agent_client::IdentityProvider, C: agent_client::Clock>(
     if client.enrollment_status()?.failure
         == Some(rss_mdm_agent_wire::enroll::ErrorCode::CredentialRevoked)
     {
-        return store.retire_registration().map_err(|_| Error::Storage);
+        return store
+            .retire_registration(device_access::Channel::Mdm)
+            .map_err(|_| Error::Storage);
     }
     match client.registration() {
         Ok(r) => store
             .bind_registration(device_access::Registration {
+                channel: device_access::Channel::Mdm,
                 tenant: client.configuration().tenant,
                 device: r.device_id,
             })
             .map_err(|_| Error::Identity)?,
-        Err(Error::Identity) => store.retire_registration().map_err(|_| Error::Storage)?,
+        Err(Error::Identity) => store
+            .retire_registration(device_access::Channel::Mdm)
+            .map_err(|_| Error::Storage)?,
         Err(error) => return Err(error),
     }
     Ok(())
@@ -73,7 +78,7 @@ impl State {
         #[cfg(windows)]
         {
             device_access::windows::require_system().map_err(|_| Error::Denied)?;
-            if create {
+            if create && !root.try_exists()? {
                 platform_private_storage::directory(&root)?;
                 device_access::Store::create(&root, installation).map_err(|_| Error::Storage)?;
             } else {
@@ -745,6 +750,7 @@ mod tests {
         let mut store = Store::create(&offline, installation).unwrap();
         sync_registration(&mut store, &client).unwrap();
         let authority = Authority {
+            channel: device_access::Channel::Mdm,
             tenant: client.configuration().tenant,
             device: r.device_id,
             instance: Uuid::new_v4(),

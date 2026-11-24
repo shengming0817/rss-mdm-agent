@@ -28,6 +28,7 @@ impl Fixture {
             root,
             id: Uuid::new_v4(),
             authority: Authority {
+                channel: device_access::Channel::Mdm,
                 instance: Uuid::new_v4(),
                 principal: Uuid::new_v4(),
                 join: "local-machine".into(),
@@ -195,16 +196,22 @@ fn recovery_is_repeatable_and_independent_of_wall_clock_rollback() {
             Decision::Accepted
         );
     }
-    let uses = store.recovery_uses().unwrap();
+    let uses = store.recovery_uses(&f.authority.registration()).unwrap();
     assert_eq!(uses.len(), 2);
     assert_ne!(uses[0].operation_id, uses[1].operation_id);
     assert!(uses
         .iter()
         .all(|u| u.material == facts.recovery.material && u.version == 1));
     store
-        .acknowledge_recovery_use(uses[0].operation_id)
+        .acknowledge_recovery_use(&f.authority.registration(), uses[0].operation_id)
         .unwrap();
-    assert_eq!(store.recovery_uses().unwrap().len(), 1);
+    assert_eq!(
+        store
+            .recovery_uses(&f.authority.registration())
+            .unwrap()
+            .len(),
+        1
+    );
 }
 #[test]
 fn failure_budget_survives_reopen_reboot_and_configuration() {
@@ -450,7 +457,9 @@ fn device_replacement_retires_old_bindings_and_retirement_cannot_reopen() {
             &TestProtector
         )
         .is_err());
-    store.retire_registration().unwrap();
+    store
+        .retire_registration(device_access::Channel::Mdm)
+        .unwrap();
     assert!(store.bind_registration(next).is_err());
 }
 
@@ -738,4 +747,38 @@ fn hot_offline_recovers_current_format_and_preserves_old_format_bytes() {
             .unwrap();
         assert_eq!(restored, 200, "uncommitted factor values must roll back");
     }
+}
+
+#[test]
+fn a_second_channel_cannot_replace_a_live_sid_or_retire_its_registration() {
+    let f = Fixture::new();
+    let (mut store, recovery, _, _, _) = f.setup();
+    let mut da = f.authority.clone();
+    da.channel = Channel::Da;
+    store.bind_registration(da.registration()).unwrap();
+    store.retire_registration(Channel::Da).unwrap();
+    assert!(store.bind_registration(da.registration()).is_err());
+    assert_eq!(
+        store.authority(&f.authority.sid).unwrap(),
+        Some(f.authority.clone())
+    );
+    assert_eq!(
+        store
+            .verify(
+                &f.authority,
+                Factor::Recovery(&recovery),
+                f.clock,
+                &TestProtector
+            )
+            .unwrap(),
+        Decision::Accepted
+    );
+    assert!(store.recovery_uses(&da.registration()).unwrap().is_empty());
+    assert_eq!(
+        store
+            .recovery_uses(&f.authority.registration())
+            .unwrap()
+            .len(),
+        1
+    );
 }

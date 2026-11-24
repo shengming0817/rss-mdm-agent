@@ -17,7 +17,7 @@ pub(super) fn apply(
         return Err(Error::Protocol);
     };
     let record = store
-        .prepare_hello(task, authority(task, sid, native)?)
+        .prepare_hello(task, authority(input.channel, task, sid, native)?)
         .map_err(|_| Error::Identity)?;
     let before = match native.hello_prepare(&record) {
         Ok(value) => value,
@@ -127,7 +127,7 @@ pub(crate) fn refresh(
         return Ok(());
     }
     // Recheck identity even after the original worker has exited.
-    if authority(task, sid, &native)? != record.authority {
+    if authority(device_access::Channel::Mdm, task, sid, &native)? != record.authority {
         return Err(Error::Identity);
     }
     let (facts, owned) =

@@ -34,6 +34,7 @@ pub(crate) const OUTPUT_BYTES: u64 = 16384;
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Input {
+    pub channel: device_access::Channel,
     pub task: w::AccessTaskSpec,
     pub root: PathBuf,
     pub installation: uuid::Uuid,
@@ -60,6 +61,7 @@ pub(crate) fn plan_root(plan: &execution_contract::FrozenExecution) -> Result<Pa
 }
 #[cfg(any(windows, test))]
 fn authority(
+    channel: device_access::Channel,
     task: &w::AccessTaskSpec,
     sid: &str,
     native: &impl engine::Native,
@@ -81,6 +83,7 @@ fn authority(
         _ => (),
     }
     Ok(device_access::Authority {
+        channel,
         instance: task.instance_id,
         principal: task.principal_id,
         source,

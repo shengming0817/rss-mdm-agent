@@ -3,15 +3,19 @@ use agent_client::{da::Selection, Error};
 use rss_mdm_agent_wire::runtime::{AccessObservation, AccessWindowsConfiguration as Windows};
 use std::path::Path;
 
-pub(super) fn readback(root: &Path, target: &Selection) -> Result<bool, Error> {
+pub(super) fn readback(
+    root: &Path,
+    installation: uuid::Uuid,
+    target: &Selection,
+) -> Result<bool, Error> {
     match &target.settings.windows {
         Windows::Whfb => {
             let dir = root;
             if !dir.join("device-access.sqlite").try_exists()? {
                 return Ok(false);
             }
-            let store = device_access::Store::open(&dir, target.identity.service_id)
-                .map_err(|_| Error::Storage)?;
+            let store =
+                device_access::Store::open(dir, installation).map_err(|_| Error::Storage)?;
             let mut seen = false;
             for record in store.hello_records().map_err(|_| Error::Storage)? {
                 if record.authority.tenant != target.identity.tenant
@@ -40,13 +44,14 @@ pub(super) fn readback(root: &Path, target: &Selection) -> Result<bool, Error> {
             let Ok(installed) = device_access::windows::installation() else {
                 return Ok(false);
             };
-            if installed.id != target.identity.service_id || installed.root != root {
+            if installed.id != installation || installed.root != root {
                 return Ok(false);
             }
             let store = device_access::Store::open(&installed.root, installed.id)
                 .map_err(|_| Error::Storage)?;
             store
                 .confirms_rss_policy(
+                    device_access::Channel::Da,
                     target.identity.tenant,
                     target.identity.device_id,
                     target.settings.enabled,

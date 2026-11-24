@@ -24,6 +24,7 @@ impl Fixture {
             u32::from_le_bytes(bytes[12..16].try_into().unwrap())
         );
         let authority = Authority {
+            channel: device_access::Channel::Mdm,
             instance: Uuid::new_v4(),
             principal: Uuid::new_v4(),
             join: "entra-join".into(),
@@ -221,7 +222,7 @@ fn retirement_blocks_replay_and_new_binding_until_native_cleanup_observed() {
     s.observe_hello(&retired, cleared, false).unwrap();
     assert!(s.hello_cleanup_complete().unwrap());
     s.prepare_hello(&f.task, f.authority.clone()).unwrap();
-    s.retire_registration().unwrap();
+    s.retire_registration(device_access::Channel::Mdm).unwrap();
     assert!(s.prepare_hello(&f.task, f.authority.clone()).is_err());
     assert!(s
         .observe_hello(&retired, f.facts(None, 1800000001), true)

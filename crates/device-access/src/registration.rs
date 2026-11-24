@@ -1,9 +1,19 @@
 //! One durable admission fence shared by service writers and the offline provider.
 use super::*;
 
+/// Authenticated transport that owns an offline binding within this installation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[repr(u8)]
+pub enum Channel {
+    Mdm = 1,
+    Da = 2,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Registration {
+    pub channel: Channel,
     pub tenant: Uuid,
     pub device: rss_mdm_agent_wire::DeviceId,
 }
@@ -16,6 +26,7 @@ struct Current {
 impl Authority {
     pub fn registration(&self) -> Registration {
         Registration {
+            channel: self.channel,
             tenant: self.tenant,
             device: self.device,
         }
@@ -29,9 +40,13 @@ impl Registration {
         Ok(())
     }
 }
-fn current(conn: &Connection) -> Result<Option<Current>, Error> {
+fn current(conn: &Connection, channel: Channel) -> Result<Option<Current>, Error> {
     let bytes: Option<Vec<u8>> = conn
-        .query_row("SELECT body FROM registration WHERE id=1", [], |r| r.get(0))
+        .query_row(
+            "SELECT body FROM registration WHERE channel=?1",
+            [channel as u8],
+            |r| r.get(0),
+        )
         .optional()?;
     bytes
         .map(|b| {
@@ -40,12 +55,15 @@ fn current(conn: &Connection) -> Result<Option<Current>, Error> {
             }
             let value: Current = serde_json::from_slice(&b).map_err(|_| Error::Invalid)?;
             value.registration.validate()?;
+            if value.registration.channel != channel {
+                return Err(Error::Invalid);
+            }
             Ok(value)
         })
         .transpose()
 }
 pub(super) fn require(conn: &Connection, authority: &Authority) -> Result<(), Error> {
-    let value = current(conn)?.ok_or(Error::Changed)?;
+    let value = current(conn, authority.channel)?.ok_or(Error::Changed)?;
     if value.retired || value.registration != authority.registration() {
         return Err(Error::Changed);
     }
@@ -58,8 +76,11 @@ pub(super) fn record_revocation(
 ) -> Result<(), Error> {
     let previous: Option<(i64, i64)> = conn
         .query_row(
-            "SELECT generation,revision FROM revoked WHERE binding=?1",
-            [authority.binding.to_string()],
+            "SELECT generation,revision FROM revoked WHERE binding=?1 AND owner=?2",
+            params![
+                authority.binding.to_string(),
+                encode(&authority.registration())?
+            ],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )
         .optional()?;
@@ -69,15 +90,18 @@ pub(super) fn record_revocation(
     }) {
         return Err(Error::Changed);
     }
-    conn.execute("INSERT INTO revoked VALUES(?1,?2,?3) ON CONFLICT(binding) DO UPDATE SET generation=excluded.generation,revision=excluded.revision", params![authority.binding.to_string(),authority.binding_generation,revision])?;
+    conn.execute("INSERT INTO revoked VALUES(?4,?1,?2,?3) ON CONFLICT(owner,binding) DO UPDATE SET generation=excluded.generation,revision=excluded.revision", params![authority.binding.to_string(),authority.binding_generation,revision,encode(&authority.registration())?])?;
     Ok(())
 }
 pub(super) fn admit(conn: &Connection, authority: &Authority) -> Result<(), Error> {
     require(conn, authority)?;
     let generation: Option<i64> = conn
         .query_row(
-            "SELECT generation FROM revoked WHERE binding=?1",
-            [authority.binding.to_string()],
+            "SELECT generation FROM revoked WHERE binding=?1 AND owner=?2",
+            params![
+                authority.binding.to_string(),
+                encode(&authority.registration())?
+            ],
             |r| r.get(0),
         )
         .optional()?;
@@ -90,6 +114,7 @@ impl Store {
     /// Admission precedes account mutation and recovery escrow, not merely factor activation.
     pub fn admit_task(
         &self,
+        channel: Channel,
         task: &rss_mdm_agent_wire::runtime::AccessTaskSpec,
     ) -> Result<(), Error> {
         task.validate().map_err(|_| Error::Invalid)?;
@@ -103,13 +128,21 @@ impl Store {
             } = &task.action
             {
                 super::hello::require_rss(&self.conn, sid)?;
+                if load(&self.conn, sid)?.is_some_and(|r| {
+                    !r.revoked
+                        && (r.authority.channel != channel
+                            || r.authority.binding != task.binding_id)
+                }) {
+                    return Err(Error::Changed);
+                }
             }
         }
         self.check_files()?;
-        let value = current(&self.conn)?.ok_or(Error::Changed)?;
+        let value = current(&self.conn, channel)?.ok_or(Error::Changed)?;
         if value.retired
             || value.registration
                 != (Registration {
+                    channel,
                     tenant: task.tenant_id,
                     device: task.device_id,
                 })
@@ -119,8 +152,8 @@ impl Store {
         let generation: Option<i64> = self
             .conn
             .query_row(
-                "SELECT generation FROM revoked WHERE binding=?1",
-                [task.binding_id.to_string()],
+                "SELECT generation FROM revoked WHERE binding=?1 AND owner=?2",
+                params![task.binding_id.to_string(), encode(&value.registration)?],
                 |r| r.get(0),
             )
             .optional()?;
@@ -158,7 +191,7 @@ impl Store {
             }
         }
         if old.is_some() {
-            retire_records(&tx, true)?;
+            retire_records(&tx, None)?;
         }
         tx.execute("INSERT INTO join_epoch VALUES(1,?1,?2) ON CONFLICT(id) DO UPDATE SET fingerprint=excluded.fingerprint,observed=excluded.observed", params![fingerprint, now])?;
         tx.commit()?;
@@ -179,6 +212,7 @@ impl Store {
     /// Signed Unbind closes a binding even if its Initialize has not arrived yet.
     pub fn revoke_task(
         &mut self,
+        channel: Channel,
         task: &rss_mdm_agent_wire::runtime::AccessTaskSpec,
     ) -> Result<(), Error> {
         use rss_mdm_agent_wire::runtime::{AccessAccount, AccessAction, TaskPermit};
@@ -198,10 +232,11 @@ impl Store {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let current = current(&tx)?.ok_or(Error::Changed)?;
+        let current = current(&tx, channel)?.ok_or(Error::Changed)?;
         if current.retired
             || current.registration
                 != (Registration {
+                    channel,
                     tenant: task.tenant_id,
                     device: task.device_id,
                 })
@@ -210,8 +245,8 @@ impl Store {
         }
         let previous: Option<(i64, i64)> = tx
             .query_row(
-                "SELECT generation,revision FROM revoked WHERE binding=?1",
-                [task.binding_id.to_string()],
+                "SELECT generation,revision FROM revoked WHERE binding=?1 AND owner=?2",
+                params![task.binding_id.to_string(), encode(&current.registration)?],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()?;
@@ -239,7 +274,7 @@ impl Store {
             record.enabled = false;
             save(&tx, &record)?;
         }
-        tx.execute("INSERT INTO revoked VALUES(?1,?2,?3) ON CONFLICT(binding) DO UPDATE SET generation=excluded.generation,revision=excluded.revision", params![task.binding_id.to_string(),task.binding_generation,task.revision])?;
+        tx.execute("INSERT INTO revoked VALUES(?4,?1,?2,?3) ON CONFLICT(owner,binding) DO UPDATE SET generation=excluded.generation,revision=excluded.revision", params![task.binding_id.to_string(),task.binding_generation,task.revision,encode(&current.registration)?])?;
         tx.commit()?;
         Ok(())
     }
@@ -249,7 +284,7 @@ impl Store {
         let Some(record) = load(&self.conn, sid)? else {
             return self.hello(sid).map(|r| r.map(|r| r.authority));
         };
-        let value = current(&self.conn)?.ok_or(Error::Changed)?;
+        let value = current(&self.conn, record.authority.channel)?.ok_or(Error::Changed)?;
         if value.retired || value.registration != record.authority.registration() {
             return Ok(None);
         }
@@ -262,7 +297,7 @@ impl Store {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if let Some(old) = current(&tx)? {
+        if let Some(old) = current(&tx, registration.channel)? {
             if old.registration == registration {
                 return if old.retired {
                     Err(Error::Changed)
@@ -273,24 +308,24 @@ impl Store {
             if old.registration.tenant != registration.tenant {
                 return Err(Error::Changed);
             }
-            retire_records(&tx, false)?;
+            retire_records(&tx, Some(&old.registration))?;
         }
-        tx.execute("INSERT INTO registration VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET body=excluded.body", [encode(&Current { registration, retired: false })?])?;
+        tx.execute("INSERT INTO registration VALUES(?1,?2) ON CONFLICT(channel) DO UPDATE SET body=excluded.body", params![registration.channel as u8, encode(&Current { registration, retired: false })?])?;
         tx.commit()?;
         Ok(())
     }
     /// A confirmed retirement cannot be undone by reopening or replaying the same registration.
-    pub fn retire_registration(&mut self) -> Result<(), Error> {
+    pub fn retire_registration(&mut self, channel: Channel) -> Result<(), Error> {
         self.check_files()?;
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if let Some(mut value) = current(&tx)? {
-            retire_records(&tx, false)?;
+        if let Some(mut value) = current(&tx, channel)? {
+            retire_records(&tx, Some(&value.registration))?;
             value.retired = true;
             tx.execute(
-                "UPDATE registration SET body=?1 WHERE id=1",
-                [encode(&value)?],
+                "UPDATE registration SET body=?1 WHERE channel=?2",
+                params![encode(&value)?, channel as u8],
             )?;
         }
         tx.commit()?;
@@ -300,16 +335,24 @@ impl Store {
     /// live admission records. A machine with no matching bindings cannot confirm application.
     pub fn confirms_rss_policy(
         &self,
+        channel: Channel,
         tenant: Uuid,
         device: rss_mdm_agent_wire::DeviceId,
         enabled: bool,
         classes: &[rss_mdm_agent_wire::runtime::AccessWindowsKind],
     ) -> Result<bool, Error> {
         self.check_files()?;
-        let Some(registration) = current(&self.conn)? else {
+        let Some(registration) = current(&self.conn, channel)? else {
             return Ok(false);
         };
-        if registration.retired || registration.registration != (Registration { tenant, device }) {
+        if registration.retired
+            || registration.registration
+                != (Registration {
+                    channel,
+                    tenant,
+                    device,
+                })
+        {
             return Ok(false);
         }
         let sids = self
@@ -349,15 +392,18 @@ impl Store {
         Ok(Some(record.authority))
     }
 }
-fn retire_records(conn: &Connection, cloud_only: bool) -> Result<(), Error> {
-    super::hello::retire_all(conn)?;
+fn retire_records(conn: &Connection, registration: Option<&Registration>) -> Result<(), Error> {
+    super::hello::retire_all(conn, registration)?;
     let sids = conn
         .prepare("SELECT sid FROM bindings")?
         .query_map([], |r| r.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;
     for sid in sids {
         let mut record = load(conn, &sid)?.ok_or(Error::Changed)?;
-        if cloud_only
+        if registration.is_some_and(|r| *r != record.authority.registration()) {
+            continue;
+        }
+        if registration.is_none()
             && !matches!(
                 record.authority.source,
                 rss_mdm_agent_wire::runtime::AccessWindowsAuthority::Entra { .. }

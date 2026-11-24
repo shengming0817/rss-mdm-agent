@@ -514,7 +514,7 @@ pub(super) fn preflight_candidate_state(
 ) -> Result<(), Error> {
     persistent(&next.service.path, next_config)?;
     #[cfg(windows)]
-    if next.modules.mdm.enabled() {
+    if next.modules.mdm.enabled() || next.modules.da.enabled() {
         crate::access_component::preflight(next)?;
     }
     Ok(())

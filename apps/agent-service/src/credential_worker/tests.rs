@@ -633,6 +633,7 @@ fn rss_rotation_changes_only_recovery_after_ack_and_verification_reuses_material
         sid: sid.clone(),
     };
     let authority = Authority {
+        channel: device_access::Channel::Mdm,
         instance: uuid::Uuid::new_v4(),
         principal: uuid::Uuid::new_v4(),
         join: "local-machine".into(),
