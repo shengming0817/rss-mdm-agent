@@ -17,7 +17,7 @@ pub(super) fn apply(
         return Err(Error::Protocol);
     };
     let record = store
-        .prepare_hello(task, authority(task, sid, native)?)
+        .prepare_hello(task, authority(input.channel, task, sid, native)?)
         .map_err(|_| Error::Identity)?;
     let before = match native.hello_prepare(&record) {
         Ok(value) => value,
@@ -106,6 +106,8 @@ pub(crate) fn refresh(
         return Ok(());
     }
     let mut native = super::windows::NativeWindows {
+        da_password: None,
+        channel: device_access::Channel::Mdm,
         root: root.into(),
         installation,
     };
@@ -127,7 +129,7 @@ pub(crate) fn refresh(
         return Ok(());
     }
     // Recheck identity even after the original worker has exited.
-    if authority(task, sid, &native)? != record.authority {
+    if authority(device_access::Channel::Mdm, task, sid, &native)? != record.authority {
         return Err(Error::Identity);
     }
     let (facts, owned) =
@@ -148,6 +150,8 @@ pub(crate) fn drain(root: &Path, installation: uuid::Uuid) -> Result<bool, Error
     let _lock = state::lock(root)?;
     let mut store = device_access::Store::open(root, installation).map_err(|_| Error::Storage)?;
     let mut native = super::windows::NativeWindows {
+        da_password: None,
+        channel: device_access::Channel::Mdm,
         root: root.into(),
         installation,
     };

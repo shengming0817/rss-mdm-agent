@@ -73,14 +73,18 @@ impl Deployment {
             .and_then(|_| crate::registration::RegistrationOwner::new(self))
         {
             Ok(owner) => Ok(Box::new(owner)),
-            Err(error) => {
-                execution_ipc::record_startup_failure(startup_failure(error));
-                Ok(Box::new(Diagnostic {
-                    policy,
-                    readiness: execution_ipc::host::Readiness::NotReady,
-                }))
-            }
+            Err(error) => Ok(Self::startup_diagnostic(policy, error)),
         }
+    }
+    pub(crate) fn startup_diagnostic(
+        policy: PeerPolicy,
+        error: Error,
+    ) -> Box<dyn execution_ipc::host::Handler> {
+        execution_ipc::record_startup_failure(startup_failure(error));
+        Box::new(Diagnostic {
+            policy,
+            readiness: execution_ipc::host::Readiness::NotReady,
+        })
     }
     pub fn default_path() -> Result<PathBuf, Error> {
         installation_security::deployment_path().map_err(|_| Error::Configuration)
@@ -329,7 +333,7 @@ impl Deployment {
         agent_client::telemetry::validate_existing(&root.join("communication"), &network)?;
         let access = crate::access_worker::root(&self.execution);
         match access.join("device-access.sqlite").symlink_metadata() {
-            Ok(_) => device_access::Store::validate_existing(&access, self.mdm()?.instance)
+            Ok(_) => device_access::Store::validate_existing(&access, self.installation_id)
                 .map_err(|_| Error::Schema)?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
             Err(e) => return Err(e.into()),
@@ -449,8 +453,6 @@ impl Deployment {
             self.helpers(),
             self.installation_id,
         )?;
-        #[cfg(windows)]
-        crate::access_component::install_for(self, false)?;
         service.installation = Some(self.clone());
         let marker = self.state_root.join("execution-initialized");
         if !marker.exists() {
@@ -493,7 +495,7 @@ impl Deployment {
             // identity when the otherwise equivalent origin omits the trailing slash.
             platform_private_storage::validate(&self.execution.work_root)?;
             #[cfg(windows)]
-            validate_access_storage(&self.execution, self.mdm()?.instance)?;
+            validate_access_storage(&self.execution, self.installation_id)?;
         }
         Ok(())
     }
@@ -820,16 +822,15 @@ pub(crate) mod tests {
         deployment.execution.material_root = root.clone();
         let offline = crate::access_worker::root(&deployment.execution);
         assert!(
-            validate_access_storage(&deployment.execution, deployment.mdm().unwrap().instance)
-                .is_err()
+            validate_access_storage(&deployment.execution, deployment.installation_id).is_err()
         );
         assert!(
             !offline.exists(),
             "preflight must not initialize missing state"
         );
         platform_private_storage::directory(&offline).unwrap();
-        device_access::Store::create(&offline, deployment.mdm().unwrap().instance).unwrap();
-        validate_access_storage(&deployment.execution, deployment.mdm().unwrap().instance).unwrap();
+        device_access::Store::create(&offline, deployment.installation_id).unwrap();
+        validate_access_storage(&deployment.execution, deployment.installation_id).unwrap();
         assert!(validate_access_storage(&deployment.execution, uuid::Uuid::new_v4()).is_err());
         std::fs::remove_dir_all(root).unwrap();
     }

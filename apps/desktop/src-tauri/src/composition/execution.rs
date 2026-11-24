@@ -544,18 +544,28 @@ impl ExecutionHandle {
                 return Err(bad(Error::Denied));
             }
         }
-        match self
-            .request(Request::DeviceAccess {
-                context: self.context_ref()?,
-                origin: self.origin.clone(),
-                input,
-            })
-            .await
-            .map_err(bad)?
-        {
-            Reply::DeviceAccess { value } => Ok(value),
-            _ => Err(bad(Error::Unavailable)),
-        }
+        let context = self.context_ref()?;
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let reply = self
+                    .request(Request::DeviceAccess {
+                        context: context.clone(),
+                        origin: self.origin.clone(),
+                        input: input.clone(),
+                    })
+                    .await
+                    .map_err(bad)?;
+                match reply {
+                    Reply::DeviceAccess { value } => return Ok(value),
+                    Reply::DaVerificationPending {} => {
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await
+                    }
+                    _ => return Err(bad(Error::Unavailable)),
+                }
+            }
+        })
+        .await
+        .map_err(|_| bad(Error::Unavailable))?
     }
     pub async fn policy_directory(
         &self,

@@ -66,6 +66,7 @@ pub(crate) fn compile(
         },
         |image_sha256, run_as, session| {
             serde_json::to_vec(&crate::credential_worker::Input {
+                channel: device_access::Channel::Mdm,
                 task: payload.clone(),
                 root: state_root,
                 image_sha256,
@@ -93,6 +94,7 @@ pub(crate) fn verify_input(
         _ => return Err(Error::Untrusted),
     };
     let input = crate::credential_worker::Input {
+        channel: device_access::Channel::Mdm,
         task: task.clone(),
         root,
         image_sha256: plan.spec().launch.interpreter.artifact.sha256.clone(),

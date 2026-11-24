@@ -341,6 +341,7 @@ async fn native_observation_refresh_settles_original_journal_after_restart_and_a
         },
     );
     let worker = crate::access_worker::Input {
+        channel: device_access::Channel::Mdm,
         task: {
             let mut normalized = task.clone();
             normalized.permit = r::TaskPermit::Offer;

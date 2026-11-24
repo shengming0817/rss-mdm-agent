@@ -241,6 +241,24 @@ pub fn set_role(sid: &str, role: Role) -> Result<(), F> {
     }
     Ok(())
 }
+/// Confirm absence in the local SAM. All failures other than the documented missing
+/// account status leave the create attempt unresolved.
+pub fn local_name_absent(name: &str) -> Result<bool, F> {
+    let mut buffer = Buffer(std::ptr::null_mut());
+    let status = unsafe {
+        NetUserGetInfo(
+            PCWSTR::null(),
+            PCWSTR(wide(name).as_ptr()),
+            0,
+            &mut buffer.0,
+        )
+    };
+    match status {
+        0 => Ok(false),
+        NERR_UserNotFound => Ok(true),
+        _ => Err(F::NativeFailure),
+    }
+}
 pub fn create(name: &str, password: &str) -> Result<String, F> {
     if name.is_empty()
         || name.len() > 20

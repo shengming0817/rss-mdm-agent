@@ -140,6 +140,7 @@ async fn settlement(case: u8) {
         },
     );
     let input = crate::credential_worker::Input {
+        channel: device_access::Channel::Mdm,
         task: {
             let mut value = task.clone();
             value.permit = w::TaskPermit::Offer;

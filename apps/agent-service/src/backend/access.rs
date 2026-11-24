@@ -81,6 +81,7 @@ pub(crate) fn compile(
         },
         |image_sha256, run_as, session| {
             serde_json::to_vec(&crate::access_worker::Input {
+                channel: device_access::Channel::Mdm,
                 task: task.clone(),
                 root,
                 installation,
@@ -110,6 +111,7 @@ pub(crate) fn verify_input(plan: &FrozenExecution, task: &w::AccessTaskSpec) -> 
         _ => return Err(Error::Untrusted),
     };
     let input = crate::access_worker::Input {
+        channel: device_access::Channel::Mdm,
         task: task.clone(),
         root,
         installation,

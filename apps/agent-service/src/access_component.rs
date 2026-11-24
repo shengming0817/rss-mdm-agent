@@ -118,10 +118,17 @@ pub fn run(args: &[OsString]) -> Result<(), Error> {
             delete(&class())?;
             println!("RSS component disabled and COM registration removed; installation and factor state preserved");
         }
-        ["health"] => {
-            let config =
-                device_access::windows::installation().map_err(|_| Error::Configuration)?;
-            let state = readiness(&config.root, config.id)?;
+        ["health", path] => {
+            let d = crate::deployment::Deployment::load(Path::new(path))?;
+            d.require_service()?;
+            let candidate = crate::installation::Candidate::installed(&d)?;
+            let dll = candidate.windows_login.ok_or(Error::Unsupported)?;
+            if Path::new(&get(&format!("{}\\InprocServer32", class()), "")?) != dll.path
+                || image(&dll.path)? != dll.sha256
+            {
+                return Err(Error::Identity);
+            }
+            let state = readiness(&crate::access_worker::root(&d.execution), d.installation_id)?;
             println!("RSS component: {state:?}; DLL not loaded");
             crate::access_worker::component_health(state)?;
         }
@@ -201,6 +208,31 @@ pub(crate) fn readiness(root: &Path, installation: uuid::Uuid) -> Result<Compone
     )
 }
 
+pub(crate) fn status(
+    root: &Path,
+    installation: uuid::Uuid,
+    subject: &str,
+) -> Result<execution_ipc::device_access::WindowsStatus, Error> {
+    use execution_ipc::device_access::{WindowsComponentState, WindowsStatus};
+    let mut status = WindowsStatus {
+        component: readiness(root, installation).unwrap_or(WindowsComponentState::Unavailable),
+        factor_active: None,
+        sign_in_required: false,
+        hello: crate::access_worker::windows::hello::status(root, installation, subject),
+    };
+    if let Ok(mut store) = device_access::Store::open(root, installation) {
+        status.factor_active = store.enabled(subject).ok();
+        let native =
+            device_access::windows::account::inspect(subject).map_err(|_| Error::Identity)?;
+        if let Some(logon) = native.logon_millis {
+            status.sign_in_required = store
+                .require_join_session(&native.join, logon, crate::wall()? as i64)
+                .is_err();
+        }
+    }
+    Ok(status)
+}
+
 pub(crate) fn remove_for(deployment: &crate::deployment::Deployment) -> Result<(), Error> {
     if !exists(CONFIG_KEY)? {
         return Ok(());
@@ -208,17 +240,42 @@ pub(crate) fn remove_for(deployment: &crate::deployment::Deployment) -> Result<(
     let config = device_access::windows::installation().map_err(|_| Error::Identity)?;
     crate::access_worker::verify_installation(
         &crate::access_worker::root(&deployment.execution),
-        deployment.mdm()?.instance,
+        deployment.installation_id,
         &config.root,
         config.id,
     )?;
     device_access::Store::open(&config.root, config.id)
         .map_err(|_| Error::Storage)?
-        .retire_registration()
+        .retire_registration(device_access::Channel::Mdm)
         .map_err(|_| Error::Storage)?;
     delete(&provider())?;
     delete(&class())?;
     delete(CONFIG_KEY)
+}
+
+/// Open the single installation-bound login store before either delivery owner starts.
+pub(crate) fn prepare_store(deployment: &crate::deployment::Deployment) -> Result<(), Error> {
+    let root = crate::access_worker::root(&deployment.execution);
+    if root.try_exists()? {
+        device_access::Store::open(&root, deployment.installation_id)
+            .map_err(|_| Error::Storage)?;
+    } else {
+        if exists(CONFIG_KEY)?
+            || deployment
+                .state_root
+                .join("execution-initialized")
+                .try_exists()?
+            || crate::da_service::has_retained_identity(deployment)?
+        {
+            return Err(Error::Storage);
+        }
+        execution_runner::staging::initialize(&deployment.execution.material_root)
+            .map_err(crate::error::app_error)?;
+        platform_private_storage::directory(&root)?;
+        device_access::Store::create(&root, deployment.installation_id)
+            .map_err(|_| Error::Storage)?;
+    }
+    Ok(())
 }
 
 /// Both unattended installation and explicit repair consume the same frozen candidate.
@@ -237,7 +294,7 @@ pub(crate) fn install_for(
         };
     };
     let root = crate::access_worker::root(&deployment.execution);
-    device_access::Store::open(&root, deployment.mdm()?.instance).map_err(|_| Error::Storage)?;
+    device_access::Store::open(&root, deployment.installation_id).map_err(|_| Error::Storage)?;
     if !repair && exists(CONFIG_KEY)? {
         match get(CONFIG_KEY, "MaintenanceDisabled")?.as_str() {
             "1" => return Ok(()),
@@ -257,15 +314,25 @@ pub(crate) fn install_for(
     if let Some(old) = &old {
         crate::access_worker::verify_installation(
             &root,
-            deployment.mdm()?.instance,
+            deployment.installation_id,
             &old.root,
             old.id,
         )?;
     }
     let unchanged = old.is_some() && get(CONFIG_KEY, "ImageSha256")? == digest;
+    let inproc = format!("{}\\InprocServer32", class());
+    if !repair
+        && unchanged
+        && get(&inproc, "").is_ok_and(|path| Path::new(&path) == dll.path)
+        && old
+            .as_ref()
+            .is_some_and(|config| health_for(config).is_ok())
+    {
+        return Ok(());
+    }
     let config = Installation {
         root,
-        id: deployment.mdm()?.instance,
+        id: deployment.installation_id,
         installed_boot: if unchanged {
             old.as_ref().ok_or(Error::Identity)?.installed_boot
         } else {
@@ -282,11 +349,11 @@ pub(crate) fn install_for(
     )?;
     set(CONFIG_KEY, "ImageSha256", &digest)?;
     set(CONFIG_KEY, "MaintenanceDisabled", "0")?;
-    let inproc = format!("{}\\InprocServer32", class());
     set(&inproc, "", dll.path.to_str().ok_or(Error::Configuration)?)?;
     set(&inproc, "ThreadingModel", "Apartment")?;
-    set(&provider(), "", "RSS Device Access")?;
-    if let Err(error) = health_for(&config) {
+    // Publish last. Even a flush failure after setting the value can make this key visible.
+    if let Err(error) = set(&provider(), "", "RSS Device Access").and_then(|()| health_for(&config))
+    {
         delete(&provider())?;
         return Err(error);
     }
@@ -300,7 +367,7 @@ pub(crate) fn preflight(deployment: &crate::deployment::Deployment) -> Result<()
     }
     device_access::Store::validate_existing(
         &crate::access_worker::root(&deployment.execution),
-        deployment.mdm()?.instance,
+        deployment.installation_id,
     )
     .map_err(|_| Error::Storage)?;
     Ok(())

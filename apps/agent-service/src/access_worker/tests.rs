@@ -234,6 +234,7 @@ fn fixture(create: bool) -> (Root, Input, Fake, Vec<u8>, String) {
     };
     task.validate().unwrap();
     let input = Input {
+        channel: device_access::Channel::Mdm,
         task,
         root: root.0.clone(),
         installation: Uuid::new_v4(),
@@ -245,7 +246,11 @@ fn fixture(create: bool) -> (Root, Input, Fake, Vec<u8>, String) {
     };
     let mut store = Store::create(&root.0, input.installation).unwrap();
     store
-        .bind_registration(authority(&input.task, SID, &native).unwrap().registration())
+        .bind_registration(
+            authority(input.channel, &input.task, SID, &native)
+                .unwrap()
+                .registration(),
+        )
         .unwrap();
     native.registered = Some((input.root.clone(), input.installation));
     let mut candidate = device_access::Candidate::generate().unwrap();
@@ -253,7 +258,11 @@ fn fixture(create: bool) -> (Root, Input, Fake, Vec<u8>, String) {
     let recovery = candidate.recovery_secret().to_owned();
     assert!(candidate.confirm(&otp(&secret, now), native.clock).unwrap());
     store
-        .stage(input.task.task_id, &candidate, &native)
+        .stage(
+            device_access::CandidateKey::for_task(input.channel, &input.task),
+            &candidate,
+            &native,
+        )
         .unwrap();
     (root, input, native, secret, recovery)
 }
@@ -325,7 +334,7 @@ fn initialize_preserve_and_unbind_use_real_factor_state_and_exact_ack() {
     assert_eq!(
         store
             .verify(
-                &authority(&input.task, SID, &native).unwrap(),
+                &authority(input.channel, &input.task, SID, &native).unwrap(),
                 device_access::Factor::Totp(&otp(&secret, native.clock.utc)),
                 native.clock,
                 &native
@@ -339,7 +348,7 @@ fn initialize_preserve_and_unbind_use_real_factor_state_and_exact_ack() {
     assert_eq!(
         store
             .verify(
-                &authority(&input.task, SID, &native).unwrap(),
+                &authority(input.channel, &input.task, SID, &native).unwrap(),
                 device_access::Factor::Totp(&next),
                 native.clock,
                 &native
@@ -369,7 +378,7 @@ fn initialize_preserve_and_unbind_use_real_factor_state_and_exact_ack() {
     assert_eq!(
         store
             .verify(
-                &authority(&input.task, SID, &native).unwrap(),
+                &authority(input.channel, &input.task, SID, &native).unwrap(),
                 device_access::Factor::Totp(&next),
                 native.clock,
                 &native
@@ -398,7 +407,7 @@ fn initialize_preserve_and_unbind_use_real_factor_state_and_exact_ack() {
     assert_eq!(
         store
             .verify(
-                &authority(&input.task, SID, &native).unwrap(),
+                &authority(input.channel, &input.task, SID, &native).unwrap(),
                 device_access::Factor::Recovery(&recovery),
                 native.clock,
                 &native
@@ -408,6 +417,34 @@ fn initialize_preserve_and_unbind_use_real_factor_state_and_exact_ack() {
     );
     assert_eq!(native.role, w::AccessRole::Administrator);
     assert_eq!(native.creates, 0);
+}
+#[test]
+fn a_second_apply_for_an_owned_sid_returns_a_definite_rejection() {
+    let (_root, mut input, mut native, _, recovery) = fixture(false);
+    let custody = ack(&input, recovery);
+    let original = engine::execute(&input, &mut native).unwrap();
+    custody.join().unwrap();
+    assert!(matches!(original.effect, w::AccessEffect::Applied { .. }));
+    let mut store = Store::open(&input.root, input.installation).unwrap();
+    let owner = store.authority(SID).unwrap().unwrap();
+    input.channel = device_access::Channel::Da;
+    input.task.binding_id = Uuid::new_v4();
+    input.task.task_id = Uuid::new_v4();
+    input.task.attempt_id = Uuid::new_v4();
+    store
+        .bind_registration(device_access::Registration {
+            channel: input.channel,
+            ..owner.registration()
+        })
+        .unwrap();
+    let refused = engine::execute(&input, &mut native).unwrap();
+    assert_eq!(
+        refused.effect,
+        w::AccessEffect::Failed {
+            reason: w::AccessFailure::AccountChanged
+        }
+    );
+    assert_eq!(store.authority(SID).unwrap(), Some(owner));
 }
 #[test]
 fn creation_activates_before_enable_and_replay_does_not_recreate_account() {
@@ -648,6 +685,7 @@ fn unbind_before_initialize_blocks_late_account_creation() {
         disposition: w::AccessAccountDisposition::Keep,
     };
     let removal = Input {
+        channel: device_access::Channel::Mdm,
         task: unlink,
         root: input.root.clone(),
         installation: input.installation,
@@ -693,7 +731,7 @@ fn uncertain_os_disposition_cannot_restore_revoked_factors() {
     assert_eq!(
         store
             .verify(
-                &authority(&input.task, SID, &native).unwrap(),
+                &authority(input.channel, &input.task, SID, &native).unwrap(),
                 device_access::Factor::Recovery(&recovery),
                 native.clock,
                 &native
@@ -758,7 +796,7 @@ fn disabling_factors_does_not_require_an_interactive_role_observation() {
     assert_eq!(
         store
             .verify(
-                &authority(&input.task, SID, &native).unwrap(),
+                &authority(input.channel, &input.task, SID, &native).unwrap(),
                 device_access::Factor::Recovery(&recovery),
                 native.clock,
                 &native
@@ -836,4 +874,58 @@ fn hello_ignores_cp_and_totp_but_keeps_uncertain_hardware_pending() {
     assert!(prepared(&input.root, &input.task).unwrap().is_none());
     assert_eq!(native.creates, 0);
     assert_eq!(native.enables, 0);
+}
+
+#[test]
+fn da_creation_recovery_uses_exact_local_evidence() {
+    let (_root, mut input, mut native, _, _) = fixture(true);
+    let root = &input.root;
+    let task = &input.task;
+    assert!(needs_create_input(root, task).unwrap());
+    let marker = name(task, "creation");
+    state::write(
+        root,
+        &marker,
+        &engine::Creation {
+            task: task.clone(),
+            sid: None,
+        },
+    )
+    .unwrap();
+    assert!(!needs_create_input(root, task).unwrap());
+    assert!(inspect_absence(root, task, |_| Ok(true)).unwrap());
+    assert!(!inspect_absence(root, task, |_| Ok(false)).unwrap());
+    state::write(
+        root,
+        &marker,
+        &engine::Creation {
+            task: task.clone(),
+            sid: Some(SID.into()),
+        },
+    )
+    .unwrap();
+    assert!(!inspect_absence(root, task, |_| panic!("durable SID excludes absence")).unwrap());
+    state::remove(root, &marker).unwrap();
+    let mut store = Store::open(root, input.installation).unwrap();
+    let mdm_key = device_access::CandidateKey::for_task(input.channel, task);
+    let candidate = store.candidate(mdm_key, &native).unwrap();
+    input.channel = device_access::Channel::Da;
+    let da_key = device_access::CandidateKey::for_task(input.channel, task);
+    store.bind_registration(da_key.owner).unwrap();
+    store.stage(da_key, &candidate, &native).unwrap();
+    input.task.expires_at = (crate::wall().unwrap() / 1000) as i64 - 1;
+    input.task.deadline = input.task.expires_at;
+    assert!(matches!(
+        engine::execute(&input, &mut native),
+        Err(Error::Expired)
+    ));
+    assert_eq!(
+        engine::publish_creation(&input, &marker, || {
+            assert!(state::read_optional::<engine::Creation>(root, &marker)?.is_some());
+            Err(Error::Expired)
+        }),
+        Err(Error::Expired)
+    );
+    assert_eq!(native.creates, 0);
+    assert!(needs_create_input(root, &input.task).unwrap());
 }

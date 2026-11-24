@@ -18,7 +18,7 @@ Schema 描述结构，不能替代动态预算、可信主体验证或 provider 
 
 来源和改写边界见[执行契约来源](../reference/contracts-extraction.md)与[AI Runtime 来源](../reference/ai-runtime.md)。
 
-更新固定 wire revision 和 Cargo.lock 后，从匹配 revision 的服务端发布 PR 下载消费合同 ZIP。运行 `python3 scripts/update-agent-http-contract.py <消费合同ZIP路径>`。导入器核对 ZIP 清单的仓库、完整 revision 与两个 HTTP 制品摘要，然后将 Agent 和 DA 设备 listener 及引用的 schema 投影到本仓测试输入。常规构建和 CI 离线使用快照。[当前固定消费合同（PR 1699）](https://dev.azure.com/shengming0923/rss/_apis/git/repositories/rss-mdm/pullRequests/1699/attachments/rss-mdm-3225-9661978a70e516f1f94f7895b87a305d6db55f74.zip?api-version=7.1)
+更新 wire 和 Cargo.lock 时，从同一生产者 revision 取得两个 listener 的 HTTP 合同。当前固定导出的文件名、再生命令与 SHA-256 见[生产者 PR 1712](https://dev.azure.com/shengming0923/rss/_git/rss-mdm/pullrequest/1712?discussionId=21906)。将核对过摘要的两个导出按发布包布局保存为 `rss-mdm-http.json`、`rss-da-http.json`，连同含 repository、revision 和逐文件 sha256 的 `manifest.json` 打包。运行 `python3 scripts/update-agent-http-contract.py <合同ZIP路径>` 导入；常规构建和 CI 使用本仓快照。
 
 私库读取使用系统 Git credential helper 或受保护构建凭据；可通过 `CARGO_NET_GIT_FETCH_WITH_CLI=true` 使用 Git helper，不在 manifest 或日志中写凭据。`node scripts/check-agent-dependencies.mjs` 核对完整依赖闭包，常规 `make ci` 已包含该检查。Agent 继续拥有验签、身份绑定、防重放、本机权限与预算；网络解码成功不授予本机执行权限。
 

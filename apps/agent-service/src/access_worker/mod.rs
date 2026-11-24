@@ -34,6 +34,7 @@ pub(crate) const OUTPUT_BYTES: u64 = 16384;
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Input {
+    pub channel: device_access::Channel,
     pub task: w::AccessTaskSpec,
     pub root: PathBuf,
     pub installation: uuid::Uuid,
@@ -60,6 +61,7 @@ pub(crate) fn plan_root(plan: &execution_contract::FrozenExecution) -> Result<Pa
 }
 #[cfg(any(windows, test))]
 fn authority(
+    channel: device_access::Channel,
     task: &w::AccessTaskSpec,
     sid: &str,
     native: &impl engine::Native,
@@ -81,6 +83,7 @@ fn authority(
         _ => (),
     }
     Ok(device_access::Authority {
+        channel,
         instance: task.instance_id,
         principal: task.principal_id,
         source,
@@ -177,6 +180,172 @@ pub(crate) fn stored_result(
     }
     Ok(value)
 }
+/// Execute under the same exclusive worker lock, after checking the current permit and
+/// component. Deferred setup cannot consume a password or mark any native work started.
+#[cfg(windows)]
+pub(crate) fn drive_da(
+    input: &Input,
+    begin: impl FnOnce() -> Result<Option<zeroize::Zeroizing<String>>, Error>,
+) -> Result<Option<w::AccessResult>, Error> {
+    device_access::windows::require_system().map_err(|_| Error::Denied)?;
+    let lock = state::lock(&input.root)?;
+    let task = &input.task;
+    if input.channel != device_access::Channel::Da
+        || task.permit != w::TaskPermit::Start
+        || task.expires_at <= (crate::wall()? / 1000) as i64
+    {
+        return Err(Error::Denied);
+    }
+    if matches!(&task.action,w::AccessAction::Apply{configuration,..}|w::AccessAction::Create{configuration,..} if configuration.enabled)
+        && crate::access_component::readiness(&input.root, input.installation)?
+            != execution_ipc::device_access::WindowsComponentState::Ready
+    {
+        return Ok(None);
+    }
+    let password = begin()?;
+    if task.expires_at.min(task.deadline) <= (crate::wall()? / 1000) as i64 {
+        return Err(Error::Expired);
+    }
+    engine::execute_locked(
+        input,
+        &mut windows::NativeWindows {
+            root: input.root.clone(),
+            installation: input.installation,
+            channel: input.channel,
+            da_password: password,
+        },
+        &lock,
+    )
+    .map(Some)
+}
+
+/// No create intent was published before the crash, so the running permit may
+/// re-request the lost one-shot password. An existing intent never authorizes a second create.
+#[cfg(any(windows, test))]
+pub(crate) fn needs_create_input(root: &Path, t: &w::AccessTaskSpec) -> Result<bool, Error> {
+    if !matches!(t.action, w::AccessAction::Create { .. }) {
+        return Ok(false);
+    }
+    let _lock = state::lock(root)?;
+    Ok(
+        state::read_optional::<engine::Creation>(root, &name(t, "creation"))?.is_none()
+            && prepared(root, t)?.is_none()
+            && stored_result(root, t)?.is_none(),
+    )
+}
+/// Read the SAM and the stopped attempt without dispatching another account creation.
+#[cfg(windows)]
+pub(crate) fn create_absent(root: &Path, t: &w::AccessTaskSpec) -> Result<bool, Error> {
+    inspect_absence(root, t, |account| {
+        device_access::windows::account::local_name_absent(account).map_err(|_| Error::Unavailable)
+    })
+}
+#[cfg(any(windows, test))]
+fn inspect_absence(
+    root: &Path,
+    t: &w::AccessTaskSpec,
+    query: impl FnOnce(&str) -> Result<bool, Error>,
+) -> Result<bool, Error> {
+    let w::AccessAction::Create { name: account, .. } = &t.action else {
+        return Ok(false);
+    };
+    let _lock = state::lock(root)?;
+    if state::read_optional::<engine::Creation>(root, &name(t, "creation"))?
+        .is_some_and(|c| c.task != *t || c.sid.is_some())
+        || prepared(root, t)?.is_some()
+        || stored_result(root, t)?
+            .is_some_and(|v| matches!(v.effect, w::AccessEffect::Applied { .. }))
+    {
+        return Ok(false);
+    }
+    query(account)
+}
+
+/// Reconcile a stopped native attempt without issuing any operating-system change.
+#[cfg(windows)]
+pub(crate) fn observe_da(
+    root: &Path,
+    installation: uuid::Uuid,
+    task: &w::AccessTaskSpec,
+) -> Result<Option<w::AccessResult>, Error> {
+    use device_access::windows::account;
+    let _lock = state::lock(root)?;
+    if let Some(result) = stored_result(root, task)? {
+        return Ok(Some(result));
+    }
+    let account = match &task.action {
+        w::AccessAction::Apply { account, .. } | w::AccessAction::Unbind { account, .. } => {
+            account.clone()
+        }
+        w::AccessAction::Create { .. } => match prepared(root, task)? {
+            Some(p) => p.account,
+            None => return Ok(None),
+        },
+    };
+    let w::AccessAccount::Windows {
+        sid,
+        authority: w::AccessWindowsAuthority::Local,
+    } = &account
+    else {
+        return Err(Error::Identity);
+    };
+    let store = device_access::Store::open(root, installation).map_err(|_| Error::Storage)?;
+    let Some((owner, facts)) = store
+        .observed_da_task(task, sid)
+        .map_err(|_| Error::Storage)?
+    else {
+        return Ok(None);
+    };
+    let Ok(observed) = account::inspect(sid) else {
+        return Ok(None);
+    };
+    if observed.source != owner.source
+        || observed.join != owner.join
+        || account::qualified(&observed) != owner.login
+    {
+        return Ok(None);
+    }
+    let effect = match (&task.action, facts) {
+        (w::AccessAction::Unbind { disposition, .. }, None)
+            if account::disposition_matches(&account, *disposition) == Ok(true) =>
+        {
+            w::AccessEffect::Unbound {
+                disposition: *disposition,
+            }
+        }
+        (
+            w::AccessAction::Create { configuration, .. }
+            | w::AccessAction::Apply { configuration, .. },
+            Some(facts),
+        ) => {
+            let actual = observed;
+            if configuration.enabled
+                && crate::access_component::readiness(root, installation)?
+                    != execution_ipc::device_access::WindowsComponentState::Ready
+                || matches!(task.action, w::AccessAction::Create { .. }) && !actual.enabled
+                || configuration
+                    .role
+                    .or_else(|| {
+                        matches!(task.action, w::AccessAction::Create { .. })
+                            .then_some(w::AccessRole::Standard)
+                    })
+                    .is_some_and(|role| actual.role != role)
+            {
+                return Ok(None);
+            }
+            w::AccessEffect::Applied {
+                account,
+                role: actual.role,
+                mac: None,
+                windows: Some(w::AccessWindowsFacts::RssFactor(facts)),
+            }
+        }
+        _ => return Ok(None),
+    };
+    let result = report(task, effect);
+    state::write(root, &name(task, "result"), &result)?;
+    Ok(Some(result))
+}
 /// Only a runner-retained input and verified SYSTEM image can execute a started task.
 pub fn run(path: &Path) -> Result<i32, Error> {
     let bytes = execution_runner::staging::read_worker_input(path, 262144)
@@ -206,6 +375,8 @@ pub fn run(path: &Path) -> Result<i32, Error> {
     let result = engine::execute(
         &input,
         &mut windows::NativeWindows {
+            da_password: None,
+            channel: device_access::Channel::Mdm,
             root: input.root.clone(),
             installation: input.installation,
         },
@@ -235,19 +406,27 @@ pub(crate) fn retire(
         }
         _ => return Err(Error::Untrusted),
     };
-    let _lock = state::lock(&root)?;
-    if stored_result(&root, task)?.is_some_and(|r| matches!(r.effect, w::AccessEffect::Unknown)) {
+    retire_native(&root, installation, device_access::Channel::Mdm, task)
+}
+pub(crate) fn retire_native(
+    root: &Path,
+    installation: uuid::Uuid,
+    channel: device_access::Channel,
+    task: &w::AccessTaskSpec,
+) -> Result<(), Error> {
+    let _lock = state::lock(root)?;
+    if stored_result(root, task)?.is_some_and(|r| matches!(r.effect, w::AccessEffect::Unknown)) {
         return Err(Error::Conflict);
     }
     #[cfg(windows)]
-    device_access::Store::open(&root, installation)
+    device_access::Store::open(root, installation)
         .map_err(|_| Error::Storage)?
-        .retire_candidate(task.task_id)
+        .retire_candidate(device_access::CandidateKey::for_task(channel, task))
         .map_err(|_| Error::Storage)?;
     #[cfg(not(windows))]
-    let _ = installation;
+    let _ = (installation, channel);
     for suffix in ["prepared", "escrow", "ack", "creation", "result"] {
-        state::remove(&root, &name(task, suffix))?;
+        state::remove(root, &name(task, suffix))?;
     }
     Ok(())
 }

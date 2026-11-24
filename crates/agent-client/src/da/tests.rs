@@ -28,6 +28,12 @@ impl Credentials for Secrets {
     }
 }
 struct Server {
+    clock: Time,
+    account_closed: bool,
+    issued_until: Option<i64>,
+    offer: wire::AccountOffer,
+    account_event: Option<Value>,
+    deliveries: usize,
     grant: Option<wire::Grant>,
     candidate: Option<enroll::Candidate>,
     registration: Option<wire::Registration>,
@@ -42,6 +48,67 @@ struct Server {
     fail_trust_ack: bool,
     lose_renewal_reply: bool,
     expire_after_issue: bool,
+}
+fn account_event_response(s: &mut Server, input: Value) -> Response {
+    s.deliveries += 1;
+    let event: wire::AccountEvent = serde_json::from_value(input.clone()).unwrap();
+    assert_eq!(event.attempt_id, s.offer.attempt_id);
+    if s.account_closed {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            Json(json!({"code":"operation_conflict"})),
+        )
+            .into_response();
+    }
+    if let wire::AccountObservation::NotStarted { expires_at } = event.event {
+        assert_eq!(s.issued_until, Some(expires_at));
+        assert!(s.clock.now().unwrap() > expires_at);
+        return Json(wire::AccountSettlement {
+            event_id: event.event_id,
+            issued_expires_at: None,
+            permit: None,
+            receipt: None,
+        })
+        .into_response();
+    }
+    if let Some(old) = s.account_event.as_ref() {
+        assert_eq!(old, &input);
+    } else {
+        s.issued_until = Some(s.clock.now().unwrap() + 300);
+        s.account_event = Some(input);
+        return (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"code":"service_unavailable"})),
+        )
+            .into_response();
+    }
+    Json(wire::AccountSettlement {
+        event_id: event.event_id,
+        issued_expires_at: s.issued_until,
+        permit: None,
+        receipt: None,
+    })
+    .into_response()
+}
+fn windows_operation(s: &mut Server, route: &str, input: &Value) -> Option<Response> {
+    Some(match route {
+        "account-operations/next" => Json((!s.account_closed).then_some(&s.offer)).into_response(),
+        "credential-operations/next" => Json(Value::Null).into_response(),
+        "device-access/recovery-uses"
+            if input["usedAt"].as_i64().unwrap() > s.clock.now().unwrap() + 300 =>
+        {
+            (
+                axum::http::StatusCode::BAD_REQUEST,
+                Json(json!({"code":"malformed_request"})),
+            )
+                .into_response()
+        }
+        "device-access/recovery-uses" => Json(json!({"accepted":true})).into_response(),
+        path if path == format!("account-operations/{}/events", s.offer.task_id) => {
+            account_event_response(s, input.clone())
+        }
+        _ => return None,
+    })
 }
 async fn endpoint(
     State(state): State<Arc<Mutex<Server>>>,
@@ -105,6 +172,9 @@ async fn endpoint(
         }
         other => {
             assert!(s.active.is_some() && peer.0 == s.active);
+            if let Some(reply) = windows_operation(&mut s, other, &input) {
+                return reply;
+            }
             match other {
                 "renewal-grants" => return renewal_response(&mut s, &grant, input),
                 "configuration-trust" => json!(s.trust),
@@ -122,7 +192,7 @@ async fn endpoint(
                 "pki/acknowledgements" => return ().into_response(),
                 "configuration" => {
                     let d = s.config.decode().unwrap();
-                    json!({"state":"present","artifact":s.config,"publication":{"id":d.id,"version":d.version,"revision":d.revision,"enabled":true,"managedFields":[],"configuration":d.content,"target":{"kind":"tenant_default"}}})
+                    json!({"identity":{"serviceId":SERVICE_ID,"tenant":tenant,"deviceId":grant.device},"authorities":[{"policy":d.id,"version":d.version,"revision":d.revision,"enabled":true,"fields":{}}],"state":"present","artifact":s.config,"publication":{"id":d.id,"version":d.version,"revision":d.revision,"enabled":true,"managedFields":[],"configuration":d.content,"target":{"kind":"tenant_default"}}})
                 }
                 "status-reports" | "configuration-reports" => {
                     let seq = input["sequence"].as_i64().unwrap();
@@ -291,6 +361,7 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
     let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("https://{}", socket.local_addr().unwrap());
     let backend = Backend {
+        browser: None,
         instance: SERVICE_ID,
         tenant,
         origin: origin.clone(),
@@ -306,7 +377,21 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
             state: rss_mdm_agent_wire::task_trust::KeyState::Active,
         }],
     };
+    let time = Time(Arc::new(AtomicI64::new(2_000_000_000)));
+    let account_clock = Time(Arc::new(AtomicI64::new(time.now().unwrap())));
     let state = Arc::new(Mutex::new(Server {
+        clock: account_clock.clone(),
+        account_closed: false,
+        issued_until: None,
+        offer: wire::AccountOffer {
+            operation_id: Uuid::new_v4(),
+            task_id: Uuid::new_v4(),
+            attempt_id: Uuid::new_v4(),
+            binding_id: Uuid::new_v4(),
+            definition_digest: [17; 32],
+        },
+        account_event: None,
+        deliveries: 0,
         grant: None,
         candidate: None,
         registration: None,
@@ -338,7 +423,6 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         .await
         .unwrap()
     });
-    let time = Time(Arc::new(AtomicI64::new(2_000_000_000)));
     let secrets = Secrets::new();
     let open = || {
         Client::open(
@@ -396,6 +480,114 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         3
     );
     assert!(inspect(&root.path, &backend, Uuid::new_v4(), time.now().unwrap()).is_err());
+    let ops = client.operations().unwrap();
+    let offer = ops.account(None).await.unwrap().unwrap();
+    assert!(ops
+        .account_event(&offer, wire::AccountObservation::Received)
+        .await
+        .is_err());
+    assert_eq!(state.lock().unwrap().deliveries, 1);
+    let expiry = state.lock().unwrap().issued_until.unwrap();
+    account_clock.set(expiry + 1);
+    drop(ops);
+    drop(client);
+    let client = open();
+    let ops = client.operations().unwrap();
+    ops.replay_account().await.unwrap();
+    assert_eq!(state.lock().unwrap().deliveries, 2);
+    ops.replay_account().await.unwrap();
+    assert_eq!(state.lock().unwrap().deliveries, 2);
+    let expired = ops
+        .account_event(&offer, wire::AccountObservation::Received)
+        .await
+        .unwrap();
+    assert!(expired.permit.is_none());
+    assert_eq!(expired.issued_expires_at, Some(expiry));
+    let mut later = offer.clone();
+    later.task_id = Uuid::new_v4();
+    later.attempt_id = Uuid::new_v4();
+    state.lock().unwrap().offer = later.clone();
+    assert_eq!(ops.account(None).await.unwrap(), Some(later.clone()));
+    assert_eq!(ops.account(None).await.unwrap(), Some(offer.clone()));
+    assert_eq!(
+        ops.account(Some((later.task_id, later.attempt_id)))
+            .await
+            .unwrap(),
+        Some(later.clone())
+    );
+    let prefix = format!("windows/{}", grant.device);
+    state.lock().unwrap().offer = offer.clone();
+    let ack = ops
+        .account_event(
+            &offer,
+            wire::AccountObservation::NotStarted { expires_at: expiry },
+        )
+        .await
+        .unwrap();
+    assert!(ack.permit.is_none() && ack.issued_expires_at.is_none());
+    state.lock().unwrap().offer = later.clone();
+    assert_eq!(
+        ops.retire_account(|_, _, _| Err(Error::Storage)),
+        Err(Error::Storage)
+    );
+    ops.retire_account(|task, attempt, completion| {
+        assert_eq!(
+            completion,
+            AccountCompletion::NotStarted { expires_at: expiry }
+        );
+        assert_eq!((task, attempt), (offer.task_id, offer.attempt_id));
+        Ok(())
+    })
+    .unwrap();
+    let remaining: i64 = client
+        .journal
+        .db
+        .query_row(
+            "SELECT count(*) FROM state WHERE name GLOB ?1",
+            [format!(
+                "{prefix}/*/{}/{}*",
+                offer.task_id, offer.attempt_id
+            )],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(remaining, 0);
+    assert_eq!(ops.account(None).await.unwrap(), Some(later.clone()));
+    state.lock().unwrap().account_closed = true;
+    assert!(matches!(
+        ops.account_event(&later, wire::AccountObservation::Received)
+            .await,
+        Err(Error::Conflict)
+    ));
+    ops.replay_account().await.unwrap();
+    assert!(ops.account(None).await.unwrap().is_none());
+    let rejection = inspect(&root.path, &backend, install, time.now().unwrap())
+        .unwrap()
+        .unwrap()
+        .rejected_account_event
+        .unwrap();
+    assert_eq!(
+        (rejection.0, rejection.1, rejection.3),
+        (later.task_id, later.attempt_id, Error::Conflict)
+    );
+    let mut usage = rss_mdm_agent_wire::runtime::AccessRecoveryUse {
+        operation_id: Uuid::new_v4(),
+        material: Uuid::new_v4(),
+        version: 1,
+        used_at: account_clock.now().unwrap() + 301,
+    };
+    assert_eq!(
+        ops.recovery_use(&usage).await.unwrap(),
+        RecoveryUseDisposition::RetryLater
+    );
+    usage.operation_id = Uuid::new_v4();
+    usage.used_at = time.now().unwrap();
+    assert_eq!(
+        ops.recovery_use(&usage).await.unwrap(),
+        RecoveryUseDisposition::Accepted
+    );
+    assert!(ops.credential().await.unwrap().is_none());
+    drop(ops);
     client.start_renewal().unwrap();
     client.drive(&mut consumer).await.unwrap();
     let renewed = client.active().unwrap().unwrap();
@@ -501,6 +693,7 @@ fn expired_unsubmitted_grant_allows_new_authorization_without_reusing_its_key() 
     let time = Time(Arc::new(AtomicI64::new(2_000_000_000)));
     let secrets = Secrets::new();
     let backend = Backend {
+        browser: None,
         instance: SERVICE_ID,
         tenant: Uuid::new_v4(),
         origin: "https://da.test".into(),
@@ -551,6 +744,7 @@ fn field_locks_survive_disappearing_sources_and_reject_rollback_and_foreign_sign
     let client = Client::open(
         &root.path,
         Backend {
+            browser: None,
             instance: SERVICE_ID,
             tenant,
             origin: "https://da.test".into(),
@@ -606,9 +800,26 @@ fn field_locks_survive_disappearing_sources_and_reject_rollback_and_foreign_sign
         state: SourceState::Missing,
         sources: vec![],
     };
-    let published = json!({"managedFields":["windows"]});
-    let run = |doc: &wire::Configuration, input, publication: &Value| {
-        client.resolve(&identity, &trust, doc, publication, input, &mut vec![])
+    let authority = |doc: &wire::Configuration, authorized| wire::PolicyAuthority {
+        policy: doc.id,
+        version: doc.version,
+        enabled: true,
+        revision: doc.revision,
+        fields: [(
+            Field::Windows,
+            wire::FieldAuthority {
+                authorized,
+                revision: if authorized { 1 } else { doc.revision },
+            },
+        )]
+        .into(),
+    };
+    let published = [authority(&backend_config, true)];
+    let run = |doc: &wire::Configuration, input, policies: &[wire::PolicyAuthority]| {
+        client.observe_authorities(policies)?;
+        client
+            .resolve(&identity, &trust, doc, policies, input, &mut vec![])
+            .map(|(settings, _)| settings)
     };
     let selected = run(&backend_config, snapshot(wrap(&managed)), &published).unwrap();
     assert_eq!(selected.windows, managed.content.windows);
@@ -662,17 +873,18 @@ fn field_locks_survive_disappearing_sources_and_reject_rollback_and_foreign_sign
     released.revision += 1;
     released.version = Uuid::new_v4();
     assert_eq!(
-        run(&released, absent(), &json!({"managedFields":[]})).unwrap(),
+        run(&released, absent(), &[authority(&released, false)]).unwrap(),
         backend_config.content
     );
     let mut other = managed.clone();
     other.id = Uuid::new_v4();
+    let policies = [authority(&released, false), authority(&other, true)];
     assert_eq!(
-        run(&released, snapshot(wrap(&other)), &published),
-        Err(Error::Unavailable)
+        run(&released, snapshot(wrap(&other)), &policies)
+            .unwrap()
+            .windows,
+        other.content.windows
     );
-    assert_eq!(
-        run(&released, absent(), &published),
-        Err(Error::Unavailable)
-    );
+    assert_eq!(run(&released, absent(), &policies), Err(Error::Unavailable));
+    assert_eq!(run(&released, absent(), &published), Err(Error::Conflict));
 }

@@ -11,16 +11,24 @@ use rss_mdm_agent_wire::{
 use std::path::PathBuf;
 
 pub(crate) struct Machine {
+    #[cfg(windows)]
+    pub(super) local_rss: bool,
     root: PathBuf,
     #[cfg(windows)]
     native_root: PathBuf,
+    #[cfg(windows)]
+    installation: uuid::Uuid,
     source: Option<Vec<ManagedSource>>,
     state: SourceState,
     #[cfg(target_os = "macos")]
     inventory: Option<plist::Value>,
 }
 impl Machine {
-    pub(crate) async fn observe(root: PathBuf, #[cfg(windows)] native_root: PathBuf) -> Self {
+    pub(crate) async fn observe(
+        root: PathBuf,
+        #[cfg(windows)] native_root: PathBuf,
+        #[cfg(windows)] installation: uuid::Uuid,
+    ) -> Self {
         #[cfg(target_os = "macos")]
         let inventory = inventory().await;
         #[cfg(target_os = "macos")]
@@ -37,9 +45,13 @@ impl Machine {
             Err(_) => SourceState::ReadFailed,
         };
         Self {
+            #[cfg(windows)]
+            local_rss: false,
             root,
             #[cfg(windows)]
             native_root,
+            #[cfg(windows)]
+            installation,
             source: sources.ok(),
             #[cfg(target_os = "macos")]
             inventory: inventory.ok(),
@@ -68,6 +80,10 @@ impl PolicyConsumer for Machine {
         &mut self,
         settings: Option<&Selection>,
     ) -> Result<Option<AccessConfiguration>, Error> {
+        #[cfg(windows)]
+        {
+            self.local_rss = false;
+        }
         use platform_private_storage as fs;
         let active = self.root.join("selected-configuration.json");
         if settings.is_none() && !active.try_exists()? {
@@ -88,11 +104,20 @@ impl PolicyConsumer for Machine {
         if !matches!(self.state, SourceState::Missing | SourceState::Present) {
             return Ok(None);
         }
+        #[cfg(windows)]
+        {
+            self.local_rss = target.settings.enabled
+                && target
+                    .settings
+                    .windows
+                    .accounts()
+                    .contains(&rss_mdm_agent_wire::runtime::AccessWindowsKind::Local);
+        }
         #[cfg(target_os = "macos")]
         let confirmed =
             super::macos::readback(self.inventory.as_ref().ok_or(Error::Unavailable)?, target)?;
         #[cfg(windows)]
-        let confirmed = super::windows::readback(&self.native_root, target)?;
+        let confirmed = super::windows::readback(&self.native_root, self.installation, target)?;
         #[cfg(not(any(windows, target_os = "macos")))]
         let confirmed = false;
         Ok(confirmed.then(|| target.settings.clone()))

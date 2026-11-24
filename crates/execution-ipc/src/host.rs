@@ -941,6 +941,8 @@ struct Envelope {
     rename_all_fields = "camelCase"
 )]
 pub enum Reply {
+    /// A live DA employee check is in progress. The original desktop context may retry.
+    DaVerificationPending {},
     /// Original check-in drive was scheduled; no remote receipt or effect is asserted.
     CheckinRequested {},
     /// One original local tool schema.

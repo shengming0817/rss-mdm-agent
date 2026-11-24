@@ -1670,6 +1670,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "tokio",
+ "url",
  "uuid",
  "windows-sys 0.61.2",
  "zeroize",
@@ -4761,7 +4762,7 @@ dependencies = [
 [[package]]
 name = "rss-mdm-agent-wire"
 version = "1.0.0"
-source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=9661978a70e516f1f94f7895b87a305d6db55f74#9661978a70e516f1f94f7895b87a305d6db55f74"
+source = "git+https://dev.azure.com/shengming0923/rss/_git/rss-mdm?rev=99a98cc0b377e4a4dbfc0c518ee1d489f9172419#99a98cc0b377e4a4dbfc0c518ee1d489f9172419"
 dependencies = [
  "base64 0.22.1",
  "ordered-float",

@@ -281,6 +281,11 @@ fn configured_ca(
     Ok(config.ca_pem.map(String::into_bytes))
 }
 fn organization_ca(organization: &Organization) -> Result<Option<Vec<u8>>> {
+    if let Some(portal) = execution_ipc::device_access::EmployeePortal::installed().filter(|p| {
+        p.origin == organization.origin && p.tenant.to_string() == organization.tenant_id
+    }) {
+        return Ok(portal.ca_pem.map(String::into_bytes));
+    }
     let config = serde_json::from_str(include_str!(concat!(
         env!("OUT_DIR"),
         "/default_organization.json"
@@ -509,6 +514,22 @@ impl EnterpriseSession {
         )
         .await?;
         self.accept_identity(&value, true)?;
+        // The dedicated DA browser mounts the Identity SDK session route. Task authorization is
+        // returned by its authenticated device listener, independently of employee login.
+        if let Some(portal) =
+            execution_ipc::device_access::EmployeePortal::installed().filter(|p| {
+                p.dedicated()
+                    && p.origin == self.organization.origin
+                    && p.tenant.to_string() == self.organization.tenant_id
+            })
+        {
+            let instance = portal.instance.to_string();
+            if !self.instance.is_empty() && self.instance != instance {
+                return Err(failure(Stage::Authorization, Reason::Denied));
+            }
+            self.instance = instance;
+            return Ok(());
+        }
         let access = body(
             self.request(Stage::Authorization, Method::GET, "/api/v1/authorization")
                 .await?,
@@ -1030,6 +1051,18 @@ pub(super) mod http_tests {
             native.user().unwrap().instance_id.to_string(),
             session.instance
         );
+        let user = native.user().unwrap();
+        // Use the identity actually returned by /authorization and serialized for BindContext.
+        for instance in [user.instance_id, Uuid::new_v4()] {
+            let portal = execution_ipc::device_access::EmployeePortal::configured(
+                user.tenant_id,
+                instance,
+                Some(("https://employee.example.test", None)),
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(portal.accepts(user), instance == user.instance_id);
+        }
         let context = serde_json::to_string(&session.context().unwrap()).unwrap();
         for secret in [
             "password-canary",

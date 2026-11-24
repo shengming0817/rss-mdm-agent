@@ -289,7 +289,11 @@ impl<S: IdentityProvider> DeviceService<S> {
         let fences = Arc::new(policy::Fences::default());
         let access = access::State::new(
             &config,
-            client.configuration().service_id,
+            if cfg!(windows) {
+                installation
+            } else {
+                client.configuration().service_id
+            },
             matches!(startup, ProductionStartup::Create),
             fences.clone(),
         )?;
@@ -645,7 +649,15 @@ impl<S: IdentityProvider> DeviceService<S> {
             let mut offline =
                 device_access::Store::open(&self.core.access.root, self.core.access.installation)
                     .map_err(|_| Error::Storage)?;
-            for usage in offline.recovery_uses().map_err(|_| Error::Storage)? {
+            let owner = device_access::Registration {
+                channel: device_access::Channel::Mdm,
+                tenant: self.client.configuration().tenant,
+                device: self.client.registration()?.device_id,
+            };
+            for usage in offline
+                .recovery_uses(&owner, (crate::wall()? / 1000) as i64)
+                .map_err(|_| Error::Storage)?
+            {
                 network(
                     self.client.access_recovery_use(&usage),
                     &mut self.core,
@@ -653,7 +665,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 )
                 .await?;
                 offline
-                    .acknowledge_recovery_use(usage.operation_id)
+                    .acknowledge_recovery_use(&owner, usage.operation_id)
                     .map_err(|_| Error::Storage)?;
             }
         }

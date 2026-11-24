@@ -26,16 +26,21 @@ fn sync_registration<S: agent_client::IdentityProvider, C: agent_client::Clock>(
     if client.enrollment_status()?.failure
         == Some(rss_mdm_agent_wire::enroll::ErrorCode::CredentialRevoked)
     {
-        return store.retire_registration().map_err(|_| Error::Storage);
+        return store
+            .retire_registration(device_access::Channel::Mdm)
+            .map_err(|_| Error::Storage);
     }
     match client.registration() {
         Ok(r) => store
             .bind_registration(device_access::Registration {
+                channel: device_access::Channel::Mdm,
                 tenant: client.configuration().tenant,
                 device: r.device_id,
             })
             .map_err(|_| Error::Identity)?,
-        Err(Error::Identity) => store.retire_registration().map_err(|_| Error::Storage)?,
+        Err(Error::Identity) => store
+            .retire_registration(device_access::Channel::Mdm)
+            .map_err(|_| Error::Storage)?,
         Err(error) => return Err(error),
     }
     Ok(())
@@ -73,7 +78,7 @@ impl State {
         #[cfg(windows)]
         {
             device_access::windows::require_system().map_err(|_| Error::Denied)?;
-            if create {
+            if create && !root.try_exists()? {
                 platform_private_storage::directory(&root)?;
                 device_access::Store::create(&root, installation).map_err(|_| Error::Storage)?;
             } else {
@@ -117,7 +122,10 @@ impl State {
         if matches!(task.windows, Some(w::AccessWindowsPlan::Initialize { .. })) {
             let setup = self.setups.get(&task.task_id).ok_or(Error::Unavailable)?;
             setup.owner.validate(&self.fences)?;
-            if !setup.confirmed {
+            if !setup.confirmed
+                || setup.key
+                    != device_access::CandidateKey::for_task(device_access::Channel::Mdm, task)
+            {
                 return Err(Error::Unavailable);
             }
         }
@@ -125,7 +133,10 @@ impl State {
         if matches!(task.windows, Some(w::AccessWindowsPlan::Initialize { .. })) {
             device_access::Store::open(&self.root, self.installation)
                 .map_err(|_| Error::Storage)?
-                .candidate(task.task_id, &device_access::SystemProtector)
+                .candidate(
+                    device_access::CandidateKey::for_task(device_access::Channel::Mdm, task),
+                    &device_access::SystemProtector,
+                )
                 .map_err(|_| Error::Unavailable)?;
         }
         if matches!(task.action, w::AccessAction::Create { .. }) {
@@ -249,6 +260,7 @@ impl Owner {
     }
 }
 struct Setup {
+    key: device_access::CandidateKey,
     owner: Owner,
     candidate: device_access::Candidate,
     confirmed: bool,
@@ -466,35 +478,11 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
             Op::WindowsStatus {} => {
                 #[cfg(windows)]
                 {
-                    use execution_ipc::device_access::{WindowsComponentState, WindowsStatus};
-                    let mut status = WindowsStatus {
-                        component: crate::access_component::readiness(
-                            &self.core.access.root,
-                            self.core.access.installation,
-                        )
-                        .unwrap_or(WindowsComponentState::Unavailable),
-                        factor_active: None,
-                        sign_in_required: false,
-                        hello: crate::access_worker::windows::hello::status(
-                            &self.core.access.root,
-                            self.core.access.installation,
-                            &owner.subject,
-                        ),
-                    };
-                    if let Ok(mut store) = device_access::Store::open(
+                    Out::WindowsStatus(crate::access_component::status(
                         &self.core.access.root,
                         self.core.access.installation,
-                    ) {
-                        status.factor_active = store.enabled(&owner.subject).ok();
-                        let native = device_access::windows::account::inspect(&owner.subject)
-                            .map_err(|_| Error::Identity)?;
-                        if let Some(logon) = native.logon_millis {
-                            status.sign_in_required = store
-                                .require_join_session(&native.join, logon, crate::wall()? as i64)
-                                .is_err();
-                        }
-                    }
-                    Out::WindowsStatus(status)
+                        &owner.subject,
+                    )?)
                 }
                 #[cfg(not(windows))]
                 return Err(Error::Unsupported);
@@ -588,7 +576,8 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
                 if cfg!(target_os = "macos") {
                     return Err(Error::Unsupported);
                 }
-                self.access_task(*task, &user, &owner.subject)?;
+                let spec = self.access_task(*task, &user, &owner.subject)?;
+                let key = device_access::CandidateKey::for_task(device_access::Channel::Mdm, &spec);
                 if self.core.access.setups.len() >= 8 && !self.core.access.setups.contains_key(task)
                 {
                     return Err(Error::Capacity);
@@ -598,7 +587,7 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
                     .access
                     .setups
                     .get(task)
-                    .is_some_and(|s| s.owner.same(&owner))
+                    .is_some_and(|s| s.owner.same(&owner) && s.key == key)
                 {
                     #[cfg(windows)]
                     let candidate = {
@@ -607,9 +596,9 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
                             self.core.access.installation,
                         )
                         .map_err(|_| Error::Storage)?;
-                        if store.has_candidate(*task).map_err(|_| Error::Storage)? {
+                        if store.has_candidate(key).map_err(|_| Error::Storage)? {
                             store
-                                .candidate(*task, &device_access::SystemProtector)
+                                .candidate(key, &device_access::SystemProtector)
                                 .map_err(|_| Error::Storage)?
                         } else {
                             device_access::Candidate::generate().map_err(|_| Error::Unavailable)?
@@ -621,6 +610,7 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
                     self.core.access.setups.insert(
                         *task,
                         Setup {
+                            key,
                             owner: owner.clone(),
                             candidate,
                             confirmed: false,
@@ -650,7 +640,8 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
                     .setups
                     .get_mut(task)
                     .ok_or(Error::NotFound)?;
-                if !setup.owner.same(&owner) {
+                let key = device_access::CandidateKey::for_task(device_access::Channel::Mdm, &spec);
+                if !setup.owner.same(&owner) || setup.key != key {
                     return Err(Error::Identity);
                 }
                 #[cfg(windows)]
@@ -693,12 +684,12 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
                         self.core.access.installation,
                     )
                     .map_err(|_| Error::Storage)?;
-                    if !store.has_candidate(*task).map_err(|_| Error::Storage)? {
+                    if !store.has_candidate(key).map_err(|_| Error::Storage)? {
                         store
-                            .stage(*task, &setup.candidate, &device_access::SystemProtector)
+                            .stage(key, &setup.candidate, &device_access::SystemProtector)
                             .map_err(|_| Error::Storage)?;
                     } else if !store
-                        .reconfirm(*task, code, clock, &device_access::SystemProtector)
+                        .reconfirm(key, code, clock, &device_access::SystemProtector)
                         .map_err(|_| Error::Storage)?
                     {
                         return Err(Error::Denied);
@@ -745,6 +736,7 @@ mod tests {
         let mut store = Store::create(&offline, installation).unwrap();
         sync_registration(&mut store, &client).unwrap();
         let authority = Authority {
+            channel: device_access::Channel::Mdm,
             tenant: client.configuration().tenant,
             device: r.device_id,
             instance: Uuid::new_v4(),
@@ -779,7 +771,12 @@ mod tests {
         );
         assert!(candidate.confirm(&code, clock).unwrap());
         let recovery = candidate.recovery_secret().to_owned();
-        let operation = Uuid::new_v4();
+        let operation = device_access::CandidateKey {
+            owner: authority.registration(),
+            binding: authority.binding,
+            task: Uuid::new_v4(),
+            attempt: Uuid::new_v4(),
+        };
         store.stage(operation, &candidate, &Plain).unwrap();
         store
             .activate(

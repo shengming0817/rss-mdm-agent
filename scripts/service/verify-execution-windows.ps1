@@ -100,15 +100,38 @@ public static class RssPasskeyRecoveryProbe {
         DeviceAccessHealth {
             if ($Identity.User.Value -ne 'S-1-5-18' -or [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'X64') { throw 'DeviceAccessHealth requires LocalSystem on x64' }
             if (!$Frozen.binaries.PSObject.Properties['windowsLogin']) { throw 'Frozen Windows login DLL required' }
-            $ProviderDll=[IO.Path]::GetFullPath($Frozen.binaries.windowsLogin.path)
-            $ProviderSha256=$Frozen.binaries.windowsLogin.sha256
-            $Actual=(Get-FileHash -LiteralPath $ProviderDll -Algorithm SHA256).Hash
-            if ($Actual -ine $ProviderSha256) { throw 'Provider candidate hash mismatch' }
+            if (!$Frozen.installer) { throw 'Frozen NSIS installer required' }
+            $InstalledConfig=Get-Content -LiteralPath $Config -Raw | ConvertFrom-Json
+            $Service=Get-CimInstance -ClassName Win32_Service -Filter "Name='RssExecution'"
+            if (!$Service -or $Service.State -ne 'Running' -or $Service.ProcessId -eq 0) { throw 'Running installed service required' }
+            $Installed=(Get-Process -Id $Service.ProcessId -ErrorAction Stop).Path
+            $ExpectedCommand='"' + $Installed + '" --config "' + $Config + '"'
+            $Running=Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$($Service.ProcessId)"
+            if ($Service.StartName -ne 'LocalSystem' -or $Service.PathName -ine $ExpectedCommand -or $Running.CommandLine -ine $ExpectedCommand) { throw 'Running service configuration or account differs' }
+            $Receipt.scenarios.configSha256=(Get-FileHash -LiteralPath $Config -Algorithm SHA256).Hash
+            if ($Installed -ine $InstalledConfig.service.path) { throw 'SCM image differs from the deployment' }
             $Class='Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Classes\CLSID\{C61C6B95-9162-42A2-B80B-61EBCA730510}\InprocServer32'
-            if ((Get-Item -LiteralPath $Class).GetValue('') -ine $ProviderDll) { throw 'Registered provider differs from fixed candidate' }
-            & $Binary --device-access-component health
+            $ProviderDll=(Get-Item -LiteralPath $Class -ErrorAction Stop).GetValue('')
+            function Measure-CandidateFile([string]$Path,[string]$Expected) {
+                $Digest=(Get-FileHash -LiteralPath $Path -Algorithm SHA256 -ErrorAction Stop).Hash
+                if ($Digest -ine $Expected) { throw 'Installed or installer image differs from the frozen candidate' }
+                $Sig=Get-AuthenticodeSignature -LiteralPath $Path
+                $Signer=if ($Sig.SignerCertificate) { $Sig.SignerCertificate.Thumbprint } else { $null }
+                return @{path=$Path;sha256=$Digest;signature=$Sig.Status.ToString();signer=$Signer}
+            }
+            $Receipt.scenarios.deviceAccess=@{
+                service=(Measure-CandidateFile $Installed $Frozen.binaries.service.sha256)
+                provider=(Measure-CandidateFile $ProviderDll $Frozen.binaries.windowsLogin.sha256)
+                installer=(Measure-CandidateFile $Frozen.installer.path $Frozen.installer.sha256)
+                health='pending';interactiveLogin='unverified';modules=@{mdm=$InstalledConfig.modules.mdm.state;da=$InstalledConfig.modules.da.state}
+            }
+            $BuildManifest=Join-Path (Split-Path -Parent $Frozen.installer.path) 'package-manifest.json'
+            $Package=Get-Content -Raw -LiteralPath $BuildManifest | ConvertFrom-Json
+            if ($Package.packageSha256 -ine $Frozen.installer.sha256 -or $Package.installationManifestSha256 -ine $InstalledConfig.installation_artifact) { throw 'Installer and deployment manifest differ' }
+            $Receipt.scenarios.deviceAccess.packageManifestSha256=(Get-FileHash -LiteralPath $BuildManifest -Algorithm SHA256).Hash
+            & $Installed --device-access-component health $Config
             if ($LASTEXITCODE -ne 0) { throw 'Device Access component health failed' }
-            $Receipt.scenarios.deviceAccess=@{dll=$ProviderDll;sha256=$Actual;signature=(Get-AuthenticodeSignature -LiteralPath $ProviderDll).Status.ToString();health='passed; DLL not loaded'}
+            $Receipt.scenarios.deviceAccess.health='passed'
             $Receipt.unexecuted+=@('LogonUI login/unlock and offline','wrong password consumes OTP','concurrent OTP replay','reboot throttling and clock rollback','recovery rotation','last administrator protection','provider disable and uninstall')
         }
         InstallSystem {

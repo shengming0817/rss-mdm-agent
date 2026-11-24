@@ -1,13 +1,13 @@
 use super::*;
 const SCHEMA: &str = "CREATE TABLE installation(id TEXT NOT NULL);
-CREATE TABLE registration(id INTEGER PRIMARY KEY CHECK(id=1),body BLOB NOT NULL);
+CREATE TABLE registration(channel INTEGER PRIMARY KEY CHECK(channel IN (1,2)),body BLOB NOT NULL);
 CREATE TABLE join_epoch(id INTEGER PRIMARY KEY CHECK(id=1),fingerprint TEXT NOT NULL,observed INTEGER NOT NULL);
-CREATE TABLE revoked(binding TEXT PRIMARY KEY,generation INTEGER NOT NULL,revision INTEGER NOT NULL);
-CREATE TABLE candidates(id TEXT PRIMARY KEY,body BLOB NOT NULL);
+CREATE TABLE revoked(owner BLOB NOT NULL,binding TEXT NOT NULL,generation INTEGER NOT NULL,revision INTEGER NOT NULL,PRIMARY KEY(owner,binding));
+CREATE TABLE candidates(id BLOB PRIMARY KEY,body BLOB NOT NULL,owner BLOB NOT NULL);
 CREATE TABLE bindings(sid TEXT PRIMARY KEY,body BLOB NOT NULL);
 CREATE TABLE hello_bindings(sid TEXT PRIMARY KEY,body BLOB NOT NULL);
-CREATE TABLE recovery_uses(id TEXT PRIMARY KEY,body BLOB NOT NULL);
-PRAGMA application_id=1380204865; PRAGMA user_version=3;";
+CREATE TABLE recovery_uses(id TEXT PRIMARY KEY,owner BLOB NOT NULL,body BLOB NOT NULL,rejection TEXT,retry_after INTEGER NOT NULL DEFAULT 0);
+PRAGMA application_id=1380204865; PRAGMA user_version=4;";
 pub(super) fn open(root: &Path, installation: Uuid, create: bool) -> Result<Store, Error> {
     if installation.is_nil() || !platform_private_storage::is_canonical_path(root)? {
         return Err(Error::Invalid);
@@ -61,7 +61,7 @@ fn validate_schema(conn: &Connection, installation: Uuid) -> Result<(), Error> {
     let app: i64 = conn.pragma_query_value(None, "application_id", |r| r.get(0))?;
     let binding: String = conn.query_row("SELECT id FROM installation", [], |r| r.get(0))?;
     let mode: String = conn.pragma_query_value(None, "journal_mode", |r| r.get(0))?;
-    if version != 3 || app != 1380204865 || binding != installation.to_string() || mode != "delete"
+    if version != 4 || app != 1380204865 || binding != installation.to_string() || mode != "delete"
     {
         return Err(Error::Invalid);
     }
@@ -127,7 +127,7 @@ pub(super) fn validate_existing(root: &Path, installation: Uuid) -> Result<(), E
 fn validate_format(conn: &Connection, create: bool) -> Result<(), Error> {
     match platform_private_storage::sqlite_format(conn).map_err(|_| Error::Invalid)? {
         None if create => Ok(()),
-        Some((1380204865, 3)) => Ok(()),
+        Some((1380204865, 4)) => Ok(()),
         _ => Err(Error::Invalid),
     }
 }

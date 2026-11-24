@@ -224,6 +224,10 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
                 return Err(Error::Identity);
             }
             platform::register(opts.system()?, &binary, &config)?;
+            #[cfg(windows)]
+            if opts.system()? {
+                report_windows_login(&deployment)?;
+            }
         }
         Action::RemoveLabRegistration => {
             if !opts.system()? {
@@ -514,7 +518,7 @@ pub(super) fn preflight_candidate_state(
 ) -> Result<(), Error> {
     persistent(&next.service.path, next_config)?;
     #[cfg(windows)]
-    if next.modules.mdm.enabled() {
+    if next.modules.mdm.enabled() || next.modules.da.enabled() {
         crate::access_component::preflight(next)?;
     }
     Ok(())
@@ -526,6 +530,12 @@ pub(super) fn stop_for_maintenance(deployment: &Deployment, config: &Path) -> Re
     std::fs::remove_file(evidence)?;
     Ok(())
 }
+#[cfg(windows)]
+fn report_windows_login(deployment: &Deployment) -> Result<(), Error> {
+    let result = crate::access_component::install_for(deployment, false);
+    outcome::details(serde_json::json!({"windowsLoginError":result.err()}))
+}
+
 fn refresh(
     current: &Path,
     config: &Path,
@@ -555,7 +565,10 @@ fn refresh(
             Step::RestoreCurrent => publish(config, &json(&old)?),
             Step::RegisterCurrent => platform::restore_registration(current, config),
         }
-    })
+    })?;
+    #[cfg(windows)]
+    report_windows_login(&next)?;
+    Ok(())
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Step {

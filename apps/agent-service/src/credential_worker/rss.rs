@@ -47,6 +47,18 @@ pub(super) fn execute(
         } => (*binding, *binding_generation, sid.clone()),
         _ => return Err(Error::Unsupported),
     };
+    let authority = store
+        .authority(&sid)
+        .map_err(|_| Error::Storage)?
+        .ok_or(Error::Identity)?;
+    if authority.channel != input.channel
+        || authority.binding != binding
+        || authority.binding_generation != binding_generation
+        || authority.device != task.device_id
+        || authority.tenant != task.tenant_id
+    {
+        return Err(Error::Identity);
+    }
     let subject = Subject::RssLogin {
         binding,
         binding_generation,
@@ -68,27 +80,52 @@ pub(super) fn execute(
         {
             return Err(Error::Untrusted);
         }
-        if record.phase == Phase::Prepared {
-            return Ok(w::CredentialResult {
-                definition_digest: task.definition_digest,
-                recovery: Some(w::CredentialRecoveryOutcome::NotAttempted),
-                failure: None,
-                complete: true,
-                items: vec![],
-            });
+        if input.channel == device_access::Channel::Da {
+            // The worker lock proves the referenced writer is stopped. SQLite is
+            // authoritative across both crash windows around the native commit.
+            let (secret, observed) = store
+                .recovery_material(task, &subject, &protection)
+                .map_err(|_| Error::Storage)?;
+            let receipts: Option<Vec<w::CredentialReceipt>> =
+                state::read_optional(&input.root, &state::name(&record.task, "receipts"))?;
+            let outcome = if receipts
+                .as_ref()
+                .is_some_and(|v| v.as_slice() == std::slice::from_ref(&observed))
+            {
+                w::CredentialRecoveryOutcome::Applied
+            } else {
+                w::CredentialRecoveryOutcome::Unchanged
+            };
+            let verification = Record {
+                task: task.clone(),
+                phase: Phase::Finished,
+                protected: state::seal(native, task, &secret)?,
+                subject: Some(subject.clone()),
+            };
+            (verification, secret, Some(outcome))
+        } else {
+            if record.phase == Phase::Prepared {
+                return Ok(w::CredentialResult {
+                    definition_digest: task.definition_digest,
+                    recovery: Some(w::CredentialRecoveryOutcome::NotAttempted),
+                    failure: None,
+                    complete: true,
+                    items: vec![],
+                });
+            }
+            let secret = state::secret(native, &record)?;
+            let receipts: Vec<w::CredentialReceipt> =
+                state::read_optional(&input.root, &state::name(&record.task, "receipts"))?
+                    .ok_or(Error::Storage)?;
+            if receipts.len() != 1
+                || !store
+                    .verify_recovery_material(task, &subject, &secret, &receipts[0])
+                    .map_err(|_| Error::Storage)?
+            {
+                return failure_with_materials(&input.root, task, Failure::RecoveryState);
+            }
+            (record, secret, Some(w::CredentialRecoveryOutcome::Applied))
         }
-        let secret = state::secret(native, &record)?;
-        let receipts: Vec<w::CredentialReceipt> =
-            state::read_optional(&input.root, &state::name(&record.task, "receipts"))?
-                .ok_or(Error::Storage)?;
-        if receipts.len() != 1
-            || !store
-                .verify_recovery_material(task, &subject, &secret, &receipts[0])
-                .map_err(|_| Error::Storage)?
-        {
-            return failure_with_materials(&input.root, task, Failure::RecoveryState);
-        }
-        (record, secret, Some(w::CredentialRecoveryOutcome::Applied))
     } else if matches!(task.operation, Op::VerifyRssLogin { .. }) {
         let (secret, _) = store
             .recovery_material(task, &subject, &protection)
@@ -103,7 +140,11 @@ pub(super) fn execute(
     } else {
         let current = state::read_optional::<Record>(&input.root, &state::name(task, "state"))?;
         let record = if let Some(current) = current {
-            if current.task != *task || current.subject.as_ref() != Some(&subject) {
+            let mut expected = task.clone();
+            if input.channel == device_access::Channel::Da {
+                expected.expires_at = current.task.expires_at;
+            }
+            if current.task != expected || current.subject.as_ref() != Some(&subject) {
                 return Err(Error::Untrusted);
             }
             current
@@ -155,6 +196,9 @@ pub(super) fn execute(
             == Some(&digest)
         {
             break;
+        }
+        if input.channel == device_access::Channel::Da {
+            return Err(Error::Unavailable);
         }
         std::thread::sleep(std::time::Duration::from_millis(200));
     }

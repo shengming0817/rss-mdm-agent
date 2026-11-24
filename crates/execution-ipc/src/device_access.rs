@@ -222,3 +222,149 @@ pub struct WindowsHelloStatus {
     /// Current observations, not proof of an actual login.
     pub facts: Option<w::AccessWhfbFacts>,
 }
+
+/// Employee session issuer installed with the desktop and the SYSTEM service. IPC requests
+/// cannot select this endpoint. Pinning it separately keeps browser cookies off the mTLS listener.
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EmployeePortal {
+    /// Exact public HTTPS browser origin.
+    pub origin: String,
+    /// Optional public trust root.
+    pub ca_pem: Option<String>,
+    /// Product installation owning the portal.
+    pub instance: Uuid,
+    /// Tenant at this issuer.
+    pub tenant: Uuid,
+    product: PortalProduct,
+}
+#[derive(Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum PortalProduct {
+    Mdm,
+    Da,
+}
+impl EmployeePortal {
+    /// Whether the issuer supplies DA employee login directly.
+    pub fn dedicated(&self) -> bool {
+        self.product == PortalProduct::Da
+    }
+    /// Compare a desktop IPC identity to this configured employee issuer.
+    pub fn accepts(&self, user: &w::SelfServiceUser) -> bool {
+        (self.tenant, self.instance) == (user.tenant_id, user.instance_id)
+    }
+    /// The desktop uses the same protected DA profile and packaged issuer as the service.
+    pub fn installed() -> Option<Self> {
+        let path = installation_security::deployment_path().ok()?;
+        let bytes = installation_security::read_protected(&path).ok()?;
+        let d: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+        if d["version"].as_u64() != Some(u64::from(crate::host::DEPLOYMENT_VERSION))
+            || d["ipc_version"].as_u64() != Some(u64::from(crate::host::IPC_VERSION))
+            || d["modules"]["da"]["state"] != "enabled"
+        {
+            return None;
+        }
+        let da = &d["modules"]["da"]["backend"];
+        let browser = match da.get("browser").filter(|b| !b.is_null()) {
+            Some(b) => Some((b["origin"].as_str()?, b["ca_pem"].as_str())),
+            None => None,
+        };
+        Self::configured(
+            serde_json::from_value(da["tenant"].clone()).ok()?,
+            serde_json::from_value(da["instance"].clone()).ok()?,
+            browser,
+        )
+        .ok()
+        .flatten()
+    }
+    /// Resolve employee login independently of the device listener or other enabled modules.
+    /// A device-only profile has no employee portal.
+    pub fn configured(
+        tenant: Uuid,
+        instance: Uuid,
+        browser: Option<(&str, Option<&str>)>,
+    ) -> Result<Option<Self>, installation_security::Rejected> {
+        Self::resolve(
+            tenant,
+            instance,
+            browser,
+            option_env!("RSS_BUILD_EMPLOYEE_PORTAL"),
+        )
+    }
+    fn resolve(
+        tenant: Uuid,
+        instance: Uuid,
+        browser: Option<(&str, Option<&str>)>,
+        packaged: Option<&str>,
+    ) -> Result<Option<Self>, installation_security::Rejected> {
+        use installation_security::Rejected;
+        let mut package = packaged
+            .map(serde_json::from_str::<Self>)
+            .transpose()
+            .map_err(|_| Rejected)?;
+        if let Some(p) = &mut package {
+            p.origin = Self::origin(&p.origin).ok_or(Rejected)?;
+        }
+        let Some((origin, ca)) = browser else {
+            return Ok(package.filter(|p| (p.tenant, p.instance) == (tenant, instance)));
+        };
+        let origin = Self::origin(origin).ok_or(Rejected)?;
+        let product = match package.filter(|p| p.origin == origin && p.tenant == tenant) {
+            Some(p) if p.instance != instance => return Err(Rejected),
+            Some(p) => p.product,
+            None => PortalProduct::Da,
+        };
+        Ok(Some(Self {
+            product,
+            origin,
+            instance,
+            tenant,
+            ca_pem: ca.map(String::from),
+        }))
+    }
+    fn origin(raw: &str) -> Option<String> {
+        let mut url = url::Url::parse(raw).ok()?;
+        if url.scheme() != "https"
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.path() != "/"
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            return None;
+        }
+        if let url::Host::Domain(host) = url.host()? {
+            let host = host.trim_end_matches('.').to_owned();
+            url.set_host(Some(&host)).ok()?;
+        }
+        Some(url.origin().ascii_serialization())
+    }
+}
+
+#[cfg(test)]
+mod portal_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn employee_portal_belongs_to_one_instance_regardless_of_coinstalled_modules() {
+        let tenant = Uuid::new_v4();
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        for (product, instance) in [("mdm", a), ("da", b)] {
+            let package=json!({"product":product,"tenant":tenant,"instance":instance,"origin":"https://package.test"}).to_string();
+            let resolve = |instance, browser| {
+                EmployeePortal::resolve(tenant, instance, browser, Some(&package))
+            };
+            let same = resolve(instance, None).unwrap().unwrap();
+            assert_eq!(same.dedicated(), product == "da");
+            let other = if instance == a { b } else { a };
+            assert!(resolve(other, None).unwrap().is_none());
+            assert!(resolve(other, Some(("https://PACKAGE.test./", None))).is_err());
+            let distinct = resolve(other, Some(("https://other.test", None)))
+                .unwrap()
+                .unwrap();
+            assert!(distinct.dedicated());
+            assert_eq!(distinct.instance, other);
+        }
+    }
+}

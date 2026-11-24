@@ -7,6 +7,10 @@ use uuid::Uuid;
 #[serde(deny_unknown_fields)]
 /// Public HTTPS bootstrap authority supplied through the protected installation profile.
 pub struct Backend {
+    /// Explicit HTTPS employee portal for an administrator-selected installation profile.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub browser: Option<Browser>,
+
     /// Expected DA service installation.
     pub instance: Uuid,
     /// Tenant selected by the administrator.
@@ -15,6 +19,15 @@ pub struct Backend {
     pub origin: String,
     /// Public root that authenticates the device listener.
     pub ca_pem: String,
+}
+/// Browser issuer is independent of device mTLS.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Browser {
+    /// Trusted HTTPS origin.
+    pub origin: String,
+    /// Optional organization CA for the browser listener.
+    pub ca_pem: Option<String>,
 }
 impl Backend {
     /// Validate public coordinates and the pinned authority.
@@ -32,12 +45,30 @@ impl Backend {
         {
             return Err(Error::Configuration);
         }
+        if let Some(browser) = &self.browser {
+            let u = url::Url::parse(&browser.origin).map_err(|_| Error::Configuration)?;
+            if u.scheme() != "https"
+                || u.host().is_none()
+                || !u.username().is_empty()
+                || u.password().is_some()
+                || u.path() != "/"
+                || u.query().is_some()
+                || u.fragment().is_some()
+            {
+                return Err(Error::Configuration);
+            }
+            if let Some(pem) = &browser.ca_pem {
+                crate::validate_public_ca(pem.as_bytes())?;
+            }
+        }
         crate::validate_public_ca(self.ca_pem.as_bytes())
     }
 }
 
 mod configuration;
+mod operations;
 mod registration;
+pub use operations::{verify_employee, AccountCompletion, Operations, RecoveryUseDisposition};
 pub use registration::validate_keys;
 mod storage;
 use crate::{
@@ -93,6 +124,16 @@ pub struct Status {
     pub renewal_error: Option<Error>,
     /// Most recent closed local or protocol failure.
     pub diagnostic: Option<Error>,
+    /// Last Windows native delivery failure, independent of configuration maintenance.
+    pub windows_delivery_error: Option<Error>,
+    /// Latest confirmed account and attempt with its original terminal settlement.
+    pub account_settlement: Option<(Uuid, Uuid, wire::AccountSettlement)>,
+    /// Latest confirmed recovery operation and attempt with its original settlement.
+    pub credential_settlement: Option<(Uuid, Uuid, wire::CredentialSettlement)>,
+    /// Last rejected account event and its exact attempt.
+    pub rejected_account_event: Option<(Uuid, Uuid, Uuid, Error)>,
+    /// Last definitively rejected offline use for this registration.
+    pub rejected_recovery_use: Option<(Uuid, Error)>,
 }
 
 /// Inspect retained identity and report watermarks without creating a key or acquiring the writer.
@@ -117,7 +158,25 @@ pub fn inspect(
         .map(|p| p.until);
     let valid = valid_until.is_some_and(|until| now < until)
         && read::<i64>(&c, "clock")?.is_some_and(|seen| now >= seen);
+    let device = active.as_ref().map(|a| a.receipt.device);
+    let windows_key = |kind: &str| device.map(|d| format!("windows/{d}/{kind}"));
     Ok(Some(Status {
+        account_settlement: windows_key("last-account-settlement")
+            .map(|k| read(&c, &k))
+            .transpose()?
+            .flatten(),
+        credential_settlement: windows_key("last-credential-settlement")
+            .map(|k| read(&c, &k))
+            .transpose()?
+            .flatten(),
+        rejected_account_event: windows_key("last-rejected-account")
+            .map(|k| read(&c, &k))
+            .transpose()?
+            .flatten(),
+        rejected_recovery_use: windows_key("last-rejected-use")
+            .map(|k| read(&c, &k))
+            .transpose()?
+            .flatten(),
         status_receipt: receipt("status")?,
         application_receipt: receipt("application")?,
         registration: active.map(|a| a.receipt),
@@ -133,6 +192,7 @@ pub fn inspect(
             None
         },
         diagnostic: read(&c, "last-error")?.flatten(),
+        windows_delivery_error: read(&c, "windows-delivery-error")?.flatten(),
         renewal_error: read(&c, "renewal-error")?.flatten(),
     }))
 }

@@ -81,6 +81,12 @@ operations! {
     TelemetryStatus: GET "/api/v1/agent/runtime/telemetry/batches/{id}" [200] Some("application/json"), () => w::TelemetryReceipt;
     TelemetryGap: POST "/api/v1/agent/runtime/telemetry/gaps" [202] Some("application/json"), w::TelemetryGapReport => w::TelemetryGapReceipt;
     TelemetryGapStatus: GET "/api/v1/agent/runtime/telemetry/gaps/{id}" [200] Some("application/json"), () => w::TelemetryGapReceipt;
+    DaAccountNext: POST "/api/v1/da/account-operations/next" [200] Some("application/json"), () => Option<da::AccountOffer>;
+    DaAccountEvent: POST "/api/v1/da/account-operations/{id}/events" [200] Some("application/json"), da::AccountEvent => da::AccountSettlement;
+    DaCredentialNext: POST "/api/v1/da/credential-operations/next" [200] Some("application/json"), () => Option<w::CredentialTaskSpec>;
+    DaCredentialEvent: POST "/api/v1/da/credential-operations/{id}/events" [200] Some("application/json"), da::CredentialEvent => da::CredentialSettlement;
+    DaAccessUse: POST "/api/v1/da/device-access/recovery-uses" [200] Some("application/json"), w::AccessRecoveryUse => RecoveryUseAck;
+    DaRevocation: GET "/api/v1/da/registrations/revocation" [200] Some("application/json"), () => da::RevocationReceipt;
     DaCertificate: POST "/api/v1/da/certificates" [200] Some("application/json"), da::CertificateRequest => e::Candidate;
     DaActivate: POST "/api/v1/da/activate" [200] Some("application/json"), e::ActivationRequest => da::Registration;
     DaProgress: POST "/api/v1/da/registrations/status" [200] Some("application/json"), e::StatusRequest => da::Progress;
@@ -89,7 +95,7 @@ operations! {
     DaPkiAck: POST "/api/v1/da/pki/acknowledgements" [200] None, pki::Acknowledgement => ();
     DaTrust: GET "/api/v1/da/configuration-trust" [200] Some("application/json"), () => da::ConfigurationTrust;
     DaTrustAck: POST "/api/v1/da/configuration-trust/acknowledgements" [200] None, task_trust::Acknowledgement => ();
-    DaConfiguration: GET "/api/v1/da/configuration" [200] Some("application/json"), () => serde_json::Value;
+    DaConfiguration: GET "/api/v1/da/configuration" [200] Some("application/json"), () => da::CurrentConfiguration;
     DaStatus: POST "/api/v1/da/status-reports" [200] Some("application/json"), da::StatusReport => serde_json::Value;
     DaApplication: POST "/api/v1/da/configuration-reports" [200] Some("application/json"), da::ApplicationReport => serde_json::Value;
     Grant: POST "/api/v1/agent/enroll/requests" [200] Some("application/json"), e::GrantRequest => e::GrantReceipt;

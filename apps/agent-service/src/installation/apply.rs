@@ -58,6 +58,8 @@ struct Record {
     failure: Option<Error>,
     failure_phase: Option<Phase>,
     compensation_error: Option<Error>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    windows_login_error: Option<Error>,
 }
 
 impl Record {
@@ -108,6 +110,12 @@ impl Record {
             Err(self.failure.unwrap_or(Error::Unavailable))
         }
     }
+    #[cfg(any(windows, test))]
+    fn finish_windows_login(&mut self, install: impl FnOnce(&Self) -> Result<(), Error>) {
+        if self.phase == Phase::Applied && self.source == Source::Package {
+            self.windows_login_error = install(self).err();
+        }
+    }
     fn report(&self) -> Result<(), Error> {
         let state = match self.phase {
             Phase::Received => "received",
@@ -116,7 +124,7 @@ impl Record {
             _ => "pending",
         };
         outcome::details(serde_json::json!({"state":state,"operation":self.operation,
-            "phase":self.phase,"revision":self.revision,"failure":self.failure, "failurePhase":self.failure_phase, "compensationError":self.compensation_error}))
+            "phase":self.phase,"revision":self.revision,"failure":self.failure, "failurePhase":self.failure_phase, "compensationError":self.compensation_error,"windowsLoginError":self.windows_login_error}))
     }
 }
 
@@ -226,7 +234,25 @@ impl Journal {
         }
         outcome::phase(record.phase_name())
     }
-    fn archive(&self, record: &Record) -> Result<(), Error> {
+    fn archive(&self, record: &mut Record) -> Result<(), Error> {
+        // The core operation is durably terminal. SCM, desktop entry and deployment
+        // compensation cannot run after this point. A restart replays this same archive.
+        #[cfg(windows)]
+        {
+            let original_error = record.windows_login_error;
+            record.finish_windows_login(|r| {
+                let bytes = optional(&r.config)?.ok_or(Error::NotFound)?;
+                if r.after.as_deref() != Some(hash(&bytes).as_str()) {
+                    return Err(Error::Conflict);
+                }
+                let deployment: Deployment =
+                    serde_json::from_slice(&bytes).map_err(|_| Error::Configuration)?;
+                crate::access_component::install_for(&deployment, false)
+            });
+            if record.windows_login_error != original_error {
+                self.save(record)?;
+            }
+        }
         // Atomically move the terminal checkpoint to immutable per-operation history.
         platform_private_storage::replace(&self.active(), &self.file(record.operation, "result"))?;
         if record.phase == Phase::Applied && self.recovery_identity().try_exists()? {
@@ -312,6 +338,7 @@ pub(super) fn module_status(config: &Path) -> Result<(), Error> {
     outcome::details(serde_json::json!({
         "available": available,
         "enabled": { "mdm":deployment.modules.mdm.enabled(), "da":deployment.modules.da.enabled() },
+        "daEmployeePortalOrigin":deployment.modules.employee_portal()?.map(|p|p.origin),
         "mdmRegistered":registered,"da":da.as_ref().ok().and_then(|state|state.as_ref()),"daError":da.as_ref().err(),"pendingOperation":pending,
         "revision":deployment.modules.revision,
     }))?;
@@ -748,7 +775,7 @@ pub(super) fn run(
                     && supplied_digest.as_ref().is_none_or(|d| d == &r.artifact)))
     };
     let mut pending = j.read(&j.active())?;
-    if let Some(r) = pending.as_ref().filter(|r| r.terminal()) {
+    if let Some(r) = pending.as_mut().filter(|r| r.terminal()) {
         j.archive(r)?;
         pending = None;
     }
@@ -828,6 +855,7 @@ pub(super) fn run(
             failure: malformed.then_some(Error::Configuration),
             failure_phase: malformed.then_some(Phase::Received),
             compensation_error: None,
+            windows_login_error: None,
         };
         j.save(&r)?;
         r
@@ -897,7 +925,7 @@ pub(super) fn run(
     }
     record.input = None;
     j.save(&record)?;
-    j.archive(&record)?;
+    j.archive(&mut record)?;
     record.report()?;
     record.result()
 }
@@ -965,9 +993,57 @@ mod tests {
             failure: None,
             failure_phase: None,
             compensation_error: None,
+            windows_login_error: None,
         }
     }
 
+    #[test]
+    fn only_a_committed_package_publishes_the_login_component() {
+        use Phase::*;
+        for upgrading in [false, true] {
+            let mut r = record(Register);
+            let mut effects = Vec::new();
+            drive_steps(
+                &mut r,
+                upgrading,
+                |_| Ok(()),
+                |_| Ok(()),
+                |phase| {
+                    effects.push(phase);
+                    if phase == Register {
+                        Err(Error::Unavailable)
+                    } else {
+                        Ok(())
+                    }
+                },
+            )
+            .unwrap();
+            assert_eq!(r.phase, Rejected);
+            assert_eq!(effects.contains(&Restart), upgrading);
+            r.finish_windows_login(|_| panic!("SCM failure must not register a Provider"));
+        }
+        let mut r = record(Register);
+        let mut seen = Vec::new();
+        drive_steps(
+            &mut r,
+            true,
+            |_| Ok(()),
+            |_| Ok(()),
+            |phase| {
+                seen.push(phase);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(seen, [Register, Desktop]);
+        r.finish_windows_login(|committed| {
+            assert_eq!(committed.phase, Applied);
+            Err(Error::Storage)
+        });
+        assert!(r.result().is_ok());
+        assert_eq!(r.windows_login_error, Some(Error::Storage));
+        assert!(r.compensation_error.is_none());
+    }
     #[test]
     fn private_checkpoint_reopens_frozen_input_and_retains_original_result() {
         let temp = crate::protocol_test_support::Root::new();
@@ -986,7 +1062,7 @@ mod tests {
         r.phase = Phase::Rejected;
         r.failure = Some(Error::Unsupported);
         journal.save(&r).unwrap();
-        journal.archive(&r).unwrap();
+        journal.archive(&mut r).unwrap();
         assert!(journal.read(&journal.active()).unwrap().is_none());
         let archived = journal
             .read(&journal.file(r.operation, "result"))

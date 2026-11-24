@@ -1,5 +1,11 @@
 //! The existing system service drives DA on its own bounded worker. An unavailable DA
 //! endpoint cannot stall authenticated IPC, MDM enrollment, or the ordinary task owner.
+#[cfg(any(windows, test))]
+mod attempt;
+#[cfg(windows)]
+mod delivery;
+#[cfg(windows)]
+mod login;
 #[cfg(target_os = "macos")]
 mod macos;
 pub(crate) mod policy;
@@ -122,6 +128,10 @@ pub(crate) fn renew(d: &Deployment) -> Result<(), Error> {
 }
 
 pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
+    #[cfg(windows)]
+    if let Err(e) = crate::access_component::prepare_store(&d) {
+        return Ok(Deployment::startup_diagnostic(d.clients.clone(), e));
+    }
     if !d.modules.da.enabled() {
         return d.mdm_owner();
     }
@@ -130,6 +140,13 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
     } else {
         None
     };
+    #[cfg(windows)]
+    let login = Arc::new(login::Login::new(
+        &d,
+        mdm.as_ref().and_then(|owner| owner.session_fence()),
+    )?);
+    #[cfg(windows)]
+    let worker_login = login.clone();
     let policy = d.clients.clone();
     let (stop, mut stopped) = tokio::sync::oneshot::channel::<()>();
     let ready = Arc::new(AtomicBool::new(false));
@@ -164,9 +181,47 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                                     root.clone(),
                                     #[cfg(windows)]
                                     crate::access_worker::root(&d.execution),
+                                    #[cfg(windows)]
+                                    d.installation_id,
                                 )
                                 .await;
-                                client.drive(&mut policy).await
+                                async {
+                                    let result = client.drive(&mut policy).await;
+                                    #[cfg(windows)]
+                                    {
+                                        let operations = async {
+                                            if let Some(r) = client.revocation().await? {
+                                                let native =
+                                                    crate::access_worker::root(&d.execution);
+                                                device_access::Store::open(
+                                                    &native,
+                                                    d.installation_id,
+                                                )
+                                                .map_err(|_| Error::Storage)?
+                                                .retire_registration(device_access::Channel::Da)
+                                                .map_err(|_| Error::Storage)?;
+                                                worker_login.reset()?;
+                                                client.retire(&r)?;
+                                            } else if cfg!(target_arch = "x86_64") {
+                                                let operations = delivery::drive(
+                                                    &d,
+                                                    &client,
+                                                    &worker_login,
+                                                    policy.local_rss,
+                                                )
+                                                .await;
+                                                operations?;
+                                            }
+                                            Ok(())
+                                        }
+                                        .await;
+                                        client.record_windows_delivery(operations)?;
+                                        result
+                                    }
+                                    #[cfg(not(windows))]
+                                    result
+                                }
+                                .await
                             }
                             Err(e) => {
                                 available.store(false, Ordering::Release);
@@ -181,6 +236,9 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                                 10
                             }
                         };
+                        #[cfg(windows)]
+                        tokio::select! {_=worker_login.wake.notified()=>(),_=tokio::time::sleep(Duration::from_secs(delay))=>()}
+                        #[cfg(not(windows))]
                         tokio::time::sleep(Duration::from_secs(delay)).await;
                     }
                 };
@@ -189,6 +247,8 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
         })?;
     Ok(Box::new(Service {
         mdm,
+        #[cfg(windows)]
+        login,
         ready,
         policy,
         stop: Some(stop),
@@ -196,6 +256,8 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
     }))
 }
 struct Service {
+    #[cfg(windows)]
+    login: Arc<login::Login>,
     mdm: Option<Box<dyn Handler>>,
     policy: PeerPolicy,
     ready: Arc<AtomicBool>,
@@ -204,7 +266,14 @@ struct Service {
 }
 impl Handler for Service {
     fn session_fence(&self) -> Option<Arc<dyn SessionFence>> {
-        self.mdm.as_ref().and_then(|owner| owner.session_fence())
+        #[cfg(windows)]
+        {
+            Some(self.login.clone())
+        }
+        #[cfg(not(windows))]
+        {
+            self.mdm.as_ref().and_then(|owner| owner.session_fence())
+        }
     }
     fn peer_policy(&self) -> Option<PeerPolicy> {
         self.mdm
@@ -224,6 +293,53 @@ impl Handler for Service {
                 .worker
                 .as_ref()
                 .is_some_and(|worker| !worker.is_finished());
+        #[cfg(windows)]
+        if let Some(reply) = self.login.handle(peer, &request) {
+            use execution_ipc::device_access::Response;
+            match (&mut self.mdm, reply) {
+                (None, reply) => return reply,
+                (Some(mdm), Reply::ContextBound { value }) => {
+                    let original = mdm.handle(peer, request);
+                    return if matches!(original, Reply::ContextBound { .. }) {
+                        original
+                    } else {
+                        Reply::ContextBound { value }
+                    };
+                }
+                (
+                    Some(mdm),
+                    Reply::DeviceAccess {
+                        value: Response::Tasks { mut tasks },
+                    },
+                ) => {
+                    tasks.extend(self.login.mdm_tasks(peer, &request, mdm.as_mut(), true));
+                    return Reply::DeviceAccess {
+                        value: Response::Tasks { tasks },
+                    };
+                }
+                (Some(mdm), Reply::DaVerificationPending {}) => {
+                    self.login.mdm_tasks(peer, &request, mdm.as_mut(), false);
+                    return Reply::DaVerificationPending {};
+                }
+                (Some(mdm), Reply::Rejected)
+                    if matches!(
+                        request,
+                        Request::DeviceAccess {
+                            input: execution_ipc::device_access::Operation::Tasks {},
+                            ..
+                        }
+                    ) =>
+                {
+                    return Reply::DeviceAccess {
+                        value: Response::Tasks {
+                            tasks: self.login.mdm_tasks(peer, &request, mdm.as_mut(), true),
+                        },
+                    };
+                }
+                (Some(_), Reply::Rejected) if matches!(request, Request::BindContext { .. }) => (),
+                (_, reply) => return reply,
+            }
+        }
         if let Some(mdm) = &mut self.mdm {
             let mut reply = mdm.handle(peer, request);
             if let Reply::ServiceStatus { value } = &mut reply {

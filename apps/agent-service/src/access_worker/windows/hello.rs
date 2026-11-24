@@ -218,11 +218,7 @@ fn verify(native: &super::NativeWindows, record: &HelloRecord) -> Result<(), Fai
         &crate::deployment::Deployment::default_path().map_err(|_| Failure::NativeFailure)?,
     )
     .map_err(|_| Failure::NativeFailure)?;
-    if deployment
-        .mdm()
-        .map_err(|_| Failure::NativeFailure)?
-        .instance
-        != native.installation
+    if deployment.installation_id != native.installation
         || super::super::root(&deployment.execution) != native.root
     {
         return Err(Failure::AccountChanged);
@@ -331,6 +327,8 @@ pub(crate) fn status(root: &Path, installation: uuid::Uuid, subject: &str) -> Wi
     }
     match observe(
         &super::NativeWindows {
+            da_password: None,
+            channel: device_access::Channel::Mdm,
             root: root.into(),
             installation,
         },
