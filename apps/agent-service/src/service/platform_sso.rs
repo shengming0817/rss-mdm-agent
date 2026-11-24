@@ -78,7 +78,11 @@ impl<S: IdentityProvider> DeviceService<S> {
         let deployment = self.installation.as_ref().ok_or(Error::Configuration)?;
         let config = deployment.platform_sso.as_ref().ok_or(Error::Unsupported)?;
         if require_enabled {
-            enabled(&self.core.access.root, deployment.mdm()?.instance)?;
+            enabled(
+                &self.core.access.root,
+                w::RegistrationTrust::MdmBootstrapPop,
+                deployment.mdm()?.instance,
+            )?;
         }
         let profile = self.client.registration()?;
         let context = ::platform_sso::Context {
@@ -500,7 +504,7 @@ pub(crate) trait Owner {
                 };
                 {
                     let _lock = state::lock(self.root())?;
-                    enabled(self.root(), current.installation)?;
+                    enabled(self.root(), current.authority, current.installation)?;
                     require_owner(
                         self.root(),
                         (
@@ -915,7 +919,9 @@ fn sweep_retirement(
     withdrawal: Option<&rss_mdm_agent_wire::da::RevocationReceipt>,
 ) -> Result<bool, Error> {
     let _lock = state::lock(root)?;
-    state::write(root, "platform-sso.disabled", &Disabled { installation })?;
+    if withdrawal.is_none() {
+        state::write(root, "platform-sso.disabled", &Disabled { installation })?;
+    }
     settle_prepared(root, installation, withdrawal)?;
     let mut complete = true;
     let mut count = 0;
@@ -1059,7 +1065,7 @@ fn native_facts_in_session(
     binding: &::platform_sso::LocalBinding,
     session: impl FnOnce(&NativeObservation) -> bool,
 ) -> Result<Option<wire::AccessMacPlatformSsoFacts>, Error> {
-    if !binding.enabled || enabled(root, binding.installation).is_err() {
+    if !binding.enabled || enabled(root, binding.authority, binding.installation).is_err() {
         return Ok(None);
     }
     let Some(c) = state::read_optional::<Coordinate>(
@@ -1917,13 +1923,24 @@ pub(crate) fn uninstall_preflight(deployment: &crate::deployment::Deployment) ->
 struct Disabled {
     installation: Uuid,
 }
-pub(crate) fn enabled(root: &std::path::Path, installation: Uuid) -> Result<(), Error> {
+const DA_WITHDRAWAL: &str = "platform-sso.da-withdrawal";
+pub(crate) fn enabled(
+    root: &std::path::Path,
+    authority: w::RegistrationTrust,
+    installation: Uuid,
+) -> Result<(), Error> {
     if let Some(disabled) = state::read_optional::<Disabled>(root, "platform-sso.disabled")? {
         return Err(if disabled.installation == installation {
             Error::Denied
         } else {
             Error::Identity
         });
+    }
+    if authority == w::RegistrationTrust::DaDevicePop
+        && state::read_optional::<rss_mdm_agent_wire::da::RevocationReceipt>(root, DA_WITHDRAWAL)?
+            .is_some_and(|r| r.service_id == installation)
+    {
+        return Err(Error::Denied);
     }
     Ok(())
 }
@@ -2088,7 +2105,7 @@ fn component_state(deployment: &crate::deployment::Deployment, action: &str) -> 
         }
         release_bindings(&root, instance, None)?;
     }
-    let disabled = match enabled(&root, instance) {
+    let disabled = match enabled(&root, authority, instance) {
         Ok(()) => false,
         Err(Error::Denied) => true,
         Err(e) => return Err(e),
@@ -2187,7 +2204,12 @@ fn retirement_requested(root: &std::path::Path, coordinate: &Coordinate) -> Resu
 
 fn retain_registration(root: &std::path::Path, coordinate: &Coordinate) -> Result<bool, Error> {
     let _lock = state::lock(root)?;
-    match enabled(root, coordinate.context.installation).and_then(|()| {
+    match enabled(
+        root,
+        coordinate.context.authority,
+        coordinate.context.installation,
+    )
+    .and_then(|()| {
         if retirement_requested(root, coordinate)? {
             Err(Error::Denied)
         } else {
@@ -2348,6 +2370,26 @@ mod tests {
             da::withdraw_sources(&root.path, &withdrawal),
             Err(Error::Unavailable)
         );
+        assert_eq!(enabled(&root.path, owner.0, owner.1), Err(Error::Denied));
+        // Even identical backend UUIDs do not give the DA withdrawal ownership of MDM admission.
+        enabled(&root.path, w::RegistrationTrust::MdmBootstrapPop, owner.1).unwrap();
+        let other = rss_mdm_agent_wire::da::RevocationReceipt {
+            operation_id: Uuid::new_v4(),
+            ..withdrawal.clone()
+        };
+        assert_eq!(
+            da::withdraw_sources(&root.path, &other),
+            Err(Error::Conflict)
+        );
+        assert_eq!(
+            state::read_optional::<rss_mdm_agent_wire::da::RevocationReceipt>(
+                &root.path,
+                DA_WITHDRAWAL
+            )
+            .unwrap()
+            .unwrap(),
+            withdrawal
+        );
         let observe = Operation::Observe {
             operation: c.operation,
             save: NativeSave::Cleanup,
@@ -2361,6 +2403,8 @@ mod tests {
         };
         record_observation(&root.path, &c.context, &observe, "0", 1, None).unwrap();
         da::withdraw_sources(&root.path, &withdrawal).unwrap();
+        assert!(!root.path.join(DA_WITHDRAWAL).exists());
+        enabled(&root.path, owner.0, owner.1).unwrap();
         let (reply, _rx) = tokio::sync::oneshot::channel();
         let command = Command {
             request: LocalRequest::operation(Request::PlatformSso {
@@ -2592,7 +2636,10 @@ mod tests {
         let c = coordinate();
         state::write(&root, &c.file("source").unwrap(), &c).unwrap();
         assert!(!sweep_retirement(&root, c.context.installation, None).unwrap());
-        assert_eq!(enabled(&root, c.context.installation), Err(Error::Denied));
+        assert_eq!(
+            enabled(&root, c.context.authority, c.context.installation),
+            Err(Error::Denied)
+        );
         finish_retirement(&root, &c, RemoteRetirement::Revoked).unwrap();
         assert!(!sweep_retirement(&root, c.context.installation, None).unwrap());
         state::write(

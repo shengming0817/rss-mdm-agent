@@ -254,7 +254,11 @@ fn apply(input: &Input) -> Result<Effect, Error> {
     let task = &input.task;
     if matches!(&task.action, Action::Apply{configuration,..}|Action::Create{configuration,..} if configuration.enabled)
     {
-        crate::service::platform_sso::enabled(&input.root, input.installation)?;
+        crate::service::platform_sso::enabled(
+            &input.root,
+            rss_mdm_agent_wire::platform_sso::RegistrationTrust::MdmBootstrapPop,
+            input.installation,
+        )?;
     }
     let deployment =
         crate::deployment::Deployment::metadata(&crate::deployment::Deployment::default_path()?)?;

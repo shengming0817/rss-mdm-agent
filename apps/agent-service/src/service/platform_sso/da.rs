@@ -462,6 +462,20 @@ pub(super) fn withdraw_sources(
     root: &Path,
     r: &rss_mdm_agent_wire::da::RevocationReceipt,
 ) -> Result<(), Error> {
+    if !root.try_exists()? {
+        return Ok(());
+    }
+    {
+        let _lock = state::lock(root)?;
+        match state::read_optional::<rss_mdm_agent_wire::da::RevocationReceipt>(
+            root,
+            DA_WITHDRAWAL,
+        )? {
+            Some(held) if held != *r => return Err(Error::Conflict),
+            Some(_) => (),
+            None => state::write(root, DA_WITHDRAWAL, r)?,
+        }
+    }
     if has_authority(root, w::RegistrationTrust::DaDevicePop)? {
         // Persist the exact withdrawal separately from source revocation before releasing the device key.
         let mut sources = Vec::new();
@@ -501,16 +515,16 @@ pub(super) fn withdraw_sources(
             return Err(Error::Unavailable);
         }
     }
-    if root.try_exists()? {
-        let _lock = state::lock(root)?;
-        settle_prepared(root, r.service_id, Some(r))?;
-        release_bindings(root, r.service_id, Some(r))?;
-        // The old issuer's completed withdrawal must not disable the next installation authority.
-        if state::read_optional::<Disabled>(root, "platform-sso.disabled")?
-            .is_some_and(|d| d.installation == r.service_id)
-        {
-            state::remove(root, "platform-sso.disabled")?;
-        }
+    let _lock = state::lock(root)?;
+    let held =
+        state::read_optional::<rss_mdm_agent_wire::da::RevocationReceipt>(root, DA_WITHDRAWAL)?;
+    if held.as_ref().is_some_and(|other| other != r) {
+        return Err(Error::Conflict);
+    }
+    settle_prepared(root, r.service_id, Some(r))?;
+    release_bindings(root, r.service_id, Some(r))?;
+    if held.is_some() {
+        state::remove(root, DA_WITHDRAWAL)?;
     }
     Ok(())
 }
@@ -738,7 +752,7 @@ impl Owner for Da<'_> {
         }
         let (authority, installation, tenant, device_id) = self.identity()?;
         let selected = if require_enabled {
-            enabled(&self.root, installation)?;
+            enabled(&self.root, authority, installation)?;
             Some(self.selected().await?)
         } else {
             None
@@ -827,7 +841,7 @@ mod tests {
         assert!(!root.exists());
         component_state(&d, "disable").unwrap();
         assert!(matches!(
-            enabled(&root, c.context.installation),
+            enabled(&root, c.context.authority, c.context.installation),
             Err(Error::Denied)
         ));
         state::write(&root, &c.file("source").unwrap(), &c).unwrap();
@@ -870,6 +884,46 @@ mod tests {
             configured_owner(&d).unwrap().0,
             w::RegistrationTrust::DaDevicePop
         );
+    }
+    #[test]
+    fn explicit_disable_survives_da_withdrawal_and_replay_for_the_same_instance() {
+        use crate::installation::Module;
+        let temp = crate::protocol_test_support::Root::new();
+        let mut d = crate::deployment::tests::deployment();
+        d.state_root = temp.path.join("state");
+        d.execution.material_root = temp.path.join("materials");
+        let c = super::super::tests::coordinate();
+        let r = rss_mdm_agent_wire::da::RevocationReceipt {
+            service_id: c.context.installation,
+            tenant: c.context.tenant,
+            device: c.context.device_id,
+            credential: Uuid::new_v4(),
+            operation_id: Uuid::new_v4(),
+        };
+        d.modules.mdm = Module::Disabled;
+        d.modules.da = Module::Enabled {
+            backend: da::Backend {
+                origin: "https://da.example".into(),
+                browser: None,
+                ca_pem: String::new(),
+                tenant: r.tenant,
+                instance: r.service_id,
+            },
+        };
+        component_state(&d, "disable").unwrap();
+        let root = crate::access_worker::root(&d.execution);
+        let owner = configured_owner(&d).unwrap();
+        // Administrative disable alone, then a restart with both independent records present.
+        for interrupted in [false, true] {
+            if interrupted {
+                state::write(&root, DA_WITHDRAWAL, &r).unwrap();
+            }
+            withdraw_sources(&root, &r).unwrap();
+            withdraw_sources(&root, &r).unwrap();
+            assert!(root.join("platform-sso.disabled").exists());
+            assert!(!root.join(DA_WITHDRAWAL).exists());
+            assert_eq!(enabled(&root, owner.0, owner.1), Err(Error::Denied));
+        }
     }
     #[test]
     fn device_context_refresh_is_fenced_by_logout_and_session_change() {
