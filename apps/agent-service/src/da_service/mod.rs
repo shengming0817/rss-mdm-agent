@@ -299,6 +299,55 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
         worker: Some(worker),
     }))
 }
+#[cfg(target_os = "macos")]
+fn settle_mac_request(
+    request: Request,
+    native: impl FnOnce() -> Reply,
+    mdm: impl FnOnce(Request) -> Option<Reply>,
+) -> Reply {
+    // BindContext serves both independently authorized products. A native callback has only one issuer.
+    let other = if matches!(request, Request::BindContext { .. }) {
+        mdm(request)
+    } else {
+        None
+    };
+    let result = native();
+    match other {
+        Some(bound @ Reply::ContextBound { .. }) => bound,
+        _ => result,
+    }
+}
+#[cfg(all(test, target_os = "macos"))]
+#[test]
+fn shared_login_preserves_mdm_context_and_native_rejection_never_retries_with_mdm() {
+    let id = execution_contract::Id::new("login-1").unwrap();
+    let login = Request::BindContext {
+        value: execution_ipc::host::NativeContextSession::device(id.clone()),
+        expected: None,
+    };
+    let bound = settle_mac_request(
+        login,
+        || Reply::Unavailable,
+        |_| {
+            Some(Reply::ContextBound {
+                value: execution_contract::NativeContextRef {
+                    id: id.clone(),
+                    generation: id,
+                },
+            })
+        },
+    );
+    assert!(matches!(bound, Reply::ContextBound { .. }));
+    let callback = Request::PlatformSso {
+        input: execution_ipc::platform_sso::Operation::Status {
+            scope: rss_mdm_agent_wire::platform_sso::Kind::Device,
+        },
+    };
+    assert!(matches!(
+        settle_mac_request(callback, || Reply::Rejected, |_| panic!("second issuer")),
+        Reply::Rejected
+    ));
+}
 struct Service {
     #[cfg(target_os = "macos")]
     endpoint: native::Endpoint,
@@ -357,17 +406,11 @@ impl Handler for Service {
                 .is_some_and(|worker| !worker.is_finished());
         #[cfg(target_os = "macos")]
         if let Some(pending) = self.endpoint.start(peer, &request) {
-            // A Desktop session belongs to each product independently. A platform callback has one owner.
-            let mdm = if matches!(request, Request::BindContext { .. }) {
-                self.mdm.as_mut().map(|m| m.handle(peer, request))
-            } else {
-                None
-            };
-            let native = pending.map_or_else(|reply| reply, |call| call.wait());
-            return match mdm {
-                Some(bound @ Reply::ContextBound { .. }) => bound,
-                _ => native,
-            };
+            return settle_mac_request(
+                request,
+                || pending.map_or_else(|e| e, |call| call.wait()),
+                |r| self.mdm.as_mut().map(|m| m.handle(peer, r)),
+            );
         }
         #[cfg(windows)]
         if let Some(reply) = self.login.handle(peer, &request) {
