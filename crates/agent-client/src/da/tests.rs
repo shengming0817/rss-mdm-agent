@@ -110,6 +110,58 @@ fn windows_operation(s: &mut Server, route: &str, input: &Value) -> Option<Respo
         _ => return None,
     })
 }
+fn mac_operation(
+    s: &Server,
+    route: &str,
+    uri: &Uri,
+    headers: &axum::http::HeaderMap,
+    input: &Value,
+) -> Response {
+    use rss_mdm_agent_wire::platform_sso as psso;
+    assert!(!headers.contains_key("x-rss-user-session") && !headers.contains_key("cookie"));
+    let source = s.offer.binding_id;
+    let value = match route {
+        "platform-sso/status" => {
+            assert_eq!(uri.query(), Some(format!("bindingId={source}").as_str()));
+            json!({"deviceRegistered":false,"userRegistered":false,"loginReady":false,"applicationObserved":true,"profileObserved":true,"deviceSource":null,"userSource":null,"passwordExchange":null,"hardwareAttested":false,"registrationTrust":"da_device_pop"})
+        }
+        "platform-sso/bootstrap" => json!(psso::BootstrapResponse {
+            id: source,
+            nonce: "test-nonce".into(),
+            expires_at: s.clock.now().unwrap() + 60,
+            source_id: source,
+            source_version: 1,
+            endpoints: psso::Endpoints::new("https://mac.example", s.trust.tenant).unwrap(),
+            client_id: source,
+            login_user_name: source.to_string()
+        }),
+        "platform-sso/register" => json!(psso::RegistrationReceipt {
+            registered: true,
+            source_id: source,
+            source_version: 1,
+            kind: psso::Kind::Device,
+            registration_trust: psso::RegistrationTrust::DaDevicePop,
+            hardware_attested: false
+        }),
+        _ => {
+            assert_eq!(route, format!("platform-sso/sources/{source}/revoke"));
+            assert_eq!(*input, json!({"sourceVersion":1}));
+            json!(psso::RevocationReceipt {
+                revoked: true,
+                source_id: source,
+                source_version: 2
+            })
+        }
+    };
+    (
+        [
+            ("cache-control", "no-store"),
+            ("referrer-policy", "no-referrer"),
+        ],
+        Json(value),
+    )
+        .into_response()
+}
 async fn endpoint(
     State(state): State<Arc<Mutex<Server>>>,
     ConnectInfo(peer): ConnectInfo<TlsIdentity>,
@@ -145,32 +197,7 @@ async fn endpoint(
             json!({"grant":grant,"issuanceId":s.candidate.as_ref().map(|v|v.issuance_id),"issuanceUnknown":false,"registration":s.registration})
         }
         "certificates" => return certificate_response(&mut s, &grant, tenant, input),
-        "activate" => {
-            let c = s.candidate.clone().unwrap();
-            assert_eq!(
-                peer.0.as_ref(),
-                Some(&STANDARD.decode(&c.certificate_chain[0]).unwrap())
-            );
-            assert_eq!(input["issuanceId"], c.issuance_id.to_string());
-            s.active = peer.0;
-            let r = wire::Registration {
-                service_id: SERVICE_ID,
-                tenant,
-                device: grant.device,
-                credential: Uuid::new_v4(),
-                issuance_id: c.issuance_id,
-                operation_id: serde_json::from_value(input["operationId"].clone()).unwrap(),
-            };
-            s.registration = Some(r.clone());
-            if std::mem::take(&mut s.lose_activation) {
-                return (
-                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
-                    Json(json!({"code":"activation_unknown","issuanceId":null})),
-                )
-                    .into_response();
-            }
-            json!(r)
-        }
+        "activate" => return activation_response(&mut s, &grant, tenant, peer, input),
         other => {
             assert!(s.active.is_some() && peer.0 == s.active);
             if let Some(reply) = windows_operation(&mut s, other, &input) {
@@ -187,53 +214,7 @@ async fn endpoint(
                         .into_response();
                 }
                 route if route.starts_with("platform-sso/") => {
-                    use rss_mdm_agent_wire::platform_sso as psso;
-                    assert!(
-                        !headers.contains_key("x-rss-user-session")
-                            && !headers.contains_key("cookie")
-                    );
-                    let source = s.offer.binding_id;
-                    let value = match route {
-                        "platform-sso/status" => {
-                            assert_eq!(uri.query(), Some(format!("bindingId={source}").as_str()));
-                            json!({"deviceRegistered":false,"userRegistered":false,"loginReady":false,"applicationObserved":true,"profileObserved":true,"deviceSource":null,"userSource":null,"passwordExchange":null,"hardwareAttested":false,"registrationTrust":"da_device_pop"})
-                        }
-                        "platform-sso/bootstrap" => json!(psso::BootstrapResponse {
-                            id: source,
-                            nonce: "test-nonce".into(),
-                            expires_at: s.clock.now().unwrap() + 60,
-                            source_id: source,
-                            source_version: 1,
-                            endpoints: psso::Endpoints::new("https://mac.example", tenant).unwrap(),
-                            client_id: source,
-                            login_user_name: source.to_string()
-                        }),
-                        "platform-sso/register" => json!(psso::RegistrationReceipt {
-                            registered: true,
-                            source_id: source,
-                            source_version: 1,
-                            kind: psso::Kind::Device,
-                            registration_trust: psso::RegistrationTrust::DaDevicePop,
-                            hardware_attested: false
-                        }),
-                        _ => {
-                            assert_eq!(route, format!("platform-sso/sources/{source}/revoke"));
-                            assert_eq!(input, json!({"sourceVersion":1}));
-                            json!(psso::RevocationReceipt {
-                                revoked: true,
-                                source_id: source,
-                                source_version: 2
-                            })
-                        }
-                    };
-                    return (
-                        [
-                            ("cache-control", "no-store"),
-                            ("referrer-policy", "no-referrer"),
-                        ],
-                        Json(value),
-                    )
-                        .into_response();
+                    return mac_operation(&s, route, &uri, &headers, &input);
                 }
                 "renewal-grants" => return renewal_response(&mut s, &grant, input),
                 "configuration-trust" => json!(s.trust),
@@ -279,6 +260,38 @@ async fn endpoint(
         }
     };
     Json(output).into_response()
+}
+fn activation_response(
+    s: &mut Server,
+    grant: &wire::Grant,
+    tenant: Uuid,
+    peer: TlsIdentity,
+    input: Value,
+) -> Response {
+    let c = s.candidate.clone().unwrap();
+    assert_eq!(
+        peer.0.as_ref(),
+        Some(&STANDARD.decode(&c.certificate_chain[0]).unwrap())
+    );
+    assert_eq!(input["issuanceId"], c.issuance_id.to_string());
+    s.active = peer.0;
+    let r = wire::Registration {
+        service_id: SERVICE_ID,
+        tenant,
+        device: grant.device,
+        credential: Uuid::new_v4(),
+        issuance_id: c.issuance_id,
+        operation_id: serde_json::from_value(input["operationId"].clone()).unwrap(),
+    };
+    s.registration = Some(r.clone());
+    if std::mem::take(&mut s.lose_activation) {
+        return (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"code":"activation_unknown","issuanceId":null})),
+        )
+            .into_response();
+    }
+    Json(r).into_response()
 }
 fn renewal_response(s: &mut Server, grant: &wire::Grant, input: Value) -> Response {
     let req: wire::GrantRequest = serde_json::from_value(input).unwrap();

@@ -115,9 +115,6 @@ impl Deployment {
             .validate_for(crate::installation::Assembly::CURRENT)?;
         Ok(value)
     }
-    pub(crate) fn require_mdm_assembly(&self) -> Result<(), Error> {
-        self.mdm().map(|_| ())
-    }
     pub(crate) fn mdm(&self) -> Result<&crate::installation::MdmBackend, Error> {
         self.modules.mdm.backend()
     }
