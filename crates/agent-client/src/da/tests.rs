@@ -28,6 +28,8 @@ impl Credentials for Secrets {
     }
 }
 struct Server {
+    clock: Time,
+    account_closed: bool,
     offer: wire::AccountOffer,
     account_event: Option<Value>,
     deliveries: usize,
@@ -50,6 +52,22 @@ fn account_event_response(s: &mut Server, input: Value) -> Response {
     s.deliveries += 1;
     let event: wire::AccountEvent = serde_json::from_value(input.clone()).unwrap();
     assert_eq!(event.attempt_id, s.offer.attempt_id);
+    if s.account_closed {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            Json(json!({"code":"operation_conflict"})),
+        )
+            .into_response();
+    }
+    if matches!(event.event, wire::AccountObservation::NotStarted { .. }) {
+        return Json(wire::AccountSettlement {
+            event_id: event.event_id,
+            issued_expires_at: None,
+            permit: None,
+            receipt: None,
+        })
+        .into_response();
+    }
     if let Some(old) = s.account_event.as_ref() {
         assert_eq!(old, &input);
     } else {
@@ -132,7 +150,18 @@ async fn endpoint(
             assert!(s.active.is_some() && peer.0 == s.active);
             match other {
                 "renewal-grants" => return renewal_response(&mut s, &grant, input),
+                "account-operations/next" if s.account_closed => Value::Null,
                 "account-operations/next" => json!(s.offer),
+                "device-access/recovery-uses"
+                    if input["usedAt"].as_i64().unwrap() > s.clock.now().unwrap() + 300 =>
+                {
+                    return (
+                        axum::http::StatusCode::BAD_REQUEST,
+                        Json(json!({"code":"malformed_request"})),
+                    )
+                        .into_response()
+                }
+                "device-access/recovery-uses" => json!({"accepted":true}),
                 "credential-operations/next" => Value::Null,
                 path if path == format!("account-operations/{}/events", s.offer.task_id) => {
                     return account_event_response(&mut s, input);
@@ -337,7 +366,10 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
             state: rss_mdm_agent_wire::task_trust::KeyState::Active,
         }],
     };
+    let time = Time(Arc::new(AtomicI64::new(2_000_000_000)));
     let state = Arc::new(Mutex::new(Server {
+        clock: time.clone(),
+        account_closed: false,
         offer: wire::AccountOffer {
             operation_id: Uuid::new_v4(),
             task_id: Uuid::new_v4(),
@@ -378,7 +410,6 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         .await
         .unwrap()
     });
-    let time = Time(Arc::new(AtomicI64::new(2_000_000_000)));
     let secrets = Secrets::new();
     let open = || {
         Client::open(
@@ -464,13 +495,18 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         Some(later.clone())
     );
     let prefix = format!("windows/{}", grant.device);
-    let cleanup = format!("{prefix}/account-cleanup");
-    write(
-        &client.journal.db,
-        &cleanup,
-        &(offer.task_id, offer.attempt_id),
-    )
-    .unwrap();
+    state.lock().unwrap().offer = offer.clone();
+    let ack = ops
+        .account_event(
+            &offer,
+            wire::AccountObservation::NotStarted {
+                expires_at: time.now().unwrap() - 1,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(ack.permit.is_none() && ack.issued_expires_at.is_none());
+    state.lock().unwrap().offer = later.clone();
     assert_eq!(
         ops.retire_account(|_, _| Err(Error::Storage)),
         Err(Error::Storage)
@@ -493,7 +529,40 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         )
         .unwrap();
     assert_eq!(remaining, 0);
-    assert_eq!(ops.account(None).await.unwrap(), Some(later));
+    assert_eq!(ops.account(None).await.unwrap(), Some(later.clone()));
+    state.lock().unwrap().account_closed = true;
+    assert!(matches!(
+        ops.account_event(&later, wire::AccountObservation::Received)
+            .await,
+        Err(Error::Conflict)
+    ));
+    ops.replay_account().await.unwrap();
+    assert!(ops.account(None).await.unwrap().is_none());
+    let rejection = inspect(&root.path, &backend, install, time.now().unwrap())
+        .unwrap()
+        .unwrap()
+        .rejected_account_event
+        .unwrap();
+    assert_eq!(
+        (rejection.0, rejection.1, rejection.3),
+        (later.task_id, later.attempt_id, Error::Conflict)
+    );
+    let mut usage = rss_mdm_agent_wire::runtime::AccessRecoveryUse {
+        operation_id: Uuid::new_v4(),
+        material: Uuid::new_v4(),
+        version: 1,
+        used_at: time.now().unwrap() + 301,
+    };
+    assert_eq!(
+        ops.recovery_use(&usage).await.unwrap(),
+        RecoveryUseDisposition::RetryLater
+    );
+    usage.operation_id = Uuid::new_v4();
+    usage.used_at = time.now().unwrap();
+    assert_eq!(
+        ops.recovery_use(&usage).await.unwrap(),
+        RecoveryUseDisposition::Accepted
+    );
     assert!(ops.credential().await.unwrap().is_none());
     drop(ops);
     client.start_renewal().unwrap();

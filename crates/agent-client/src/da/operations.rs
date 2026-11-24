@@ -4,6 +4,15 @@ use crate::http as h;
 use rss_mdm_agent_wire::runtime as w;
 use serde::de::DeserializeOwned;
 
+/// Device recovery-use settlement at the fixed DA listener.
+#[derive(Debug, PartialEq, Eq)]
+pub enum RecoveryUseDisposition {
+    /// Original event was accepted.
+    Accepted,
+    /// The listener rejected this item as malformed, including device time ahead of the server.
+    RetryLater,
+}
+
 /// An mTLS session bound to the current registration and its single writer.
 pub struct Operations<'a> {
     http: reqwest::Client,
@@ -134,15 +143,24 @@ impl Operations<'_> {
         &self.registration
     }
 
+    async fn request<E: Endpoint>(
+        &self,
+        params: &[&str],
+        input: Option<&E::Input>,
+    ) -> Result<reqwest::Response, Error> {
+        Call::<E>::new(&self.http, self.origin, params, None, input)?
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await
+    }
     async fn send<E: Endpoint>(
         &self,
         params: &[&str],
         input: Option<&E::Input>,
     ) -> Result<E::Output, Error> {
-        let response = Call::<E>::new(&self.http, self.origin, params, None, input)?
-            .timeout(Duration::from_secs(5))
-            .send()
-            .await?;
+        Self::decode(self.request::<E>(params, input).await?).await
+    }
+    async fn decode<T: DeserializeOwned>(response: reqwest::Response) -> Result<T, Error> {
         if !response.status().is_success() {
             return Err(match response.status().as_u16() {
                 401 => Error::Identity,
@@ -174,10 +192,9 @@ impl Operations<'_> {
             Err(reason @ (Error::Denied | Error::Conflict | Error::NotFound)) => {
                 // Keep the original rejected event. A withdrawn attempt must not starve cleanup.
                 let tx = self.db.unchecked_transaction()?;
-                let digest = crate::store::hash(&crate::store::encode(event)?);
                 write(
                     &tx,
-                    &self.key(&format!("rejected/{key}/{digest}")),
+                    &self.key(&format!("last-rejected-{key}")),
                     &(event, reason),
                 )?;
                 tx.execute("DELETE FROM state WHERE name=?1", [self.key(key)])?;
@@ -291,7 +308,10 @@ impl Operations<'_> {
                     effect: w::AccessEffect::Applied { .. } | w::AccessEffect::Unbound { .. },
                     ..
                 })
-        ) {
+        ) || matches!(body.event, wire::AccountObservation::NotStarted { .. })
+            && ack.permit.is_none()
+            && ack.issued_expires_at.is_none()
+        {
             write(
                 &tx,
                 &self.key("last-account-settlement"),
@@ -310,23 +330,24 @@ impl Operations<'_> {
     pub async fn replay_account(&self) -> Result<(), Error> {
         if let Some((task, body)) = self.load::<(Uuid, wire::AccountEvent)>("account-pending")? {
             let result = self.send_account(task, &body).await;
-            if matches!(
-                result,
-                Err(Error::Denied | Error::Conflict | Error::NotFound)
-            ) {
-                let tx = self.db.unchecked_transaction()?;
-                let key = self.key(&format!("offer/{task}/{}", body.attempt_id));
-                if let Some(o) = read::<wire::AccountOffer>(&tx, &key)? {
+            match result {
+                Ok(_) => (),
+                Err(reason @ (Error::NotFound | Error::Conflict | Error::Denied)) => {
+                    let tx = self.db.unchecked_transaction()?;
                     write(
                         &tx,
-                        &self.key(&format!("withdrawn/{task}/{}", body.attempt_id)),
-                        &o,
+                        &self.key("last-rejected-account"),
+                        &(task, body.attempt_id, body.event_id, reason),
                     )?;
-                    tx.execute("DELETE FROM state WHERE name=?1", [key])?;
+                    self.forget_account(&tx, task, body.attempt_id)?;
+                    tx.execute(
+                        "DELETE FROM state WHERE name=?1",
+                        [self.key("account-pending")],
+                    )?;
+                    tx.commit()?;
                 }
-                tx.commit()?;
+                Err(e) => return Err(e),
             }
-            self.finish_replay("account-pending", &(task, &body), result)?;
         }
         Ok(())
     }
@@ -431,6 +452,22 @@ impl Operations<'_> {
         }
         Ok(())
     }
+    fn forget_account(
+        &self,
+        tx: &rusqlite::Transaction<'_>,
+        id: Uuid,
+        attempt: Uuid,
+    ) -> Result<(), Error> {
+        tx.execute(
+            "DELETE FROM state WHERE name=?1 OR name GLOB ?2 OR name GLOB ?3",
+            rusqlite::params![
+                self.key(&format!("offer/{id}/{attempt}")),
+                self.key(&format!("event/{id}/{attempt}/*")),
+                self.key(&format!("account-receipt/{id}/{attempt}/*"))
+            ],
+        )?;
+        Ok(())
+    }
     /// Resume local retirement only from a durably accepted original event.
     pub fn retire_account(
         &self,
@@ -440,15 +477,8 @@ impl Operations<'_> {
         if let Some((id, attempt)) = read(self.db, &key)? {
             clean(id, attempt)?;
             let tx = self.db.unchecked_transaction()?;
-            tx.execute(
-                "DELETE FROM state WHERE name IN (?1,?2) OR name GLOB ?3 OR name GLOB ?4",
-                rusqlite::params![
-                    key,
-                    self.key(&format!("offer/{id}/{attempt}")),
-                    self.key(&format!("event/{id}/{attempt}/*")),
-                    self.key(&format!("account-receipt/{id}/{attempt}/*"))
-                ],
-            )?;
+            self.forget_account(&tx, id, attempt)?;
+            tx.execute("DELETE FROM state WHERE name=?1", [key])?;
             tx.commit()?;
         }
         Ok(())
@@ -479,16 +509,26 @@ impl Operations<'_> {
         self.save("last-rejected-use", &(id, reason))
     }
     /// Acknowledge one original, durably recorded offline use.
-    pub async fn recovery_use(&self, usage: &w::AccessRecoveryUse) -> Result<(), Error> {
+    pub async fn recovery_use(
+        &self,
+        usage: &w::AccessRecoveryUse,
+    ) -> Result<RecoveryUseDisposition, Error> {
         usage.validate()?;
-        if !self
-            .send::<h::DaAccessUse>(&[], Some(usage))
-            .await?
-            .accepted
-        {
+        let response = self.request::<h::DaAccessUse>(&[], Some(usage)).await?;
+        if response.status() == reqwest::StatusCode::BAD_REQUEST {
+            let refusal: w::ErrorBody =
+                crate::store::decode(&crate::client::bounded(response, 4096).await?)?;
+            return if refusal.code == w::ErrorCode::MalformedRequest {
+                Ok(RecoveryUseDisposition::RetryLater)
+            } else {
+                Err(Error::Protocol)
+            };
+        }
+        let accepted: h::RecoveryUseAck = Self::decode(response).await?;
+        if !accepted.accepted {
             return Err(Error::Protocol);
         }
-        Ok(())
+        Ok(RecoveryUseDisposition::Accepted)
     }
 }
 

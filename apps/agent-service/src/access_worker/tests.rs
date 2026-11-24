@@ -887,9 +887,16 @@ fn da_creation_recovery_uses_exact_local_evidence() {
     store.stage(da_key, &candidate, &native).unwrap();
     input.task.expires_at = (crate::wall().unwrap() / 1000) as i64 - 1;
     input.task.deadline = input.task.expires_at;
+    assert!(matches!(
+        engine::execute(&input, &mut native),
+        Err(Error::Expired)
+    ));
     assert_eq!(
-        engine::execute(&input, &mut native).unwrap().effect,
-        w::AccessEffect::Unknown
+        engine::publish_creation(&input, &marker, || {
+            assert!(state::read_optional::<engine::Creation>(root, &marker)?.is_some());
+            Err(Error::Expired)
+        }),
+        Err(Error::Expired)
     );
     assert_eq!(native.creates, 0);
     assert!(needs_create_input(root, &input.task).unwrap());

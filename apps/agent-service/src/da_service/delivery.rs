@@ -39,19 +39,35 @@ pub(super) async fn drive(
         .map_err(|_| Error::Identity)?;
     let account = account(d, &ops, &root, login, enable).await;
     let credentials = credentials(d, &ops).await;
-    for usage in store.recovery_uses(&owner).map_err(|_| Error::Storage)? {
-        if let Err(error) = ops.recovery_use(&usage).await {
-            let reason = match error {
-                Error::Conflict => "conflict",
-                Error::NotFound => "not_found",
-                Error::Denied => "denied",
-                e => return Err(e),
-            };
-            ops.rejected_use(usage.operation_id, error)?;
-            store
-                .reject_recovery_use(&owner, usage.operation_id, reason)
-                .map_err(|_| Error::Storage)?;
-            continue;
+    let sampled = now()?;
+    for usage in store
+        .recovery_uses(&owner, sampled)
+        .map_err(|_| Error::Storage)?
+    {
+        match ops.recovery_use(&usage).await {
+            Ok(da::RecoveryUseDisposition::Accepted) => (),
+            Ok(da::RecoveryUseDisposition::RetryLater) => {
+                let retry = sampled
+                    .saturating_add(300)
+                    .max(usage.used_at.saturating_sub(299));
+                store
+                    .defer_recovery_use(&owner, usage.operation_id, retry)
+                    .map_err(|_| Error::Storage)?;
+                continue;
+            }
+            Err(error) => {
+                let reason = match error {
+                    Error::Conflict => "conflict",
+                    Error::NotFound => "not_found",
+                    Error::Denied => "denied",
+                    e => return Err(e),
+                };
+                ops.rejected_use(usage.operation_id, error)?;
+                store
+                    .reject_recovery_use(&owner, usage.operation_id, reason)
+                    .map_err(|_| Error::Storage)?;
+                continue;
+            }
         }
         store
             .acknowledge_recovery_use(&owner, usage.operation_id)
@@ -100,6 +116,9 @@ async fn account(
     };
     let Some(t) = ack.permit else {
         login.withdraw(o.task_id, o.attempt_id)?;
+        if attempt.renew_from.is_some() && ack.issued_expires_at.is_none() {
+            return Ok(());
+        }
         if let Some(old) = &attempt.permit {
             if let Some(p) = access::prepared(root, old)? {
                 ops.account_event(&o, Observation::Prepared(p)).await?;

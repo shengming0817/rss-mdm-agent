@@ -654,7 +654,10 @@ impl<S: IdentityProvider> DeviceService<S> {
                 tenant: self.client.configuration().tenant,
                 device: self.client.registration()?.device_id,
             };
-            for usage in offline.recovery_uses(&owner).map_err(|_| Error::Storage)? {
+            for usage in offline
+                .recovery_uses(&owner, (crate::wall()? / 1000) as i64)
+                .map_err(|_| Error::Storage)?
+            {
                 network(
                     self.client.access_recovery_use(&usage),
                     &mut self.core,

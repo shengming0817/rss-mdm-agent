@@ -236,8 +236,8 @@ pub struct EmployeePortal {
     pub instance: Uuid,
     /// Tenant at this issuer.
     pub tenant: Uuid,
-    /// Standalone installations use DA operation grants for product authorization.
-    pub standalone: bool,
+    /// The selected portal authenticates employees for DA operation grants.
+    pub da_session: bool,
 }
 impl EmployeePortal {
     /// Both images read the same effective administrator-protected deployment. The package
@@ -269,17 +269,34 @@ impl EmployeePortal {
             "enabled" => false,
             _ => return None,
         };
-        let default;
+        let default = packaged.and_then(|d| serde_json::from_str::<serde_json::Value>(d).ok());
         let browser = if let Some(value) = backend.get("browser").filter(|b| !b.is_null()) {
             value
         } else {
-            default = serde_json::from_str::<serde_json::Value>(packaged?).ok()?;
+            let default = default.as_ref()?;
             if serde_json::from_value::<Uuid>(default["tenant"].clone()).ok()? != tenant {
                 return None;
             }
-            &default
+            default
         };
-        let mut url = url::Url::parse(browser["origin"].as_str()?).ok()?;
+        let origin = Self::origin(browser["origin"].as_str()?)?;
+        let shared_mdm =
+            serde_json::from_value::<Uuid>(modules["mdm"]["backend"]["tenant"].clone()).ok()
+                == Some(tenant)
+                && default.as_ref().is_some_and(|mdm| {
+                    serde_json::from_value::<Uuid>(mdm["tenant"].clone()).ok() == Some(tenant)
+                        && mdm["origin"].as_str().and_then(Self::origin).as_ref() == Some(&origin)
+                });
+        Some(Self {
+            origin,
+            instance,
+            tenant,
+            ca_pem: browser["ca_pem"].as_str().map(String::from),
+            da_session: standalone || !shared_mdm,
+        })
+    }
+    fn origin(raw: &str) -> Option<String> {
+        let mut url = url::Url::parse(raw).ok()?;
         if url.scheme() != "https"
             || !url.username().is_empty()
             || url.password().is_some()
@@ -293,13 +310,7 @@ impl EmployeePortal {
             let host = host.trim_end_matches('.').to_owned();
             url.set_host(Some(&host)).ok()?;
         }
-        Some(Self {
-            origin: url.origin().ascii_serialization(),
-            instance,
-            tenant,
-            ca_pem: browser["ca_pem"].as_str().map(String::from),
-            standalone,
-        })
+        Some(url.origin().ascii_serialization())
     }
 }
 
@@ -314,18 +325,28 @@ mod portal_tests {
         let mut deployment = json!({"version":crate::host::DEPLOYMENT_VERSION,"ipc_version":crate::host::IPC_VERSION,"modules":{"mdm":{"state":"disabled"},"da":{"state":"enabled","backend":{"tenant":tenant,"instance":instance}}}});
         let default = json!({"tenant":tenant,"origin":"https://Example.test./"}).to_string();
         let p = EmployeePortal::resolve(&deployment, Some(&default)).unwrap();
-        assert!(p.standalone);
+        assert!(p.da_session);
         assert_eq!(p.origin, "https://example.test");
         assert_eq!(p.instance, instance);
         let foreign = json!({"tenant":Uuid::new_v4(),"origin":"https://other.test"}).to_string();
         assert!(EmployeePortal::resolve(&deployment, Some(&foreign)).is_none());
-        deployment["modules"]["mdm"]["state"] = json!("enabled");
+        let mdm_instance = Uuid::new_v4();
+        deployment["modules"]["mdm"] =
+            json!({"state":"enabled","backend":{"instance":mdm_instance,"tenant":tenant}});
         deployment["modules"]["da"]["backend"]["browser"] =
             json!({"origin":"https://profile.test","ca_pem":"test CA"});
         let p = EmployeePortal::resolve(&deployment, Some(&foreign)).unwrap();
-        assert!(!p.standalone);
+        assert!(p.da_session);
         assert_eq!(p.origin, "https://profile.test");
+        assert_eq!(p.instance, instance);
+        assert_ne!(p.instance, mdm_instance);
         assert_eq!(p.ca_pem.as_deref(), Some("test CA"));
+        deployment["modules"]["da"]["backend"]["browser"]["origin"] = json!("https://EXAMPLE.test");
+        assert!(
+            !EmployeePortal::resolve(&deployment, Some(&default))
+                .unwrap()
+                .da_session
+        );
         deployment["modules"]["da"]["state"] = json!("disabled");
         assert!(EmployeePortal::resolve(&deployment, Some(&default)).is_none());
     }

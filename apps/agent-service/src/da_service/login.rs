@@ -473,10 +473,6 @@ impl Login {
                 value: Response::Tasks { tasks: vec![] },
             }));
         }
-        // In a dual deployment MDM already provides the installation-wide native status.
-        if matches!(input, Operation::WindowsStatus {}) && self.deployment.modules.mdm.enabled() {
-            return Ok(None);
-        }
         if !self.checked(&mut s, &e)? {
             return Ok(Some(Reply::DaVerificationPending {}));
         }
@@ -485,21 +481,15 @@ impl Login {
         }
         let root = crate::access_worker::root(&self.deployment.execution);
         let installation = self.deployment.installation_id;
-        use execution_ipc::device_access::{WindowsComponentState, WindowsStatus};
-        let component = crate::access_component::readiness(&root, installation)
-            .unwrap_or(WindowsComponentState::Unavailable);
-        if matches!(input, Operation::WindowsStatus {})
-            || target.is_some() && !matches!(component, WindowsComponentState::Ready)
-        {
-            let status = WindowsStatus {
-                component,
-                factor_active: self.store().ok().and_then(|s| s.enabled(subject).ok()),
-                sign_in_required: false,
-                hello: crate::access_worker::windows::hello::status(&root, installation, subject),
-            };
-            return Ok(Some(Reply::DeviceAccess {
-                value: Response::WindowsStatus(status),
-            }));
+        if matches!(input, Operation::WindowsStatus {}) || target.is_some() {
+            let status = crate::access_component::status(&root, installation, subject)?;
+            if matches!(input, Operation::WindowsStatus {})
+                || status.component != execution_ipc::device_access::WindowsComponentState::Ready
+            {
+                return Ok(Some(Reply::DeviceAccess {
+                    value: Response::WindowsStatus(status),
+                }));
+            }
         }
         let value = match input {
             Operation::Tasks {} => Response::Tasks {

@@ -68,7 +68,7 @@ impl Backend {
 mod configuration;
 mod operations;
 mod registration;
-pub use operations::{verify_employee, Operations};
+pub use operations::{verify_employee, Operations, RecoveryUseDisposition};
 pub use registration::validate_keys;
 mod storage;
 use crate::{
@@ -130,6 +130,8 @@ pub struct Status {
     pub account_settlement: Option<(Uuid, Uuid, wire::AccountSettlement)>,
     /// Latest confirmed recovery operation and attempt with its original settlement.
     pub credential_settlement: Option<(Uuid, Uuid, wire::CredentialSettlement)>,
+    /// Last rejected account event and its exact attempt.
+    pub rejected_account_event: Option<(Uuid, Uuid, Uuid, Error)>,
     /// Last definitively rejected offline use for this registration.
     pub rejected_recovery_use: Option<(Uuid, Error)>,
 }
@@ -164,6 +166,10 @@ pub fn inspect(
             .transpose()?
             .flatten(),
         credential_settlement: windows_key("last-credential-settlement")
+            .map(|k| read(&c, &k))
+            .transpose()?
+            .flatten(),
+        rejected_account_event: windows_key("last-rejected-account")
             .map(|k| read(&c, &k))
             .transpose()?
             .flatten(),

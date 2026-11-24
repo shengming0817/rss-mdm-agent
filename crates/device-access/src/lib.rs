@@ -769,14 +769,30 @@ impl Store {
         tx.commit()?;
         Ok(decision)
     }
-    pub fn recovery_uses(&self, owner: &Registration) -> Result<Vec<AccessRecoveryUse>, Error> {
+    pub fn recovery_uses(
+        &self,
+        owner: &Registration,
+        now: i64,
+    ) -> Result<Vec<AccessRecoveryUse>, Error> {
         self.check_files()?;
         let mut query = self
             .conn
-            .prepare("SELECT body FROM recovery_uses WHERE owner=?1 AND rejection IS NULL ORDER BY rowid LIMIT 128")?;
-        let rows = query.query_map([encode(owner)?], |r| r.get::<_, Vec<u8>>(0))?;
+            .prepare("SELECT body FROM recovery_uses WHERE owner=?1 AND rejection IS NULL AND retry_after<=?2 ORDER BY rowid LIMIT 128")?;
+        let rows = query.query_map(params![encode(owner)?, now], |r| r.get::<_, Vec<u8>>(0))?;
         rows.map(|r| serde_json::from_slice(&r?).map_err(|_| Error::Invalid))
             .collect()
+    }
+    /// Defer only this original operation after a per-item HTTP refusal.
+    pub fn defer_recovery_use(
+        &mut self,
+        owner: &Registration,
+        id: Uuid,
+        retry_after: i64,
+    ) -> Result<(), Error> {
+        self.check_files()?;
+        self.conn.execute("UPDATE recovery_uses SET retry_after=?3 WHERE owner=?1 AND id=?2 AND rejection IS NULL",
+            params![encode(owner)?,id.to_string(),retry_after])?;
+        Ok(())
     }
     /// Preserve a permanently rejected use for diagnostics, independently of delivery of other rows.
     pub fn reject_recovery_use(

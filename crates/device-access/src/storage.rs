@@ -6,7 +6,7 @@ CREATE TABLE revoked(owner BLOB NOT NULL,binding TEXT NOT NULL,generation INTEGE
 CREATE TABLE candidates(id BLOB PRIMARY KEY,body BLOB NOT NULL,owner BLOB NOT NULL);
 CREATE TABLE bindings(sid TEXT PRIMARY KEY,body BLOB NOT NULL);
 CREATE TABLE hello_bindings(sid TEXT PRIMARY KEY,body BLOB NOT NULL);
-CREATE TABLE recovery_uses(id TEXT PRIMARY KEY,owner BLOB NOT NULL,body BLOB NOT NULL,rejection TEXT);
+CREATE TABLE recovery_uses(id TEXT PRIMARY KEY,owner BLOB NOT NULL,body BLOB NOT NULL,rejection TEXT,retry_after INTEGER NOT NULL DEFAULT 0);
 PRAGMA application_id=1380204865; PRAGMA user_version=4;";
 pub(super) fn open(root: &Path, installation: Uuid, create: bool) -> Result<Store, Error> {
     if installation.is_nil() || !platform_private_storage::is_canonical_path(root)? {

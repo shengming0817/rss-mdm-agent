@@ -208,6 +208,31 @@ pub(crate) fn readiness(root: &Path, installation: uuid::Uuid) -> Result<Compone
     )
 }
 
+pub(crate) fn status(
+    root: &Path,
+    installation: uuid::Uuid,
+    subject: &str,
+) -> Result<execution_ipc::device_access::WindowsStatus, Error> {
+    use execution_ipc::device_access::{WindowsComponentState, WindowsStatus};
+    let mut status = WindowsStatus {
+        component: readiness(root, installation).unwrap_or(WindowsComponentState::Unavailable),
+        factor_active: None,
+        sign_in_required: false,
+        hello: crate::access_worker::windows::hello::status(root, installation, subject),
+    };
+    if let Ok(mut store) = device_access::Store::open(root, installation) {
+        status.factor_active = store.enabled(subject).ok();
+        let native =
+            device_access::windows::account::inspect(subject).map_err(|_| Error::Identity)?;
+        if let Some(logon) = native.logon_millis {
+            status.sign_in_required = store
+                .require_join_session(&native.join, logon, crate::wall()? as i64)
+                .is_err();
+        }
+    }
+    Ok(status)
+}
+
 pub(crate) fn remove_for(deployment: &crate::deployment::Deployment) -> Result<(), Error> {
     if !exists(CONFIG_KEY)? {
         return Ok(());

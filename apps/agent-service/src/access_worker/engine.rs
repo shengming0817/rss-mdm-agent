@@ -63,6 +63,9 @@ pub(super) fn execute_locked(
     let outcome = apply(input, native);
     let result = match outcome {
         Ok(effect) => report(task, effect),
+        Err(Error::Expired) if input.channel == device_access::Channel::Da => {
+            return Err(Error::Expired)
+        }
         Err(_) => report(task, Effect::Unknown),
     };
     // An uncertain account or escrow operation remains recoverable; never freeze Unknown as Applied.
@@ -77,6 +80,28 @@ fn require_window(input: &Input) -> Result<(), Error> {
         if input.task.expires_at <= now || input.task.deadline <= now {
             return Err(Error::Expired);
         }
+    }
+    Ok(())
+}
+/// The exclusive worker lock spans this publication and the following native call.
+pub(super) fn publish_creation(
+    input: &Input,
+    marker: &str,
+    check: impl FnOnce() -> Result<(), Error>,
+) -> Result<(), Error> {
+    state::write(
+        &input.root,
+        marker,
+        &Creation {
+            task: input.task.clone(),
+            sid: None,
+        },
+    )?;
+    if let Err(error) = check() {
+        // We are still on the pre-dispatch side. Removing the intent is a durable
+        // proof for renewal. A process interruption leaves the normal uncertain intent.
+        state::remove(&input.root, marker)?;
+        return Err(error);
     }
     Ok(())
 }
@@ -161,15 +186,7 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
                 None => {
                     require_window(input)?;
                     let password = native.password()?;
-                    state::write(
-                        &input.root,
-                        &marker,
-                        &Creation {
-                            task: task.clone(),
-                            sid: None,
-                        },
-                    )?;
-                    require_window(input)?;
+                    publish_creation(input, &marker, || require_window(input))?;
                     let sid = match native.create(account_name, &password) {
                         Ok(sid) => sid,
                         Err(Failure::NativeFailure) => return Err(Error::Unavailable),

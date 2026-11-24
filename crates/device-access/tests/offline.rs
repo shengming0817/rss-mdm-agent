@@ -204,7 +204,9 @@ fn recovery_is_repeatable_and_independent_of_wall_clock_rollback() {
             Decision::Accepted
         );
     }
-    let uses = store.recovery_uses(&f.authority.registration()).unwrap();
+    let uses = store
+        .recovery_uses(&f.authority.registration(), f.clock.utc)
+        .unwrap();
     assert_eq!(uses.len(), 2);
     assert_ne!(uses[0].operation_id, uses[1].operation_id);
     assert!(uses
@@ -212,15 +214,34 @@ fn recovery_is_repeatable_and_independent_of_wall_clock_rollback() {
         .all(|u| u.material == facts.recovery.material && u.version == 1));
     let owner = f.authority.registration();
     store
+        .defer_recovery_use(&owner, uses[0].operation_id, f.clock.utc + 300)
+        .unwrap();
+    let due = store.recovery_uses(&owner, f.clock.utc).unwrap();
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].operation_id, uses[1].operation_id);
+    drop(store);
+    let mut store = Store::open(&f.root, f.id).unwrap();
+    assert_eq!(
+        store
+            .recovery_uses(&owner, f.clock.utc + 299)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        store.recovery_uses(&owner, f.clock.utc + 300).unwrap()[0].operation_id,
+        uses[0].operation_id
+    );
+    store
         .reject_recovery_use(&owner, uses[0].operation_id, "conflict")
         .unwrap();
-    let pending = store.recovery_uses(&owner).unwrap();
+    let pending = store.recovery_uses(&owner, f.clock.utc).unwrap();
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0].operation_id, uses[1].operation_id);
     store
         .acknowledge_recovery_use(&owner, uses[1].operation_id)
         .unwrap();
-    assert!(store.recovery_uses(&owner).unwrap().is_empty());
+    assert!(store.recovery_uses(&owner, f.clock.utc).unwrap().is_empty());
     let db = rusqlite::Connection::open(f.root.join("device-access.sqlite")).unwrap();
     let reason: String = db
         .query_row(
@@ -865,14 +886,20 @@ fn a_second_channel_cannot_replace_a_live_sid_or_retire_its_registration() {
             .unwrap(),
         Decision::Accepted
     );
-    let event = store.recovery_uses(&f.authority.registration()).unwrap()[0].operation_id;
+    let event = store
+        .recovery_uses(&f.authority.registration(), f.clock.utc)
+        .unwrap()[0]
+        .operation_id;
     store
         .acknowledge_recovery_use(&da.registration(), event)
         .unwrap();
-    assert!(store.recovery_uses(&da.registration()).unwrap().is_empty());
+    assert!(store
+        .recovery_uses(&da.registration(), f.clock.utc)
+        .unwrap()
+        .is_empty());
     assert_eq!(
         store
-            .recovery_uses(&f.authority.registration())
+            .recovery_uses(&f.authority.registration(), f.clock.utc)
             .unwrap()
             .len(),
         1
