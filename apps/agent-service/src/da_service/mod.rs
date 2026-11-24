@@ -461,11 +461,16 @@ impl Service {
             move || pending.map_or_else(|e| e, |call| call.wait()),
             |r| {
                 let mdm = self.mdm.as_mut()?;
+                let generation = match &r {
+                    Request::BindContext { value, .. } => Some(value.generation.clone()),
+                    _ => None,
+                };
                 let bytes = execution_ipc::host::encode(r.clone()).ok()?;
-                Some(mdm.deferred_reply(peer, &bytes).unwrap_or_else(|| {
+                let wait = mdm.deferred_reply(peer, &bytes).unwrap_or_else(|| {
                     let immediate = mdm.handle(peer, r);
                     Box::new(move || immediate)
-                }))
+                });
+                Some(self.endpoint.track_mdm(generation, wait))
             },
         ))
     }

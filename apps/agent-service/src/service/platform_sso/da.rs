@@ -36,29 +36,46 @@ pub(super) fn mdm_assigned(d: &Deployment) -> Result<bool, Error> {
 
 type Client = da::Client<DeviceSecrets, SystemClock>;
 
-/// Logout fences a directory lookup even while its HTTPS response is outstanding.
+/// Query both issuers for a DA employee accepted by either verified session owner.
+/// Pending or rejected requests have no route of their own.
 #[derive(Default)]
 struct AccountRoutes {
-    active: Option<execution_contract::Id>,
-    candidate: Option<execution_contract::Id>,
+    da: Option<execution_contract::Id>,
+    mdm: Option<(u64, execution_contract::Id)>,
+    issued: u64,
 }
 impl AccountRoutes {
     fn targets(&self, generation: &execution_contract::Id) -> bool {
-        self.active.as_ref() == Some(generation) || self.candidate.as_ref() == Some(generation)
+        self.da.as_ref() == Some(generation)
+            || self.mdm.as_ref().is_some_and(|(_, g)| g == generation)
     }
-    fn proposed(&mut self, generation: &execution_contract::Id) {
-        if self.active.as_ref() != Some(generation) {
-            self.candidate = Some(generation.clone());
-        }
+    fn reserve(&mut self) -> Result<u64, Error> {
+        self.issued = self.issued.checked_add(1).ok_or(Error::Capacity)?;
+        Ok(self.issued)
     }
-    fn commit(&mut self, generation: &execution_contract::Id) {
-        self.active = Some(generation.clone());
-        if self.candidate.as_ref() == Some(generation) {
-            self.candidate = None;
+    fn mdm_reply(
+        &mut self,
+        order: u64,
+        generation: &execution_contract::Id,
+        reply: &Reply,
+    ) -> Result<(), Error> {
+        if let Reply::ContextBound { value } = reply {
+            if &value.generation != generation {
+                return Err(Error::Identity);
+            }
+            if self
+                .mdm
+                .as_ref()
+                .is_none_or(|(accepted, _)| order > *accepted)
+            {
+                self.mdm = Some((order, generation.clone()));
+            }
         }
+        Ok(())
     }
 }
 
+/// Logout fences a directory lookup even while its HTTPS response is outstanding.
 pub(crate) struct Fence {
     policy: PeerPolicy,
     epoch: Arc<Mutex<u64>>,
@@ -241,6 +258,37 @@ impl Endpoint {
         }
         Ok(configured_owner(d)?.0 == w::RegistrationTrust::MdmBootstrapPop)
     }
+    pub fn track_mdm(
+        &self,
+        generation: Option<execution_contract::Id>,
+        wait: execution_ipc::host::DeferredReply,
+    ) -> execution_ipc::host::DeferredReply {
+        let Some(generation) = generation else {
+            return wait;
+        };
+        let fence = self.fence.clone();
+        let Ok(order) = fence
+            .routes
+            .lock()
+            .map_err(|_| Error::Unavailable)
+            .and_then(|mut routes| routes.reserve())
+        else {
+            return Box::new(|| Reply::Unavailable);
+        };
+        Box::new(move || {
+            let reply = wait();
+            let published = fence
+                .routes
+                .lock()
+                .map_err(|_| Error::Unavailable)
+                .and_then(|mut routes| routes.mdm_reply(order, &generation, &reply));
+            if published.is_err() {
+                Reply::Unavailable
+            } else {
+                reply
+            }
+        })
+    }
     pub fn start(&self, peer: &Peer, request: &Request) -> Option<Result<Pending, Reply>> {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(4);
         let d = &self.deployment;
@@ -300,18 +348,18 @@ impl Endpoint {
         let (Some(subject), Ok(binding)) = (subject, peer.session_binding()) else {
             return Some(Err(Reply::Rejected));
         };
-        if d.modules.mdm.enabled() {
-            let Ok(mut routes) = self.fence.routes.lock() else {
-                return Some(Err(Reply::Unavailable));
-            };
-            match request {
-                Request::BindContext { value, .. } => routes.proposed(&value.generation),
-                Request::DeviceAccess {
-                    context,
-                    input: AccountOp::Tasks {},
-                    ..
-                } if !routes.targets(&context.generation) => return None,
-                _ => (),
+        if let Request::DeviceAccess {
+            context,
+            input: AccountOp::Tasks {},
+            ..
+        } = request
+        {
+            if d.modules.mdm.enabled() {
+                match self.fence.routes.lock() {
+                    Ok(routes) if !routes.targets(&context.generation) => return None,
+                    Err(_) => return Some(Err(Reply::Unavailable)),
+                    _ => (),
+                }
             }
         }
         let Ok(epoch) = self.fence.epoch.lock().map(|g| *g) else {
@@ -480,11 +528,8 @@ impl Worker {
                             expires,
                         });
                     }
-                    self.fence
-                        .routes
-                        .lock()
-                        .map_err(|_| Error::Unavailable)?
-                        .commit(&value.generation);
+                    self.fence.routes.lock().map_err(|_| Error::Unavailable)?.da =
+                        Some(value.generation.clone());
                     Ok(Reply::ContextBound {
                         value: execution_contract::NativeContextRef {
                             id: value.generation.clone(),
@@ -1125,18 +1170,33 @@ mod tests {
         }
     }
     #[test]
-    fn rejected_candidate_keeps_the_committed_mixed_route() {
+    fn rejected_and_late_refreshes_preserve_mdm_confirmed_da_recovery_route() {
         let mut routes = AccountRoutes::default();
-        let a = execution_contract::Id::new("active").unwrap();
-        let b = execution_contract::Id::new("other").unwrap();
-        routes.commit(&a);
-        routes.proposed(&b);
-        assert!(routes.targets(&a));
-        assert!(routes.targets(&b));
-        routes.commit(&b);
-        assert!(!routes.targets(&a));
-        assert!(routes.targets(&b));
+        let old = execution_contract::Id::new("previous").unwrap();
+        let current = execution_contract::Id::new("mdm-active-da-recovering").unwrap();
+        let bound = |generation: &execution_contract::Id| Reply::ContextBound {
+            value: execution_contract::NativeContextRef {
+                id: generation.clone(),
+                generation: generation.clone(),
+            },
+        };
+        let delayed = routes.reserve().unwrap();
+        let accepted = routes.reserve().unwrap();
+        assert!(!routes.targets(&current));
+        routes
+            .mdm_reply(accepted, &current, &bound(&current))
+            .unwrap();
+        let rejected = routes.reserve().unwrap();
+        routes.mdm_reply(rejected, &old, &Reply::Rejected).unwrap();
+        routes.mdm_reply(delayed, &old, &bound(&old)).unwrap();
+        assert!(routes.targets(&current));
+        assert!(!routes.targets(&old));
+        assert!(routes.mdm_reply(rejected, &old, &bound(&current)).is_err());
+        assert!(routes.targets(&current));
+        routes.da = Some(old.clone());
+        assert!(routes.targets(&current) && routes.targets(&old));
     }
+
     #[test]
     fn device_context_refresh_is_fenced_by_logout_and_session_change() {
         let id = execution_contract::Id::new("generation").unwrap();
