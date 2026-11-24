@@ -156,6 +156,9 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
         if apply::status(&opts.config()?, id)? {
             return Ok(());
         }
+        #[cfg(target_os = "macos")]
+        return platform::operation_status(&opts.config()?, id);
+        #[cfg(not(target_os = "macos"))]
         return platform::operation_status(id);
     }
     if action == "validate-trust" {
@@ -498,13 +501,14 @@ pub(super) fn preflight_refresh(
     preserved(old, next)?;
     #[cfg(target_os = "macos")]
     if old.modules.mdm.enabled() || old.platform_sso.is_some() {
-        if old.modules.mdm.enabled()
-            && next.modules.mdm.enabled()
+        if (old.modules.mdm.enabled() && next.modules.mdm.enabled()
+            || old.modules.da.enabled() && next.modules.da.enabled())
             && old.platform_sso.is_some()
             && next.platform_sso.is_none()
         {
             return Err(Error::Configuration);
         }
+        crate::service::platform_sso::preflight_owner_change(old, next)?;
         crate::service::platform_sso::upgrade_preflight(old, next.platform_sso.is_some())?;
     }
     if old.service.path.exists() {
@@ -906,7 +910,12 @@ fn apply_msi_package(candidate_path: &Path, config: &Path) -> Result<(), Error> 
     }
     let profile = match &old {
         Some(d) => LocalAccess::from_deployment(d),
-        None => initial_profile(candidate.defaults.mdm.enabled())?,
+        None => initial_profile(
+            candidate.defaults.mdm.enabled()
+                || (cfg!(target_os = "macos")
+                    && candidate.defaults.da.enabled()
+                    && candidate.platform_sso.is_some()),
+        )?,
     };
     platform::public_directory(config.parent().ok_or(Error::Configuration)?)?;
     let manifests = config

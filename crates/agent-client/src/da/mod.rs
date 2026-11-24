@@ -67,6 +67,7 @@ impl Backend {
 
 mod configuration;
 mod operations;
+mod platform_sso;
 mod registration;
 pub use operations::{verify_employee, AccountCompletion, Operations, RecoveryUseDisposition};
 pub use registration::validate_keys;
@@ -76,10 +77,10 @@ use crate::{
     trust::VerifiedTrust,
     Clock, IdentityProvider,
 };
-pub use configuration::{ManagedSnapshot, ManagedSource, PolicyConsumer, Selection};
+pub use configuration::{mac_assigned, ManagedSnapshot, ManagedSource, PolicyConsumer, Selection};
 use rss_mdm_agent_wire::{da as wire, enroll, pki};
 use std::{path::Path, sync::Arc, time::Duration};
-pub use storage::has_live_credentials;
+pub use storage::{has_live_credentials, retired_receipt};
 use storage::{read, write};
 
 /// Machine credential storage with idempotent, single-reference release after DA settlement.
@@ -102,6 +103,8 @@ pub struct Client<S, C> {
 pub struct Status {
     /// Last committed activation receipt.
     pub registration: Option<wire::Registration>,
+    /// Original administrative withdrawal, retained after the local key is released.
+    pub revocation: Option<wire::RevocationReceipt>,
     /// Original grant operation awaiting completion.
     pub pending_operation: Option<Uuid>,
     /// A dispatched issue needs reconciliation at the CA.
@@ -180,6 +183,7 @@ pub fn inspect(
         status_receipt: receipt("status")?,
         application_receipt: receipt("application")?,
         registration: active.map(|a| a.receipt),
+        revocation: read(&c, "revocation")?,
         pending_operation: pending.as_ref().map(|p| p.operation),
         issuance_id: pending.as_ref().and_then(|p| p.issuance_id),
         issuance_unknown: pending.is_some_and(|p| p.unknown),

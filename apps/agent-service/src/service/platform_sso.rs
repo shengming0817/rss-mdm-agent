@@ -3,7 +3,7 @@ use super::*;
 use crate::credential_worker::state;
 use execution_ipc::{
     host::{Reply, Request},
-    platform_sso::{Operation, Response},
+    platform_sso::{NativeSave, Operation, Response},
 };
 use rss_mdm_agent_wire::platform_sso as w;
 use serde::{Deserialize, Serialize};
@@ -44,7 +44,7 @@ impl crate::deployment::PlatformSsoConfiguration {
         Ok(())
     }
 }
-struct Pending {
+pub(crate) struct Pending {
     callback_generation: u64,
     authentication: w::AuthenticationMode,
     subject: String,
@@ -54,7 +54,7 @@ struct Pending {
     challenge: w::BootstrapResponse,
 }
 #[derive(Default)]
-pub(super) struct State {
+pub(crate) struct State {
     pub commands: VecDeque<Command>,
     pending: BTreeMap<Uuid, Pending>,
     next_retirement: Option<std::time::Instant>,
@@ -78,10 +78,15 @@ impl<S: IdentityProvider> DeviceService<S> {
         let deployment = self.installation.as_ref().ok_or(Error::Configuration)?;
         let config = deployment.platform_sso.as_ref().ok_or(Error::Unsupported)?;
         if require_enabled {
-            enabled(&self.core.access.root, deployment.mdm()?.instance)?;
+            enabled(
+                &self.core.access.root,
+                w::RegistrationTrust::MdmBootstrapPop,
+                deployment.mdm()?.instance,
+            )?;
         }
         let profile = self.client.registration()?;
-        let mut context = ::platform_sso::Context {
+        let context = ::platform_sso::Context {
+            authority: rss_mdm_agent_wire::platform_sso::RegistrationTrust::MdmBootstrapPop,
             tenant: deployment.mdm()?.tenant,
             device_id: profile.device_id,
             installation: self.core.access.installation,
@@ -93,37 +98,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             binding_revision: 0,
             configuration: None,
         };
-        if kind == w::Kind::User {
-            #[cfg(target_os = "macos")]
-            {
-                let uid: u32 = command.subject.parse().map_err(|_| Error::Identity)?;
-                if !execution_ipc::macos_identity::console_user(uid) || command.session == 0 {
-                    return Err(Error::Identity);
-                }
-            }
-            let account =
-                crate::account_identity::generated_uid(&command.subject)?.ok_or(Error::Identity)?;
-            let binding: ::platform_sso::LocalBinding =
-                state::read_optional(&self.core.access.root, &binding_name(&account)?)?
-                    .ok_or(Error::NotFound)?;
-            if (require_enabled && !binding.enabled)
-                || !binding.matches_identity(
-                    context.installation,
-                    deployment.mdm()?.tenant,
-                    &profile,
-                    &account,
-                )
-            {
-                return Err(Error::Identity);
-            }
-            context.binding = Some(binding.binding);
-            context.binding_generation = Some(binding.binding_generation);
-            context.generated_uid = Some(account);
-            context.binding_revision = binding.revision;
-            context.configuration = Some(binding.configuration);
-        }
-        context.validate().map_err(|_| Error::Identity)?;
-        Ok(context)
+        complete_context(&self.core.access.root, command, context, require_enabled)
     }
     pub(super) async fn drive_platform_sso(
         &mut self,
@@ -135,7 +110,12 @@ impl<S: IdentityProvider> DeviceService<S> {
             .pending
             .retain(|_, p| p.challenge.expires_at > now);
         let Some(command) = self.core.psso.commands.pop_front() else {
-            self.retry_retirement(commands).await;
+            Mdm {
+                service: self,
+                commands,
+            }
+            .retry_retirement()
+            .await;
             return Ok(());
         };
         if command.reply.is_closed() {
@@ -145,7 +125,12 @@ impl<S: IdentityProvider> DeviceService<S> {
             if self.core.psso.retiring && !cleanup_operation(command.request.as_operation()) {
                 Err(Error::Denied)
             } else {
-                self.platform_sso(&command, commands).await
+                Mdm {
+                    service: self,
+                    commands,
+                }
+                .platform_sso(&command)
+                .await
             };
         let reply = match result {
             Ok(value) => Reply::PlatformSso { value },
@@ -155,27 +140,262 @@ impl<S: IdentityProvider> DeviceService<S> {
         let _ = command.reply.send(reply);
         Ok(())
     }
-    async fn platform_sso(
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) mod da;
+
+fn complete_context(
+    root: &std::path::Path,
+    command: &Command,
+    mut context: ::platform_sso::Context,
+    require_enabled: bool,
+) -> Result<::platform_sso::Context, Error> {
+    if require_enabled {
+        require_owner(
+            root,
+            (
+                context.authority,
+                context.installation,
+                context.tenant,
+                context.device_id,
+            ),
+        )?;
+    }
+    if context.kind == w::Kind::User {
+        #[cfg(target_os = "macos")]
+        {
+            let uid: u32 = command.subject.parse().map_err(|_| Error::Identity)?;
+            if !execution_ipc::macos_identity::console_user(uid) || command.session == 0 {
+                return Err(Error::Identity);
+            }
+        }
+        let account =
+            crate::account_identity::generated_uid(&command.subject)?.ok_or(Error::Identity)?;
+        apply_account_binding(root, &mut context, &account, require_enabled)?;
+    }
+    context.validate().map_err(|_| Error::Identity)?;
+    Ok(context)
+}
+fn apply_account_binding(
+    root: &Path,
+    context: &mut ::platform_sso::Context,
+    account: &str,
+    require_enabled: bool,
+) -> Result<(), Error> {
+    let binding: ::platform_sso::LocalBinding =
+        state::read_optional(root, &binding_name(account)?)?.ok_or(Error::NotFound)?;
+    if binding.authority != context.authority
+        || (require_enabled && !binding.enabled)
+        || !binding.matches_identity(
+            context.installation,
+            context.tenant,
+            context.device_id,
+            account,
+        )
+    {
+        return Err(Error::Identity);
+    }
+    context.binding = Some(binding.binding);
+    context.binding_generation = Some(binding.binding_generation);
+    context.generated_uid = Some(account.to_owned());
+    context.binding_revision = binding.revision;
+    context.configuration = Some(binding.configuration);
+    Ok(())
+}
+type Identity = (
+    w::RegistrationTrust,
+    Uuid,
+    Uuid,
+    rss_mdm_agent_wire::DeviceId,
+);
+
+struct Mdm<'a, S: IdentityProvider> {
+    service: &'a mut DeviceService<S>,
+    commands: &'a mut tokio::sync::mpsc::Receiver<Command>,
+}
+impl<S: IdentityProvider> Owner for Mdm<'_, S> {
+    fn state(&mut self) -> &mut State {
+        &mut self.service.core.psso
+    }
+    fn root(&self) -> &std::path::Path {
+        &self.service.core.access.root
+    }
+    fn identity(&self) -> Result<Identity, Error> {
+        let client = &self.service.client;
+        Ok((
+            w::RegistrationTrust::MdmBootstrapPop,
+            self.service.core.access.installation,
+            client.configuration().tenant,
+            client.registration()?.device_id,
+        ))
+    }
+    async fn context(
+        &self,
+        command: &Command,
+        kind: w::Kind,
+        require_enabled: bool,
+        _mode: Option<w::AuthenticationMode>,
+    ) -> Result<::platform_sso::Context, Error> {
+        self.service.psso_context(command, kind, require_enabled)
+    }
+    async fn bootstrap(&mut self, input: &w::Bootstrap) -> Result<w::BootstrapResponse, Error> {
+        network(
+            self.service.client.psso_bootstrap(input),
+            &mut self.service.core,
+            self.commands,
+        )
+        .await
+    }
+    async fn register(
+        &mut self,
+        input: &w::Registration,
+    ) -> Result<Option<w::RegistrationReceipt>, Error> {
+        network(
+            self.service.client.psso_register(input),
+            &mut self.service.core,
+            self.commands,
+        )
+        .await
+    }
+    async fn status(&mut self, binding: Option<Uuid>) -> Result<w::Status, Error> {
+        network(
+            self.service.client.psso_status(binding),
+            &mut self.service.core,
+            self.commands,
+        )
+        .await
+    }
+    async fn revoke(&mut self, source: Uuid, version: i64) -> Result<w::RevocationReceipt, Error> {
+        network(
+            self.service.client.psso_revoke(source, version),
+            &mut self.service.core,
+            self.commands,
+        )
+        .await
+    }
+}
+
+pub(crate) trait Owner {
+    fn state(&mut self) -> &mut State;
+    fn root(&self) -> &std::path::Path;
+    fn identity(&self) -> Result<Identity, Error>;
+    fn identity_hint(&self) -> Result<(w::RegistrationTrust, Uuid, Uuid), Error> {
+        let (a, i, t, _) = self.identity()?;
+        Ok((a, i, t))
+    }
+    async fn context(
+        &self,
+        command: &Command,
+        kind: w::Kind,
+        require_enabled: bool,
+        mode: Option<w::AuthenticationMode>,
+    ) -> Result<::platform_sso::Context, Error>;
+    async fn bootstrap(&mut self, input: &w::Bootstrap) -> Result<w::BootstrapResponse, Error>;
+    async fn register(
+        &mut self,
+        input: &w::Registration,
+    ) -> Result<Option<w::RegistrationReceipt>, Error>;
+    async fn status(&mut self, binding: Option<Uuid>) -> Result<w::Status, Error>;
+    async fn revoke(&mut self, source: Uuid, version: i64) -> Result<w::RevocationReceipt, Error>;
+    async fn mac_status(
         &mut self,
         command: &Command,
-        commands: &mut tokio::sync::mpsc::Receiver<Command>,
-    ) -> Result<Response, Error> {
+        installed: bool,
+    ) -> Result<execution_ipc::device_access::MacStatus, Error> {
+        use execution_ipc::device_access::MacStatus;
+        let mut result = MacStatus {
+            extension_installed: installed,
+            configuration: None,
+            password_exchange: None,
+            device_registered: None,
+            user_registered: None,
+            login_ready: None,
+            native_configuration_matches: None,
+            login_keychain: execution_ipc::device_access::KeychainStatus::Unavailable,
+            native_device_registered: None,
+            native_user_registered: None,
+            observed_at: None,
+        };
+        if !installed {
+            return Ok(result);
+        }
+        let context = match self.context(command, w::Kind::User, false, None).await {
+            Ok(v) => v,
+            Err(Error::NotFound) => return Ok(result),
+            Err(e) => return Err(e),
+        };
+        result.configuration = context.configuration.clone();
+        if let Some(account) = context.generated_uid.as_deref() {
+            let retained: Option<Coordinate> =
+                state::read_optional(self.root(), &format!("{account}.psso-source"))?;
+            let observation: Option<NativeObservation> =
+                state::read_optional(self.root(), &format!("{account}.psso-observation"))?;
+            if let Some(o) = observation.filter(|o| {
+                context.binding_generation == o.binding_generation
+                    && o.live_session()
+                    && retained.as_ref().is_some_and(|c| {
+                        observation_owner(&c.context, &context)
+                            && o.belongs_to(c)
+                            && !retirement_requested(self.root(), c).unwrap_or(true)
+                            && c.source == o.source
+                            && c.source_version == o.source_version
+                    })
+            }) {
+                result.native_configuration_matches = o.configuration;
+                result.native_device_registered = Some(o.device_registered);
+                result.native_user_registered = Some(o.user_registered);
+                result.observed_at = Some(o.observed_at);
+            }
+        }
+        if let Ok(value) = self.status(context.binding).await {
+            if value.registration_trust != context.authority
+                || value.hardware_attested
+                || self.context(command, w::Kind::User, false, None).await? != context
+            {
+                return Err(Error::Identity);
+            }
+            result.password_exchange = value.password_exchange;
+            result.device_registered = Some(value.device_registered);
+            result.user_registered = Some(value.user_registered);
+            result.login_ready = Some(value.login_ready);
+        }
+        Ok(result)
+    }
+    async fn platform_sso(&mut self, command: &Command) -> Result<Response, Error> {
         let Some(Request::PlatformSso { input }) = command.request.as_operation() else {
             return Err(Error::Denied);
         };
+        if matches!(
+            input,
+            Operation::Observe { .. } | Operation::Unregister { .. }
+        ) {
+            if let Some(response) =
+                replay_cleanup(self.root(), input, command, self.identity_hint()?)?
+            {
+                return Ok(response);
+            }
+        }
         match input {
             Operation::Bootstrap {
                 callback_generation,
                 scope,
                 authentication,
             } => {
+                let now = (crate::wall()? / 1000) as i64;
+                self.state()
+                    .pending
+                    .retain(|_, p| p.challenge.expires_at > now);
                 if *callback_generation == 0 {
                     return Err(Error::Identity);
                 }
-                if self.core.psso.pending.len() >= 16 {
+                if self.state().pending.len() >= 16 {
                     return Err(Error::Capacity);
                 }
-                let context = match self.psso_context(command, *scope, true) {
+                let context = match self
+                    .context(command, *scope, true, Some(*authentication))
+                    .await
+                {
                     Err(Error::NotFound) if *scope == w::Kind::User => {
                         return Ok(Response::NeedsAccount {})
                     }
@@ -194,12 +414,41 @@ impl<S: IdentityProvider> DeviceService<S> {
                     binding_id: context.binding,
                     binding_generation: context.binding_generation,
                 };
-                let challenge =
-                    network(self.client.psso_bootstrap(&input), &mut self.core, commands).await?;
+                let challenge = self.bootstrap(&input).await?;
+                if self
+                    .context(command, *scope, true, Some(*authentication))
+                    .await?
+                    != context
+                {
+                    return Err(Error::Identity);
+                }
                 context
                     .check_bootstrap(&challenge, (crate::wall()? / 1000) as i64)
                     .map_err(|_| Error::Untrusted)?;
-                self.core.psso.pending.insert(
+                let coordinate = Coordinate {
+                    operation: challenge.id,
+                    client_id: challenge.client_id,
+                    authentication: *authentication,
+                    callback_generation: *callback_generation,
+                    context: context.clone(),
+                    source: challenge.source_id,
+                    source_version: challenge.source_version,
+                };
+                {
+                    let _lock = state::lock(self.root())?;
+                    if attempt_record(self.root(), coordinate.operation)?.is_some() {
+                        return Err(Error::Conflict);
+                    }
+                    state::write(
+                        self.root(),
+                        &attempt_name(coordinate.operation),
+                        &Attempt {
+                            coordinate,
+                            phase: AttemptPhase::Prepared,
+                        },
+                    )?;
+                }
+                self.state().pending.insert(
                     challenge.id,
                     Pending {
                         callback_generation: *callback_generation,
@@ -215,19 +464,26 @@ impl<S: IdentityProvider> DeviceService<S> {
             }
             Operation::Register { input } => {
                 let pending = self
-                    .core
-                    .psso
+                    .state()
                     .pending
                     .remove(&input.challenge_id)
                     .ok_or(Error::Identity)?;
-                if pending.subject != command.subject
+                if input.operation_id != input.challenge_id
+                    || pending.subject != command.subject
                     || pending.session != command.session
                     || pending.session_binding != command.binding
                     || pending.challenge.expires_at <= (crate::wall()? / 1000) as i64
                 {
                     return Err(Error::Identity);
                 }
-                let current = self.psso_context(command, pending.context.kind, true)?;
+                let current = self
+                    .context(
+                        command,
+                        pending.context.kind,
+                        true,
+                        Some(pending.authentication),
+                    )
+                    .await?;
                 if current != pending.context
                     || (current.kind == w::Kind::User
                         && current.configuration.as_ref().is_some_and(|c| {
@@ -238,6 +494,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                     return Err(Error::Identity);
                 }
                 let coordinate = Coordinate {
+                    operation: input.operation_id,
                     client_id: pending.challenge.client_id,
                     authentication: pending.authentication,
                     callback_generation: pending.callback_generation,
@@ -246,24 +503,41 @@ impl<S: IdentityProvider> DeviceService<S> {
                     source_version: pending.challenge.source_version,
                 };
                 {
-                    let _lock = state::lock(&self.core.access.root)?;
-                    enabled(&self.core.access.root, current.installation)?;
-                    if retirement_requested(&self.core.access.root, &coordinate)? {
+                    let _lock = state::lock(self.root())?;
+                    enabled(self.root(), current.authority, current.installation)?;
+                    require_owner(
+                        self.root(),
+                        (
+                            current.authority,
+                            current.installation,
+                            current.tenant,
+                            current.device_id,
+                        ),
+                    )?;
+                    if retirement_requested(self.root(), &coordinate)? {
                         return Err(Error::Denied);
                     }
-                    state::write(
-                        &self.core.access.root,
-                        &coordinate.file("registering")?,
-                        &coordinate,
-                    )?;
+                    let prepared = attempt_record(self.root(), coordinate.operation)?
+                        .ok_or(Error::Identity)?;
+                    if prepared.coordinate != coordinate || prepared.phase != AttemptPhase::Prepared
+                    {
+                        return Err(Error::Denied);
+                    }
+                    let registering = coordinate.file("registering")?;
+                    if state::read_optional::<Coordinate>(self.root(), &registering)?.is_some() {
+                        return Err(Error::Conflict);
+                    }
+                    state::write(self.root(), &registering, &coordinate)?;
+                    state::remove(self.root(), &attempt_name(coordinate.operation))?;
                 }
-                let receipt =
-                    network(self.client.psso_register(input), &mut self.core, commands).await?;
+                let receipt = self.register(input).await?;
                 let Some(receipt) = receipt else {
-                    settle_rejected_registration(&self.core.access.root, &coordinate)?;
+                    settle_rejected_registration(self.root(), &coordinate)?;
                     return Err(Error::Denied);
                 };
-                if !receipt.registered
+                if receipt.registration_trust != current.authority
+                    || receipt.hardware_attested
+                    || !receipt.registered
                     || receipt.source_id != pending.challenge.source_id
                     || receipt.source_version != pending.challenge.source_version
                     || receipt.kind != current.kind
@@ -271,28 +545,29 @@ impl<S: IdentityProvider> DeviceService<S> {
                     return Err(Error::Untrusted);
                 }
                 if self
-                    .psso_context(command, pending.context.kind, true)
+                    .context(
+                        command,
+                        pending.context.kind,
+                        true,
+                        Some(pending.authentication),
+                    )
+                    .await
                     .ok()
                     .as_ref()
                     != Some(&current)
                 {
-                    queue_retirement(&self.core.access.root, coordinate)?;
+                    queue_retirement(self.root(), coordinate)?;
                     return Err(Error::Identity);
                 }
-                if !retain_registration(&self.core.access.root, &coordinate)? {
+                if !retain_registration(self.root(), &coordinate)? {
                     return Err(Error::Denied);
                 }
                 Ok(Response::Registered { receipt })
             }
-            Operation::Status { scope } => {
-                let context = self.psso_context(command, *scope, true)?;
-                let value = network(
-                    self.client.psso_status(context.binding),
-                    &mut self.core,
-                    commands,
-                )
-                .await?;
-                if self.psso_context(command, *scope, true)? != context {
+            Operation::Status { scope, operation } => {
+                let context = self.context(command, *scope, true, None).await?;
+                let value = self.status(context.binding).await?;
+                if value.registration_trust != context.authority || value.hardware_attested {
                     return Err(Error::Identity);
                 }
                 let source = match scope {
@@ -303,22 +578,31 @@ impl<S: IdentityProvider> DeviceService<S> {
                 if let Some(source) = source {
                     // Recover only the protected original registering intent. Server status alone
                     // cannot reconstruct the expected native configuration.
-                    let coordinate = retained_coordinate(
-                        &self.core.access.root,
-                        &context,
-                        source.id,
-                        source.version,
-                    )?;
-                    if !retain_registration(&self.core.access.root, &coordinate)? {
+                    let coordinate =
+                        retained_coordinate(self.root(), &context, source.id, source.version)?;
+                    if coordinate.operation != *operation {
+                        return Err(Error::Identity);
+                    }
+                    if self
+                        .context(command, *scope, true, Some(coordinate.authentication))
+                        .await?
+                        != context
+                    {
+                        return Err(Error::Identity);
+                    }
+                    if !observation_owner(&coordinate.context, &context) {
+                        return Err(Error::Identity);
+                    }
+                    if !retain_registration(self.root(), &coordinate)? {
                         return Err(Error::Denied);
                     }
                 }
                 Ok(Response::Status { value })
             }
             Operation::Observe { scope, .. } => {
-                let context = self.psso_context(command, *scope, false)?;
+                let context = self.context(command, *scope, false, None).await?;
                 record_observation(
-                    &self.core.access.root,
+                    self.root(),
                     &context,
                     input,
                     &command.subject,
@@ -328,34 +612,146 @@ impl<S: IdentityProvider> DeviceService<S> {
                 Ok(Response::Observed {})
             }
             Operation::Unregister {
+                operation,
                 scope,
                 source,
                 source_version,
             } => {
-                let context = self.psso_context(command, *scope, false)?;
-                let coordinate = retained_coordinate(
-                    &self.core.access.root,
-                    &context,
-                    *source,
-                    *source_version,
-                )?;
-                if coordinate.source.is_nil() || coordinate.source_version < 1 {
+                let context = self.context(command, *scope, false, None).await?;
+                let coordinate =
+                    retained_coordinate(self.root(), &context, *source, *source_version)?;
+                if coordinate.operation != *operation
+                    || coordinate.source.is_nil()
+                    || coordinate.source_version < 1
+                {
                     return Err(Error::Identity);
                 }
                 // Remove any not-yet-submitted challenge first. Register and Unregister share this
                 // single owner; a request already on the wire has a durable registering record.
-                self.core.psso.pending.retain(|_, p| {
+                self.state().pending.retain(|_, p| {
                     !(p.context == coordinate.context
                         && p.challenge.source_id == coordinate.source
                         && p.challenge.source_version == coordinate.source_version)
                 });
-                let coordinate = queue_retirement(&self.core.access.root, coordinate)?;
-                self.retire_coordinate(&coordinate, commands).await
+                if let Some(RemoteRetirement::RegistrationWithdrawn { .. }) =
+                    resolution(self.root(), &coordinate)?
+                {
+                    return Ok(Response::RegistrationWithdrawn {});
+                }
+                let coordinate = queue_retirement(self.root(), coordinate)?;
+                self.retire_coordinate(&coordinate).await
+            }
+        }
+    }
+    async fn retire_coordinate(&mut self, coordinate: &Coordinate) -> Result<Response, Error> {
+        match resolution(self.root(), coordinate)? {
+            Some(RemoteRetirement::NotSubmitted | RemoteRetirement::RegistrationRejected) => {
+                return Ok(Response::Retired {})
+            }
+            Some(RemoteRetirement::RegistrationWithdrawn { .. }) => {
+                return Ok(Response::RegistrationWithdrawn {})
+            }
+            _ => (),
+        }
+        if self.identity()?
+            != (
+                coordinate.context.authority,
+                coordinate.context.installation,
+                coordinate.context.tenant,
+                coordinate.context.device_id,
+            )
+        {
+            return Err(Error::Identity);
+        }
+        let status = self.status(coordinate.context.binding).await?;
+        if status.registration_trust != coordinate.context.authority || status.hardware_attested {
+            return Err(Error::Untrusted);
+        }
+        let source = match coordinate.context.kind {
+            w::Kind::Device => status.device_source,
+            w::Kind::User => status.user_source,
+        };
+        if registration_unresolved(self.root(), coordinate, source.as_ref())? {
+            // Absence is a snapshot, not a fence against a still-unresolved first registration.
+            return Err(Error::Unavailable);
+        }
+        // The decision avoids unnecessary writes; the server CAS is the race fence.
+        let response = match ::platform_sso::retirement(
+            coordinate.source,
+            coordinate.source_version,
+            source.as_ref(),
+        )
+        .map_err(|_| Error::Identity)?
+        {
+            ::platform_sso::Retirement::Revoke => {
+                let receipt = self
+                    .revoke(coordinate.source, coordinate.source_version)
+                    .await?;
+                if !receipt.revoked
+                    || receipt.source_id != coordinate.source
+                    || Some(receipt.source_version) != coordinate.source_version.checked_add(1)
+                {
+                    return Err(Error::Untrusted);
+                }
+                Response::Revoked { receipt }
+            }
+            ::platform_sso::Retirement::AlreadyRevoked => Response::Revoked {
+                receipt: w::RevocationReceipt {
+                    source_id: coordinate.source,
+                    source_version: source.ok_or(Error::Untrusted)?.version,
+                    revoked: true,
+                },
+            },
+            ::platform_sso::Retirement::Superseded => Response::Retired {},
+        };
+        finish_retirement(
+            self.root(),
+            coordinate,
+            if matches!(response, Response::Revoked { .. }) {
+                RemoteRetirement::Revoked
+            } else {
+                RemoteRetirement::Superseded
+            },
+        )?;
+        Ok(response)
+    }
+    async fn retry_retirement(&mut self) {
+        let now = std::time::Instant::now();
+        if self.state().next_retirement.is_some_and(|next| next > now) {
+            return;
+        }
+        self.state().next_retirement = Some(now + std::time::Duration::from_secs(5));
+        let Ok(entries) = std::fs::read_dir(self.root()) else {
+            return;
+        };
+        let mut names = entries
+            .filter_map(Result::ok)
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|n| n.ends_with(".psso-retire"))
+            .take(257)
+            .collect::<Vec<_>>();
+        if names.len() > 256 {
+            return;
+        }
+        names.sort();
+        let name = names
+            .iter()
+            .find(|name| {
+                self.state()
+                    .retirement_cursor
+                    .as_ref()
+                    .is_none_or(|previous| *name > previous)
+            })
+            .or_else(|| names.first())
+            .cloned();
+        if let Some(name) = name {
+            self.state().retirement_cursor = Some(name.clone());
+            if let Ok(Some(coordinate)) = state::read_optional::<Coordinate>(self.root(), &name) {
+                let _ = self.retire_coordinate(&coordinate).await;
             }
         }
     }
 }
-
 fn record_observation(
     root: &std::path::Path,
     context: &::platform_sso::Context,
@@ -365,6 +761,8 @@ fn record_observation(
     session_binding: Option<&execution_contract::Id>,
 ) -> Result<(), Error> {
     let Operation::Observe {
+        operation,
+        save,
         callback_generation,
         configuration,
         source,
@@ -378,9 +776,20 @@ fn record_observation(
     };
     let account = context.generated_uid.as_deref().unwrap_or("device");
     let _lock = state::lock(root)?;
-    let retained: Coordinate =
-        state::read_optional(root, &format!("{account}.psso-source"))?.ok_or(Error::Identity)?;
-    if !retained.same_owner(context)
+    let current = state::read_optional::<Coordinate>(root, &format!("{account}.psso-source"))?;
+    let (retained, slot) = match current {
+        Some(c) if (c.source, c.source_version) == (*source, *source_version) => (c, "observation"),
+        _ => (
+            state::read_optional::<Coordinate>(
+                root,
+                &format!("{account}-{source}-{source_version}.psso-previous"),
+            )?
+            .ok_or(Error::Identity)?,
+            "previous-observation",
+        ),
+    };
+    if retained.operation != *operation
+        || !retained.same_owner(context)
         || retained.source != *source
         || retained.source_version != *source_version
         || retained.callback_generation != *callback_generation
@@ -388,6 +797,7 @@ fn record_observation(
         return Err(Error::Identity);
     }
     let observation = NativeObservation {
+        save: *save,
         source: *source,
         source_version: *source_version,
         binding_generation: retained.context.binding_generation,
@@ -398,6 +808,7 @@ fn record_observation(
         session_binding: session_binding.cloned(),
         configuration: configuration
             .as_ref()
+            .filter(|_| *save == NativeSave::Saved)
             .map(|actual| {
                 actual.matches(
                     &retained.context,
@@ -411,7 +822,45 @@ fn record_observation(
         device_registered: *device_registered,
         user_registered: *user_registered,
     };
-    state::write(root, &format!("{account}.psso-observation"), &observation)
+    state::write(root, &retained.file(slot)?, &observation)?;
+    if slot == "observation"
+        && observation.configuration == Some(true)
+        && observation.device_registered
+        && (context.kind == w::Kind::Device || observation.user_registered)
+    {
+        // Only an actual Apple readback of the replacement releases its previous native source.
+        let mut previous = Vec::new();
+        visit_live_sources(root, |c| {
+            if c != retained
+                && c.context.kind == context.kind
+                && c.context.generated_uid == context.generated_uid
+                && c.context.authority == context.authority
+                && c.context.tenant == context.tenant
+                && c.context.installation == context.installation
+                && c.context.device_id == context.device_id
+                && state::read_optional::<Coordinate>(root, &c.file("previous")?)?.as_ref()
+                    == Some(&c)
+                && !previous.contains(&c)
+            {
+                previous.push(c);
+            }
+            Ok(())
+        })?;
+        for c in previous {
+            if resolution(root, &c)?.is_none() {
+                state::write(
+                    root,
+                    &c.file("retired")?,
+                    &Retired {
+                        coordinate: c.clone(),
+                        result: RemoteRetirement::Superseded,
+                    },
+                )?;
+            }
+            clear_coordinate(root, &c, false)?;
+        }
+    }
+    Ok(())
 }
 fn observation_owner(
     retained: &::platform_sso::Context,
@@ -444,12 +893,16 @@ impl<S: IdentityProvider> DeviceService<S> {
         if !root.exists() {
             return Ok(true);
         }
-        sweep_retirement(&root, self.core.access.installation)?;
+        #[cfg(target_os = "macos")]
+        if has_authority(&root, w::RegistrationTrust::DaDevicePop)? {
+            return Ok(false);
+        }
+        sweep_retirement(&root, self.core.access.installation, None)?;
         while let Ok(command) = commands.try_recv() {
             self.core.handle(command);
         }
         self.drive_platform_sso(commands).await?;
-        let complete = sweep_retirement(&root, self.core.access.installation)?;
+        let complete = sweep_retirement(&root, self.core.access.installation, None)?;
         if !complete {
             // Cleanup may outlive trust/CRL validity. Keep the existing PKI owner's bounded
             // recovery running without reopening business admission or new registration.
@@ -460,9 +913,16 @@ impl<S: IdentityProvider> DeviceService<S> {
     }
 }
 /// The existing owner lock serializes retirement with registering and late completion.
-fn sweep_retirement(root: &std::path::Path, installation: Uuid) -> Result<bool, Error> {
+fn sweep_retirement(
+    root: &std::path::Path,
+    installation: Uuid,
+    withdrawal: Option<&rss_mdm_agent_wire::da::RevocationReceipt>,
+) -> Result<bool, Error> {
     let _lock = state::lock(root)?;
-    state::write(root, "platform-sso.disabled", &Disabled { installation })?;
+    if withdrawal.is_none() {
+        state::write(root, "platform-sso.disabled", &Disabled { installation })?;
+    }
+    settle_prepared(root, installation, withdrawal)?;
     let mut complete = true;
     let mut count = 0;
     for entry in std::fs::read_dir(root)? {
@@ -471,11 +931,21 @@ fn sweep_retirement(root: &std::path::Path, installation: Uuid) -> Result<bool, 
             .into_string()
             .map_err(|_| Error::Storage)?;
         if name.ends_with(".psso-retire") {
-            complete = false;
+            // A crash may leave both the completion and its write-ahead request.
+            if let Some(c) = state::read_optional::<Coordinate>(root, &name)? {
+                if c.context.installation != installation || c.file("retire")? != name {
+                    return Err(Error::Identity);
+                }
+                if resolution(root, &c)?.is_some() {
+                    state::remove(root, &name)?;
+                } else {
+                    complete = false;
+                }
+            }
             continue;
         }
         let in_flight = name.ends_with(".psso-registering");
-        if !in_flight && !name.ends_with(".psso-source") {
+        if !in_flight && !name.ends_with(".psso-source") && !name.ends_with(".psso-previous") {
             continue;
         }
         count += 1;
@@ -484,23 +954,54 @@ fn sweep_retirement(root: &std::path::Path, installation: Uuid) -> Result<bool, 
         }
         let c: Coordinate = state::read_optional(root, &name)?.ok_or(Error::Storage)?;
         if c.context.installation != installation
-            || c.file(if in_flight { "registering" } else { "source" })? != name
+            || c.file(name.rsplit_once(".psso-").ok_or(Error::Identity)?.1)? != name
         {
             return Err(Error::Identity);
         }
-        let retired: Option<Coordinate> = state::read_optional(root, &c.file("retired")?)?;
-        let native: Option<NativeObservation> =
-            state::read_optional(root, &c.file("observation")?)?;
-        if retired.as_ref() == Some(&c) && native_cleared(&c, in_flight, native.as_ref()) {
-            state::remove(root, &name)?;
+        let retired = resolution(root, &c)?;
+        let native: Option<NativeObservation> = native_observation(root, &c)?;
+        if retired.is_some() && native_cleared(&c, in_flight, native.as_ref()) {
+            clear_coordinate(root, &c, in_flight)?;
         } else {
-            if retired.as_ref() != Some(&c) {
+            if retired.is_none() {
                 state::write(root, &c.file("retire")?, &c)?;
             }
             complete = false;
         }
     }
+    if complete {
+        release_bindings(root, installation, withdrawal)?;
+    }
     Ok(complete)
+}
+fn release_bindings(
+    root: &Path,
+    installation: Uuid,
+    withdrawal: Option<&rss_mdm_agent_wire::da::RevocationReceipt>,
+) -> Result<(), Error> {
+    for entry in std::fs::read_dir(root)? {
+        let name = entry?
+            .file_name()
+            .into_string()
+            .map_err(|_| Error::Storage)?;
+        if !name.ends_with(".psso-binding") {
+            continue;
+        }
+        let b: ::platform_sso::LocalBinding =
+            state::read_optional(root, &name)?.ok_or(Error::Storage)?;
+        if binding_name(&b.generated_uid)? != name {
+            return Err(Error::Identity);
+        }
+        if b.installation == installation
+            && withdrawal.is_none_or(|r| {
+                (b.authority, b.tenant, b.device_id)
+                    == (w::RegistrationTrust::DaDevicePop, r.tenant, r.device)
+            })
+        {
+            state::remove(root, &name)?;
+        }
+    }
+    Ok(())
 }
 fn native_cleared(c: &Coordinate, in_flight: bool, native: Option<&NativeObservation>) -> bool {
     in_flight
@@ -509,14 +1010,16 @@ fn native_cleared(c: &Coordinate, in_flight: bool, native: Option<&NativeObserva
                 && n.source_version == c.source_version
                 && n.binding_generation == c.context.binding_generation
                 && n.callback_generation == c.callback_generation
-                && !n.user_registered
-                && (c.context.kind == w::Kind::User || !n.device_registered)
+                && (n.save == NativeSave::NotSaved
+                    || !n.user_registered
+                        && (c.context.kind == w::Kind::User || !n.device_registered))
         })
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct NativeObservation {
+    save: NativeSave,
     callback_generation: u64,
     subject: String,
     session: u32,
@@ -562,7 +1065,7 @@ fn native_facts_in_session(
     binding: &::platform_sso::LocalBinding,
     session: impl FnOnce(&NativeObservation) -> bool,
 ) -> Result<Option<wire::AccessMacPlatformSsoFacts>, Error> {
-    if !binding.enabled || enabled(root, binding.installation).is_err() {
+    if !binding.enabled || enabled(root, binding.authority, binding.installation).is_err() {
         return Ok(None);
     }
     let Some(c) = state::read_optional::<Coordinate>(
@@ -577,7 +1080,8 @@ fn native_facts_in_session(
     context.binding_generation = Some(binding.binding_generation);
     context.binding_revision = binding.revision;
     context.configuration = Some(binding.configuration.clone());
-    if c.context.installation != binding.installation
+    if c.context.authority != binding.authority
+        || c.context.installation != binding.installation
         || c.context.tenant != binding.tenant
         || c.context.device_id != binding.device_id
         || c.context.generated_uid.as_deref() != Some(binding.generated_uid.as_str())
@@ -615,80 +1119,24 @@ impl<S: IdentityProvider> DeviceService<S> {
         command: &Command,
         commands: &mut tokio::sync::mpsc::Receiver<Command>,
     ) -> Result<execution_ipc::device_access::MacStatus, Error> {
-        use execution_ipc::device_access::MacStatus;
         let installed = self
             .installation
             .as_ref()
             .and_then(|d| d.platform_sso.as_ref())
             .is_some_and(|c| c.verify().is_ok());
-        let mut result = MacStatus {
-            extension_installed: installed,
-            configuration: None,
-            password_exchange: None,
-            device_registered: None,
-            user_registered: None,
-            login_ready: None,
-            native_configuration_matches: None,
-            login_keychain: execution_ipc::device_access::KeychainStatus::Unavailable,
-            native_device_registered: None,
-            native_user_registered: None,
-            observed_at: None,
-        };
-        if !installed {
-            return Ok(result);
-        }
-        let context = match self.psso_context(command, w::Kind::User, false) {
-            Ok(v) => v,
-            Err(Error::NotFound) => return Ok(result),
-            Err(e) => return Err(e),
-        };
-        result.configuration = context.configuration.clone();
-        if let Some(account) = context.generated_uid.as_deref() {
-            let retained: Option<Coordinate> =
-                state::read_optional(&self.core.access.root, &format!("{account}.psso-source"))?;
-            let observation: Option<NativeObservation> = state::read_optional(
-                &self.core.access.root,
-                &format!("{account}.psso-observation"),
-            )?;
-            if let Some(o) = observation.filter(|o| {
-                context.binding_generation == o.binding_generation
-                    && o.live_session()
-                    && retained.as_ref().is_some_and(|c| {
-                        observation_owner(&c.context, &context)
-                            && o.belongs_to(c)
-                            && !retirement_requested(&self.core.access.root, c).unwrap_or(true)
-                            && c.source == o.source
-                            && c.source_version == o.source_version
-                    })
-            }) {
-                result.native_configuration_matches = o.configuration;
-                result.native_device_registered = Some(o.device_registered);
-                result.native_user_registered = Some(o.user_registered);
-                result.observed_at = Some(o.observed_at);
-            }
-        }
-        if let Ok(value) = network(
-            self.client.psso_status(context.binding),
-            &mut self.core,
+        Mdm {
+            service: self,
             commands,
-        )
-        .await
-        {
-            if self.psso_context(command, w::Kind::User, false)? != context {
-                return Err(Error::Identity);
-            }
-            result.password_exchange = value.password_exchange;
-            result.device_registered = Some(value.device_registered);
-            result.user_registered = Some(value.user_registered);
-            result.login_ready = Some(value.login_ready);
         }
-        Ok(result)
+        .mac_status(command, installed)
+        .await
     }
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct Coordinate {
+pub(crate) struct Coordinate {
+    operation: Uuid,
     client_id: Uuid,
     authentication: w::AuthenticationMode,
     callback_generation: u64,
@@ -696,6 +1144,441 @@ struct Coordinate {
     source: Uuid,
     source_version: i64,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+enum RemoteRetirement {
+    NotSubmitted,
+    RegistrationRejected,
+    Revoked,
+    Superseded,
+    /// The registration was revoked. Its now-inaccessible source has no independent revocation receipt.
+    RegistrationWithdrawn {
+        operation: Uuid,
+        credential: Uuid,
+    },
+}
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum AttemptPhase {
+    Prepared,
+    NotSubmitted,
+    Rejected,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Attempt {
+    coordinate: Coordinate,
+    phase: AttemptPhase,
+}
+fn attempt_name(operation: Uuid) -> String {
+    format!("{operation}.psso-attempt")
+}
+// Called with the state lock. Only a durable submission authorizes remote work after a restart.
+fn settle_prepared(
+    root: &Path,
+    installation: Uuid,
+    withdrawal: Option<&rss_mdm_agent_wire::da::RevocationReceipt>,
+) -> Result<(), Error> {
+    for entry in std::fs::read_dir(root)? {
+        let name = entry?
+            .file_name()
+            .into_string()
+            .map_err(|_| Error::Storage)?;
+        let Some(id) = name.strip_suffix(".psso-attempt") else {
+            continue;
+        };
+        let operation = Uuid::parse_str(id).map_err(|_| Error::Identity)?;
+        let Some(a) = attempt_record(root, operation)? else {
+            continue;
+        };
+        let c = &a.coordinate;
+        if c.context.installation != installation
+            || withdrawal.is_some_and(|r| {
+                (c.context.authority, c.context.tenant, c.context.device_id)
+                    != (w::RegistrationTrust::DaDevicePop, r.tenant, r.device)
+            })
+        {
+            continue;
+        }
+        let pending =
+            state::read_optional::<Coordinate>(root, &c.file("registering")?)?.as_ref() == Some(c);
+        match a.phase {
+            AttemptPhase::Prepared if pending => state::remove(root, &name)?,
+            AttemptPhase::Prepared => finish_attempt(root, c, AttemptPhase::NotSubmitted)?,
+            phase
+                if pending
+                    || state::read_optional::<CleanupReceipt>(
+                        root,
+                        &format!("{operation}.psso-result"),
+                    )?
+                    .is_none() =>
+            {
+                finish_attempt(root, c, phase)?
+            }
+            _ => (),
+        }
+    }
+    Ok(())
+}
+fn attempt_record(root: &Path, operation: Uuid) -> Result<Option<Attempt>, Error> {
+    let value: Option<Attempt> = state::read_optional(root, &attempt_name(operation))?;
+    if value
+        .as_ref()
+        .is_some_and(|a| a.coordinate.operation != operation)
+    {
+        return Err(Error::Identity);
+    }
+    Ok(value)
+}
+// A refusal belongs to a single challenge. A later challenge may receive the same source version.
+fn finish_attempt(root: &Path, c: &Coordinate, phase: AttemptPhase) -> Result<(), Error> {
+    let result = match phase {
+        AttemptPhase::NotSubmitted => RemoteRetirement::NotSubmitted,
+        AttemptPhase::Rejected => RemoteRetirement::RegistrationRejected,
+        AttemptPhase::Prepared => return Err(Error::Protocol),
+    };
+    state::write(
+        root,
+        &attempt_name(c.operation),
+        &Attempt {
+            coordinate: c.clone(),
+            phase,
+        },
+    )?;
+    state::write(
+        root,
+        &format!("{}.psso-result", c.operation),
+        &cleanup_receipt(c, true, Some(result), true),
+    )?;
+    for suffix in ["registering", "retire"] {
+        let name = c.file(suffix)?;
+        if state::read_optional::<Coordinate>(root, &name)?.as_ref() == Some(c) {
+            state::remove(root, &name)?;
+        }
+    }
+    Ok(())
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Retired {
+    coordinate: Coordinate,
+    result: RemoteRetirement,
+}
+fn resolution(root: &Path, c: &Coordinate) -> Result<Option<RemoteRetirement>, Error> {
+    if let Some(a) = attempt_record(root, c.operation)? {
+        if a.coordinate != *c {
+            return Err(Error::Identity);
+        }
+        match a.phase {
+            AttemptPhase::NotSubmitted => return Ok(Some(RemoteRetirement::NotSubmitted)),
+            AttemptPhase::Rejected => return Ok(Some(RemoteRetirement::RegistrationRejected)),
+            AttemptPhase::Prepared => (),
+        }
+    }
+    let record: Option<Retired> = state::read_optional(root, &c.file("retired")?)?;
+    record
+        .map(|r| {
+            if &r.coordinate == c {
+                Ok(r.result)
+            } else {
+                Err(Error::Identity)
+            }
+        })
+        .transpose()
+}
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct CleanupReceipt {
+    operation: Uuid,
+    installation: Uuid,
+    tenant: Uuid,
+    device: rss_mdm_agent_wire::DeviceId,
+    authority: w::RegistrationTrust,
+    binding: Option<Uuid>,
+    binding_generation: Option<i64>,
+    revision: i64,
+    scope: w::Kind,
+    source: Uuid,
+    source_version: i64,
+    remote: Option<RemoteRetirement>,
+    native_cleanup_confirmed: Option<bool>,
+}
+fn cleanup_receipt(
+    c: &Coordinate,
+    in_flight: bool,
+    remote: Option<RemoteRetirement>,
+    native: bool,
+) -> CleanupReceipt {
+    CleanupReceipt {
+        operation: c.operation,
+        installation: c.context.installation,
+        tenant: c.context.tenant,
+        device: c.context.device_id,
+        authority: c.context.authority,
+        binding: c.context.binding,
+        binding_generation: c.context.binding_generation,
+        revision: c.context.binding_revision,
+        scope: c.context.kind,
+        source: c.source,
+        source_version: c.source_version,
+        remote,
+        native_cleanup_confirmed: (!in_flight).then_some(native),
+    }
+}
+fn native_observation(root: &Path, c: &Coordinate) -> Result<Option<NativeObservation>, Error> {
+    let current = state::read_optional::<NativeObservation>(root, &c.file("observation")?)?;
+    if current.as_ref().is_some_and(|o| o.belongs_to(c)) {
+        return Ok(current);
+    }
+    state::read_optional(root, &c.file("previous-observation")?)
+}
+fn clear_coordinate(root: &std::path::Path, c: &Coordinate, in_flight: bool) -> Result<(), Error> {
+    let receipt = cleanup_receipt(
+        c,
+        in_flight,
+        Some(resolution(root, c)?.ok_or(Error::Unavailable)?),
+        true,
+    );
+    let name = format!("{}.psso-result", c.operation);
+    state::write(root, &name, &receipt)?;
+    for suffix in ["source", "registering", "previous"] {
+        let name = c.file(suffix)?;
+        if state::read_optional::<Coordinate>(root, &name)?.as_ref() == Some(c) {
+            state::remove(root, &name)?;
+        }
+    }
+    for suffix in ["observation", "previous-observation"] {
+        let name = c.file(suffix)?;
+        if state::read_optional::<NativeObservation>(root, &name)?.is_some_and(|o| o.belongs_to(c))
+        {
+            state::remove(root, &name)?;
+        }
+    }
+    state::remove(root, &c.file("retire")?)?;
+    Ok(())
+}
+
+fn visit_live_sources(
+    root: &std::path::Path,
+    mut visit: impl FnMut(Coordinate) -> Result<(), Error>,
+) -> Result<(), Error> {
+    if !root.try_exists()? {
+        return Ok(());
+    }
+    let mut count = 0;
+    for entry in std::fs::read_dir(root)? {
+        let name = entry?
+            .file_name()
+            .into_string()
+            .map_err(|_| Error::Storage)?;
+        if let Some((_, suffix)) = name.rsplit_once(".psso-") {
+            if matches!(suffix, "source" | "registering" | "retire" | "previous") {
+                count += 1;
+                if count > 256 {
+                    return Err(Error::Capacity);
+                }
+                let c: Coordinate = state::read_optional(root, &name)?.ok_or(Error::Storage)?;
+                if c.file(suffix)? != name {
+                    return Err(Error::Identity);
+                }
+                visit(c)?;
+            }
+        }
+    }
+    Ok(())
+}
+#[cfg(target_os = "macos")]
+fn find_source(
+    root: &std::path::Path,
+    id: Uuid,
+    version: i64,
+) -> Result<Option<Coordinate>, Error> {
+    let mut found = None;
+    visit_live_sources(root, |c| {
+        if (c.source, c.source_version) == (id, version) {
+            if found.as_ref().is_some_and(|old| old != &c) {
+                return Err(Error::Conflict);
+            }
+            found = Some(c);
+        }
+        Ok(())
+    })?;
+    Ok(found)
+}
+#[cfg(target_os = "macos")]
+fn has_authority(root: &std::path::Path, trust: w::RegistrationTrust) -> Result<bool, Error> {
+    let mut found = false;
+    visit_live_sources(root, |c| {
+        found |= c.context.authority == trust;
+        Ok(())
+    })?;
+    Ok(found)
+}
+/// A single Apple device source is shared across all users of this extension.
+fn require_owner(root: &std::path::Path, identity: Identity) -> Result<(), Error> {
+    visit_live_sources(root, |c| {
+        if (
+            c.context.authority,
+            c.context.installation,
+            c.context.tenant,
+            c.context.device_id,
+        ) != identity
+        {
+            return Err(Error::Conflict);
+        }
+        Ok(())
+    })
+}
+
+fn retired_by_source(
+    root: &Path,
+    account: &str,
+    id: Uuid,
+    version: i64,
+) -> Result<Option<Retired>, Error> {
+    if account != "device" && !wire::generated_uid_valid(account) {
+        return Err(Error::Identity);
+    }
+    let name = format!("{account}-{id}-{version}.psso-retired");
+    let record = state::read_optional::<Retired>(root, &name)?;
+    if record
+        .as_ref()
+        .is_some_and(|r| r.coordinate.file("retired").ok().as_deref() != Some(&name))
+    {
+        return Err(Error::Identity);
+    }
+    Ok(record)
+}
+fn replay_cleanup(
+    root: &Path,
+    op: &Operation,
+    cmd: &Command,
+    owner: (w::RegistrationTrust, Uuid, Uuid),
+) -> Result<Option<Response>, Error> {
+    let (kind, id, version, operation) = match op {
+        Operation::Observe {
+            scope,
+            source,
+            source_version,
+            operation,
+            ..
+        }
+        | Operation::Unregister {
+            scope,
+            source,
+            source_version,
+            operation,
+        } => (*scope, *source, *source_version, *operation),
+        _ => return Ok(None),
+    };
+    let account = match kind {
+        w::Kind::Device => "device".into(),
+        w::Kind::User if cmd.session != 0 => {
+            crate::account_identity::generated_uid(&cmd.subject)?.ok_or(Error::Identity)?
+        }
+        _ => return Err(Error::Identity),
+    };
+    let _lock = state::lock(root)?;
+    if let Some(attempt) = attempt_record(root, operation)? {
+        let c = &attempt.coordinate;
+        if c.source != id
+            || c.source_version != version
+            || c.context.kind != kind
+            || c.context.generated_uid.as_deref().unwrap_or("device") != account
+            || (
+                c.context.authority,
+                c.context.installation,
+                c.context.tenant,
+            ) != owner
+        {
+            return Err(Error::Identity);
+        }
+        if let Operation::Observe {
+            callback_generation,
+            ..
+        } = op
+        {
+            if *callback_generation != c.callback_generation {
+                return Err(Error::Identity);
+            }
+        }
+        let pending = state::read_optional::<Coordinate>(root, &c.file("registering")?)?;
+        // The write-ahead submission wins if the service stopped between the two writes.
+        if attempt.phase != AttemptPhase::Prepared || pending.as_ref() != Some(c) {
+            if matches!(op, Operation::Observe { .. }) {
+                return Ok(Some(Response::Observed {}));
+            }
+            let phase = if attempt.phase == AttemptPhase::Prepared {
+                AttemptPhase::NotSubmitted
+            } else {
+                attempt.phase
+            };
+            finish_attempt(root, c, phase)?;
+            return Ok(Some(Response::Retired {}));
+        }
+        state::remove(root, &attempt_name(operation))?;
+    }
+    let Some(r) = retired_by_source(root, &account, id, version)? else {
+        return Ok(None);
+    };
+    let c = &r.coordinate;
+    if c.operation != operation {
+        return Err(Error::Identity);
+    }
+    if (
+        c.context.authority,
+        c.context.installation,
+        c.context.tenant,
+    ) != owner
+        || c.context.kind != kind
+    {
+        return Err(Error::Identity);
+    }
+    match op {
+        Operation::Observe {
+            callback_generation,
+            device_registered,
+            user_registered,
+            ..
+        } => {
+            if c.callback_generation != *callback_generation {
+                return Err(Error::Identity);
+            }
+            // A live source still needs its final native readback written under the original lock.
+            if state::read_optional::<Coordinate>(root, &c.file("source")?)?.as_ref() == Some(c)
+                || state::read_optional::<Coordinate>(root, &c.file("previous")?)?.as_ref()
+                    == Some(c)
+            {
+                return Ok(None);
+            }
+            if *user_registered || kind == w::Kind::Device && *device_registered {
+                return Err(Error::Conflict);
+            }
+            let complete = state::read_optional::<CleanupReceipt>(
+                root,
+                &format!("{}.psso-result", c.operation),
+            )?;
+            Ok(complete
+                .filter(|v| v.source == id && v.source_version == version && v.authority == owner.0)
+                .map(|_| Response::Observed {}))
+        }
+        Operation::Unregister { .. } => Ok(Some(match r.result {
+            RemoteRetirement::RegistrationWithdrawn { .. } => Response::RegistrationWithdrawn {},
+            RemoteRetirement::Superseded
+            | RemoteRetirement::RegistrationRejected
+            | RemoteRetirement::NotSubmitted => Response::Retired {},
+            RemoteRetirement::Revoked => Response::Revoked {
+                receipt: w::RevocationReceipt {
+                    source_id: id,
+                    source_version: version.checked_add(1).ok_or(Error::Protocol)?,
+                    revoked: true,
+                },
+            },
+        })),
+        _ => Ok(None),
+    }
+}
+
 fn retained_coordinate(
     root: &std::path::Path,
     context: &::platform_sso::Context,
@@ -706,10 +1589,16 @@ fn retained_coordinate(
     for file in [
         format!("{account}.psso-source"),
         format!("{account}-{source}-{version}.psso-registering"),
+        format!("{account}-{source}-{version}.psso-previous"),
         format!("{account}-{source}-{version}.psso-retire"),
         format!("{account}-{source}-{version}.psso-retired"),
     ] {
-        if let Some(c) = state::read_optional::<Coordinate>(root, &file)? {
+        let record = if file.ends_with(".psso-retired") {
+            state::read_optional::<Retired>(root, &file)?.map(|r| r.coordinate)
+        } else {
+            state::read_optional(root, &file)?
+        };
+        if let Some(c) = record {
             if c.source == source && c.source_version == version && c.same_owner(context) {
                 return Ok(c);
             }
@@ -731,124 +1620,21 @@ impl Coordinate {
     fn file(&self, suffix: &str) -> Result<String, Error> {
         self.context.validate().map_err(|_| Error::Identity)?;
         let account = self.context.generated_uid.as_deref().unwrap_or("device");
-        if ["registering", "retire", "retired"].contains(&suffix) {
+        if [
+            "registering",
+            "retire",
+            "retired",
+            "previous",
+            "previous-observation",
+        ]
+        .contains(&suffix)
+        {
             return Ok(format!(
                 "{account}-{}-{}.psso-{suffix}",
                 self.source, self.source_version
             ));
         }
         Ok(format!("{account}.psso-{suffix}"))
-    }
-}
-impl<S: IdentityProvider> DeviceService<S> {
-    async fn retire_coordinate(
-        &mut self,
-        coordinate: &Coordinate,
-        commands: &mut tokio::sync::mpsc::Receiver<Command>,
-    ) -> Result<Response, Error> {
-        let registration = self.client.registration()?;
-        if coordinate.context.device_id != registration.device_id
-            || coordinate.context.tenant != self.client.configuration().tenant
-        {
-            finish_retirement(&self.core.access.root, coordinate)?;
-            return Ok(Response::Retired {});
-        }
-        let status = network(
-            self.client.psso_status(coordinate.context.binding),
-            &mut self.core,
-            commands,
-        )
-        .await?;
-        let source = match coordinate.context.kind {
-            w::Kind::Device => status.device_source,
-            w::Kind::User => status.user_source,
-        };
-        if registration_unresolved(&self.core.access.root, coordinate, source.as_ref())? {
-            // Absence is a snapshot, not a fence against a still-unresolved first registration.
-            return Err(Error::Unavailable);
-        }
-        // The decision avoids unnecessary writes; the server CAS is the race fence.
-        let response = match ::platform_sso::retirement(
-            coordinate.source,
-            coordinate.source_version,
-            source.as_ref(),
-        )
-        .map_err(|_| Error::Identity)?
-        {
-            ::platform_sso::Retirement::Revoke => {
-                let receipt = network(
-                    self.client
-                        .psso_revoke(coordinate.source, coordinate.source_version),
-                    &mut self.core,
-                    commands,
-                )
-                .await?;
-                if !receipt.revoked
-                    || receipt.source_id != coordinate.source
-                    || Some(receipt.source_version) != coordinate.source_version.checked_add(1)
-                {
-                    return Err(Error::Untrusted);
-                }
-                Response::Revoked { receipt }
-            }
-            ::platform_sso::Retirement::AlreadyRevoked => Response::Revoked {
-                receipt: w::RevocationReceipt {
-                    source_id: coordinate.source,
-                    source_version: source.ok_or(Error::Untrusted)?.version,
-                    revoked: true,
-                },
-            },
-            ::platform_sso::Retirement::Superseded => Response::Retired {},
-        };
-        finish_retirement(&self.core.access.root, coordinate)?;
-        Ok(response)
-    }
-    async fn retry_retirement(&mut self, commands: &mut tokio::sync::mpsc::Receiver<Command>) {
-        let now = std::time::Instant::now();
-        if self
-            .core
-            .psso
-            .next_retirement
-            .is_some_and(|next| next > now)
-        {
-            return;
-        }
-        self.core.psso.next_retirement = Some(now + std::time::Duration::from_secs(5));
-        if self.client.runtime_readiness().is_err() {
-            return;
-        }
-        let Ok(entries) = std::fs::read_dir(&self.core.access.root) else {
-            return;
-        };
-        let mut names = entries
-            .filter_map(Result::ok)
-            .filter_map(|e| e.file_name().into_string().ok())
-            .filter(|n| n.ends_with(".psso-retire"))
-            .take(257)
-            .collect::<Vec<_>>();
-        if names.len() > 256 {
-            return;
-        }
-        names.sort();
-        let name = names
-            .iter()
-            .find(|name| {
-                self.core
-                    .psso
-                    .retirement_cursor
-                    .as_ref()
-                    .is_none_or(|previous| *name > previous)
-            })
-            .or_else(|| names.first())
-            .cloned();
-        if let Some(name) = name {
-            self.core.psso.retirement_cursor = Some(name.clone());
-            if let Ok(Some(coordinate)) =
-                state::read_optional::<Coordinate>(&self.core.access.root, &name)
-            {
-                let _ = self.retire_coordinate(&coordinate, commands).await;
-            }
-        }
     }
 }
 
@@ -858,15 +1644,26 @@ pub(crate) fn save_binding(
     root: &std::path::Path,
     next: &::platform_sso::LocalBinding,
 ) -> Result<(), Error> {
+    require_owner(
+        root,
+        (
+            next.authority,
+            next.installation,
+            next.tenant,
+            next.device_id,
+        ),
+    )?;
     let name = binding_name(&next.generated_uid)?;
     let previous: Option<::platform_sso::LocalBinding> = state::read_optional(root, &name)?;
     if let Some(old) = previous.as_ref() {
-        if old.installation != next.installation
+        if old.authority != next.authority
+            || old.installation != next.installation
             || old.tenant != next.tenant
             || old.device_id != next.device_id
-            || old.binding_generation > next.binding_generation
-            || old.revision > next.revision
-            || (old.revision == next.revision
+            || (old.binding == next.binding && old.binding_generation > next.binding_generation)
+            || (old.binding == next.binding && old.revision > next.revision)
+            || (old.binding == next.binding
+                && old.revision == next.revision
                 && (old.configuration != next.configuration || old.enabled != next.enabled))
         {
             return Err(Error::Identity);
@@ -887,7 +1684,9 @@ pub(crate) fn save_binding(
                     .into_string()
                     .map_err(|_| Error::Storage)?;
                 if !file.starts_with(&prefix)
-                    || !(file.ends_with(".psso-source") || file.ends_with(".psso-registering"))
+                    || !(file.ends_with(".psso-source")
+                        || file.ends_with(".psso-previous")
+                        || file.ends_with(".psso-registering"))
                 {
                     continue;
                 }
@@ -898,19 +1697,17 @@ pub(crate) fn save_binding(
                 {
                     return Err(Error::Identity);
                 }
-                let retired: Option<Coordinate> =
-                    state::read_optional(root, &coordinate.file("retired")?)?;
-                let observation: Option<NativeObservation> =
-                    state::read_optional(root, &coordinate.file("observation")?)?;
+                let retired = resolution(root, &coordinate)?;
+                let observation: Option<NativeObservation> = native_observation(root, &coordinate)?;
                 let native_done = native_cleared(
                     &coordinate,
                     file.ends_with(".psso-registering"),
                     observation.as_ref(),
                 );
-                if retired.as_ref() == Some(&coordinate) && native_done {
-                    state::remove(root, &file)?;
+                if retired.is_some() && native_done {
+                    clear_coordinate(root, &coordinate, file.ends_with(".psso-registering"))?;
                 } else {
-                    if retired.as_ref() != Some(&coordinate) {
+                    if retired.is_none() {
                         state::write(root, &coordinate.file("retire")?, &coordinate)?;
                     }
                     complete = false;
@@ -924,7 +1721,7 @@ pub(crate) fn save_binding(
     state::write(root, &name, next)
 }
 
-/// Read the current format only. An old installation must retire using its original candidate.
+/// Validate all current native records before changing the installed extension.
 pub(crate) fn upgrade_preflight(
     deployment: &crate::deployment::Deployment,
     has_extension: bool,
@@ -945,9 +1742,21 @@ pub(crate) fn upgrade_preflight(
             if binding.enabled && !has_extension {
                 return Err(Error::Unavailable);
             }
+        } else if let Some(id) = name.strip_suffix(".psso-attempt") {
+            let id = Uuid::parse_str(id).map_err(|_| Error::Identity)?;
+            let attempt = attempt_record(&root, id)?.ok_or(Error::Storage)?;
+            attempt
+                .coordinate
+                .context
+                .validate()
+                .map_err(|_| Error::Identity)?;
+            if !has_extension && attempt.phase == AttemptPhase::Prepared {
+                return Err(Error::Unavailable);
+            }
         } else if [
             ".psso-source",
             ".psso-registering",
+            ".psso-previous",
             ".psso-retire",
             ".psso-retired",
         ]
@@ -957,12 +1766,113 @@ pub(crate) fn upgrade_preflight(
             if !has_extension && !name.ends_with(".psso-retired") {
                 return Err(Error::Unavailable);
             }
-            let coordinate: Coordinate =
-                state::read_optional(&root, &name)?.ok_or(Error::Storage)?;
+            let coordinate: Coordinate = if name.ends_with(".psso-retired") {
+                state::read_optional::<Retired>(&root, &name)?.map(|r| r.coordinate)
+            } else {
+                state::read_optional(&root, &name)?
+            }
+            .ok_or(Error::Storage)?;
             coordinate.context.validate().map_err(|_| Error::Identity)?;
         }
     }
     Ok(())
+}
+
+fn supports_owner(
+    deployment: &crate::deployment::Deployment,
+    id: (w::RegistrationTrust, Uuid, Uuid),
+) -> bool {
+    match id.0 {
+        w::RegistrationTrust::DaDevicePop => deployment
+            .modules
+            .da
+            .backend()
+            .is_ok_and(|b| (b.instance, b.tenant) == (id.1, id.2)),
+        w::RegistrationTrust::MdmBootstrapPop => deployment
+            .mdm()
+            .is_ok_and(|b| (b.instance, b.tenant) == (id.1, id.2)),
+    }
+}
+#[cfg(target_os = "macos")]
+pub(crate) fn preflight_owner_change(
+    old: &crate::deployment::Deployment,
+    next: &crate::deployment::Deployment,
+) -> Result<(), Error> {
+    let root = crate::access_worker::root(&old.execution);
+    visit_live_sources(&root, |c| {
+        if supports_owner(
+            next,
+            (
+                c.context.authority,
+                c.context.installation,
+                c.context.tenant,
+            ),
+        ) && next
+            .platform_sso
+            .as_ref()
+            .is_some_and(|v| v.origin == c.context.origin)
+        {
+            Ok(())
+        } else {
+            Err(Error::Conflict)
+        }
+    })
+}
+fn configured_owner(
+    deployment: &crate::deployment::Deployment,
+) -> Result<(w::RegistrationTrust, Uuid, Uuid), Error> {
+    let root = crate::access_worker::root(&deployment.execution);
+    let mut retained = None;
+    visit_live_sources(&root, |c| {
+        let id = (
+            c.context.authority,
+            c.context.installation,
+            c.context.tenant,
+        );
+        let matches = supports_owner(deployment, id);
+        if !matches || retained.replace(id).is_some_and(|old| old != id) {
+            return Err(Error::Conflict);
+        }
+        Ok(())
+    })?;
+    if root.try_exists()? {
+        for entry in std::fs::read_dir(&root)? {
+            let name = entry?
+                .file_name()
+                .into_string()
+                .map_err(|_| Error::Storage)?;
+            if !name.ends_with(".psso-binding") {
+                continue;
+            }
+            let b: ::platform_sso::LocalBinding =
+                state::read_optional(&root, &name)?.ok_or(Error::Storage)?;
+            let id = (b.authority, b.installation, b.tenant);
+            if binding_name(&b.generated_uid)? != name
+                || !supports_owner(deployment, id)
+                || retained.replace(id).is_some_and(|old| old != id)
+            {
+                return Err(Error::Conflict);
+            }
+        }
+    }
+    if let Some(id) = retained {
+        return Ok(id);
+    }
+    #[cfg(target_os = "macos")]
+    let use_da = !da::mdm_assigned(deployment)?;
+    #[cfg(not(target_os = "macos"))]
+    let use_da = deployment.modules.da.enabled();
+    if use_da {
+        let da = deployment.modules.da.backend()?;
+        Ok((w::RegistrationTrust::DaDevicePop, da.instance, da.tenant))
+    } else {
+        let mdm = deployment.mdm()?;
+        Ok((
+            w::RegistrationTrust::MdmBootstrapPop,
+            mdm.instance,
+            mdm.tenant,
+        ))
+    }
 }
 
 /// Keep the service and extension available until native and remote cleanup has completed.
@@ -976,17 +1886,31 @@ pub(crate) fn uninstall_preflight(deployment: &crate::deployment::Deployment) ->
         &root,
         "platform-sso.disabled",
         &Disabled {
-            installation: deployment.mdm()?.instance,
+            installation: configured_owner(deployment)?.1,
         },
     )?;
+    settle_prepared(&root, configured_owner(deployment)?.1, None)?;
     for entry in std::fs::read_dir(&root)? {
         let name = entry?
             .file_name()
             .into_string()
             .map_err(|_| Error::Storage)?;
-        if [".psso-source", ".psso-registering", ".psso-retire"]
-            .iter()
-            .any(|suffix| name.ends_with(suffix))
+        if let Some(id) = name.strip_suffix(".psso-result") {
+            let receipt: CleanupReceipt =
+                state::read_optional(&root, &name)?.ok_or(Error::Storage)?;
+            if Uuid::parse_str(id).ok() != Some(receipt.operation) {
+                return Err(Error::Identity);
+            }
+            crate::installation::preserve_psso_result(receipt.operation, &receipt)?;
+        }
+        if [
+            ".psso-source",
+            ".psso-previous",
+            ".psso-registering",
+            ".psso-retire",
+        ]
+        .iter()
+        .any(|suffix| name.ends_with(suffix))
         {
             return Err(Error::Unavailable);
         }
@@ -999,13 +1923,24 @@ pub(crate) fn uninstall_preflight(deployment: &crate::deployment::Deployment) ->
 struct Disabled {
     installation: Uuid,
 }
-pub(crate) fn enabled(root: &std::path::Path, installation: Uuid) -> Result<(), Error> {
+const DA_WITHDRAWAL: &str = "platform-sso.da-withdrawal";
+pub(crate) fn enabled(
+    root: &std::path::Path,
+    authority: w::RegistrationTrust,
+    installation: Uuid,
+) -> Result<(), Error> {
     if let Some(disabled) = state::read_optional::<Disabled>(root, "platform-sso.disabled")? {
         return Err(if disabled.installation == installation {
             Error::Denied
         } else {
             Error::Identity
         });
+    }
+    if authority == w::RegistrationTrust::DaDevicePop
+        && state::read_optional::<rss_mdm_agent_wire::da::RevocationReceipt>(root, DA_WITHDRAWAL)?
+            .is_some_and(|r| r.service_id == installation)
+    {
+        return Err(Error::Denied);
     }
     Ok(())
 }
@@ -1031,8 +1966,36 @@ pub(crate) fn component(
         .service
         .verify(&std::env::current_exe()?)
         .map_err(|_| Error::Identity)?;
+    component_state(deployment, action)
+}
+fn component_state(deployment: &crate::deployment::Deployment, action: &str) -> Result<(), Error> {
     let root = crate::access_worker::root(&deployment.execution);
+    let (authority, instance, tenant) = configured_owner(deployment)?;
+    let custody = if deployment.modules.mdm.enabled() {
+        deployment
+            .network()
+            .and_then(|cfg| {
+                agent_client::filevault::inspect(&deployment.state_root.join("communication"), &cfg)
+            })
+            .unwrap_or(execution_contract::FilevaultState::Unavailable)
+    } else {
+        execution_contract::FilevaultState::Unavailable
+    };
+    if !root.try_exists()? {
+        if action == "inspect" {
+            println!(
+                "{}",
+                serde_json::json!({"componentValid":deployment.platform_sso.as_ref().is_some_and(|c|c.verify().is_ok()),"disabled":false,"sources":[],"accounts":[],"filevaultCustody":custody,"cleanupComplete":false})
+            );
+            return Ok(());
+        }
+        platform_private_storage::directory(&deployment.execution.material_root)?;
+        platform_private_storage::directory(&root)?;
+    }
     let _lock = state::lock(&root)?;
+    if matches!(action, "retire" | "cleanup") {
+        settle_prepared(&root, instance, None)?;
+    }
     let mut coordinates = Vec::new();
     for entry in std::fs::read_dir(&root)? {
         let name = entry?
@@ -1040,16 +2003,19 @@ pub(crate) fn component(
             .into_string()
             .map_err(|_| Error::Storage)?;
         let in_flight = name.ends_with(".psso-registering");
-        if !in_flight && !name.ends_with(".psso-source") {
+        if !in_flight && !name.ends_with(".psso-source") && !name.ends_with(".psso-previous") {
             continue;
         }
         if coordinates.len() >= 256 {
             return Err(Error::Capacity);
         }
         let coordinate: Coordinate = state::read_optional(&root, &name)?.ok_or(Error::Storage)?;
-        if coordinate.file(if in_flight { "registering" } else { "source" })? != name
-            || coordinate.context.installation != deployment.mdm()?.instance
-            || coordinate.context.tenant != deployment.mdm()?.tenant
+        if coordinate.file(name.rsplit_once(".psso-").ok_or(Error::Identity)?.1)? != name
+            || (
+                coordinate.context.authority,
+                coordinate.context.installation,
+                coordinate.context.tenant,
+            ) != (authority, instance, tenant)
         {
             return Err(Error::Identity);
         }
@@ -1071,44 +2037,75 @@ pub(crate) fn component(
             &root,
             "platform-sso.disabled",
             &Disabled {
-                installation: deployment.mdm()?.instance,
+                installation: instance,
             },
         )?;
     }
     if action == "retire" {
         for (coordinate, _) in &coordinates {
-            state::write(&root, &coordinate.file("retire")?, coordinate)?;
+            if resolution(&root, coordinate)?.is_none() {
+                state::write(&root, &coordinate.file("retire")?, coordinate)?;
+            }
         }
     }
     let mut observations = Vec::new();
     let mut complete = true;
     for (coordinate, in_flight) in &coordinates {
-        let retired: Option<Coordinate> =
-            state::read_optional(&root, &coordinate.file("retired")?)?;
-        let native: Option<NativeObservation> =
-            state::read_optional(&root, &coordinate.file("observation")?)?;
-        let remote_done = retired.as_ref().is_some_and(|r| r == coordinate);
+        let retired = resolution(&root, coordinate)?;
+        let native: Option<NativeObservation> = native_observation(&root, coordinate)?;
+        let remote_done = retired.is_some();
         // An in-flight record never authorized saving an Apple login configuration.
         let native_done = native_cleared(coordinate, *in_flight, native.as_ref());
         complete &= remote_done && native_done;
-        observations.push(serde_json::json!({"source": coordinate.source, "sourceVersion": coordinate.source_version,
-            "scope": coordinate.context.kind, "remoteRetired": remote_done,
-            "registrationRecord": if *in_flight { "in_flight" } else { "accepted" },
-            "nativeCleanupConfirmed": if *in_flight { None } else { Some(native_done) }}));
+        observations.push(cleanup_receipt(
+            coordinate,
+            *in_flight,
+            retired,
+            native_done,
+        ));
     }
+    #[cfg(target_os = "macos")]
+    let accounts = if action == "inspect" {
+        let mut facts = Vec::new();
+        for entry in std::fs::read_dir(&root)? {
+            let name = entry?
+                .file_name()
+                .into_string()
+                .map_err(|_| Error::Storage)?;
+            if !name.ends_with(".psso-binding") {
+                continue;
+            }
+            let binding: ::platform_sso::LocalBinding =
+                state::read_optional(&root, &name)?.ok_or(Error::Storage)?;
+            if binding_name(&binding.generated_uid)? != name
+                || (binding.authority, binding.installation, binding.tenant)
+                    != (authority, instance, tenant)
+            {
+                return Err(Error::Identity);
+            }
+            if facts.len() >= 256 {
+                return Err(Error::Capacity);
+            }
+            let native=crate::access_worker::macos::inspect(&binding.generated_uid,false).ok().map(|a|{
+                let mut facts=crate::access_worker::macos::facts(&a);
+                facts.platform_sso=native_facts(&root,&binding).ok().flatten();
+                serde_json::json!({"role":if a.administrator {"administrator"}else{"standard"},"facts":facts})
+            });
+            facts.push(serde_json::json!({"binding":binding.binding,"revision":binding.revision,"generatedUid":binding.generated_uid,"bindingGeneration":binding.binding_generation,"observation":native}));
+        }
+        Some(facts)
+    } else {
+        None
+    };
+    #[cfg(not(target_os = "macos"))]
+    let accounts = None::<()>;
     if action == "cleanup" && complete {
         for (coordinate, in_flight) in &coordinates {
-            let suffixes: &[&str] = if *in_flight {
-                &["registering", "retire"]
-            } else {
-                &["source", "retire", "observation"]
-            };
-            for suffix in suffixes {
-                state::remove(&root, &coordinate.file(suffix)?)?;
-            }
+            clear_coordinate(&root, coordinate, *in_flight)?;
         }
+        release_bindings(&root, instance, None)?;
     }
-    let disabled = match enabled(&root, deployment.mdm()?.instance) {
+    let disabled = match enabled(&root, authority, instance) {
         Ok(()) => false,
         Err(Error::Denied) => true,
         Err(e) => return Err(e),
@@ -1116,7 +2113,7 @@ pub(crate) fn component(
     println!(
         "{}",
         serde_json::json!({"componentValid": deployment.platform_sso.as_ref().is_some_and(|c| c.verify().is_ok()),
-        "disabled": disabled, "sources": observations,
+        "disabled": disabled, "sources": observations,"accounts":accounts,"filevaultCustody":custody,
         "cleanupComplete": action == "cleanup" && complete})
     );
     if action == "cleanup" && !complete {
@@ -1125,11 +2122,22 @@ pub(crate) fn component(
     Ok(())
 }
 
-fn finish_retirement(root: &std::path::Path, coordinate: &Coordinate) -> Result<(), Error> {
+fn finish_retirement(
+    root: &std::path::Path,
+    coordinate: &Coordinate,
+    result: RemoteRetirement,
+) -> Result<(), Error> {
     let _lock = state::lock(root)?;
     let pending: Option<Coordinate> = state::read_optional(root, &coordinate.file("retire")?)?;
     if pending.as_ref() == Some(coordinate) {
-        state::write(root, &coordinate.file("retired")?, coordinate)?;
+        state::write(
+            root,
+            &coordinate.file("retired")?,
+            &Retired {
+                coordinate: coordinate.clone(),
+                result,
+            },
+        )?;
         state::remove(root, &coordinate.file("retire")?)?;
     }
     Ok(())
@@ -1156,6 +2164,9 @@ fn queue_retirement(
             }
         }
     }
+    if resolution(root, &coordinate)?.is_some() {
+        return Ok(coordinate);
+    }
     state::write(root, &coordinate.file("retire")?, &coordinate)?;
     Ok(coordinate)
 }
@@ -1167,7 +2178,7 @@ fn settle_rejected_registration(
     if state::read_optional::<Coordinate>(root, &coordinate.file("registering")?)?.as_ref()
         == Some(coordinate)
     {
-        state::remove(root, &coordinate.file("registering")?)?;
+        finish_attempt(root, coordinate, AttemptPhase::Rejected)?;
     }
     Ok(())
 }
@@ -1187,14 +2198,18 @@ fn retirement_requested(root: &std::path::Path, coordinate: &Coordinate) -> Resu
     Ok(
         state::read_optional::<Coordinate>(root, &coordinate.file("retire")?)?.as_ref()
             == Some(coordinate)
-            || state::read_optional::<Coordinate>(root, &coordinate.file("retired")?)?.as_ref()
-                == Some(coordinate),
+            || resolution(root, coordinate)?.is_some(),
     )
 }
 
 fn retain_registration(root: &std::path::Path, coordinate: &Coordinate) -> Result<bool, Error> {
     let _lock = state::lock(root)?;
-    match enabled(root, coordinate.context.installation).and_then(|()| {
+    match enabled(
+        root,
+        coordinate.context.authority,
+        coordinate.context.installation,
+    )
+    .and_then(|()| {
         if retirement_requested(root, coordinate)? {
             Err(Error::Denied)
         } else {
@@ -1202,6 +2217,32 @@ fn retain_registration(root: &std::path::Path, coordinate: &Coordinate) -> Resul
         }
     }) {
         Ok(()) => {
+            require_owner(
+                root,
+                (
+                    coordinate.context.authority,
+                    coordinate.context.installation,
+                    coordinate.context.tenant,
+                    coordinate.context.device_id,
+                ),
+            )?;
+            if let Some(old) =
+                state::read_optional::<Coordinate>(root, &coordinate.file("source")?)?
+                    .filter(|old| old != coordinate)
+            {
+                if old.source == coordinate.source
+                    && old.source_version >= coordinate.source_version
+                {
+                    return Err(Error::Conflict);
+                }
+                state::write(root, &old.file("previous")?, &old)?;
+                if let Some(o) =
+                    state::read_optional::<NativeObservation>(root, &old.file("observation")?)?
+                        .filter(|o| o.belongs_to(&old))
+                {
+                    state::write(root, &old.file("previous-observation")?, &o)?;
+                }
+            }
             state::write(root, &coordinate.file("source")?, coordinate)?;
             state::remove(root, &coordinate.file("registering")?)?;
             Ok(true)
@@ -1219,12 +2260,16 @@ fn retain_registration(root: &std::path::Path, coordinate: &Coordinate) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn coordinate() -> Coordinate {
+    #[path = "authorization.rs"]
+    pub(super) mod authorization;
+    pub(super) fn coordinate() -> Coordinate {
         Coordinate {
+            operation: Uuid::new_v4(),
             client_id: Uuid::from_u128(7),
             authentication: w::AuthenticationMode::SecureEnclave,
             callback_generation: 1,
             context: ::platform_sso::Context {
+                authority: rss_mdm_agent_wire::platform_sso::RegistrationTrust::MdmBootstrapPop,
                 tenant: Uuid::from_u128(1),
                 device_id: Uuid::from_u128(2).try_into().unwrap(),
                 installation: Uuid::from_u128(3),
@@ -1240,9 +2285,10 @@ mod tests {
             source_version: 1,
         }
     }
-    fn binding() -> ::platform_sso::LocalBinding {
+    pub(super) fn binding() -> ::platform_sso::LocalBinding {
         let c = coordinate().context;
         ::platform_sso::LocalBinding {
+            authority: rss_mdm_agent_wire::platform_sso::RegistrationTrust::MdmBootstrapPop,
             installation: c.installation,
             tenant: c.tenant,
             device_id: c.device_id,
@@ -1253,6 +2299,260 @@ mod tests {
             enabled: true,
             configuration: w::LoginConfiguration::default(),
         }
+    }
+    #[test]
+    fn da_source_excludes_mdm_and_cleanup_is_queryable_after_restart() {
+        let root = std::env::temp_dir().join(format!("psso-da-{}", Uuid::new_v4()));
+        platform_private_storage::directory(&root).unwrap();
+        let mut c = coordinate();
+        c.context.authority = w::RegistrationTrust::DaDevicePop;
+        state::write(&root, &c.file("registering").unwrap(), &c).unwrap();
+        let id = (
+            c.context.authority,
+            c.context.installation,
+            c.context.tenant,
+            c.context.device_id,
+        );
+        assert!(require_owner(&root, id).is_ok());
+        assert_eq!(
+            require_owner(
+                &root,
+                (w::RegistrationTrust::MdmBootstrapPop, id.1, id.2, id.3)
+            ),
+            Err(Error::Conflict)
+        );
+        assert!(!sweep_retirement(&root, id.1, None).unwrap());
+        finish_retirement(&root, &c, RemoteRetirement::Revoked).unwrap();
+        // Simulate interruption between publishing the result and removing its journal entry.
+        state::write(&root, &c.file("retire").unwrap(), &c).unwrap();
+        assert!(sweep_retirement(&root, id.1, None).unwrap());
+        let receipt: CleanupReceipt =
+            state::read_optional(&root, &format!("{}.psso-result", c.operation))
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            receipt,
+            cleanup_receipt(&c, true, Some(RemoteRetirement::Revoked), true)
+        );
+        assert!(receipt.native_cleanup_confirmed.is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn da_withdrawal_waits_for_native_clear_and_replays_after_sweep() {
+        let root = crate::protocol_test_support::Root::new();
+        platform_private_storage::directory(&root.path).unwrap();
+        let mut c = coordinate();
+        c.context.authority = w::RegistrationTrust::DaDevicePop;
+        c.context.kind = w::Kind::Device;
+        c.context.generated_uid = None;
+        c.context.binding = None;
+        c.context.binding_generation = None;
+        c.context.binding_revision = 0;
+        c.context.configuration = None;
+        let owner = (
+            c.context.authority,
+            c.context.installation,
+            c.context.tenant,
+        );
+        let withdrawal = rss_mdm_agent_wire::da::RevocationReceipt {
+            service_id: owner.1,
+            tenant: owner.2,
+            device: c.context.device_id,
+            credential: Uuid::new_v4(),
+            operation_id: Uuid::new_v4(),
+        };
+        state::write(&root.path, &c.file("source").unwrap(), &c).unwrap();
+        let mut local = binding();
+        local.authority = owner.0;
+        save_binding(&root.path, &local).unwrap();
+        assert_eq!(
+            da::withdraw_sources(&root.path, &withdrawal),
+            Err(Error::Unavailable)
+        );
+        assert_eq!(enabled(&root.path, owner.0, owner.1), Err(Error::Denied));
+        // Even identical backend UUIDs do not give the DA withdrawal ownership of MDM admission.
+        enabled(&root.path, w::RegistrationTrust::MdmBootstrapPop, owner.1).unwrap();
+        let other = rss_mdm_agent_wire::da::RevocationReceipt {
+            operation_id: Uuid::new_v4(),
+            ..withdrawal.clone()
+        };
+        assert_eq!(
+            da::withdraw_sources(&root.path, &other),
+            Err(Error::Conflict)
+        );
+        assert_eq!(
+            state::read_optional::<rss_mdm_agent_wire::da::RevocationReceipt>(
+                &root.path,
+                DA_WITHDRAWAL
+            )
+            .unwrap()
+            .unwrap(),
+            withdrawal
+        );
+        let observe = Operation::Observe {
+            operation: c.operation,
+            save: NativeSave::Cleanup,
+            scope: c.context.kind,
+            source: c.source,
+            source_version: c.source_version,
+            callback_generation: c.callback_generation,
+            device_registered: false,
+            user_registered: false,
+            configuration: None,
+        };
+        record_observation(&root.path, &c.context, &observe, "0", 1, None).unwrap();
+        da::withdraw_sources(&root.path, &withdrawal).unwrap();
+        assert!(!root.path.join(DA_WITHDRAWAL).exists());
+        enabled(&root.path, owner.0, owner.1).unwrap();
+        let (reply, _rx) = tokio::sync::oneshot::channel();
+        let command = Command {
+            request: LocalRequest::operation(Request::PlatformSso {
+                input: observe.clone(),
+            }),
+            subject: "0".into(),
+            session: 1,
+            binding: None,
+            reply,
+            fence_epoch: 0,
+        };
+        assert!(matches!(
+            replay_cleanup(&root.path, &observe, &command, owner),
+            Ok(Some(Response::Observed {}))
+        ));
+        let unregister = Operation::Unregister {
+            operation: c.operation,
+            scope: c.context.kind,
+            source: c.source,
+            source_version: c.source_version,
+        };
+        assert!(matches!(
+            replay_cleanup(&root.path, &unregister, &command, owner),
+            Ok(Some(Response::RegistrationWithdrawn {}))
+        ));
+        assert!(replay_cleanup(
+            &root.path,
+            &unregister,
+            &command,
+            (w::RegistrationTrust::MdmBootstrapPop, owner.1, owner.2)
+        )
+        .is_err());
+        let receipt: CleanupReceipt =
+            state::read_optional(&root.path, &format!("{}.psso-result", c.operation))
+                .unwrap()
+                .unwrap();
+        assert_eq!(receipt.native_cleanup_confirmed, Some(true));
+        assert!(
+            matches!(receipt.remote,Some(RemoteRetirement::RegistrationWithdrawn{operation,..}) if operation==withdrawal.operation_id)
+        );
+        // Same native user can now receive a scoped MDM binding.
+        save_binding(&root.path, &binding()).unwrap();
+    }
+
+    #[test]
+    fn repair_preserves_the_previous_native_source_while_save_is_unconfirmed() {
+        let root = crate::protocol_test_support::Root::new();
+        let old = coordinate();
+        let mut new = old.clone();
+        new.source_version += 1;
+        new.operation = Uuid::new_v4();
+        new.callback_generation += 1;
+        assert!(retain_registration(&root.path, &old).unwrap());
+        assert!(retain_registration(&root.path, &new).unwrap());
+        assert!(
+            retained_coordinate(&root.path, &old.context, old.source, old.source_version).unwrap()
+                == old
+        );
+        assert_eq!(
+            state::read_optional::<Coordinate>(&root.path, &new.file("source").unwrap())
+                .unwrap()
+                .unwrap()
+                .operation,
+            new.operation
+        );
+        let observation = |c: &Coordinate, configuration| Operation::Observe {
+            operation: c.operation,
+            save: NativeSave::Saved,
+            scope: c.context.kind,
+            source: c.source,
+            source_version: c.source_version,
+            callback_generation: c.callback_generation,
+            device_registered: true,
+            user_registered: true,
+            configuration,
+        };
+        // A readback of the old configuration after restart must remain attributable to the old version.
+        record_observation(
+            &root.path,
+            &old.context,
+            &observation(&old, None),
+            "501",
+            1,
+            None,
+        )
+        .unwrap();
+        assert!(resolution(&root.path, &old).unwrap().is_none());
+        assert!(native_observation(&root.path, &old)
+            .unwrap()
+            .unwrap()
+            .belongs_to(&old));
+        let e = w::Endpoints::new(&new.context.origin, new.context.tenant).unwrap();
+        let actual = ::platform_sso::NativeConfiguration {
+            authentication: 2,
+            client_id: new.client_id.to_string(),
+            issuer: e.issuer.clone(),
+            audience: e.issuer,
+            token_endpoint: e.token,
+            jwks_endpoint: e.jwks,
+            nonce_endpoint: e.nonce,
+            nonce_response_keypath: "nonce".into(),
+            server_nonce_claim: "request_nonce".into(),
+            additional_scopes: w::SCOPE.into(),
+            login_request_values: vec![("platform_sso_version".into(), "1.0".into())],
+            login_user_name: Some(new.source.to_string()),
+        };
+        let mut cleanup_observation = observation(&new, Some(Box::new(actual.clone())));
+        if let Operation::Observe { save, .. } = &mut cleanup_observation {
+            *save = NativeSave::NotSaved;
+        }
+        record_observation(
+            &root.path,
+            &new.context,
+            &cleanup_observation,
+            "501",
+            1,
+            None,
+        )
+        .unwrap();
+        assert!(resolution(&root.path, &old).unwrap().is_none());
+        assert!(
+            state::read_optional::<Coordinate>(&root.path, &old.file("previous").unwrap()).unwrap()
+                == Some(old.clone())
+        );
+        record_observation(
+            &root.path,
+            &new.context,
+            &observation(&new, Some(Box::new(actual))),
+            "501",
+            1,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            resolution(&root.path, &old).unwrap(),
+            Some(RemoteRetirement::Superseded)
+        );
+        assert!(
+            state::read_optional::<Coordinate>(&root.path, &old.file("previous").unwrap())
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            state::read_optional::<Coordinate>(&root.path, &new.file("source").unwrap())
+                .unwrap()
+                .unwrap()
+                == new
+        );
     }
     #[test]
     fn mode_switch_waits_for_both_retirement_and_native_cleanup_without_touching_other_users() {
@@ -1280,7 +2580,7 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-        finish_retirement(&root, &c).unwrap();
+        finish_retirement(&root, &c, RemoteRetirement::Revoked).unwrap();
         assert_eq!(save_binding(&root, &next), Err(Error::Unavailable));
         state::write(
             &root,
@@ -1288,7 +2588,7 @@ mod tests {
             &serde_json::json!({
                 "source": c.source, "sourceVersion": c.source_version, "bindingGeneration": 1,
                 "callbackGeneration": 1, "subject": "501", "session": 1, "sessionBinding": null, "configuration": null,
-                "observedAt": 10, "deviceRegistered": true, "userRegistered": false
+                "save":"cleanup","observedAt": 10, "deviceRegistered": true, "userRegistered": false
             }),
         )
         .unwrap();
@@ -1299,7 +2599,7 @@ mod tests {
                 .unwrap();
         assert_eq!(stored.configuration, next.configuration);
         assert!(
-            state::read_optional::<Coordinate>(&root, &c.file("retired").unwrap())
+            state::read_optional::<Retired>(&root, &c.file("retired").unwrap())
                 .unwrap()
                 .is_some()
         );
@@ -1335,23 +2635,26 @@ mod tests {
         platform_private_storage::directory(&root).unwrap();
         let c = coordinate();
         state::write(&root, &c.file("source").unwrap(), &c).unwrap();
-        assert!(!sweep_retirement(&root, c.context.installation).unwrap());
-        assert_eq!(enabled(&root, c.context.installation), Err(Error::Denied));
-        finish_retirement(&root, &c).unwrap();
-        assert!(!sweep_retirement(&root, c.context.installation).unwrap());
+        assert!(!sweep_retirement(&root, c.context.installation, None).unwrap());
+        assert_eq!(
+            enabled(&root, c.context.authority, c.context.installation),
+            Err(Error::Denied)
+        );
+        finish_retirement(&root, &c, RemoteRetirement::Revoked).unwrap();
+        assert!(!sweep_retirement(&root, c.context.installation, None).unwrap());
         state::write(
             &root,
             &c.file("observation").unwrap(),
             &serde_json::json!({
                 "source": c.source, "sourceVersion": c.source_version, "bindingGeneration": 1,
                 "callbackGeneration": 1, "subject": "501", "session": 1, "sessionBinding": null, "configuration": null,
-                "observedAt": 10, "deviceRegistered": true, "userRegistered": false
+                "save":"cleanup","observedAt": 10, "deviceRegistered": true, "userRegistered": false
             }),
         )
         .unwrap();
-        assert!(sweep_retirement(&root, c.context.installation).unwrap());
+        assert!(sweep_retirement(&root, c.context.installation, None).unwrap());
         assert!(
-            state::read_optional::<Coordinate>(&root, &c.file("retired").unwrap())
+            state::read_optional::<Retired>(&root, &c.file("retired").unwrap())
                 .unwrap()
                 .is_some()
         );
@@ -1364,6 +2667,7 @@ mod tests {
         })));
         assert!(cleanup_operation(Some(&Request::PlatformSso {
             input: Operation::Unregister {
+                operation: c.operation,
                 scope: w::Kind::User,
                 source: c.source,
                 source_version: 1
@@ -1385,7 +2689,7 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-        finish_retirement(&root, &retiring).unwrap();
+        finish_retirement(&root, &retiring, RemoteRetirement::Revoked).unwrap();
         assert!(retirement_requested(&root, &coordinate).unwrap());
         let mut newer = coordinate.clone();
         newer.source_version += 1;
@@ -1459,9 +2763,9 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(pending.source_version, coordinate.source_version);
-        finish_retirement(&root, &coordinate).unwrap();
+        finish_retirement(&root, &coordinate, RemoteRetirement::Revoked).unwrap();
         assert!(
-            state::read_optional::<Coordinate>(&root, &coordinate.file("retired").unwrap())
+            state::read_optional::<Retired>(&root, &coordinate.file("retired").unwrap())
                 .unwrap()
                 .is_some()
         );
@@ -1475,27 +2779,26 @@ mod tests {
         let mut replacement = old.clone();
         replacement.source_version = 2;
         state::write(&root, &replacement.file("retire").unwrap(), &replacement).unwrap();
-        finish_retirement(&root, &old).unwrap();
+        finish_retirement(&root, &old, RemoteRetirement::Revoked).unwrap();
         let pending: Coordinate = state::read_optional(&root, &replacement.file("retire").unwrap())
             .unwrap()
             .unwrap();
         assert_eq!(pending.source_version, 2);
         assert!(
-            state::read_optional::<Coordinate>(&root, &old.file("retired").unwrap())
+            state::read_optional::<Retired>(&root, &old.file("retired").unwrap())
                 .unwrap()
                 .is_none()
         );
-        finish_retirement(&root, &replacement).unwrap();
+        finish_retirement(&root, &replacement, RemoteRetirement::Revoked).unwrap();
         assert!(
             state::read_optional::<Coordinate>(&root, &old.file("retire").unwrap())
                 .unwrap()
                 .is_none()
         );
-        let completed: Coordinate =
-            state::read_optional(&root, &replacement.file("retired").unwrap())
-                .unwrap()
-                .unwrap();
-        assert_eq!(completed.source_version, 2);
+        let completed: Retired = state::read_optional(&root, &replacement.file("retired").unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(completed.coordinate.source_version, 2);
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]

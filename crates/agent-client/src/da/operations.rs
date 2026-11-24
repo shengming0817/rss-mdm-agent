@@ -26,8 +26,8 @@ pub enum AccountCompletion {
 }
 /// An mTLS session bound to the current registration and its single writer.
 pub struct Operations<'a> {
-    http: reqwest::Client,
-    origin: &'a url::Url,
+    pub(super) http: reqwest::Client,
+    pub(super) origin: &'a url::Url,
     db: &'a rusqlite::Connection,
     registration: wire::Registration,
 }
@@ -138,10 +138,12 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         }
         let tx = self.journal.db.unchecked_transaction()?;
         let mut release: Vec<(String, bool)> = read(&tx, "release")?.unwrap_or_default();
+        self.close_unissued_renewal(&tx, active.receipt.device, &mut release)?;
         release.push((active.key, true));
         write(&tx, "release", &release)?;
+        write(&tx, "retired-registration", receipt)?;
         tx.execute(
-            "DELETE FROM state WHERE name IN ('active','applied-proof','effective-digest')",
+            "DELETE FROM state WHERE name IN ('active','applied-proof','effective-digest','mac-unassigned')",
             [],
         )?;
         tx.commit()?;
@@ -164,14 +166,16 @@ impl Operations<'_> {
             .send()
             .await
     }
-    async fn send<E: Endpoint>(
+    pub(super) async fn send<E: Endpoint>(
         &self,
         params: &[&str],
         input: Option<&E::Input>,
     ) -> Result<E::Output, Error> {
         Self::decode(self.request::<E>(params, input).await?).await
     }
-    async fn decode<T: DeserializeOwned>(response: reqwest::Response) -> Result<T, Error> {
+    pub(super) async fn decode<T: DeserializeOwned>(
+        response: reqwest::Response,
+    ) -> Result<T, Error> {
         if !response.status().is_success() {
             return Err(match response.status().as_u16() {
                 401 => Error::Identity,

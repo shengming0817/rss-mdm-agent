@@ -8,6 +8,8 @@ mod delivery;
 mod login;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "macos")]
+use crate::service::platform_sso::da as native;
 pub(crate) mod policy;
 #[cfg(windows)]
 mod windows;
@@ -75,6 +77,12 @@ fn provider(d: &Deployment, root: &Path, backend: &da::Backend) -> Result<Device
     );
     let secrets = root.join("secrets");
     DeviceSecrets::open(&secrets, &namespace)
+}
+#[cfg(target_os = "macos")]
+pub(crate) fn release_installation(d: &Deployment) -> Result<bool, Error> {
+    let root = d.da_root()?;
+    let store = provider(d, &root, d.modules.da.backend()?)?;
+    Ok(store.0.retire(&[])?)
 }
 fn open(d: &Deployment) -> Result<da::Client<DeviceSecrets, SystemClock>, Error> {
     let root = d.da_root()?;
@@ -147,6 +155,9 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
     )?);
     #[cfg(windows)]
     let worker_login = login.clone();
+    #[cfg(target_os = "macos")]
+    let (endpoint, mut native) =
+        native::Endpoint::new(&d, mdm.as_ref().and_then(|h| h.session_fence()));
     let policy = d.clients.clone();
     let (stop, mut stopped) = tokio::sync::oneshot::channel::<()>();
     let ready = Arc::new(AtomicBool::new(false));
@@ -186,7 +197,22 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                                 )
                                 .await;
                                 async {
+                                    #[cfg(not(target_os="macos"))]
                                     let result = client.drive(&mut policy).await;
+                                    #[cfg(target_os="macos")]
+                                    let result = {
+                                        let drive=client.drive(&mut policy);
+                                        tokio::pin!(drive);
+                                        loop {
+                                            tokio::select! {
+                                                result = &mut drive => break result,
+                                                Some(cmd) = native.rx.recv() => native.handle(&d,&client,cmd).await,
+                                            }
+                                        }
+                                    };
+                                    #[cfg(target_os="macos")]
+                                    if d.platform_sso.is_some() {native.maintenance(&d,&client).await?;}
+
                                     #[cfg(windows)]
                                     {
                                         let operations = async {
@@ -238,7 +264,23 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                         };
                         #[cfg(windows)]
                         tokio::select! {_=worker_login.wake.notified()=>(),_=tokio::time::sleep(Duration::from_secs(delay))=>()}
-                        #[cfg(not(windows))]
+                        #[cfg(target_os="macos")]
+                        {
+                            let wait = tokio::time::sleep(Duration::from_secs(delay));
+                            tokio::pin!(wait);
+                            loop {
+                                tokio::select! {
+                                    _=&mut wait => break,
+                                    Some(cmd)=native.rx.recv() => {
+                                        match channel_initialized(&d).and_then(|live| if live { open(&d) } else {Err(Error::Identity)}) {
+                                            Ok(client) => native.handle(&d, &client, cmd).await,
+                                            Err(_) => drop(cmd),
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        #[cfg(not(any(target_os="macos",windows)))]
                         tokio::time::sleep(Duration::from_secs(delay)).await;
                     }
                 };
@@ -247,6 +289,8 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
         })?;
     Ok(Box::new(Service {
         mdm,
+        #[cfg(target_os = "macos")]
+        endpoint,
         #[cfg(windows)]
         login,
         ready,
@@ -255,7 +299,60 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
         worker: Some(worker),
     }))
 }
+#[cfg(target_os = "macos")]
+fn settle_mac_request(
+    request: Request,
+    native: impl FnOnce() -> Reply + Send + 'static,
+    mdm: impl FnOnce(Request) -> Option<Reply>,
+) -> execution_ipc::host::DeferredReply {
+    let other = if matches!(request, Request::BindContext { .. }) {
+        mdm(request)
+    } else {
+        None
+    };
+    Box::new(move || {
+        let result = native();
+        match other {
+            Some(bound @ Reply::ContextBound { .. }) => bound,
+            _ => result,
+        }
+    })
+}
+#[cfg(all(test, target_os = "macos"))]
+#[test]
+fn shared_login_preserves_mdm_context_and_native_rejection_never_retries_with_mdm() {
+    let id = execution_contract::Id::new("login-1").unwrap();
+    let login = Request::BindContext {
+        value: execution_ipc::host::NativeContextSession::device(id.clone()),
+        expected: None,
+    };
+    let bound = settle_mac_request(
+        login,
+        || Reply::Unavailable,
+        |_| {
+            Some(Reply::ContextBound {
+                value: execution_contract::NativeContextRef {
+                    id: id.clone(),
+                    generation: id,
+                },
+            })
+        },
+    );
+    assert!(matches!(bound(), Reply::ContextBound { .. }));
+    let callback = Request::PlatformSso {
+        input: execution_ipc::platform_sso::Operation::Status {
+            operation: uuid::Uuid::new_v4(),
+            scope: rss_mdm_agent_wire::platform_sso::Kind::Device,
+        },
+    };
+    assert!(matches!(
+        settle_mac_request(callback, || Reply::Rejected, |_| panic!("second issuer"))(),
+        Reply::Rejected
+    ));
+}
 struct Service {
+    #[cfg(target_os = "macos")]
+    endpoint: native::Endpoint,
     #[cfg(windows)]
     login: Arc<login::Login>,
     mdm: Option<Box<dyn Handler>>,
@@ -264,30 +361,23 @@ struct Service {
     stop: Option<tokio::sync::oneshot::Sender<()>>,
     worker: Option<thread::JoinHandle<Result<(), Error>>>,
 }
-impl Handler for Service {
-    fn session_fence(&self) -> Option<Arc<dyn SessionFence>> {
-        #[cfg(windows)]
-        {
-            Some(self.login.clone())
-        }
-        #[cfg(not(windows))]
-        {
-            self.mdm.as_ref().and_then(|owner| owner.session_fence())
-        }
+#[cfg(target_os = "macos")]
+impl Service {
+    fn begin_native(
+        &mut self,
+        peer: &Peer,
+        request: &Request,
+    ) -> Option<execution_ipc::host::DeferredReply> {
+        let pending = self.endpoint.start(peer, request)?;
+        Some(settle_mac_request(
+            request.clone(),
+            move || pending.map_or_else(|e| e, |call| call.wait()),
+            |r| self.mdm.as_mut().map(|m| m.handle(peer, r)),
+        ))
     }
-    fn peer_policy(&self) -> Option<PeerPolicy> {
-        self.mdm
-            .as_ref()
-            .and_then(|owner| owner.peer_policy())
-            .or_else(|| Some(self.policy.clone()))
-    }
-    fn register_helper(&mut self, peer: &Peer) -> Result<(), execution_app::Error> {
-        self.mdm
-            .as_mut()
-            .ok_or(execution_app::Error::Denied)?
-            .register_helper(peer)
-    }
-    fn handle(&mut self, peer: &Peer, request: Request) -> Reply {
+}
+impl Service {
+    fn handle_immediate(&mut self, peer: &Peer, request: Request) -> Reply {
         let da_ready = self.ready.load(Ordering::Acquire)
             && self
                 .worker
@@ -362,6 +452,66 @@ impl Handler for Service {
             },
             _ => Reply::Rejected,
         }
+    }
+}
+impl Handler for Service {
+    #[cfg(target_os = "macos")]
+    fn deferred_reply(
+        &mut self,
+        peer: &Peer,
+        bytes: &[u8],
+    ) -> Option<execution_ipc::host::DeferredReply> {
+        let request = execution_ipc::host::decode_request(bytes)?;
+        if let Some(wait) = self.begin_native(peer, &request) {
+            return Some(wait);
+        }
+        let reply = self.handle_immediate(peer, request);
+        Some(Box::new(move || reply))
+    }
+    fn session_fence(&self) -> Option<Arc<dyn SessionFence>> {
+        #[cfg(windows)]
+        {
+            Some(self.login.clone())
+        }
+        #[cfg(target_os = "macos")]
+        {
+            Some(self.endpoint.fence.clone())
+        }
+        #[cfg(not(any(windows, target_os = "macos")))]
+        {
+            self.mdm.as_ref().and_then(|owner| owner.session_fence())
+        }
+    }
+    fn peer_policy(&self) -> Option<PeerPolicy> {
+        let policy = self
+            .mdm
+            .as_ref()
+            .and_then(|h| h.peer_policy())
+            .unwrap_or_else(|| self.policy.clone());
+        #[cfg(target_os = "macos")]
+        let policy = {
+            let mut policy = policy;
+            self.endpoint.policy(&mut policy);
+            policy
+        };
+        Some(policy)
+    }
+    fn register_helper(&mut self, peer: &Peer) -> Result<(), execution_app::Error> {
+        #[cfg(target_os = "macos")]
+        if self.mdm.is_none() {
+            return self.endpoint.helper(peer);
+        }
+        self.mdm
+            .as_mut()
+            .ok_or(execution_app::Error::Denied)?
+            .register_helper(peer)
+    }
+    fn handle(&mut self, peer: &Peer, request: Request) -> Reply {
+        #[cfg(target_os = "macos")]
+        if let Some(wait) = self.begin_native(peer, &request) {
+            return wait();
+        }
+        self.handle_immediate(peer, request)
     }
     fn tick(&mut self) -> Result<(), execution_app::Error> {
         if let Some(mdm) = &mut self.mdm {

@@ -23,6 +23,8 @@ pub enum Error {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Context {
+    /// Registration authority bound to this installation and source.
+    pub authority: w::RegistrationTrust,
     pub tenant: Uuid,
     pub device_id: rss_mdm_agent_wire::DeviceId,
     pub installation: Uuid,
@@ -100,6 +102,7 @@ impl Context {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Registration {
+    pub operation: Uuid,
     pub callback_generation: u64,
     pub context: Context,
     pub source_id: Uuid,
@@ -141,6 +144,7 @@ impl Registration {
             };
         encryption_key.key_id().map_err(|_| Error::Protocol)?;
         Ok(Self {
+            operation: response.id,
             callback_generation,
             context,
             source_id: response.source_id,
@@ -154,7 +158,8 @@ impl Registration {
     }
     pub fn proof(&self, challenge: &w::BootstrapResponse, now: i64) -> Result<String, Error> {
         self.context.check_bootstrap(challenge, now)?;
-        if self.source_id != challenge.source_id
+        if self.operation != challenge.id
+            || self.source_id != challenge.source_id
             || self.source_version != challenge.source_version
             || self.client_id != challenge.client_id
         {
@@ -182,7 +187,7 @@ impl Registration {
             && receipt.source_version == self.source_version
             && receipt.kind == self.context.kind
             && !receipt.hardware_attested
-            && receipt.registration_trust == w::RegistrationTrust::MdmBootstrapPop
+            && receipt.registration_trust == self.context.authority
     }
     pub fn recovered(&self, status: &w::Status) -> bool {
         let (registered, source) = match self.context.kind {
@@ -190,6 +195,8 @@ impl Registration {
             w::Kind::User => (status.user_registered, &status.user_source),
         };
         registered
+            && status.registration_trust == self.context.authority
+            && !status.hardware_attested
             && (self.authentication != w::AuthenticationMode::Password
                 || self.context.kind == w::Kind::Device
                 || (status.device_registered
@@ -277,6 +284,8 @@ pub fn public_key(point: &[u8]) -> Result<w::PublicKey, Error> {
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LocalBinding {
+    /// Registration authority bound to this installation and source.
+    pub authority: w::RegistrationTrust,
     pub installation: Uuid,
     pub tenant: Uuid,
     pub device_id: rss_mdm_agent_wire::DeviceId,
@@ -292,12 +301,12 @@ impl LocalBinding {
         &self,
         installation: Uuid,
         tenant: Uuid,
-        registration: &rss_mdm_agent_wire::runtime::BindingProfile,
+        device: rss_mdm_agent_wire::DeviceId,
         account: &str,
     ) -> bool {
         self.installation == installation
             && self.tenant == tenant
-            && self.device_id == registration.device_id
+            && self.device_id == device
             && self.generated_uid == account
             && self.binding_generation > 0
             && self.revision > 0
@@ -343,6 +352,7 @@ mod tests {
         let tenant = Uuid::from_u128(1);
         let source = Uuid::from_u128(2);
         let context = Context {
+            authority: rss_mdm_agent_wire::platform_sso::RegistrationTrust::MdmBootstrapPop,
             tenant,
             device_id: Uuid::from_u128(3).try_into().unwrap(),
             installation: Uuid::from_u128(4),
@@ -546,6 +556,55 @@ mod tests {
         status.user_source.as_mut().unwrap().revoked = false;
         status.user_registered = false;
         assert!(!registration.recovered(&status));
+    }
+    #[test]
+    fn registration_and_lost_reply_accept_only_the_original_authority() {
+        for mode in [
+            w::AuthenticationMode::SecureEnclave,
+            w::AuthenticationMode::Password,
+        ] {
+            let (mut context, challenge, key) = sample();
+            context.authority = w::RegistrationTrust::DaDevicePop;
+            let login = context.configuration.as_mut().unwrap();
+            login.authentication = mode;
+            if mode == w::AuthenticationMode::Password {
+                login.password_provider = Some(Uuid::from_u128(8));
+            }
+            let registration =
+                Registration::prepare(context, &challenge, 1, mode, key.clone(), key.clone(), 1000)
+                    .unwrap();
+            let mut receipt = w::RegistrationReceipt {
+                source_id: registration.source_id,
+                source_version: registration.source_version,
+                kind: w::Kind::User,
+                registered: true,
+                hardware_attested: false,
+                registration_trust: w::RegistrationTrust::DaDevicePop,
+            };
+            let source = |signing_key| w::SourceStatus {
+                id: registration.source_id,
+                version: registration.source_version,
+                revoked: false,
+                signing_key,
+                encryption_key: key.clone(),
+            };
+            let mut status = w::Status {
+                password_exchange: None,
+                application_observed: true,
+                profile_observed: true,
+                device_registered: true,
+                user_registered: true,
+                login_ready: false,
+                device_source: Some(source(Some(key.clone()))),
+                user_source: Some(source(registration.signing_key.clone())),
+                registration_trust: receipt.registration_trust,
+                hardware_attested: false,
+            };
+            assert!(registration.accepts(&receipt) && registration.recovered(&status));
+            receipt.registration_trust = w::RegistrationTrust::MdmBootstrapPop;
+            status.registration_trust = receipt.registration_trust;
+            assert!(!registration.accepts(&receipt) && !registration.recovered(&status));
+        }
     }
     #[test]
     fn browser_proof_cannot_cross_origin_or_target_and_never_uses_device_scope() {

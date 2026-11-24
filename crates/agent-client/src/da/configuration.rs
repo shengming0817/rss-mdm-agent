@@ -87,6 +87,50 @@ pub(super) struct AppliedProof {
     effective: Selection,
 }
 
+// The service starts its next successful poll after 30 seconds plus request time.
+const UNASSIGNED_LIFETIME_SECONDS: i64 = 120;
+
+/// Inspect the signed platform assignment and registration together before routing a mixed installation.
+pub fn mac_assigned(
+    root: &std::path::Path,
+    backend: &Backend,
+    installation: Uuid,
+    now: i64,
+) -> Result<Option<bool>, Error> {
+    let Some(mut db) = super::storage::inspect(root, backend, installation)? else {
+        return Ok(None);
+    };
+    let tx = db.transaction()?;
+    let Some(active) = read::<super::registration::Active>(&tx, "active")? else {
+        return Ok(None);
+    };
+    let Some(proof) = read::<Option<AppliedProof>>(&tx, "applied-proof")?.flatten() else {
+        let absent = read::<(wire::ReportIdentity, i64)>(&tx, "mac-unassigned")?;
+        return if absent.is_some_and(|(id, until)| {
+            now > 0
+                && now < until
+                && (id.service_id, id.tenant, id.device_id)
+                    == (backend.instance, backend.tenant, active.receipt.device)
+        }) && read::<i64>(&tx, "clock")?.is_some_and(|t| t <= now)
+        {
+            Ok(Some(false))
+        } else {
+            Err(Error::Untrusted)
+        };
+    };
+    if now <= 0
+        || now >= proof.until
+        || read::<i64>(&tx, "clock")?.is_none_or(|last| last > now)
+        || (
+            proof.effective.identity.service_id,
+            proof.effective.identity.tenant,
+            proof.effective.identity.device_id,
+        ) != (backend.instance, backend.tenant, active.receipt.device)
+    {
+        return Err(Error::Untrusted);
+    }
+    Ok(Some(proof.effective.settings.mac.is_some()))
+}
 fn fingerprints(snapshot: &ManagedSnapshot) -> Result<BTreeSet<String>, Error> {
     snapshot
         .sources
@@ -398,7 +442,24 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         }
         Ok(())
     }
-    fn configure(
+    /// Revalidate the exact signed selection and machine readback at a native callback.
+    pub fn platform_configuration(&self, snapshot: &ManagedSnapshot) -> Result<Selection, Error> {
+        let proof = read::<Option<AppliedProof>>(&self.journal.db, "applied-proof")?
+            .flatten()
+            .ok_or(Error::Untrusted)?;
+        if self.now()? >= proof.until
+            || !matches!(snapshot.state, SourceState::Missing | SourceState::Present)
+            || fingerprints(snapshot)? != proof.sources
+            || !proof.effective.settings.enabled
+            || read::<Option<String>>(&self.journal.db, "effective-digest")?
+                .flatten()
+                .is_none()
+        {
+            return Err(Error::Untrusted);
+        }
+        Ok(proof.effective)
+    }
+    pub(super) fn configure(
         &self,
         id: &wire::ReportIdentity,
         trust: &wire::ConfigurationTrust,
@@ -411,18 +472,37 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         }
         self.observe_authorities(&current.authorities)?;
         let Some(envelope) = current.artifact else {
-            self.withdraw(consumer)?;
             let locks: Locks = read(&self.journal.db, "locks")?.unwrap_or_default();
-            return if locks.is_empty()
-                && snapshot.sources.is_empty()
-                && snapshot.state == SourceState::Missing
-                && matches!(current.state, SourceState::Missing | SourceState::Withdrawn)
+            if !locks.is_empty()
+                || !snapshot.sources.is_empty()
+                || snapshot.state != SourceState::Missing
+                || !matches!(current.state, SourceState::Missing | SourceState::Withdrawn)
             {
-                Ok(())
+                self.withdraw(consumer)?;
+                return Err(Error::Unavailable);
+            }
+            // Preserve the last bounded confirmation while refreshing the same absence. A change away
+            // from an applied assignment clears the old proof before the native withdrawal.
+            let previous = read::<(wire::ReportIdentity, i64)>(&self.journal.db, "mac-unassigned")?;
+            if previous.is_some_and(|(prior, _)| prior == *id) {
+                if let Err(e) = consumer.apply(None) {
+                    self.journal
+                        .db
+                        .execute("DELETE FROM state WHERE name='mac-unassigned'", [])?;
+                    return Err(e);
+                }
             } else {
-                Err(Error::Unavailable)
-            };
+                self.withdraw(consumer)?;
+            }
+            return write(
+                &self.journal.db,
+                "mac-unassigned",
+                &(id, self.now()?.saturating_add(UNASSIGNED_LIFETIME_SECONDS)),
+            );
         };
+        self.journal
+            .db
+            .execute("DELETE FROM state WHERE name='mac-unassigned'", [])?;
         let doc = verify(&envelope, trust, id, self.now()?, DeliveryPermission::Da)?;
         let publication = current.publication.ok_or(Error::Protocol)?;
         if current.state != SourceState::Present
@@ -554,6 +634,7 @@ impl<S: Credentials, C: Clock> Client<S, C> {
     }
 
     fn clear_proof(tx: &rusqlite::Connection) -> Result<(), Error> {
+        tx.execute("DELETE FROM state WHERE name='mac-unassigned'", [])?;
         if read::<Option<String>>(tx, "effective-digest")?
             .flatten()
             .is_some()

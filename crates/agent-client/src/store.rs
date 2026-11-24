@@ -122,8 +122,7 @@ impl Store {
         Ok(now)
     }
     pub fn get<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>, Error> {
-        let bytes:Option<Vec<u8>>=self.conn.query_row("SELECT CASE WHEN typeof(body)='blob' AND length(body)<=16777216 THEN body END FROM state WHERE key=?1",[key],|r|r.get(0)).optional()?;
-        bytes.as_deref().map(decode).transpose()
+        read_value(&self.conn, key)
     }
     pub fn put(&self, key: &str, value: &impl Serialize) -> Result<(), Error> {
         let body = encode(value)?;
@@ -143,6 +142,13 @@ impl Store {
     }
 }
 
+pub(crate) fn read_value<T: DeserializeOwned>(
+    conn: &Connection,
+    key: &str,
+) -> Result<Option<T>, Error> {
+    let bytes:Option<Vec<u8>>=conn.query_row("SELECT CASE WHEN typeof(body)='blob' AND length(body)<=16777216 THEN body END FROM state WHERE key=?1",[key],|r|r.get(0)).optional()?;
+    bytes.as_deref().map(decode).transpose()
+}
 pub(crate) fn read_existing(root: &Path, cfg: &Config) -> Result<Connection, Error> {
     cfg.validate()?;
     private_root(root)?;

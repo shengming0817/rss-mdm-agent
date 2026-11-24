@@ -27,7 +27,7 @@ int main(void) { @autoreleasepool {
     NSString *id1=@"00000000-0000-0000-0000-000000000001";
     NSString *issuer=[@"https://mdm.example/api/v1/apple/platform-sso/" stringByAppendingString:id1];
     NSString *target=[issuer stringByAppendingString:@"/browser/complete"];
-    NSString *metadata=json(@{@"context":@{@"tenant":id1,@"deviceId":id1,@"installation":id1,@"origin":@"https://mdm.example",@"kind":@"user",@"binding":id1,@"bindingGeneration":@1,@"generatedUid":id1,@"bindingRevision":@1,@"configuration":@{@"authentication":@"secure_enclave",@"passwordProvider":NSNull.null,@"login":@"local",@"unlock":@"local",@"filevault":@"local",@"offlineGraceSeconds":NSNull.null,@"registrationGraceSeconds":NSNull.null,@"maintenanceAccounts":@[]}},@"callbackGeneration":@1,@"sourceId":id1,@"sourceVersion":@1,@"clientId":id1,@"authentication":@"secure_enclave",@"proofKey":publicKey,@"signingKey":publicKey,@"encryptionKey":publicKey});
+    NSString *metadata=json(@{@"operation":@"00000000-0000-4000-8000-000000000002",@"context":@{@"authority":@"mdm_bootstrap_pop",@"tenant":id1,@"deviceId":id1,@"installation":id1,@"origin":@"https://mdm.example",@"kind":@"user",@"binding":id1,@"bindingGeneration":@1,@"generatedUid":id1,@"bindingRevision":@1,@"configuration":@{@"authentication":@"secure_enclave",@"passwordProvider":NSNull.null,@"login":@"local",@"unlock":@"local",@"filevault":@"local",@"offlineGraceSeconds":NSNull.null,@"registrationGraceSeconds":NSNull.null,@"maintenanceAccounts":@[]}},@"callbackGeneration":@1,@"sourceId":id1,@"sourceVersion":@1,@"clientId":id1,@"authentication":@"secure_enclave",@"proofKey":publicKey,@"signingKey":publicKey,@"encryptionKey":publicKey});
     NSString *body=json(@{@"challengeId":id1,@"nonce":@"test-nonce",@"proof":@""});
     NSString *token=[@"a" stringByPaddingToLength:43 withString:@"a" startingAtIndex:0];
     char *result=rss_psso_browser(2,point.bytes,metadata.UTF8String,issuer.UTF8String,target.UTF8String,body.UTF8String,token.UTF8String,testSign,(void *)key);
@@ -73,6 +73,11 @@ int main(void) { @autoreleasepool {
     RSSCompleteRetirement(defaults,@"deviceRegistration",@"first-inflight");
     assert(![defaults dictionaryForKey:@"inflight"] && !RSSPendingRetirements(defaults).count);
     assert(RSSBeginSave(defaults,@"deviceRegistration",@"device-v1"));
+    assert(RSSCommitSave(defaults,@"deviceRegistration",@"device-v1"));
+    RSSSetInflight(defaults,@"deviceRegistration",@"device-v1");
+    RSSSetSaving(defaults,@"deviceRegistration",@"device-v1");
+    RSSQueueInflight(defaults);assert(RSSPendingRetirements(defaults).count==0);
+    assert(![defaults dictionaryForKey:@"inflight"] && ![defaults dictionaryForKey:@"saving"]);
     RSSSetInflight(defaults,@"deviceRegistration",@"device-v2");
     RSSQueueInflight(defaults);assert(RSSPendingRetirements(defaults).count==1);
     RSSQueueRetirements(defaults);assert(RSSPendingRetirements(defaults).count==2);
@@ -93,6 +98,11 @@ int main(void) { @autoreleasepool {
     assert(!RSSObservationCurrent(defaults,@"registration",@"new-callback-user"));
     RSSQueueCancelledRegistration(defaults,@"registration",@"valid-old-user");
     assert(!RSSObservationCurrent(defaults,@"registration",@"valid-old-user"));
+    assert(RSSBeginSave(defaults,@"registration",@"replacement"));
+    assert([[reopened stringForKey:@"registration"] isEqual:@"valid-old-user"]);
+    assert([[reopened dictionaryForKey:@"saving"][@"registration"] isEqual:@"replacement"]);
+    assert(RSSCommitSave(defaults,@"registration",@"replacement"));
+    assert([[reopened stringForKey:@"registration"] isEqual:@"replacement"]);
     [defaults removePersistentDomainForName:suite];
     CFRelease(publicKeyRef);CFRelease(key);puts("Platform SSO native ABI and signature test passed; no system registration exercised");
 } return 0; }

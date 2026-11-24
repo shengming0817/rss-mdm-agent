@@ -423,7 +423,12 @@ fn prepare(
             Some(d) => (LocalAccess::from_deployment(d), d.modules.clone()),
             None => (
                 j.initial_access(r, || {
-                    lifecycle::initial_profile(candidate.defaults.mdm.enabled())
+                    lifecycle::initial_profile(
+                        candidate.defaults.mdm.enabled()
+                            || (cfg!(target_os = "macos")
+                                && candidate.defaults.da.enabled()
+                                && candidate.platform_sso.is_some()),
+                    )
                 })?,
                 candidate.defaults.clone(),
             ),

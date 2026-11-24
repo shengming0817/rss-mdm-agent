@@ -15,4 +15,3 @@ execution-ipc = { path = "../../crates/execution-ipc" }
 rss-mdm-agent-wire.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-uuid = { version = "=1.26.0", features = ["v4", "serde"] }

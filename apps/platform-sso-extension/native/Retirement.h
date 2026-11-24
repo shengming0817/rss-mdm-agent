@@ -7,12 +7,6 @@ static NSDictionary<NSString *,NSString *> *RSSPendingRetirements(NSUserDefaults
 static BOOL RSSObservationCurrent(NSUserDefaults *defaults,NSString *scope,NSString *metadata) {
     return [[defaults stringForKey:scope] isEqual:metadata] && !RSSPendingRetirements(defaults)[metadata];
 }
-static void RSSQueueInflight(NSUserDefaults *defaults) {
-    NSMutableDictionary *pending=[RSSPendingRetirements(defaults) mutableCopy];
-    NSDictionary *inflight=[defaults dictionaryForKey:@"inflight"];
-    for(NSString *scope in RSSRegistrationScopes())if(inflight[scope])pending[inflight[scope]]=scope;
-    if(pending.count)[defaults setObject:pending forKey:@"retirements"];
-}
 // Cancellation belongs to one callback's published registration, not its previously saved scope.
 static BOOL RSSQueueCancelledRegistration(NSUserDefaults *defaults,NSString *scope,NSString *metadata) {
     if(!scope || !metadata)return NO;
@@ -26,6 +20,8 @@ static void RSSQueueRetirements(NSUserDefaults *defaults) {
     for(NSString *scope in RSSRegistrationScopes()) {
         NSString *metadata=[defaults stringForKey:scope];
         if(metadata)pending[metadata]=scope;
+        metadata=[defaults dictionaryForKey:@"saving"][scope];
+        if(metadata)pending[metadata]=scope;
         metadata=inflight[scope];
         if(metadata)pending[metadata]=scope;
     }
@@ -38,13 +34,38 @@ static BOOL RSSSetInflight(NSUserDefaults *defaults,NSString *scope,NSString *me
     return [defaults synchronize]; // Fence metadata before issuing a remote mutation.
 }
 // This records a save intent, never an assertion that Apple accepted the configuration.
-static BOOL RSSBeginSave(NSUserDefaults *defaults,NSString *scope,NSString *metadata) {
-    [defaults setObject:metadata forKey:scope];
+static BOOL RSSSetSaving(NSUserDefaults *defaults, NSString *scope, NSString *metadata) {
+    NSMutableDictionary *saving=[[defaults dictionaryForKey:@"saving"] mutableCopy] ?: [NSMutableDictionary dictionary];
+    if(metadata)saving[scope]=metadata;else[saving removeObjectForKey:scope];
+    if(saving.count)[defaults setObject:saving forKey:@"saving"];else[defaults removeObjectForKey:@"saving"];
     return [defaults synchronize];
+}
+static void RSSQueueInflight(NSUserDefaults *defaults) {
+    NSMutableDictionary *pending=[RSSPendingRetirements(defaults) mutableCopy];
+    for(NSString *scope in RSSRegistrationScopes()) {
+        NSString *current=[defaults stringForKey:scope];
+        NSString *inflight=[defaults dictionaryForKey:@"inflight"][scope];
+        NSString *saving=[defaults dictionaryForKey:@"saving"][scope];
+        // Only a successful Apple save can publish this attempt as current. Finish a lost local checkpoint.
+        if(inflight && [current isEqual:inflight])RSSSetInflight(defaults,scope,nil);
+        else if(inflight)pending[inflight]=scope;
+        if(saving && [current isEqual:saving])RSSSetSaving(defaults,scope,nil);
+        else if(saving)pending[saving]=scope;
+    }
+    if(pending.count)[defaults setObject:pending forKey:@"retirements"];
+}
+static BOOL RSSBeginSave(NSUserDefaults *defaults,NSString *scope,NSString *metadata) {
+    return RSSSetSaving(defaults,scope,metadata);
+}
+static BOOL RSSCommitSave(NSUserDefaults *defaults,NSString *scope,NSString *metadata) {
+    if(![[defaults dictionaryForKey:@"saving"][scope] isEqual:metadata])return NO;
+    [defaults setObject:metadata forKey:scope];
+    return [defaults synchronize] && RSSSetSaving(defaults,scope,nil) && RSSSetInflight(defaults,scope,nil);
 }
 static void RSSCompleteRetirement(NSUserDefaults *defaults,NSString *scope,NSString *metadata) {
     NSMutableDictionary *pending=[RSSPendingRetirements(defaults) mutableCopy];
     if(![pending[metadata] isEqual:scope])return;
+    if([[defaults dictionaryForKey:@"saving"][scope] isEqual:metadata]) RSSSetSaving(defaults,scope,nil);
     [pending removeObjectForKey:metadata];
     if([[defaults stringForKey:scope] isEqual:metadata])[defaults removeObjectForKey:scope];
     if([[[defaults dictionaryForKey:@"inflight"] objectForKey:scope] isEqual:metadata])RSSSetInflight(defaults,scope,nil);

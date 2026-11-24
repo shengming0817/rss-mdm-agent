@@ -252,7 +252,13 @@ pub(super) fn readback(
         if !applies {
             continue;
         }
-        if matched || !target.settings.enabled {
+        if matched
+            || !target.settings.enabled
+            || profile
+                .get("ProfileWasInstalledByMDM")
+                .and_then(Value::as_boolean)
+                != Some(true)
+        {
             return Ok(false);
         }
         let bindings = &target.native.bindings;

@@ -37,6 +37,8 @@ fn readback(c: &Coordinate) -> ::platform_sso::NativeConfiguration {
 }
 fn observation(c: &Coordinate, actual: ::platform_sso::NativeConfiguration) -> Operation {
     Operation::Observe {
+        operation: c.operation,
+        save: execution_ipc::platform_sso::NativeSave::Saved,
         scope: w::Kind::User,
         callback_generation: c.callback_generation,
         configuration: Some(Box::new(actual)),
@@ -113,6 +115,7 @@ async fn native_observation_refresh_settles_original_journal_after_restart_and_a
     let access_root = root.path.join("access");
     platform_private_storage::directory(&access_root).unwrap();
     let local_binding = ::platform_sso::LocalBinding {
+        authority: rss_mdm_agent_wire::platform_sso::RegistrationTrust::MdmBootstrapPop,
         installation,
         tenant: task.tenant_id,
         device_id: task.device_id,
@@ -124,12 +127,14 @@ async fn native_observation_refresh_settles_original_journal_after_restart_and_a
         configuration: login,
     };
     let coordinate = Coordinate {
+        operation: Uuid::new_v4(),
         client_id: Uuid::new_v4(),
         authentication: w::AuthenticationMode::Password,
         callback_generation: 7,
         source: Uuid::new_v4(),
         source_version: 1,
         context: ::platform_sso::Context {
+            authority: rss_mdm_agent_wire::platform_sso::RegistrationTrust::MdmBootstrapPop,
             installation,
             tenant: task.tenant_id,
             device_id: task.device_id,

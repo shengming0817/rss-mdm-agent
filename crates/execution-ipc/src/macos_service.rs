@@ -182,6 +182,21 @@ pub fn query_helper(
     session: u32,
     policy: &PeerPolicy,
 ) -> Result<Vec<u8>, Error> {
+    query_helper_until(
+        bytes,
+        uid,
+        session,
+        policy,
+        std::time::Instant::now() + Duration::from_secs(5),
+    )
+}
+pub(crate) fn query_helper_until(
+    bytes: &[u8],
+    uid: u32,
+    session: u32,
+    policy: &PeerPolicy,
+    deadline: std::time::Instant,
+) -> Result<Vec<u8>, Error> {
     extern "C" {
         fn rss_execution_helper_query(
             request: *const u8,
@@ -191,6 +206,7 @@ pub fn query_helper(
             output: *mut u8,
             capacity: *mut usize,
             requirement: *const std::ffi::c_char,
+            timeout_ms: u32,
         ) -> i32;
     }
     if bytes.len() > host::FRAME_LIMIT || policy.subjects != [uid.to_string()] {
@@ -199,6 +215,13 @@ pub fn query_helper(
     let requirement = policy.requirement()?;
     let mut output = vec![0; host::FRAME_LIMIT];
     let mut size = output.len();
+    let remaining = deadline
+        .saturating_duration_since(std::time::Instant::now())
+        .as_millis()
+        .min(5000) as u32;
+    if remaining == 0 {
+        return Err(Error::Unavailable);
+    }
     if unsafe {
         rss_execution_helper_query(
             bytes.as_ptr(),
@@ -208,6 +231,7 @@ pub fn query_helper(
             output.as_mut_ptr(),
             &mut size,
             requirement.as_ptr(),
+            remaining,
         )
     } != 0
         || size > output.len()
@@ -310,6 +334,10 @@ fn handle_call(
             return Ok(reply);
         }
         let mut h = handler.lock().map_err(|_| Error::Unavailable)?;
+        if let Some(wait) = h.deferred_reply(peer, bytes) {
+            drop(h);
+            return Ok(host::encode_reply(wait()));
+        }
         Ok(host::dispatch(h.as_mut(), peer, bytes))
     }))
     .unwrap_or(Err(Error::Unavailable));
@@ -332,6 +360,68 @@ mod tests {
         fn stop(&mut self) -> Result<(), Error> {
             Ok(())
         }
+    }
+    #[test]
+    fn deferred_native_reply_releases_handler_for_other_calls() {
+        struct Slow {
+            started: std::sync::mpsc::Sender<()>,
+            finish: Option<std::sync::mpsc::Receiver<()>>,
+        }
+        impl Handler for Slow {
+            fn deferred_reply(&mut self, _: &Peer, bytes: &[u8]) -> Option<host::DeferredReply> {
+                if bytes != b"slow" {
+                    return None;
+                }
+                let started = self.started.clone();
+                let release = self.finish.take().unwrap();
+                Some(Box::new(move || {
+                    started.send(()).unwrap();
+                    release.recv_timeout(Duration::from_secs(2)).unwrap();
+                    host::Reply::Unavailable
+                }))
+            }
+            fn handle(&mut self, _: &Peer, _: host::Request) -> host::Reply {
+                host::Reply::Rejected
+            }
+            fn tick(&mut self) -> Result<(), Error> {
+                Ok(())
+            }
+            fn stop(&mut self) -> Result<(), Error> {
+                Ok(())
+            }
+        }
+        let (started, ready) = std::sync::mpsc::channel();
+        let (done, finish) = std::sync::mpsc::channel();
+        let handler = Mutex::new(Box::new(Slow {
+            started,
+            finish: Some(finish),
+        }) as Box<dyn Handler>);
+        let stop = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            let peer = || Peer {
+                pid: 1,
+                uid: Some(1),
+                session: 1,
+            };
+            scope.spawn(|| {
+                handle_call(
+                    &handler,
+                    None,
+                    &stop,
+                    &Peer {
+                        pid: 1,
+                        uid: Some(1),
+                        session: 1,
+                    },
+                    b"slow",
+                )
+                .unwrap()
+            });
+            ready.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert!(handler.try_lock().is_ok());
+            assert!(handle_call(&handler, None, &stop, &peer(), b"{}").is_ok());
+            done.send(()).unwrap();
+        });
     }
     #[test]
     fn poisoned_handler_stops_the_service_instead_of_silently_skipping_work() {

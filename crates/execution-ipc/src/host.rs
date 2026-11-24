@@ -1264,27 +1264,35 @@ pub trait SessionFence: Send + Sync {
 /// Only a current, bounded native employee revocation bypasses the serial business handler.
 #[cfg(windows)]
 pub(crate) fn is_employee_revocation(bytes: &[u8]) -> bool {
-    bytes.len() <= 65536
-        && serde_json::from_slice::<Envelope>(bytes).is_ok_and(|e| {
-            e.version == IPC_VERSION && matches!(e.request, Request::RevokeContext {})
-        })
+    matches!(decode_request(bytes), Some(Request::RevokeContext {}))
 }
 /// Decode a current revocation and dispatch only its authenticated ephemeral fence.
 pub fn dispatch_fence(fence: &dyn SessionFence, peer: &Peer, bytes: &[u8]) -> Option<Vec<u8>> {
-    if bytes.len() > 65536 {
-        return None;
-    }
-    let envelope: Envelope = serde_json::from_slice(bytes).ok()?;
-    if envelope.version != IPC_VERSION {
-        return None;
-    }
-    match envelope.request {
+    match decode_request(bytes)? {
         Request::RevokeContext {} => Some(encode_reply(fence.revoke(peer))),
         _ => None,
     }
 }
+/// Bound a current desktop envelope before dispatching it to a platform-specific owner.
+pub fn decode_request(bytes: &[u8]) -> Option<Request> {
+    if bytes.len() > 64 * 1024 {
+        return None;
+    }
+    serde_json::from_slice::<Envelope>(bytes)
+        .ok()
+        .filter(|e| e.version == IPC_VERSION)
+        .map(|e| e.request)
+}
+#[cfg(target_os = "macos")]
+/// Waiting for a native worker does not require the listener's mutable handler.
+pub type DeferredReply = Box<dyn FnOnce() -> Reply + Send>;
 /// Native lifecycle handler; all business work remains serialized by its owner.
 pub trait Handler: Send {
+    #[cfg(target_os = "macos")]
+    /// Authenticate and enqueue work under the handler lock, returning an owned reply waiter.
+    fn deferred_reply(&mut self, _peer: &Peer, _bytes: &[u8]) -> Option<DeferredReply> {
+        None
+    }
     /// Optional authenticated revocation which performs no execution or journal IO.
     fn session_fence(&self) -> Option<std::sync::Arc<dyn SessionFence>> {
         None
@@ -1307,14 +1315,8 @@ pub trait Handler: Send {
     /// Native framing seam for the separately authenticated helper protocol. The system
     /// service uses this default, which accepts only task-reference IPC V1.
     fn handle_wire(&mut self, peer: &Peer, bytes: &[u8]) -> Vec<u8> {
-        let reply = if bytes.len() > 65536 {
-            Reply::Rejected
-        } else {
-            match serde_json::from_slice::<Envelope>(bytes) {
-                Ok(e) if e.version == IPC_VERSION => self.handle(peer, e.request),
-                _ => Reply::Rejected,
-            }
-        };
+        let reply =
+            decode_request(bytes).map_or(Reply::Rejected, |request| self.handle(peer, request));
         encode_reply(reply)
     }
     /// Reconcile existing attempts without obtaining replacement dispatch authority.

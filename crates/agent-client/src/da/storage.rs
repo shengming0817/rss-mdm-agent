@@ -81,6 +81,38 @@ pub fn has_live_credentials(root: &Path, installation: Uuid) -> Result<bool, Err
     Ok(active.is_some() || pending.is_some() || !release.is_empty())
 }
 
+/// Return only the committed, locally released credential withdrawal for this installed authority.
+pub fn retired_receipt(
+    root: &Path,
+    backend: &Backend,
+    installation: Uuid,
+    operation: Uuid,
+) -> Result<rss_mdm_agent_wire::da::RevocationReceipt, Error> {
+    let mut db = inspect(root, backend, installation)?.ok_or(Error::Identity)?;
+    let tx = db.transaction()?;
+    if read::<super::registration::Active>(&tx, "active")?.is_some()
+        || read::<Option<super::registration::Pending>>(&tx, "enrollment")?
+            .flatten()
+            .is_some()
+        || !read::<Vec<(String, bool)>>(&tx, "release")?
+            .unwrap_or_default()
+            .is_empty()
+    {
+        return Err(Error::Conflict);
+    }
+    let receipt: rss_mdm_agent_wire::da::RevocationReceipt =
+        read(&tx, "retired-registration")?.ok_or(Error::Denied)?;
+    if operation.is_nil()
+        || receipt.credential.is_nil()
+        || (receipt.operation_id, receipt.service_id, receipt.tenant)
+            != (operation, backend.instance, backend.tenant)
+        || read::<rss_mdm_agent_wire::da::RevocationReceipt>(&tx, "revocation")?.as_ref()
+            != Some(&receipt)
+    {
+        return Err(Error::Identity);
+    }
+    Ok(receipt)
+}
 pub(super) fn inspect(
     root: &Path,
     backend: &Backend,

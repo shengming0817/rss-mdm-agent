@@ -43,8 +43,43 @@ pub(super) fn dispatch(_: &[OsString]) -> Result<bool, Error> {
     }
     Ok(false)
 }
-pub(super) fn operation_status(_: uuid::Uuid) -> Result<(), Error> {
-    Err(Error::Unsupported)
+pub(super) fn operation_status(config: &Path, id: uuid::Uuid) -> Result<(), Error> {
+    let dir = config
+        .parent()
+        .ok_or(Error::Configuration)?
+        .join("install-operations");
+    if let Some(status) = unmanage::observed_status(config, id)? {
+        println!("{status}");
+        return Ok(());
+    }
+    for suffix in ["psso-result", "retirement.json"] {
+        let path = dir.join(format!("{id}.{suffix}"));
+        if path.try_exists()? {
+            let bytes =
+                installation_security::read_protected(&path).map_err(|_| Error::Identity)?;
+            let value: serde_json::Value =
+                serde_json::from_slice(&bytes).map_err(|_| Error::Storage)?;
+            println!("{value}");
+            return Ok(());
+        }
+    }
+    if config.try_exists()? {
+        let d = Deployment::metadata(config)?;
+        let root = crate::access_worker::root(&d.execution);
+        if root.try_exists()? {
+            if let Some(receipt) = crate::credential_worker::state::read_optional::<
+                crate::service::platform_sso::CleanupReceipt,
+            >(&root, &format!("{id}.psso-result"))?
+            {
+                println!(
+                    "{}",
+                    serde_json::to_string(&receipt).map_err(|_| Error::Storage)?
+                );
+                return Ok(());
+            }
+        }
+    }
+    Err(Error::NotFound)
 }
 pub(super) fn public_directory(path: &Path) -> Result<(), Error> {
     if !path.is_absolute() {
@@ -203,7 +238,8 @@ fn register_verified(
     }
     if !system {
         let subject = execution_ipc::host::current_subject().map_err(crate::error::app_error)?;
-        if !deployment.modules.mdm.enabled() || !deployment.helper_work_roots.contains_key(&subject)
+        if !deployment.requires_user_helper()
+            || !deployment.helper_work_roots.contains_key(&subject)
         {
             return Err(Error::Identity);
         }
@@ -240,7 +276,7 @@ fn register_verified(
         stop_endpoint(&endpoint)?;
         return Err(error);
     }
-    if system && deployment.modules.mdm.enabled() {
+    if system && deployment.requires_user_helper() {
         let helper = plist_path(false);
         if helper.exists() {
             require_exit_budget(&read_job(false, binary, config)?)?;
@@ -563,13 +599,28 @@ pub(super) fn launch_unmanage(deployment: &Deployment, task: uuid::Uuid) -> Resu
     }
     Ok(())
 }
+pub(super) fn carrier_gone(deployment: &Deployment, task: uuid::Uuid) -> Result<bool, Error> {
+    let cleanup =
+        Path::new("/Library/LaunchDaemons").join(format!("{LABEL}.unmanage.{task}.cleanup.plist"));
+    for path in [
+        unmanage_binary(deployment, task)?,
+        unmanage_job(task),
+        cleanup,
+    ] {
+        match std::fs::symlink_metadata(path) {
+            Ok(_) => return Ok(false),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(true)
+}
 pub(super) fn finish_unmanage(deployment: &Deployment, task: uuid::Uuid) -> Result<bool, Error> {
     let carrier = unmanage_binary(deployment, task)?;
     let original = unmanage_job(task);
     let label = format!("{LABEL}.unmanage.{task}.cleanup");
     let cleanup = Path::new("/Library/LaunchDaemons").join(format!("{label}.plist"));
-    let absent = |p: &Path| matches!(std::fs::symlink_metadata(p),Err(e) if e.kind()==std::io::ErrorKind::NotFound);
-    if absent(&carrier) && absent(&original) && absent(&cleanup) {
+    if carrier_gone(deployment, task)? {
         return Ok(true);
     }
     // ref: launchd.plist(5) ProgramArguments / KeepAlive SuccessfulExit.
@@ -600,7 +651,7 @@ pub(super) fn finish_unmanage(deployment: &Deployment, task: uuid::Uuid) -> Resu
         )?;
     }
     for _ in 0..10 {
-        if absent(&carrier) && absent(&original) && absent(&cleanup) {
+        if carrier_gone(deployment, task)? {
             return Ok(true);
         }
         std::thread::sleep(Duration::from_millis(100));

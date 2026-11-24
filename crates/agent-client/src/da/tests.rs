@@ -16,7 +16,7 @@ use base64::{
 };
 use der::{Decode, Encode};
 use ring::signature::{Ed25519KeyPair, KeyPair};
-use rss_mdm_agent_wire::runtime::AccessConfiguration;
+use rss_mdm_agent_wire::runtime::{self as w, AccessConfiguration};
 use serde_json::{json, Value};
 use std::sync::{atomic::AtomicI64, Mutex};
 use wire::{ApplicationState, DeliveryPermission, Health, SourceState};
@@ -29,6 +29,7 @@ impl Credentials for Secrets {
 }
 struct Server {
     clock: Time,
+    mac_mode: rss_mdm_agent_wire::platform_sso::AuthenticationMode,
     account_closed: bool,
     issued_until: Option<i64>,
     offer: wire::AccountOffer,
@@ -110,9 +111,101 @@ fn windows_operation(s: &mut Server, route: &str, input: &Value) -> Option<Respo
         _ => return None,
     })
 }
+fn fixture_mac_binding(s: &Server) -> w::AccessBindingStatus {
+    use rss_mdm_agent_wire::platform_sso as mac;
+    let mode = s.mac_mode;
+    w::AccessBindingStatus {
+        id: s.offer.binding_id,
+        binding_generation: 1,
+        factor_generation: 1,
+        revision: 1,
+        revoked: false,
+        account_disposition: w::AccessAccountDisposition::Keep,
+        account: Some(w::AccessAccount::Macos {
+            generated_uid: s.offer.operation_id,
+        }),
+        configuration: w::AccessConfiguration {
+            windows: w::AccessWindowsConfiguration::Disabled,
+            mac: Some(mac::LoginConfiguration {
+                authentication: mode,
+                password_provider: (mode == mac::AuthenticationMode::Password)
+                    .then_some(s.offer.operation_id),
+                ..Default::default()
+            }),
+            role: None,
+            self_enrollment: false,
+            enabled: true,
+        },
+        received_revision: None,
+        applied_revision: None,
+        effect: None,
+    }
+}
+fn mac_operation(
+    s: &Server,
+    route: &str,
+    uri: &Uri,
+    headers: &axum::http::HeaderMap,
+    input: &Value,
+) -> Response {
+    use rss_mdm_agent_wire::platform_sso as psso;
+    assert!(!headers.contains_key("x-rss-user-session") && !headers.contains_key("cookie"));
+    let source = s.offer.binding_id;
+    let value = match route {
+        "platform-sso/status" => {
+            assert_eq!(uri.query(), Some(format!("bindingId={source}").as_str()));
+            json!({"deviceRegistered":false,"userRegistered":false,"loginReady":false,"applicationObserved":true,"profileObserved":true,"deviceSource":null,"userSource":null,"passwordExchange":null,"hardwareAttested":false,"registrationTrust":"da_device_pop"})
+        }
+        "platform-sso/bootstrap" => json!(psso::BootstrapResponse {
+            id: if input["kind"] == "user" {
+                assert_eq!(input["bindingId"], source.to_string());
+                s.offer.attempt_id
+            } else {
+                source
+            },
+            nonce: "test-nonce".into(),
+            expires_at: s.clock.now().unwrap() + 60,
+            source_id: source,
+            source_version: 1,
+            endpoints: psso::Endpoints::new("https://mac.example", s.trust.tenant).unwrap(),
+            client_id: source,
+            login_user_name: source.to_string()
+        }),
+        "platform-sso/register" => json!(psso::RegistrationReceipt {
+            registered: true,
+            source_id: source,
+            source_version: 1,
+            kind: if input["challengeId"] == s.offer.attempt_id.to_string() {
+                psso::Kind::User
+            } else {
+                psso::Kind::Device
+            },
+            registration_trust: psso::RegistrationTrust::DaDevicePop,
+            hardware_attested: false
+        }),
+        _ => {
+            assert_eq!(route, format!("platform-sso/sources/{source}/revoke"));
+            assert_eq!(*input, json!({"sourceVersion":1}));
+            json!(psso::RevocationReceipt {
+                revoked: true,
+                source_id: source,
+                source_version: 2
+            })
+        }
+    };
+    (
+        [
+            ("cache-control", "no-store"),
+            ("referrer-policy", "no-referrer"),
+        ],
+        Json(value),
+    )
+        .into_response()
+}
 async fn endpoint(
     State(state): State<Arc<Mutex<Server>>>,
     ConnectInfo(peer): ConnectInfo<TlsIdentity>,
+    headers: axum::http::HeaderMap,
     uri: Uri,
     body: axum::body::Bytes,
 ) -> Response {
@@ -144,38 +237,25 @@ async fn endpoint(
             json!({"grant":grant,"issuanceId":s.candidate.as_ref().map(|v|v.issuance_id),"issuanceUnknown":false,"registration":s.registration})
         }
         "certificates" => return certificate_response(&mut s, &grant, tenant, input),
-        "activate" => {
-            let c = s.candidate.clone().unwrap();
-            assert_eq!(
-                peer.0.as_ref(),
-                Some(&STANDARD.decode(&c.certificate_chain[0]).unwrap())
-            );
-            assert_eq!(input["issuanceId"], c.issuance_id.to_string());
-            s.active = peer.0;
-            let r = wire::Registration {
-                service_id: SERVICE_ID,
-                tenant,
-                device: grant.device,
-                credential: Uuid::new_v4(),
-                issuance_id: c.issuance_id,
-                operation_id: serde_json::from_value(input["operationId"].clone()).unwrap(),
-            };
-            s.registration = Some(r.clone());
-            if std::mem::take(&mut s.lose_activation) {
-                return (
-                    axum::http::StatusCode::SERVICE_UNAVAILABLE,
-                    Json(json!({"code":"activation_unknown","issuanceId":null})),
-                )
-                    .into_response();
-            }
-            json!(r)
-        }
+        "activate" => return activation_response(&mut s, &grant, tenant, peer, input),
         other => {
             assert!(s.active.is_some() && peer.0 == s.active);
             if let Some(reply) = windows_operation(&mut s, other, &input) {
                 return reply;
             }
             match other {
+                "device-access" => {
+                    assert_eq!(uri.query(), Some("limit=1"));
+                    assert_eq!(headers["x-rss-user-session"], "a".repeat(64));
+                    return (
+                        [("cache-control", "no-store")],
+                        Json(json!({"policies":[],"nextCursor":null,"bindings":[fixture_mac_binding(&s)]})),
+                    )
+                        .into_response();
+                }
+                route if route.starts_with("platform-sso/") => {
+                    return mac_operation(&s, route, &uri, &headers, &input);
+                }
                 "renewal-grants" => return renewal_response(&mut s, &grant, input),
                 "configuration-trust" => json!(s.trust),
                 "configuration-trust/acknowledgements" => {
@@ -220,6 +300,38 @@ async fn endpoint(
         }
     };
     Json(output).into_response()
+}
+fn activation_response(
+    s: &mut Server,
+    grant: &wire::Grant,
+    tenant: Uuid,
+    peer: TlsIdentity,
+    input: Value,
+) -> Response {
+    let c = s.candidate.clone().unwrap();
+    assert_eq!(
+        peer.0.as_ref(),
+        Some(&STANDARD.decode(&c.certificate_chain[0]).unwrap())
+    );
+    assert_eq!(input["issuanceId"], c.issuance_id.to_string());
+    s.active = peer.0;
+    let r = wire::Registration {
+        service_id: SERVICE_ID,
+        tenant,
+        device: grant.device,
+        credential: Uuid::new_v4(),
+        issuance_id: c.issuance_id,
+        operation_id: serde_json::from_value(input["operationId"].clone()).unwrap(),
+    };
+    s.registration = Some(r.clone());
+    if std::mem::take(&mut s.lose_activation) {
+        return (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"code":"activation_unknown","issuanceId":null})),
+        )
+            .into_response();
+    }
+    Json(r).into_response()
 }
 fn renewal_response(s: &mut Server, grant: &wire::Grant, input: Value) -> Response {
     let req: wire::GrantRequest = serde_json::from_value(input).unwrap();
@@ -381,6 +493,7 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
     let account_clock = Time(Arc::new(AtomicI64::new(time.now().unwrap())));
     let state = Arc::new(Mutex::new(Server {
         clock: account_clock.clone(),
+        mac_mode: rss_mdm_agent_wire::platform_sso::AuthenticationMode::SecureEnclave,
         account_closed: false,
         issued_until: None,
         offer: wire::AccountOffer {
@@ -481,6 +594,75 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
     );
     assert!(inspect(&root.path, &backend, Uuid::new_v4(), time.now().unwrap()).is_err());
     let ops = client.operations().unwrap();
+    let mac_binding = state.lock().unwrap().offer.binding_id;
+    assert_eq!(
+        ops.psso_status(Some(mac_binding))
+            .await
+            .unwrap()
+            .registration_trust,
+        rss_mdm_agent_wire::platform_sso::RegistrationTrust::DaDevicePop
+    );
+    use rss_mdm_agent_wire::platform_sso as mac;
+    let challenge = ops
+        .psso_bootstrap(&mac::Bootstrap {
+            operation_id: Uuid::new_v4(),
+            kind: mac::Kind::Device,
+            binding_id: None,
+            binding_generation: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(challenge.source_id, mac_binding);
+    let key = mac::PublicKey {
+        kty: "EC".into(),
+        crv: "P-256".into(),
+        x: "BkFHRYQoleq39LplGqlcmsEdnw64w0wbcbHAEjrM4pw".into(),
+        y: "jbOoWZbgDFTEfLa1O_7ZuJy3R8d2XAw0CHWUKmJLsbU".into(),
+    };
+    assert!(
+        ops.psso_register(&mac::Registration {
+            operation_id: Uuid::new_v4(),
+            challenge_id: challenge.id,
+            signing_key: Some(key.clone()),
+            encryption_key: key.clone(),
+            proof: "fixture.proof.signature".into()
+        })
+        .await
+        .unwrap()
+        .unwrap()
+        .registered
+    );
+    for mode in [
+        mac::AuthenticationMode::SecureEnclave,
+        mac::AuthenticationMode::Password,
+    ] {
+        state.lock().unwrap().mac_mode = mode;
+        let directory = ops.mac_bindings(&"a".repeat(64)).await.unwrap();
+        let b = &directory.bindings[0];
+        assert_eq!(b.configuration.mac.as_ref().unwrap().authentication, mode);
+        let user = ops
+            .psso_bootstrap(&mac::Bootstrap {
+                operation_id: Uuid::new_v4(),
+                kind: mac::Kind::User,
+                binding_id: Some(b.id),
+                binding_generation: Some(b.binding_generation),
+            })
+            .await
+            .unwrap();
+        let receipt = ops
+            .psso_register(&mac::Registration {
+                operation_id: Uuid::new_v4(),
+                challenge_id: user.id,
+                signing_key: (mode == mac::AuthenticationMode::SecureEnclave).then(|| key.clone()),
+                encryption_key: key.clone(),
+                proof: "fixture.proof.signature".into(),
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(receipt.kind, mac::Kind::User);
+    }
+    assert!(ops.psso_revoke(mac_binding, 1).await.unwrap().revoked);
     let offer = ops.account(None).await.unwrap().unwrap();
     assert!(ops
         .account_event(&offer, wire::AccountObservation::Received)
@@ -687,6 +869,122 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
     );
 }
 
+#[test]
+fn mac_uninstall_requires_the_released_operation_of_this_installation() {
+    for renewal_dispatched in [false, true] {
+        check_mac_uninstall(renewal_dispatched);
+    }
+}
+fn check_mac_uninstall(renewal_dispatched: bool) {
+    let root = Root::new();
+    let backend = Backend {
+        browser: None,
+        instance: SERVICE_ID,
+        tenant: Uuid::new_v4(),
+        origin: "https://da.test".into(),
+        ca_pem: String::from_utf8(fixture::ca()).unwrap(),
+    };
+    let install = Uuid::new_v4();
+    let client = Client::open(
+        &root.path,
+        backend.clone(),
+        install,
+        Secrets::new(),
+        Time(Arc::new(AtomicI64::new(2_000_000_000))),
+    )
+    .unwrap();
+    let r = wire::Registration {
+        service_id: SERVICE_ID,
+        tenant: backend.tenant,
+        device: rss_mdm_agent_wire::DeviceId::new_v4(),
+        credential: Uuid::new_v4(),
+        issuance_id: Uuid::new_v4(),
+        operation_id: Uuid::new_v4(),
+    };
+    let withdrawal = wire::RevocationReceipt {
+        service_id: r.service_id,
+        tenant: r.tenant,
+        device: r.device,
+        credential: r.credential,
+        operation_id: Uuid::new_v4(),
+    };
+    let op = withdrawal.operation_id;
+    write(
+        &client.journal.db,
+        "active",
+        &registration::Active {
+            receipt: r,
+            chain: vec![],
+            key: "original".into(),
+            validity: (1, 3_000_000_000),
+        },
+    )
+    .unwrap();
+    write(&client.journal.db, "revocation", &withdrawal).unwrap();
+    assert!(retired_receipt(&root.path, &backend, install, op).is_err());
+    assert_eq!(
+        mac_assigned(&root.path, &backend, install, 2_000_000_000).unwrap_err(),
+        Error::Untrusted
+    );
+    let id = wire::ReportIdentity {
+        service_id: withdrawal.service_id,
+        tenant: withdrawal.tenant,
+        device_id: withdrawal.device,
+    };
+    let mut consumer = Consumer(None);
+    let trust = wire::ConfigurationTrust {
+        service_id: id.service_id,
+        tenant: id.tenant,
+        revision: 1,
+        keys: vec![],
+    };
+    let current = || wire::CurrentConfiguration {
+        identity: id.clone(),
+        state: SourceState::Missing,
+        publication: None,
+        artifact: None,
+        authorities: vec![],
+    };
+    for now in [2_000_000_000, 2_000_000_045] {
+        client.clock.set(now);
+        client
+            .configure(
+                &id,
+                &trust,
+                current(),
+                consumer.managed_snapshot(),
+                &mut consumer,
+            )
+            .unwrap();
+        assert_eq!(
+            mac_assigned(&root.path, &backend, install, now + 45).unwrap(),
+            Some(false)
+        );
+    }
+    assert!(mac_assigned(&root.path, &backend, install, 2_000_000_165).is_err());
+    let renewal = client.start_renewal().unwrap();
+    let pending = client.pending().unwrap().unwrap();
+    assert_eq!(pending.operation, renewal);
+    let mut pending = serde_json::to_value(pending).unwrap();
+    pending["renewal_dispatched"] = json!(renewal_dispatched);
+    write(&client.journal.db, "enrollment", &Some(pending)).unwrap();
+    client.retire(&withdrawal).unwrap();
+    assert!(read::<Value>(&client.journal.db, "mac-unassigned")
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        mac_assigned(&root.path, &backend, install, 2_000_000_001).unwrap(),
+        None
+    );
+    assert_eq!(
+        retired_receipt(&root.path, &backend, install, op).unwrap(),
+        withdrawal
+    );
+    assert!(retired_receipt(&root.path, &backend, Uuid::new_v4(), op).is_err());
+    assert!(retired_receipt(&root.path, &backend, install, Uuid::new_v4()).is_err());
+    client.prepare(Uuid::new_v4(), Ok).unwrap();
+    assert!(retired_receipt(&root.path, &backend, install, op).is_err());
+}
 #[test]
 fn expired_unsubmitted_grant_allows_new_authorization_without_reusing_its_key() {
     let root = Root::new();
