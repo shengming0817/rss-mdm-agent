@@ -86,6 +86,26 @@ fn account_event_response(s: &mut Server, input: Value) -> Response {
     })
     .into_response()
 }
+fn windows_operation(s: &mut Server, route: &str, input: &Value) -> Option<Response> {
+    Some(match route {
+        "account-operations/next" => Json((!s.account_closed).then_some(&s.offer)).into_response(),
+        "credential-operations/next" => Json(Value::Null).into_response(),
+        "device-access/recovery-uses"
+            if input["usedAt"].as_i64().unwrap() > s.clock.now().unwrap() + 300 =>
+        {
+            (
+                axum::http::StatusCode::BAD_REQUEST,
+                Json(json!({"code":"malformed_request"})),
+            )
+                .into_response()
+        }
+        "device-access/recovery-uses" => Json(json!({"accepted":true})).into_response(),
+        path if path == format!("account-operations/{}/events", s.offer.task_id) => {
+            account_event_response(s, input.clone())
+        }
+        _ => return None,
+    })
+}
 async fn endpoint(
     State(state): State<Arc<Mutex<Server>>>,
     ConnectInfo(peer): ConnectInfo<TlsIdentity>,
@@ -148,24 +168,11 @@ async fn endpoint(
         }
         other => {
             assert!(s.active.is_some() && peer.0 == s.active);
+            if let Some(reply) = windows_operation(&mut s, other, &input) {
+                return reply;
+            }
             match other {
                 "renewal-grants" => return renewal_response(&mut s, &grant, input),
-                "account-operations/next" if s.account_closed => Value::Null,
-                "account-operations/next" => json!(s.offer),
-                "device-access/recovery-uses"
-                    if input["usedAt"].as_i64().unwrap() > s.clock.now().unwrap() + 300 =>
-                {
-                    return (
-                        axum::http::StatusCode::BAD_REQUEST,
-                        Json(json!({"code":"malformed_request"})),
-                    )
-                        .into_response()
-                }
-                "device-access/recovery-uses" => json!({"accepted":true}),
-                "credential-operations/next" => Value::Null,
-                path if path == format!("account-operations/{}/events", s.offer.task_id) => {
-                    return account_event_response(&mut s, input);
-                }
                 "configuration-trust" => json!(s.trust),
                 "configuration-trust/acknowledgements" => {
                     assert_eq!(input["digest"], s.trust.installation_digest().unwrap());
