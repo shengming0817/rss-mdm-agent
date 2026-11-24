@@ -2,7 +2,7 @@
 use execution_contract::{Digest, Id, RequestId, VersionedRef};
 use serde::{Deserialize, Serialize};
 /// Current desktop/system IPC. No negotiation or legacy parser exists.
-pub const IPC_VERSION: u8 = 10;
+pub const IPC_VERSION: u8 = 11;
 /// Current protected installation document format.
 pub const DEPLOYMENT_VERSION: u32 = 8;
 
@@ -758,6 +758,9 @@ pub enum Request {
         origin: ClientOrigin,
         /// Finite local setup operation.
         input: crate::device_access::Operation,
+        /// One-shot input supplied by the native password dialog for the selected Mac attempt.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        mac_password: Option<zeroize::Zeroizing<String>>,
     },
     /// Typed local software intent, without a remote task or caller-selected command.
     LocalSoftware {

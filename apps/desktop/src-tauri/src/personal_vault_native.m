@@ -32,13 +32,13 @@ int rss_personal_vault_verify(void) {
         return finished && allowed && foreground();
     }
 }
-int rss_personal_vault_password(const char *label, unsigned char *output, size_t capacity) {
+int rss_secure_password(const char *title, const char *label, unsigned char *output, size_t capacity) {
     @autoreleasepool {
         if(!foreground() || capacity<1025)return 0;
         __block int result=0;
         dispatch_sync(dispatch_get_main_queue(), ^{
             NSAlert *alert=[NSAlert new];
-            alert.messageText=@"个人 Passkey Vault";
+            alert.messageText=[NSString stringWithUTF8String:title];
             alert.informativeText=[NSString stringWithUTF8String:label];
             [alert addButtonWithTitle:@"继续"]; [alert addButtonWithTitle:@"取消"];
             NSSecureTextField *field=[[NSSecureTextField alloc] initWithFrame:NSMakeRect(0,0,360,28)];

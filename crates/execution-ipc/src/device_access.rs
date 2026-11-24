@@ -16,9 +16,8 @@ pub enum Operation {
     PrepareMac {
         /// Exact retained signed task.
         task: Uuid,
-        /// New account password, held only until native consumption.
-        #[schemars(with = "String")]
-        password: Zeroizing<String>,
+        /// Exact attempt displayed in this employee's native session.
+        attempt: Uuid,
     },
     /// Read separate extension, server and native observations for the current account.
     MacStatus {},
@@ -63,6 +62,8 @@ pub enum Operation {
 pub struct SetupTask {
     /// Exact backend task.
     pub task: Uuid,
+    /// Frozen attempt offered to this employee.
+    pub attempt: Uuid,
     /// Business association.
     pub binding: Uuid,
     /// Name only when creating a new account.

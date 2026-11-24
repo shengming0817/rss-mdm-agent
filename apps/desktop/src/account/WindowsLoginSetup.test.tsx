@@ -23,7 +23,14 @@ it("shows the employee's pending task while Windows is awaiting a reboot", async
     if (op.kind === "tasks")
       return {
         kind: "tasks",
-        tasks: [{ task: "task", binding: "binding", createName: "alice" }],
+        tasks: [
+          {
+            task: "task",
+            attempt: "attempt",
+            binding: "binding",
+            createName: "alice",
+          },
+        ],
       };
     throw Error("unexpected setup request");
   });

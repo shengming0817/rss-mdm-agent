@@ -405,9 +405,10 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
         }
         self.core.access.prune();
         let output = match input {
-            Op::PrepareMac { task, password } => {
+            Op::PrepareMac { task, attempt } => {
+                let Some(execution_ipc::host::Request::DeviceAccess { mac_password: Some(password), .. }) = command.request.as_operation() else { return Err(Error::Denied); };
                 let spec = self.access_task(*task, &user, &owner.subject)?;
-                if spec.platform != w::TaskPlatform::Macos
+                if spec.attempt_id != *attempt || spec.platform != w::TaskPlatform::Macos
                     || !matches!(
                         spec.action,
                         w::AccessAction::Create { .. } | w::AccessAction::Apply { .. }
@@ -562,6 +563,7 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
                     if let Ok(task) = self.access_task(id, &user, &owner.subject) {
                         tasks.push(SetupTask {
                             task: id,
+                            attempt: task.attempt_id,
                             binding: task.binding_id,
                             create_name: match task.action {
                                 w::AccessAction::Create { name, .. } => Some(name),

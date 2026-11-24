@@ -524,27 +524,39 @@ impl ExecutionHandle {
         if !matches!(self.origin, ClientOrigin::Desktop {}) {
             return Err(bad(Error::Denied));
         }
-        #[cfg(target_os = "macos")]
-        if matches!(
-            input,
-            execution_ipc::device_access::Operation::Begin(_)
-                | execution_ipc::device_access::Operation::Confirm { .. }
-                | execution_ipc::device_access::Operation::PrepareMac { .. }
-        ) {
-            let present = tauri::async_runtime::spawn_blocking(|| {
-                unsafe extern "C" {
-                    fn rss_device_access_presence() -> i32;
-                }
-                // SAFETY: synchronous native UI gate returns no credentials or retained pointers.
-                unsafe { rss_device_access_presence() == 1 }
-            })
-            .await
-            .map_err(|_| bad(Error::Denied))?;
-            if !present {
-                return Err(bad(Error::Denied));
-            }
-        }
+        use execution_ipc::device_access::Operation;
         let context = self.context_ref()?;
+        #[cfg(target_os = "macos")]
+        let password = {
+            let prompt = if let Operation::PrepareMac { task, attempt } = &input {
+                let tasks = self.send_device_access(&context, &Operation::Tasks {}, None).await?;
+                let execution_ipc::device_access::Response::Tasks { tasks } = tasks else { return Err(bad(Error::Denied)); };
+                let mut matches = tasks.into_iter().filter(|t| (t.task,t.attempt) == (*task,*attempt));
+                let selected = matches.next().ok_or_else(|| bad(Error::Denied))?;
+                if matches.next().is_some() { return Err(bad(Error::Denied)); }
+                Some(selected.create_name.map_or_else(|| "输入当前本地账号的密码".to_string(), |name| format!("为本地账号 {name} 设置密码")))
+            } else { None };
+            if matches!(input, Operation::Begin(_) | Operation::Confirm { .. } | Operation::PrepareMac { .. }) {
+                tauri::async_runtime::spawn_blocking(move || {
+                    unsafe extern "C" { fn rss_device_access_presence() -> i32; }
+                    // SAFETY: bounded LocalAuthentication check on the native blocking pool.
+                    if unsafe {rss_device_access_presence()} != 1 { return Err(bad(Error::Denied)); }
+                    prompt.map(|label| super::secure_input::password("Mac 设备访问", &label).ok_or_else(|| bad(Error::Denied))).transpose()
+                }).await.map_err(|_|bad(Error::Unavailable))??
+            } else { None }
+        };
+        #[cfg(not(target_os = "macos"))]
+        let password = { if matches!(input, Operation::PrepareMac { .. }) { return Err(bad(Error::Unsupported)); } None };
+        if self.context_ref()? != context { return Err(bad(Error::Unbound)); }
+        self.send_device_access(&context, &input, password.as_ref()).await
+    }
+
+    async fn send_device_access(
+        &self,
+        context: &execution_contract::NativeContextRef,
+        input: &execution_ipc::device_access::Operation,
+        password: Option<&zeroize::Zeroizing<String>>,
+    ) -> ui::Result<execution_ipc::device_access::Response> {
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
             loop {
                 let reply = self
@@ -552,6 +564,7 @@ impl ExecutionHandle {
                         context: context.clone(),
                         origin: self.origin.clone(),
                         input: input.clone(),
+                        mac_password: password.cloned(),
                     })
                     .await
                     .map_err(bad)?;

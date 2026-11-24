@@ -354,6 +354,7 @@ impl Login {
             Request::DeviceAccess {
                 context,
                 origin: ClientOrigin::Desktop {},
+                mac_password: None,
                 input,
             } => self
                 .access(peer, &subject, context, input)
@@ -505,6 +506,7 @@ impl Login {
                     .filter(|t| e.permits(t))
                     .map(|t| SetupTask {
                         task: t.task_id,
+                        attempt: t.attempt_id,
                         binding: t.binding_id,
                         create_name: match &t.action {
                             w::AccessAction::Create { name, .. } => Some(name.clone()),
