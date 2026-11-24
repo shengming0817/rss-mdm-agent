@@ -4,13 +4,20 @@ import { SectionCard } from "@rss-mdm-agent/ui";
 import type { DeviceAccessPort } from "../self-service/native";
 import type { SetupTask, WindowsComponentState } from "../self-service/types";
 
-const components: Record<WindowsComponentState, string> = {
-  ready: "登录组件已就绪",
-  rebootRequired: "需要重启 Windows 后才能设置登录因子",
-  maintenanceDisabled: "登录组件已进入维修模式，请联系管理员恢复组件",
-  notInstalled: "尚未安装登录组件，请联系管理员安装",
-  unavailable: "无法读取登录组件状态，请联系管理员检查服务",
-};
+function componentLabel(state: WindowsComponentState): string {
+  switch (state) {
+    case "ready":
+      return "登录组件已就绪";
+    case "rebootRequired":
+      return "需要重启 Windows 后才能设置登录因子";
+    case "maintenanceDisabled":
+      return "登录组件已进入维修模式，请联系管理员恢复组件";
+    case "notInstalled":
+      return "尚未安装登录组件，请联系管理员安装";
+    case "unavailable":
+      return "无法读取登录组件状态，请联系管理员检查服务";
+  }
+}
 export function WindowsLoginSetup({ port }: { port: DeviceAccessPort }) {
   const [tasks, setTasks] = useState<SetupTask[]>([]);
   const [setup, setSetup] = useState<{
@@ -102,7 +109,7 @@ export function WindowsLoginSetup({ port }: { port: DeviceAccessPort }) {
       {component && (
         <Alert
           type={component === "ready" ? "info" : "warning"}
-          title={components[component]}
+          title={componentLabel(component)}
           description={
             active === null
               ? "当前账号的因子状态未知"
