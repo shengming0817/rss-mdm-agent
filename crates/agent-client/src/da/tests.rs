@@ -30,6 +30,8 @@ impl Credentials for Secrets {
 struct Server {
     clock: Time,
     mac_mode: rss_mdm_agent_wire::platform_sso::AuthenticationMode,
+    mac_offer: Option<wire::AccountOffer>,
+    mac_report: Option<Value>,
     account_closed: bool,
     issued_until: Option<i64>,
     offer: wire::AccountOffer,
@@ -240,6 +242,46 @@ async fn endpoint(
         "activate" => return activation_response(&mut s, &grant, tenant, peer, input),
         other => {
             assert!(s.active.is_some() && peer.0 == s.active);
+            if other == "account-operations/next" {
+                assert!(body.is_empty());
+                if uri.query() == Some("platform=macos") {
+                    return Json(s.mac_offer.clone()).into_response();
+                }
+                assert!(uri.query().is_none());
+            }
+            if s.mac_offer
+                .as_ref()
+                .is_some_and(|o| other == format!("account-operations/{}/events", o.task_id))
+            {
+                let event: wire::AccountEvent = serde_json::from_value(input.clone()).unwrap();
+                assert_eq!(event.attempt_id, s.mac_offer.as_ref().unwrap().attempt_id);
+                if matches!(
+                    event.event,
+                    wire::AccountObservation::Result(w::AccessResult {
+                        effect: wire::AccountEffect::MacAccountCreated { .. },
+                        ..
+                    })
+                ) {
+                    if let Some(old) = &s.mac_report {
+                        assert_eq!(&input, old);
+                    } else {
+                        s.mac_report = Some(input);
+                        return (
+                            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                            Json(json!({"code":"service_unavailable"})),
+                        )
+                            .into_response();
+                    }
+                    s.mac_offer = None;
+                }
+                return Json(wire::AccountSettlement {
+                    event_id: event.event_id,
+                    permit: None,
+                    issued_expires_at: None,
+                    receipt: None,
+                })
+                .into_response();
+            }
             if let Some(reply) = windows_operation(&mut s, other, &input) {
                 return reply;
             }
@@ -494,6 +536,8 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
     let state = Arc::new(Mutex::new(Server {
         clock: account_clock.clone(),
         mac_mode: rss_mdm_agent_wire::platform_sso::AuthenticationMode::SecureEnclave,
+        mac_offer: None,
+        mac_report: None,
         account_closed: false,
         issued_until: None,
         offer: wire::AccountOffer {
@@ -663,7 +707,11 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         assert_eq!(receipt.kind, mac::Kind::User);
     }
     assert!(ops.psso_revoke(mac_binding, 1).await.unwrap().revoked);
-    let offer = ops.account(w::TaskPlatform::Windows, None).await.unwrap().unwrap();
+    let offer = ops
+        .account(w::TaskPlatform::Windows, None)
+        .await
+        .unwrap()
+        .unwrap();
     assert!(ops
         .account_event(&offer, wire::AccountObservation::Received)
         .await
@@ -689,12 +737,21 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
     later.task_id = Uuid::new_v4();
     later.attempt_id = Uuid::new_v4();
     state.lock().unwrap().offer = later.clone();
-    assert_eq!(ops.account(w::TaskPlatform::Windows, None).await.unwrap(), Some(later.clone()));
-    assert_eq!(ops.account(w::TaskPlatform::Windows, None).await.unwrap(), Some(offer.clone()));
     assert_eq!(
-        ops.account(w::TaskPlatform::Windows, Some((later.task_id, later.attempt_id)))
-            .await
-            .unwrap(),
+        ops.account(w::TaskPlatform::Windows, None).await.unwrap(),
+        Some(later.clone())
+    );
+    assert_eq!(
+        ops.account(w::TaskPlatform::Windows, None).await.unwrap(),
+        Some(offer.clone())
+    );
+    assert_eq!(
+        ops.account(
+            w::TaskPlatform::Windows,
+            Some((later.task_id, later.attempt_id))
+        )
+        .await
+        .unwrap(),
         Some(later.clone())
     );
     let prefix = format!("delivery/{}", grant.device);
@@ -734,7 +791,10 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         )
         .unwrap();
     assert_eq!(remaining, 0);
-    assert_eq!(ops.account(w::TaskPlatform::Windows, None).await.unwrap(), Some(later.clone()));
+    assert_eq!(
+        ops.account(w::TaskPlatform::Windows, None).await.unwrap(),
+        Some(later.clone())
+    );
     state.lock().unwrap().account_closed = true;
     assert!(matches!(
         ops.account_event(&later, wire::AccountObservation::Received)
@@ -742,7 +802,11 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         Err(Error::Conflict)
     ));
     ops.replay_account().await.unwrap();
-    assert!(ops.account(w::TaskPlatform::Windows, None).await.unwrap().is_none());
+    assert!(ops
+        .account(w::TaskPlatform::Windows, None)
+        .await
+        .unwrap()
+        .is_none());
     let rejection = inspect(&root.path, &backend, install, time.now().unwrap())
         .unwrap()
         .unwrap()
@@ -752,6 +816,69 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         (rejection.0, rejection.1, rejection.3),
         (later.task_id, later.attempt_id, Error::Conflict)
     );
+    let mac_offer = wire::AccountOffer {
+        operation_id: Uuid::new_v4(),
+        task_id: Uuid::new_v4(),
+        attempt_id: Uuid::new_v4(),
+        ..offer.clone()
+    };
+    state.lock().unwrap().mac_offer = Some(mac_offer.clone());
+    assert!(ops
+        .account(w::TaskPlatform::Windows, None)
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        ops.account(w::TaskPlatform::Macos, None).await.unwrap(),
+        Some(mac_offer.clone())
+    );
+    let report = |effect| {
+        wire::AccountObservation::Result(w::AccessResult {
+            binding_id: mac_offer.binding_id,
+            binding_generation: 1,
+            revision: 1,
+            definition_digest: mac_offer.definition_digest,
+            effect,
+        })
+    };
+    ops.account_event(&mac_offer, report(w::AccessEffect::Unknown.into()))
+        .await
+        .unwrap();
+    ops.retire_account(|_, _, _| panic!("unknown effect retired"))
+        .unwrap();
+    let observed = wire::AccountEffect::MacAccountCreated {
+        generated_uid: Uuid::new_v4(),
+        role: w::AccessRole::Standard,
+        secure_token: w::AccessObservation::NeedsAdministrator,
+        volume_owner: w::AccessObservation::Unknown,
+        filevault_unlock: w::AccessObservation::Absent,
+    };
+    assert!(ops
+        .account_event(&mac_offer, report(observed))
+        .await
+        .is_err());
+    drop(ops);
+    drop(client);
+    let client = open();
+    let ops = client.operations().unwrap();
+    ops.replay_account().await.unwrap();
+    ops.retire_account(|id, attempt, outcome| {
+        assert_eq!(
+            (id, attempt, outcome),
+            (
+                mac_offer.task_id,
+                mac_offer.attempt_id,
+                AccountCompletion::Observed
+            )
+        );
+        Ok(())
+    })
+    .unwrap();
+    assert!(ops
+        .account(w::TaskPlatform::Macos, None)
+        .await
+        .unwrap()
+        .is_none());
     let mut usage = rss_mdm_agent_wire::runtime::AccessRecoveryUse {
         operation_id: Uuid::new_v4(),
         material: Uuid::new_v4(),
@@ -1185,4 +1312,32 @@ fn field_locks_survive_disappearing_sources_and_reject_rollback_and_foreign_sign
     );
     assert_eq!(run(&released, absent(), &policies), Err(Error::Unavailable));
     assert_eq!(run(&released, absent(), &published), Err(Error::Conflict));
+}
+
+#[test]
+fn earlier_da_storage_and_a_different_installation_reject_this_delivery_journal() {
+    let root = Root::new();
+    let backend = Backend {
+        instance: SERVICE_ID,
+        tenant: Uuid::new_v4(),
+        origin: "https://localhost".into(),
+        ca_pem: String::new(),
+        browser: None,
+    };
+    let installation = Uuid::new_v4();
+    let journal = storage::Journal::open(&root.path, &backend, installation).unwrap();
+    assert!(matches!(
+        storage::inspect(&root.path, &backend, Uuid::new_v4()),
+        Err(Error::Identity)
+    ));
+    journal.db.pragma_update(None, "user_version", 1).unwrap();
+    drop(journal);
+    assert!(matches!(
+        storage::inspect(&root.path, &backend, installation),
+        Err(Error::Schema)
+    ));
+    assert!(matches!(
+        storage::Journal::open(&root.path, &backend, installation),
+        Err(Error::Schema)
+    ));
 }

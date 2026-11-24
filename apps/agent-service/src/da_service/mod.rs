@@ -1,13 +1,13 @@
 //! The existing system service drives DA on its own bounded worker. An unavailable DA
 //! endpoint cannot stall authenticated IPC, MDM enrollment, or the ordinary task owner.
-#[cfg(any(windows, target_os="macos", test))]
+#[cfg(any(windows, target_os = "macos", test))]
 mod attempt;
-#[cfg(target_os="macos")]
-pub(crate) mod mac_accounts;
 #[cfg(windows)]
 mod delivery;
 #[cfg(windows)]
 mod login;
+#[cfg(target_os = "macos")]
+pub(crate) mod mac_accounts;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
@@ -215,7 +215,7 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                                     #[cfg(target_os="macos")]
                                     {
                                         native.maintenance(&d,&client).await?;
-                                        if client.operations().is_ok() {
+                                        if client.registered()? {
                                             let setup=native.accounts();
                                             let delivery=mac_accounts::drive(&d,&client,&setup);
                                             tokio::pin!(delivery);
@@ -321,20 +321,39 @@ fn settle_mac_request(
     native: impl FnOnce() -> Reply + Send + 'static,
     mdm: impl FnOnce(Request) -> Option<Reply>,
 ) -> execution_ipc::host::DeferredReply {
-    let other = if matches!(request, Request::BindContext { .. } | Request::DeviceAccess {input:execution_ipc::device_access::Operation::Tasks{},..}) {
+    let other = if matches!(
+        request,
+        Request::BindContext { .. }
+            | Request::DeviceAccess {
+                input: execution_ipc::device_access::Operation::Tasks {},
+                ..
+            }
+    ) {
         mdm(request)
     } else {
         None
     };
     Box::new(move || {
         let result = native();
-        match (other,result) {
-            (Some(bound @ Reply::ContextBound { .. }),_) => bound,
-            (Some(Reply::DeviceAccess{value:execution_ipc::device_access::Response::Tasks{mut tasks}}), native)=>{
-                if let Reply::DeviceAccess{value:execution_ipc::device_access::Response::Tasks{tasks:da}}=native { tasks.extend(da); }
-                Reply::DeviceAccess{value:execution_ipc::device_access::Response::Tasks{tasks}}
+        match (other, result) {
+            (Some(bound @ Reply::ContextBound { .. }), _) => bound,
+            (
+                Some(Reply::DeviceAccess {
+                    value: execution_ipc::device_access::Response::Tasks { mut tasks },
+                }),
+                native,
+            ) => {
+                if let Reply::DeviceAccess {
+                    value: execution_ipc::device_access::Response::Tasks { tasks: da },
+                } = native
+                {
+                    tasks.extend(da);
+                }
+                Reply::DeviceAccess {
+                    value: execution_ipc::device_access::Response::Tasks { tasks },
+                }
             }
-            (_,result) => result,
+            (_, result) => result,
         }
     })
 }

@@ -85,7 +85,10 @@ async fn account(
         })?;
         login.withdraw(id, sequence)
     })?;
-    let Some(o) = ops.account(w::TaskPlatform::Windows, login.confirmed()?).await? else {
+    let Some(o) = ops
+        .account(w::TaskPlatform::Windows, login.confirmed()?)
+        .await?
+    else {
         return Ok(());
     };
     let key = attempt::key(o.task_id, o.attempt_id);
@@ -113,7 +116,8 @@ async fn account(
                 ops.account_event(&o, Observation::Prepared(p)).await?;
             }
             if let Some(result) = access::observe_da(root, d.installation_id, old)? {
-                ops.account_event(&o, Observation::Result(result.into())).await?;
+                ops.account_event(&o, Observation::Result(result.into()))
+                    .await?;
                 return Ok(());
             }
         }
@@ -198,7 +202,8 @@ async fn account(
     state::write(root, &key, &attempt)?;
     if let Some(result) = access::stored_result(root, &t)? {
         login.withdraw(o.task_id, o.attempt_id)?;
-        ops.account_event(&o, Observation::Result(result.into())).await?;
+        ops.account_event(&o, Observation::Result(result.into()))
+            .await?;
         return Ok(());
     }
     let needs_setup = matches!(t.windows, Some(w::AccessWindowsPlan::Initialize { .. }));
@@ -277,7 +282,8 @@ async fn account(
             result = next;
         }
     }
-    ops.account_event(&o, Observation::Result(result.into())).await?;
+    ops.account_event(&o, Observation::Result(result.into()))
+        .await?;
     Ok(())
 }
 

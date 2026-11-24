@@ -162,7 +162,7 @@ pub fn inspect(
     let valid = valid_until.is_some_and(|until| now < until)
         && read::<i64>(&c, "clock")?.is_some_and(|seen| now >= seen);
     let device = active.as_ref().map(|a| a.receipt.device);
-    let delivery_key = |kind: &str| device.map(|d| operations::operation_key(d,kind));
+    let delivery_key = |kind: &str| device.map(|d| operations::operation_key(d, kind));
     Ok(Some(Status {
         account_settlement: delivery_key("last-account-settlement")
             .map(|k| read(&c, &k))

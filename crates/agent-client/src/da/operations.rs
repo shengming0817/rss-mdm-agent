@@ -1,4 +1,4 @@
-//! Windows delivery on the DA listener. Its single writer retains the offer and exact events.
+//! Device delivery on the DA listener. Its single writer retains the offer and exact events.
 use super::*;
 use crate::http as h;
 use rss_mdm_agent_wire::runtime as w;
@@ -40,6 +40,10 @@ impl<S: Credentials, C: Clock> Client<S, C> {
             &result.as_ref().err().copied(),
         )?;
         result
+    }
+    /// Whether this installation has an activated DA registration.
+    pub fn registered(&self) -> Result<bool, Error> {
+        Ok(self.active()?.is_some())
     }
     /// Open the current credential for device operations. Never use the Agent identity here.
     pub fn operations(&self) -> Result<Operations<'_>, Error> {
@@ -240,7 +244,9 @@ impl Operations<'_> {
             w::TaskPlatform::Windows => None,
         };
         let response = Call::<h::DaAccountNext>::new(&self.http, self.origin, &[], query, None)?
-            .timeout(Duration::from_secs(5)).send().await?;
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await?;
         let offer: Option<wire::AccountOffer> = Self::decode(response).await?;
         if let Some(o) = &offer {
             if [o.operation_id, o.task_id, o.attempt_id, o.binding_id]
@@ -250,8 +256,13 @@ impl Operations<'_> {
                 return Err(Error::Protocol);
             }
             let key = format!("offer/{}/{}", o.task_id, o.attempt_id);
-            let retained = RetainedOffer { platform, offer: o.clone() };
-            if self.load::<RetainedOffer>(&key)?.is_some_and(|old| old != retained)
+            let retained = RetainedOffer {
+                platform,
+                offer: o.clone(),
+            };
+            if self
+                .load::<RetainedOffer>(&key)?
+                .is_some_and(|old| old != retained)
             {
                 return Err(Error::Conflict);
             }
@@ -259,7 +270,9 @@ impl Operations<'_> {
         }
         if let Some((task, attempt)) = confirmed {
             if let Some(o) = self.load::<RetainedOffer>(&format!("offer/{task}/{attempt}"))? {
-                if o.platform != platform { return Err(Error::Identity); }
+                if o.platform != platform {
+                    return Err(Error::Identity);
+                }
                 return Ok(Some(o.offer));
             }
         }
@@ -277,7 +290,9 @@ impl Operations<'_> {
             .optional()?;
         if let Some((key, bytes)) = next {
             let offer: RetainedOffer = crate::store::decode(&bytes)?;
-            if offer.platform != platform { return Err(Error::Identity); }
+            if offer.platform != platform {
+                return Err(Error::Identity);
+            }
             self.save("offer-cursor", &key)?;
             Ok(Some(offer.offer))
         } else {
@@ -292,7 +307,8 @@ impl Operations<'_> {
     ) -> Result<wire::AccountSettlement, Error> {
         if self
             .load::<RetainedOffer>(&format!("offer/{}/{}", o.task_id, o.attempt_id))?
-            .as_ref().map(|r| &r.offer)
+            .as_ref()
+            .map(|r| &r.offer)
             != Some(o)
         {
             return Err(Error::Identity);
@@ -344,12 +360,22 @@ impl Operations<'_> {
             }
             wire::AccountObservation::CreateAbsent { .. }
             | wire::AccountObservation::Result(w::AccessResult {
-                effect: wire::AccountEffect::MacAccountCreated { .. } | wire::AccountEffect::Access(w::AccessEffect::Applied { .. } | w::AccessEffect::Unbound { .. }),
+                effect:
+                    wire::AccountEffect::MacAccountCreated { .. }
+                    | wire::AccountEffect::Access(
+                        w::AccessEffect::Applied { .. } | w::AccessEffect::Unbound { .. },
+                    ),
                 ..
             }) => Some(AccountCompletion::Observed),
             wire::AccountObservation::Result(w::AccessResult {
-                effect: wire::AccountEffect::Access(w::AccessEffect::Failed { .. }), ..
-            }) if self.load::<RetainedOffer>(&format!("offer/{task}/{}", body.attempt_id))?.is_some_and(|r| r.platform == w::TaskPlatform::Macos) => Some(AccountCompletion::Observed),
+                effect: wire::AccountEffect::Access(w::AccessEffect::Failed { .. }),
+                ..
+            }) if self
+                .load::<RetainedOffer>(&format!("offer/{task}/{}", body.attempt_id))?
+                .is_some_and(|r| r.platform == w::TaskPlatform::Macos) =>
+            {
+                Some(AccountCompletion::Observed)
+            }
             _ => None,
         };
         if let Some(completion) = completion {

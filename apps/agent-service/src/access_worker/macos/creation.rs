@@ -4,7 +4,7 @@ use execution_contract::Id;
 use std::path::Path;
 
 #[derive(Serialize, Deserialize)]
-pub(in crate::access_worker) struct Creation {
+struct Creation {
     task: w::AccessTaskSpec,
     boot: Id,
     group: Option<i32>,
@@ -18,21 +18,89 @@ pub(crate) enum Evidence {
     Created(NativeAccount),
 }
 
-pub(crate) fn evidence(root: &Path, task: &w::AccessTaskSpec, short_name: &str) -> Result<Evidence, Error> {
-    let Some(intent) = state::read_optional::<Creation>(root, &name(task, "creation"))? else { return Ok(Evidence::Unstarted); };
-    if intent.task != *task { return Err(Error::Identity); }
+trait Directory {
+    fn exists(&self, name: &str) -> Result<bool, Error>;
+    fn inspect(&self, key: &str, by_name: bool) -> Result<NativeAccount, Error>;
+    fn add(
+        &self,
+        name: &str,
+        uid: u32,
+        password: &str,
+        spawned: impl FnOnce(u32) -> Result<(), Error>,
+    ) -> Result<(), Error>;
+}
+struct Local;
+impl Directory for Local {
+    fn exists(&self, name: &str) -> Result<bool, Error> {
+        unsafe extern "C" {
+            fn rss_access_name_exists(name: *const std::ffi::c_char) -> i32;
+        }
+        let name = CString::new(name).map_err(|_| Error::Identity)?;
+        // SAFETY: the native local-directory query borrows the NUL-terminated name.
+        match unsafe { rss_access_name_exists(name.as_ptr()) } {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(Error::Unavailable),
+        }
+    }
+    fn inspect(&self, key: &str, by_name: bool) -> Result<NativeAccount, Error> {
+        inspect(key, by_name)
+    }
+    fn add(
+        &self,
+        name: &str,
+        uid: u32,
+        password: &str,
+        spawned: impl FnOnce(u32) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        terminal_tool(
+            "/usr/sbin/sysadminctl",
+            &["-addUser", name, "-UID", &uid.to_string(), "-password", "-"],
+            Some(password),
+            60,
+            spawned,
+        )
+        .map(|_| ())
+    }
+}
+pub(crate) fn evidence(
+    root: &Path,
+    task: &w::AccessTaskSpec,
+    short_name: &str,
+) -> Result<Evidence, Error> {
+    evidence_with(&Local, root, task, short_name)
+}
+fn evidence_with(
+    native: &impl Directory,
+    root: &Path,
+    task: &w::AccessTaskSpec,
+    short_name: &str,
+) -> Result<Evidence, Error> {
+    let Some(intent) = state::read_optional::<Creation>(root, &name(task, "creation"))? else {
+        return Ok(Evidence::Unstarted);
+    };
+    if intent.task != *task {
+        return Err(Error::Identity);
+    }
     if let Some(uid) = intent.generated_uid {
-        return Ok(inspect(&uid, false).map_or(Evidence::Unknown, Evidence::Created));
+        return Ok(native
+            .inspect(&uid, false)
+            .map_or(Evidence::Unknown, Evidence::Created));
     }
     // Owner death drops the terminal watchdog. A negative read only proves absence after
     // that process group has actually disappeared, or the machine has rebooted.
     let boot = execution_ipc::host::boot_generation().map_err(|_| Error::Identity)?;
-    let stopped = intent.boot != boot || intent.group.is_some_and(|group| {
-        group > 1 && unsafe { libc::kill(-group, 0) } == -1 &&
-            std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
-    });
-    if stopped && matches!(inspect(short_name, true), Err(Error::NotFound)) { Ok(Evidence::Absent) }
-    else { Ok(Evidence::Unknown) }
+    let stopped = intent.boot != boot
+        || intent.group.is_some_and(|group| {
+            group > 1
+                && unsafe { libc::kill(-group, 0) } == -1
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+        });
+    if stopped && !native.exists(short_name)? {
+        Ok(Evidence::Absent)
+    } else {
+        Ok(Evidence::Unknown)
+    }
 }
 
 pub(crate) enum Outcome {
@@ -45,15 +113,28 @@ fn available_uid() -> Result<u32, Error> {
     // simultaneous same-name creation by another administrator cannot be adopted by name.
     for _ in 0..8 {
         let mut random = [0u8; 4];
-        ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut random).map_err(|_| Error::Unavailable)?;
+        ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut random)
+            .map_err(|_| Error::Unavailable)?;
         let uid = 501 + u32::from_ne_bytes(random) % 59000;
         let mut record = std::mem::MaybeUninit::<libc::passwd>::uninit();
         let mut result = std::ptr::null_mut();
         let mut buffer = [0u8; 16384];
         // SAFETY: libc receives writable caller-owned storage and returns a borrowed pointer.
-        let err = unsafe { libc::getpwuid_r(uid, record.as_mut_ptr(), buffer.as_mut_ptr().cast(), buffer.len(), &mut result) };
-        if err != 0 { return Err(Error::Unavailable); }
-        if result.is_null() { return Ok(uid); }
+        let err = unsafe {
+            libc::getpwuid_r(
+                uid,
+                record.as_mut_ptr(),
+                buffer.as_mut_ptr().cast(),
+                buffer.len(),
+                &mut result,
+            )
+        };
+        if err != 0 {
+            return Err(Error::Unavailable);
+        }
+        if result.is_null() {
+            return Ok(uid);
+        }
     }
     Err(Error::Conflict)
 }
@@ -64,34 +145,171 @@ pub(crate) fn create(
     short_name: &str,
     input: impl FnOnce() -> Result<Zeroizing<String>, Error>,
 ) -> Result<Outcome, Error> {
+    create_with(&Local, root, task, short_name, input)
+}
+fn create_with(
+    native: &impl Directory,
+    root: &Path,
+    task: &w::AccessTaskSpec,
+    short_name: &str,
+    input: impl FnOnce() -> Result<Zeroizing<String>, Error>,
+) -> Result<Outcome, Error> {
     let marker = name(task, "creation");
-    match evidence(root, task, short_name)? {
+    match evidence_with(native, root, task, short_name)? {
         Evidence::Created(account) => return Ok(Outcome::Created(account)),
         Evidence::Absent | Evidence::Unknown => return Err(Error::Unavailable),
         Evidence::Unstarted => (),
     }
-    match inspect(short_name, true) {
-        Ok(_) => return Ok(Outcome::NameConflict),
-        Err(Error::NotFound) => (),
-        Err(e) => return Err(e),
+    if native.exists(short_name)? {
+        return Ok(Outcome::NameConflict);
     }
     let uid = available_uid()?;
     let mut intent = Creation {
         task: task.clone(),
         boot: execution_ipc::host::boot_generation().map_err(|_| Error::Identity)?,
-        group: None, generated_uid: None,
+        group: None,
+        generated_uid: None,
     };
     let password = input()?;
-    if password.is_empty() || password.len() > 1024 || password.chars().any(char::is_control) { return Err(Error::Denied); }
-    if task.expires_at.min(task.deadline) <= (crate::wall()?/1000) as i64 { return Err(Error::Expired); }
+    if password.is_empty() || password.len() > 1024 || password.chars().any(char::is_control) {
+        return Err(Error::Denied);
+    }
+    if task.expires_at.min(task.deadline) <= (crate::wall()? / 1000) as i64 {
+        return Err(Error::Expired);
+    }
     state::write(root, &marker, &intent)?;
-    terminal_tool("/usr/sbin/sysadminctl", &["-addUser",short_name,"-UID",&uid.to_string(),"-password","-"], Some(&password), 60, |pid| {
-        intent.group = Some(i32::try_from(pid).map_err(|_|Error::Identity)?);
+    native.add(short_name, uid, &password, |pid| {
+        intent.group = Some(i32::try_from(pid).map_err(|_| Error::Identity)?);
         state::write(root, &marker, &intent)
     })?;
-    let account = inspect(short_name, true)?;
-    if account.uid != uid || !account.name.eq_ignore_ascii_case(short_name) { return Err(Error::Identity); }
+    let account = native.inspect(short_name, true)?;
+    if account.uid != uid || !account.name.eq_ignore_ascii_case(short_name) {
+        return Err(Error::Identity);
+    }
     intent.generated_uid = Some(account.generated_uid.clone());
     state::write(root, &marker, &intent)?;
     Ok(Outcome::Created(account))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+    use uuid::Uuid;
+
+    struct Fake {
+        calls: Cell<usize>,
+        uid: Cell<Option<u32>>,
+        guid: Uuid,
+        fail_after_add: bool,
+    }
+    impl Directory for Fake {
+        fn exists(&self, _: &str) -> Result<bool, Error> {
+            Ok(self.uid.get().is_some())
+        }
+        fn inspect(&self, key: &str, by_name: bool) -> Result<NativeAccount, Error> {
+            if (by_name && !key.eq_ignore_ascii_case("employee"))
+                || (!by_name && key != self.guid.to_string())
+            {
+                return Err(Error::NotFound);
+            }
+            Ok(NativeAccount {
+                name: "employee".into(),
+                uid: self.uid.get().ok_or(Error::NotFound)?,
+                generated_uid: self.guid.to_string(),
+                administrator: false,
+                secure_token: -1,
+            })
+        }
+        fn add(
+            &self,
+            _: &str,
+            uid: u32,
+            _: &str,
+            spawned: impl FnOnce(u32) -> Result<(), Error>,
+        ) -> Result<(), Error> {
+            self.calls.set(self.calls.get() + 1);
+            spawned(1)?;
+            self.uid.set(Some(uid));
+            if self.fail_after_add {
+                return Err(Error::Unavailable);
+            }
+            Ok(())
+        }
+    }
+    use crate::da_service::mac_accounts::tests::task;
+    #[test]
+    fn restart_reads_only_the_original_uid_and_preserves_uncertain_or_conflicting_names() {
+        for fail_after_add in [false, true] {
+            let root = std::env::temp_dir().join(format!("rss-mac-create-{}", Uuid::new_v4()));
+            platform_private_storage::directory(&root).unwrap();
+            let t = task();
+            t.validate().unwrap();
+            let native = Fake {
+                calls: Cell::new(0),
+                uid: Cell::new(Some(501)),
+                guid: Uuid::new_v4(),
+                fail_after_add,
+            };
+            assert!(matches!(
+                create_with(&native, &root, &t, "Employee", || panic!("name exists")),
+                Ok(Outcome::NameConflict)
+            ));
+            native.uid.set(None);
+            let outcome = create_with(&native, &root, &t, "employee", || {
+                Ok(Zeroizing::new("local-fixture".into()))
+            });
+            assert_eq!(outcome.is_err(), fail_after_add);
+            let replay = create_with(&native, &root, &t, "employee", || {
+                panic!("replayed native create")
+            });
+            assert_eq!(replay.is_err(), fail_after_add);
+            assert_eq!(native.calls.get(), 1);
+            if fail_after_add {
+                assert!(matches!(
+                    evidence_with(&native, &root, &t, "employee").unwrap(),
+                    Evidence::Unknown
+                ));
+                let key = name(&t, "creation");
+                let mut intent: Creation = state::read_optional(&root, &key).unwrap().unwrap();
+                intent.boot = Id::new("previous-boot").unwrap();
+                native.uid.set(None);
+                state::write(&root, &key, &intent).unwrap();
+                assert!(matches!(
+                    evidence_with(&native, &root, &t, "employee").unwrap(),
+                    Evidence::Absent
+                ));
+                assert!(create_with(&native, &root, &t, "employee", || panic!()).is_err());
+            } else {
+                let Outcome::Created(actual) = replay.unwrap() else {
+                    panic!("wrong effect")
+                };
+                assert_eq!(actual.generated_uid, native.guid.to_string());
+                native.uid.set(None);
+                assert!(matches!(
+                    evidence_with(&native, &root, &t, "employee").unwrap(),
+                    Evidence::Unknown
+                ));
+            }
+            assert_eq!(native.calls.get(), 1);
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+    #[test]
+    fn invalid_filevault_output_is_unknown_and_a_valid_other_uid_is_absent() {
+        let id = Uuid::new_v4();
+        assert_eq!(filevault_list(b"list unavailable", &id.to_string()), None);
+        assert_eq!(filevault_list(b"", &id.to_string()), None);
+        assert_eq!(
+            filevault_list(format!("one,{id}\n").as_bytes(), &id.to_string()),
+            Some(Observation::Present)
+        );
+        assert_eq!(
+            filevault_list(
+                format!("one,{id}\n").as_bytes(),
+                &Uuid::new_v4().to_string()
+            ),
+            Some(Observation::Absent)
+        );
+    }
 }

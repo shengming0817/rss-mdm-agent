@@ -65,7 +65,10 @@ fn tool(
     terminal_tool(program, args, password, seconds, |_| Ok(()))
 }
 fn terminal_tool(
-    program: &str, args: &[&str], password: Option<&str>, seconds: u64,
+    program: &str,
+    args: &[&str],
+    password: Option<&str>,
+    seconds: u64,
     spawned: impl FnOnce(u32) -> Result<(), Error>,
 ) -> Result<Zeroizing<Vec<u8>>, Error> {
     let mut master = -1;
@@ -102,7 +105,11 @@ fn terminal_tool(
         .env("LANG", "C")
         .stdin(Stdio::from(slave.try_clone()?))
         .stdout(Stdio::from(slave.try_clone()?))
-        .stderr(if password.is_some() { Stdio::from(slave) } else { Stdio::null() });
+        .stderr(if password.is_some() {
+            Stdio::from(slave)
+        } else {
+            Stdio::null()
+        });
     let _terminal_group = native_process::TerminalGroup::configure(&mut command)?;
     struct Child(std::process::Child);
     impl std::ops::Deref for Child {
@@ -184,11 +191,17 @@ fn filevault_list(bytes: &[u8], uid: &str) -> Option<Observation> {
     let mut seen = false;
     for line in std::str::from_utf8(bytes).ok()?.lines() {
         let (name, value) = line.split_once(',')?;
-        if name.trim().is_empty() { return None; }
+        if name.trim().is_empty() {
+            return None;
+        }
         found |= uuid::Uuid::parse_str(value.trim()).ok()? == target;
         seen = true;
     }
-    seen.then_some(if found { Observation::Present } else { Observation::Absent })
+    seen.then_some(if found {
+        Observation::Present
+    } else {
+        Observation::Absent
+    })
 }
 pub(crate) fn facts(account: &NativeAccount) -> w::AccessMacFacts {
     let secure_token = match account.secure_token {
@@ -197,7 +210,9 @@ pub(crate) fn facts(account: &NativeAccount) -> w::AccessMacFacts {
         _ => Observation::Unknown,
     };
     let filevault_unlock = tool("/usr/bin/fdesetup", &["list"], None, 10)
-        .ok().and_then(|bytes| filevault_list(&bytes, &account.generated_uid)).unwrap_or(Observation::Unknown);
+        .ok()
+        .and_then(|bytes| filevault_list(&bytes, &account.generated_uid))
+        .unwrap_or(Observation::Unknown);
     let volume_owner = tool(
         "/usr/sbin/diskutil",
         &["apfs", "listUsers", "/", "-plist"],
@@ -321,7 +336,11 @@ fn apply(input: &Input) -> Result<Effect, Error> {
                 Ok(password)
             })? {
                 creation::Outcome::Created(account) => account,
-                creation::Outcome::NameConflict => return Ok(Effect::Failed { reason: w::AccessFailure::NameConflict }),
+                creation::Outcome::NameConflict => {
+                    return Ok(Effect::Failed {
+                        reason: w::AccessFailure::NameConflict,
+                    })
+                }
             };
             (account, configuration)
         }
@@ -411,7 +430,10 @@ fn apply(input: &Input) -> Result<Effect, Error> {
     })
 }
 
-pub(crate) fn change_role(account: &NativeAccount, role: Option<w::AccessRole>) -> Result<Option<w::AccessFailure>, Error> {
+pub(crate) fn change_role(
+    account: &NativeAccount,
+    role: Option<w::AccessRole>,
+) -> Result<Option<w::AccessFailure>, Error> {
     if let Some(role) = role {
         unsafe extern "C" {
             fn rss_access_role(uuid: *const std::ffi::c_char, administrator: i32) -> i32;

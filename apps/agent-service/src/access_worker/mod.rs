@@ -352,12 +352,13 @@ pub fn run(path: &Path) -> Result<i32, Error> {
         .map_err(crate::error::app_error)?;
     let input: Input = serde_json::from_slice(&bytes).map_err(|_| Error::Protocol)?;
     input.task.validate()?;
-    if input.task.platform
-        != if cfg!(target_os = "macos") {
-            w::TaskPlatform::Macos
-        } else {
-            w::TaskPlatform::Windows
-        }
+    if input.channel != device_access::Channel::Mdm
+        || input.task.platform
+            != if cfg!(target_os = "macos") {
+                w::TaskPlatform::Macos
+            } else {
+                w::TaskPlatform::Windows
+            }
         || !matches!(
             input.run_as,
             RunAs::System { platform } if platform == if cfg!(target_os="macos") { execution_contract::Platform::Macos } else { execution_contract::Platform::Windows }
