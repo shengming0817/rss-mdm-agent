@@ -25,6 +25,7 @@ pub(crate) const OUTPUT_BYTES: u64 = 262144;
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Input {
+    pub channel: device_access::Channel,
     pub task: w::CredentialTaskSpec,
     pub root: PathBuf,
     pub image_sha256: Digest,
@@ -76,6 +77,25 @@ pub(crate) fn failed(
     }
 }
 /// Entry accepts only the runner's retained, protected input and OS identity.
+#[cfg(windows)]
+pub(crate) fn drive_da(input: &Input) -> Result<w::CredentialResult, Error> {
+    device_access::windows::require_system().map_err(|_| Error::Denied)?;
+    if input.channel != device_access::Channel::Da
+        || input.task.permit != w::TaskPermit::Start
+        || !matches!(
+            input.task.operation,
+            w::CredentialOperation::RotateRssLogin { .. }
+                | w::CredentialOperation::VerifyRssLogin { .. }
+        )
+    {
+        return Err(Error::Denied);
+    }
+    engine::execute(
+        input,
+        &mut windows::NativeWindows::open().map_err(|_| Error::Unavailable)?,
+    )
+}
+
 pub fn run(path: &Path) -> Result<i32, Error> {
     let bytes = execution_runner::staging::read_worker_input(path, 262144)
         .map_err(crate::error::app_error)?;

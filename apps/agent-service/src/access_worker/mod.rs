@@ -181,6 +181,26 @@ pub(crate) fn stored_result(
     Ok(value)
 }
 /// Only a runner-retained input and verified SYSTEM image can execute a started task.
+#[cfg(windows)]
+pub(crate) fn drive_da(
+    input: &Input,
+    password: Option<zeroize::Zeroizing<String>>,
+) -> Result<w::AccessResult, Error> {
+    device_access::windows::require_system().map_err(|_| Error::Denied)?;
+    if input.channel != device_access::Channel::Da || input.task.permit != w::TaskPermit::Start {
+        return Err(Error::Denied);
+    }
+    engine::execute(
+        input,
+        &mut windows::NativeWindows {
+            root: input.root.clone(),
+            installation: input.installation,
+            channel: input.channel,
+            da_password: password,
+        },
+    )
+}
+
 pub fn run(path: &Path) -> Result<i32, Error> {
     let bytes = execution_runner::staging::read_worker_input(path, 262144)
         .map_err(crate::error::app_error)?;
@@ -209,6 +229,8 @@ pub fn run(path: &Path) -> Result<i32, Error> {
     let result = engine::execute(
         &input,
         &mut windows::NativeWindows {
+            da_password: None,
+            channel: device_access::Channel::Mdm,
             root: input.root.clone(),
             installation: input.installation,
         },

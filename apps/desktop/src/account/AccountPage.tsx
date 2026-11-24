@@ -3,7 +3,8 @@ import { Alert, Button, Form, Input, Modal, Tag } from "antd";
 import { UserOutlined, PlusOutlined } from "@ant-design/icons";
 import { useSnapshot } from "valtio";
 import { PageHeader, SectionCard, StatePanel } from "@rss-mdm-agent/ui";
-import { useDesktop } from "../state/react";
+import { WindowsLoginSetup } from "./WindowsLoginSetup";
+import { useDesktop, usePlatform } from "../state/react";
 import type { Workspace } from "../state/workspace";
 import { createOrganizations } from "./organizations";
 import type { AccountOrganization } from "@rss-mdm-agent/ai-contract/wire";
@@ -15,6 +16,7 @@ export function AccountPage({
   workspace: Workspace;
   onLogin(): void;
 }) {
+  const platform = usePlatform();
   const desktop = useDesktop();
   return (
     <div className="rss-page rss-stack">
@@ -42,6 +44,11 @@ export function AccountPage({
           登录与组织权限分别核验。操作仍由本机服务按当前身份确认。
         </p>
       </SectionCard>
+      {platform === "windows" &&
+        workspace.identity.identity.mode === "user_device" &&
+        workspace.deviceAccess && (
+          <WindowsLoginSetup port={workspace.deviceAccess} />
+        )}
       <BindingNotice />
       <OrganizationManager />
       <SectionCard title="本机会话">

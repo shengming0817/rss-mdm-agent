@@ -246,6 +246,10 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
                     ack.receipts[0].validate()?;
                     break ack.receipts[0].clone();
                 }
+                // The independent DA owner settles escrow between bounded native steps.
+                if input.channel == device_access::Channel::Da {
+                    return Err(Error::Unavailable);
+                }
                 std::thread::sleep(std::time::Duration::from_millis(200));
             };
             let facts = w::AccessRssFacts {

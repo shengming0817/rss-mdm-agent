@@ -28,6 +28,8 @@ impl Credentials for Secrets {
     }
 }
 struct Server {
+    offer: wire::AccountOffer,
+    account_event: Option<Value>,
     grant: Option<wire::Grant>,
     candidate: Option<enroll::Candidate>,
     registration: Option<wire::Registration>,
@@ -107,6 +109,28 @@ async fn endpoint(
             assert!(s.active.is_some() && peer.0 == s.active);
             match other {
                 "renewal-grants" => return renewal_response(&mut s, &grant, input),
+                "account-operations/next" => json!(s.offer),
+                "credential-operations/next" => Value::Null,
+                path if path == format!("account-operations/{}/events", s.offer.task_id) => {
+                    let event: wire::AccountEvent = serde_json::from_value(input.clone()).unwrap();
+                    assert_eq!(event.attempt_id, s.offer.attempt_id);
+                    if let Some(old) = s.account_event.as_ref() {
+                        assert_eq!(old, &input);
+                    } else {
+                        s.account_event = Some(input);
+                        return (
+                            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                            Json(json!({"code":"service_unavailable"})),
+                        )
+                            .into_response();
+                    }
+                    json!(wire::AccountSettlement {
+                        event_id: event.event_id,
+                        issued_expires_at: None,
+                        permit: None,
+                        receipt: None
+                    })
+                }
                 "configuration-trust" => json!(s.trust),
                 "configuration-trust/acknowledgements" => {
                     assert_eq!(input["digest"], s.trust.installation_digest().unwrap());
@@ -307,6 +331,14 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         }],
     };
     let state = Arc::new(Mutex::new(Server {
+        offer: wire::AccountOffer {
+            operation_id: Uuid::new_v4(),
+            task_id: Uuid::new_v4(),
+            attempt_id: Uuid::new_v4(),
+            binding_id: Uuid::new_v4(),
+            definition_digest: [17; 32],
+        },
+        account_event: None,
         grant: None,
         candidate: None,
         registration: None,
@@ -396,6 +428,19 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         3
     );
     assert!(inspect(&root.path, &backend, Uuid::new_v4(), time.now().unwrap()).is_err());
+    let ops = client.operations().unwrap();
+    let offer = ops.account().await.unwrap().unwrap();
+    assert!(ops
+        .account_event(&offer, wire::AccountObservation::Received)
+        .await
+        .is_err());
+    drop(ops);
+    drop(client);
+    let client = open();
+    let ops = client.operations().unwrap();
+    ops.replay_account().await.unwrap();
+    assert!(ops.credential().await.unwrap().is_none());
+    drop(ops);
     client.start_renewal().unwrap();
     client.drive(&mut consumer).await.unwrap();
     let renewed = client.active().unwrap().unwrap();

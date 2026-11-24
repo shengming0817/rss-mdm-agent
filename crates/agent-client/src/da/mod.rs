@@ -37,7 +37,9 @@ impl Backend {
 }
 
 mod configuration;
+mod operations;
 mod registration;
+pub use operations::Operations;
 pub use registration::validate_keys;
 mod storage;
 use crate::{

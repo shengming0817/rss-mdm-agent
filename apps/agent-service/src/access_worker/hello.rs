@@ -106,6 +106,8 @@ pub(crate) fn refresh(
         return Ok(());
     }
     let mut native = super::windows::NativeWindows {
+        da_password: None,
+        channel: device_access::Channel::Mdm,
         root: root.into(),
         installation,
     };
@@ -148,6 +150,8 @@ pub(crate) fn drain(root: &Path, installation: uuid::Uuid) -> Result<bool, Error
     let _lock = state::lock(root)?;
     let mut store = device_access::Store::open(root, installation).map_err(|_| Error::Storage)?;
     let mut native = super::windows::NativeWindows {
+        da_password: None,
+        channel: device_access::Channel::Mdm,
         root: root.into(),
         installation,
     };

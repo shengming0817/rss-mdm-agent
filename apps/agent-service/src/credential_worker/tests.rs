@@ -190,6 +190,7 @@ fn input(root: &Root, operation: Op) -> Input {
     .unwrap();
     task.validate().unwrap();
     Input {
+        channel: device_access::Channel::Mdm,
         task,
         root: root.0.clone(),
         image_sha256: Digest::new("a".repeat(64)).unwrap(),

@@ -327,6 +327,8 @@ pub(crate) fn status(root: &Path, installation: uuid::Uuid, subject: &str) -> Wi
     }
     match observe(
         &super::NativeWindows {
+            da_password: None,
+            channel: device_access::Channel::Mdm,
             root: root.into(),
             installation,
         },

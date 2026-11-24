@@ -11,6 +11,8 @@ use rss_mdm_agent_wire::{
 use std::path::PathBuf;
 
 pub(crate) struct Machine {
+    #[cfg(windows)]
+    pub(super) local_rss: bool,
     root: PathBuf,
     #[cfg(windows)]
     native_root: PathBuf,
@@ -43,6 +45,8 @@ impl Machine {
             Err(_) => SourceState::ReadFailed,
         };
         Self {
+            #[cfg(windows)]
+            local_rss: false,
             root,
             #[cfg(windows)]
             native_root,
@@ -76,6 +80,10 @@ impl PolicyConsumer for Machine {
         &mut self,
         settings: Option<&Selection>,
     ) -> Result<Option<AccessConfiguration>, Error> {
+        #[cfg(windows)]
+        {
+            self.local_rss=settings.is_some_and(|target|target.settings.enabled && matches!(&target.settings.windows, rss_mdm_agent_wire::runtime::AccessWindowsConfiguration::RssFactor{accounts} if accounts.contains(&rss_mdm_agent_wire::runtime::AccessWindowsKind::Local)));
+        }
         use platform_private_storage as fs;
         let active = self.root.join("selected-configuration.json");
         if settings.is_none() && !active.try_exists()? {

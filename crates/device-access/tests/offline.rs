@@ -678,10 +678,10 @@ fn crash_offline_writer() {
 #[test]
 fn hot_offline_recovers_current_format_and_preserves_old_format_bytes() {
     for (version, foreign_installation, altered_schema) in [
+        (4, false, false),
         (3, false, false),
-        (2, false, false),
-        (3, true, false),
-        (3, false, true),
+        (4, true, false),
+        (4, false, true),
     ] {
         let f = Fixture::new();
         drop(Store::create(&f.root, f.id).unwrap());
@@ -721,7 +721,7 @@ fn hot_offline_recovers_current_format_and_preserves_old_format_bytes() {
         let preflight = Store::validate_existing(&f.root, candidate);
         assert_eq!(std::fs::read(&path).unwrap(), before);
         assert_eq!(std::fs::read(&journal).unwrap(), before_journal);
-        if version == 2 {
+        if version == 3 {
             assert!(preflight.is_err());
             assert!(Store::open(&f.root, candidate).is_err());
             assert_eq!(std::fs::read(&path).unwrap(), before);

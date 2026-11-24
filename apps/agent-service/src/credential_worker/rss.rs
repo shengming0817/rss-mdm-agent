@@ -47,6 +47,18 @@ pub(super) fn execute(
         } => (*binding, *binding_generation, sid.clone()),
         _ => return Err(Error::Unsupported),
     };
+    let authority = store
+        .authority(&sid)
+        .map_err(|_| Error::Storage)?
+        .ok_or(Error::Identity)?;
+    if authority.channel != input.channel
+        || authority.binding != binding
+        || authority.binding_generation != binding_generation
+        || authority.device != task.device_id
+        || authority.tenant != task.tenant_id
+    {
+        return Err(Error::Identity);
+    }
     let subject = Subject::RssLogin {
         binding,
         binding_generation,
@@ -155,6 +167,9 @@ pub(super) fn execute(
             == Some(&digest)
         {
             break;
+        }
+        if input.channel == device_access::Channel::Da {
+            return Err(Error::Unavailable);
         }
         std::thread::sleep(std::time::Duration::from_millis(200));
     }

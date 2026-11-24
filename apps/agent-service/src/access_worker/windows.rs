@@ -6,6 +6,8 @@ use zeroize::Zeroizing;
 pub(super) struct NativeWindows {
     pub root: std::path::PathBuf,
     pub installation: uuid::Uuid,
+    pub da_password: Option<Zeroizing<String>>,
+    pub channel: device_access::Channel,
 }
 impl Protector for NativeWindows {
     fn seal(&self, bytes: &[u8]) -> Result<Vec<u8>, device_access::Error> {
@@ -76,6 +78,9 @@ impl engine::Native for NativeWindows {
         device_access::windows::clock().map_err(|_| Error::Clock)
     }
     fn password(&mut self) -> Result<Zeroizing<String>, Error> {
+        if self.channel == device_access::Channel::Da {
+            return self.da_password.take().ok_or(Error::Denied);
+        }
         use std::io::Read;
         let mut bytes = Zeroizing::new(Vec::new());
         std::io::stdin().take(1025).read_to_end(&mut bytes)?;
