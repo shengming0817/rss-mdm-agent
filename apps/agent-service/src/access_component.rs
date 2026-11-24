@@ -351,8 +351,9 @@ pub(crate) fn install_for(
     set(CONFIG_KEY, "MaintenanceDisabled", "0")?;
     set(&inproc, "", dll.path.to_str().ok_or(Error::Configuration)?)?;
     set(&inproc, "ThreadingModel", "Apartment")?;
-    set(&provider(), "", "RSS Device Access")?;
-    if let Err(error) = health_for(&config) {
+    // Publish last. Even a flush failure after setting the value can make this key visible.
+    if let Err(error) = set(&provider(), "", "RSS Device Access").and_then(|()| health_for(&config))
+    {
         delete(&provider())?;
         return Err(error);
     }
