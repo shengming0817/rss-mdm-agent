@@ -71,6 +71,11 @@ operations! {
     PssoRegister: POST "/api/v1/agent/runtime/platform-sso/register" [200] Some("application/json"), s::Registration => s::RegistrationReceipt;
     PssoStatus: GET "/api/v1/agent/runtime/platform-sso/status" [200] Some("application/json"), () => s::Status;
     PssoRevoke: POST "/api/v1/agent/runtime/platform-sso/sources/{id}/revoke" [200] Some("application/json"), s::Revocation => s::RevocationReceipt;
+    DaPssoBootstrap: POST "/api/v1/da/platform-sso/bootstrap" [200] Some("application/json"), s::Bootstrap => s::BootstrapResponse;
+    DaPssoRegister: POST "/api/v1/da/platform-sso/register" [200] Some("application/json"), s::Registration => s::RegistrationReceipt;
+    DaPssoStatus: GET "/api/v1/da/platform-sso/status" [200] Some("application/json"), () => s::Status;
+    DaPssoRevoke: POST "/api/v1/da/platform-sso/sources/{id}/revoke" [200] Some("application/json"), s::Revocation => s::RevocationReceipt;
+    DaAccessDirectory: GET "/api/v1/da/device-access" [200] Some("application/json"), () => w::AccessDirectory;
     FilevaultConfiguration: GET "/api/v1/agent/runtime/filevault/configuration" [200] Some("application/json"), () => f::Configuration;
     FilevaultUpload: POST "/api/v1/agent/runtime/filevault/escrows" [200] Some("application/json"), f::Upload => f::Receipt;
     FilevaultReceipt: GET "/api/v1/agent/runtime/filevault/operations/{id}" [200] Some("application/json"), () => Option<f::Receipt>;

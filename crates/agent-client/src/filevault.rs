@@ -145,6 +145,25 @@ fn same_material(receipt: &w::Receipt, c: &w::Configuration, digest: &str) -> bo
         && receipt.cms_digest == digest
         && receipt.escrowed
 }
+/// Read the existing custody owner's diagnostic without opening a writer or collecting a CMS.
+pub fn inspect(root: &std::path::Path, config: &crate::Config) -> Result<Status, Error> {
+    let mut conn = crate::store::read_existing(root, config)?;
+    let tx = conn.transaction()?;
+    if tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM state WHERE key='unmanage')",
+        [],
+        |r| r.get::<_, bool>(0),
+    )? {
+        return Ok(Status::Retired);
+    }
+    let identity = crate::store::read_value::<crate::identity::IdentityState>(&tx, "identity")?
+        .and_then(|s| s.active);
+    let state = crate::store::read_value::<State>(&tx, KEY)?;
+    Ok(match (identity, state) {
+        (Some(a), Some(s)) if a.receipt.runtime.device_id == s.device_id => s.status,
+        _ => Status::NotConfigured,
+    })
+}
 impl<S: IdentityProvider, C: Clock> Client<S, C> {
     /// Nonsecret durable diagnostic only; it never grants login or proves recovery validity.
     pub fn filevault_status(&self) -> Result<Status, Error> {

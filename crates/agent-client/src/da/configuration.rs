@@ -398,6 +398,23 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         }
         Ok(())
     }
+    /// Revalidate the exact signed selection and machine readback at a native callback.
+    pub fn platform_configuration(&self, snapshot: &ManagedSnapshot) -> Result<Selection, Error> {
+        let proof = read::<Option<AppliedProof>>(&self.journal.db, "applied-proof")?
+            .flatten()
+            .ok_or(Error::Untrusted)?;
+        if self.now()? >= proof.until
+            || !matches!(snapshot.state, SourceState::Missing | SourceState::Present)
+            || fingerprints(snapshot)? != proof.sources
+            || !proof.effective.settings.enabled
+            || read::<Option<String>>(&self.journal.db, "effective-digest")?
+                .flatten()
+                .is_none()
+        {
+            return Err(Error::Untrusted);
+        }
+        Ok(proof.effective)
+    }
     fn configure(
         &self,
         id: &wire::ReportIdentity,

@@ -304,7 +304,7 @@ pub unsafe extern "C" fn rss_psso_unregister(metadata: *const c_char) -> i32 {
             },
         )? {
             Response::Revoked { receipt } if receipt.revoked => Ok(()),
-            Response::Retired {} => Ok(()),
+            Response::Retired {} | Response::RegistrationWithdrawn {} => Ok(()),
             _ => Err(()),
         }
     }))

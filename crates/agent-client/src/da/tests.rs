@@ -113,6 +113,7 @@ fn windows_operation(s: &mut Server, route: &str, input: &Value) -> Option<Respo
 async fn endpoint(
     State(state): State<Arc<Mutex<Server>>>,
     ConnectInfo(peer): ConnectInfo<TlsIdentity>,
+    headers: axum::http::HeaderMap,
     uri: Uri,
     body: axum::body::Bytes,
 ) -> Response {
@@ -176,6 +177,64 @@ async fn endpoint(
                 return reply;
             }
             match other {
+                "device-access" => {
+                    assert_eq!(uri.query(), Some("limit=1"));
+                    assert_eq!(headers["x-rss-user-session"], "a".repeat(64));
+                    return (
+                        [("cache-control", "no-store")],
+                        Json(json!({"policies":[],"nextCursor":null,"bindings":[]})),
+                    )
+                        .into_response();
+                }
+                route if route.starts_with("platform-sso/") => {
+                    use rss_mdm_agent_wire::platform_sso as psso;
+                    assert!(
+                        !headers.contains_key("x-rss-user-session")
+                            && !headers.contains_key("cookie")
+                    );
+                    let source = s.offer.binding_id;
+                    let value = match route {
+                        "platform-sso/status" => {
+                            assert_eq!(uri.query(), Some(format!("bindingId={source}").as_str()));
+                            json!({"deviceRegistered":false,"userRegistered":false,"loginReady":false,"applicationObserved":true,"profileObserved":true,"deviceSource":null,"userSource":null,"passwordExchange":null,"hardwareAttested":false,"registrationTrust":"da_device_pop"})
+                        }
+                        "platform-sso/bootstrap" => json!(psso::BootstrapResponse {
+                            id: source,
+                            nonce: "test-nonce".into(),
+                            expires_at: s.clock.now().unwrap() + 60,
+                            source_id: source,
+                            source_version: 1,
+                            endpoints: psso::Endpoints::new("https://mac.example", tenant).unwrap(),
+                            client_id: source,
+                            login_user_name: source.to_string()
+                        }),
+                        "platform-sso/register" => json!(psso::RegistrationReceipt {
+                            registered: true,
+                            source_id: source,
+                            source_version: 1,
+                            kind: psso::Kind::Device,
+                            registration_trust: psso::RegistrationTrust::DaDevicePop,
+                            hardware_attested: false
+                        }),
+                        _ => {
+                            assert_eq!(route, format!("platform-sso/sources/{source}/revoke"));
+                            assert_eq!(input, json!({"sourceVersion":1}));
+                            json!(psso::RevocationReceipt {
+                                revoked: true,
+                                source_id: source,
+                                source_version: 2
+                            })
+                        }
+                    };
+                    return (
+                        [
+                            ("cache-control", "no-store"),
+                            ("referrer-policy", "no-referrer"),
+                        ],
+                        Json(value),
+                    )
+                        .into_response();
+                }
                 "renewal-grants" => return renewal_response(&mut s, &grant, input),
                 "configuration-trust" => json!(s.trust),
                 "configuration-trust/acknowledgements" => {
@@ -481,6 +540,51 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
     );
     assert!(inspect(&root.path, &backend, Uuid::new_v4(), time.now().unwrap()).is_err());
     let ops = client.operations().unwrap();
+    assert!(ops
+        .mac_bindings(&"a".repeat(64))
+        .await
+        .unwrap()
+        .bindings
+        .is_empty());
+    let mac_binding = state.lock().unwrap().offer.binding_id;
+    assert_eq!(
+        ops.psso_status(Some(mac_binding))
+            .await
+            .unwrap()
+            .registration_trust,
+        rss_mdm_agent_wire::platform_sso::RegistrationTrust::DaDevicePop
+    );
+    use rss_mdm_agent_wire::platform_sso as mac;
+    let challenge = ops
+        .psso_bootstrap(&mac::Bootstrap {
+            operation_id: Uuid::new_v4(),
+            kind: mac::Kind::Device,
+            binding_id: None,
+            binding_generation: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(challenge.source_id, mac_binding);
+    let key = mac::PublicKey {
+        kty: "EC".into(),
+        crv: "P-256".into(),
+        x: "BkFHRYQoleq39LplGqlcmsEdnw64w0wbcbHAEjrM4pw".into(),
+        y: "jbOoWZbgDFTEfLa1O_7ZuJy3R8d2XAw0CHWUKmJLsbU".into(),
+    };
+    assert!(
+        ops.psso_register(&mac::Registration {
+            operation_id: Uuid::new_v4(),
+            challenge_id: challenge.id,
+            signing_key: Some(key.clone()),
+            encryption_key: key,
+            proof: "fixture.proof.signature".into()
+        })
+        .await
+        .unwrap()
+        .unwrap()
+        .registered
+    );
+    assert!(ops.psso_revoke(mac_binding, 1).await.unwrap().revoked);
     let offer = ops.account(None).await.unwrap().unwrap();
     assert!(ops
         .account_event(&offer, wire::AccountObservation::Received)

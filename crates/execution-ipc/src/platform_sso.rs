@@ -87,6 +87,8 @@ pub enum Response {
     },
     /// The old source no longer exists at that version; no newer source was revoked.
     Retired {},
+    /// The exact DA credential was withdrawn; permit local cleanup while source status remains unknown.
+    RegistrationWithdrawn {},
     /// Native observation was retained under the actual peer account.
     Observed {},
     /// Server revocation completed; native system cleanup is still separate.
