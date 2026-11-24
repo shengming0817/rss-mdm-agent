@@ -41,7 +41,7 @@ fn connection(root: &Path, write: bool) -> Result<Connection, Error> {
 }
 
 fn verify(conn: &Connection, backend: &Backend, installation: Uuid) -> Result<(), Error> {
-    if files::sqlite_format(conn)? != Some((APP, 1)) {
+    if files::sqlite_format(conn)? != Some((APP, 2)) {
         return Err(Error::Schema);
     }
     let saved: (Uuid, Uuid, Uuid) = read(conn, "authority")?.ok_or(Error::Storage)?;
@@ -63,12 +63,12 @@ pub fn has_live_credentials(root: &Path, installation: Uuid) -> Result<bool, Err
     if std::fs::read_dir(root)?.next().transpose()?.is_none() {
         return Ok(false);
     }
-    if files::read(&root.join("initialized"), 16)? != b"da-v1" {
+    if files::read(&root.join("initialized"), 16)? != b"da-v2" {
         return Err(Error::Schema);
     }
     let mut db = connection(root, false)?;
     let tx = db.transaction()?;
-    if files::sqlite_format(&tx)? != Some((APP, 1)) {
+    if files::sqlite_format(&tx)? != Some((APP, 2)) {
         return Err(Error::Schema);
     }
     let (owner, _, _): (Uuid, Uuid, Uuid) = read(&tx, "authority")?.ok_or(Error::Storage)?;
@@ -147,7 +147,7 @@ impl Journal {
         let marker = root.join("initialized");
         let published = marker.try_exists()?;
         if published {
-            if files::read(&marker, 16)? != b"da-v1" || !path.try_exists()? {
+            if files::read(&marker, 16)? != b"da-v2" || !path.try_exists()? {
                 return Err(Error::Storage);
             }
         } else {
@@ -170,12 +170,12 @@ impl Journal {
                 &(installation, backend.instance, backend.tenant),
             )?;
             t.pragma_update(None, "application_id", APP)?;
-            t.pragma_update(None, "user_version", 1)?;
+            t.pragma_update(None, "user_version", 2)?;
             t.commit()?;
         }
         verify(&db, backend, installation)?;
         if !published {
-            files::write_new(&marker, b"da-v1")?;
+            files::write_new(&marker, b"da-v2")?;
         }
         Ok(Self { db, _writer: lock })
     }

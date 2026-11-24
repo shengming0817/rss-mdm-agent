@@ -241,7 +241,7 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                                             Ok(())
                                         }
                                         .await;
-                                        client.record_windows_delivery(operations)?;
+                                        client.record_delivery(operations)?;
                                         result
                                     }
                                     #[cfg(not(windows))]

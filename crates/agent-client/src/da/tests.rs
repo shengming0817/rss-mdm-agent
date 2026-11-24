@@ -663,7 +663,7 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         assert_eq!(receipt.kind, mac::Kind::User);
     }
     assert!(ops.psso_revoke(mac_binding, 1).await.unwrap().revoked);
-    let offer = ops.account(None).await.unwrap().unwrap();
+    let offer = ops.account(w::TaskPlatform::Windows, None).await.unwrap().unwrap();
     assert!(ops
         .account_event(&offer, wire::AccountObservation::Received)
         .await
@@ -689,15 +689,15 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
     later.task_id = Uuid::new_v4();
     later.attempt_id = Uuid::new_v4();
     state.lock().unwrap().offer = later.clone();
-    assert_eq!(ops.account(None).await.unwrap(), Some(later.clone()));
-    assert_eq!(ops.account(None).await.unwrap(), Some(offer.clone()));
+    assert_eq!(ops.account(w::TaskPlatform::Windows, None).await.unwrap(), Some(later.clone()));
+    assert_eq!(ops.account(w::TaskPlatform::Windows, None).await.unwrap(), Some(offer.clone()));
     assert_eq!(
-        ops.account(Some((later.task_id, later.attempt_id)))
+        ops.account(w::TaskPlatform::Windows, Some((later.task_id, later.attempt_id)))
             .await
             .unwrap(),
         Some(later.clone())
     );
-    let prefix = format!("windows/{}", grant.device);
+    let prefix = format!("delivery/{}", grant.device);
     state.lock().unwrap().offer = offer.clone();
     let ack = ops
         .account_event(
@@ -734,7 +734,7 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         )
         .unwrap();
     assert_eq!(remaining, 0);
-    assert_eq!(ops.account(None).await.unwrap(), Some(later.clone()));
+    assert_eq!(ops.account(w::TaskPlatform::Windows, None).await.unwrap(), Some(later.clone()));
     state.lock().unwrap().account_closed = true;
     assert!(matches!(
         ops.account_event(&later, wire::AccountObservation::Received)
@@ -742,7 +742,7 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         Err(Error::Conflict)
     ));
     ops.replay_account().await.unwrap();
-    assert!(ops.account(None).await.unwrap().is_none());
+    assert!(ops.account(w::TaskPlatform::Windows, None).await.unwrap().is_none());
     let rejection = inspect(&root.path, &backend, install, time.now().unwrap())
         .unwrap()
         .unwrap()

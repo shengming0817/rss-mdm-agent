@@ -33,10 +33,10 @@ pub struct Operations<'a> {
 }
 impl<S: Credentials, C: Clock> Client<S, C> {
     /// Save the closed delivery error for installation status and preserve the normal retry signal.
-    pub fn record_windows_delivery(&self, result: Result<(), Error>) -> Result<(), Error> {
+    pub fn record_delivery(&self, result: Result<(), Error>) -> Result<(), Error> {
         write(
             &self.journal.db,
-            "windows-delivery-error",
+            "delivery-error",
             &result.as_ref().err().copied(),
         )?;
         result
@@ -150,6 +150,16 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         self.release_settled()
     }
 }
+#[derive(serde::Deserialize, serde::Serialize, PartialEq)]
+struct RetainedOffer {
+    platform: w::TaskPlatform,
+    offer: wire::AccountOffer,
+}
+
+pub(super) fn operation_key(device: rss_mdm_agent_wire::DeviceId, item: &str) -> String {
+    format!("delivery/{device}/{item}")
+}
+
 impl Operations<'_> {
     /// Identity actually authenticated by this device session.
     pub fn registration(&self) -> &wire::Registration {
@@ -188,7 +198,7 @@ impl Operations<'_> {
         crate::store::decode(&crate::client::bounded(response, 262144).await?)
     }
     fn key(&self, item: &str) -> String {
-        format!("windows/{}/{item}", self.registration.device)
+        operation_key(self.registration.device, item)
     }
     fn save<T: Serialize>(&self, item: &str, value: &T) -> Result<(), Error> {
         write(self.db, &self.key(item), value)
@@ -222,9 +232,16 @@ impl Operations<'_> {
     /// Journal a server offer before the received event can be sent.
     pub async fn account(
         &self,
+        platform: w::TaskPlatform,
         confirmed: Option<(Uuid, Uuid)>,
     ) -> Result<Option<wire::AccountOffer>, Error> {
-        let offer = self.send::<h::DaAccountNext>(&[], None).await?;
+        let query = match platform {
+            w::TaskPlatform::Macos => Some("platform=macos"),
+            w::TaskPlatform::Windows => None,
+        };
+        let response = Call::<h::DaAccountNext>::new(&self.http, self.origin, &[], query, None)?
+            .timeout(Duration::from_secs(5)).send().await?;
+        let offer: Option<wire::AccountOffer> = Self::decode(response).await?;
         if let Some(o) = &offer {
             if [o.operation_id, o.task_id, o.attempt_id, o.binding_id]
                 .iter()
@@ -233,17 +250,17 @@ impl Operations<'_> {
                 return Err(Error::Protocol);
             }
             let key = format!("offer/{}/{}", o.task_id, o.attempt_id);
-            if self
-                .load::<wire::AccountOffer>(&key)?
-                .is_some_and(|old| old != *o)
+            let retained = RetainedOffer { platform, offer: o.clone() };
+            if self.load::<RetainedOffer>(&key)?.is_some_and(|old| old != retained)
             {
                 return Err(Error::Conflict);
             }
-            self.save(&key, o)?;
+            self.save(&key, &retained)?;
         }
         if let Some((task, attempt)) = confirmed {
-            if let Some(o) = self.load(&format!("offer/{task}/{attempt}"))? {
-                return Ok(Some(o));
+            if let Some(o) = self.load::<RetainedOffer>(&format!("offer/{task}/{attempt}"))? {
+                if o.platform != platform { return Err(Error::Identity); }
+                return Ok(Some(o.offer));
             }
         }
         // A server may keep returning its oldest started task. Rotate the retained offers
@@ -259,9 +276,10 @@ impl Operations<'_> {
             )
             .optional()?;
         if let Some((key, bytes)) = next {
-            let offer = crate::store::decode(&bytes)?;
+            let offer: RetainedOffer = crate::store::decode(&bytes)?;
+            if offer.platform != platform { return Err(Error::Identity); }
             self.save("offer-cursor", &key)?;
-            Ok(Some(offer))
+            Ok(Some(offer.offer))
         } else {
             Ok(None)
         }
@@ -273,8 +291,8 @@ impl Operations<'_> {
         event: wire::AccountObservation,
     ) -> Result<wire::AccountSettlement, Error> {
         if self
-            .load::<wire::AccountOffer>(&format!("offer/{}/{}", o.task_id, o.attempt_id))?
-            .as_ref()
+            .load::<RetainedOffer>(&format!("offer/{}/{}", o.task_id, o.attempt_id))?
+            .as_ref().map(|r| &r.offer)
             != Some(o)
         {
             return Err(Error::Identity);
@@ -326,9 +344,12 @@ impl Operations<'_> {
             }
             wire::AccountObservation::CreateAbsent { .. }
             | wire::AccountObservation::Result(w::AccessResult {
-                effect: w::AccessEffect::Applied { .. } | w::AccessEffect::Unbound { .. },
+                effect: wire::AccountEffect::MacAccountCreated { .. } | wire::AccountEffect::Access(w::AccessEffect::Applied { .. } | w::AccessEffect::Unbound { .. }),
                 ..
             }) => Some(AccountCompletion::Observed),
+            wire::AccountObservation::Result(w::AccessResult {
+                effect: wire::AccountEffect::Access(w::AccessEffect::Failed { .. }), ..
+            }) if self.load::<RetainedOffer>(&format!("offer/{task}/{}", body.attempt_id))?.is_some_and(|r| r.platform == w::TaskPlatform::Macos) => Some(AccountCompletion::Observed),
             _ => None,
         };
         if let Some(completion) = completion {
