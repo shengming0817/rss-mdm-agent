@@ -8,11 +8,6 @@ mod windows;
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     fn rss_personal_vault_verify() -> i32;
-    fn rss_personal_vault_password(
-        label: *const std::ffi::c_char,
-        output: *mut u8,
-        capacity: usize,
-    ) -> i32;
     fn rss_personal_vault_cancel();
     fn rss_personal_vault_observe(
         callback: extern "C" fn(*mut std::ffi::c_void),
@@ -41,19 +36,7 @@ pub fn verify() -> Result<()> {
 pub fn password(label: &str) -> Result<Zeroizing<String>> {
     #[cfg(target_os = "macos")]
     {
-        let label = std::ffi::CString::new(label).map_err(|_| Error::Input)?;
-        let mut bytes = Zeroizing::new(vec![0u8; 1025]);
-        // SAFETY: label and writable byte buffer remain alive throughout synchronous UI.
-        let length =
-            unsafe { rss_personal_vault_password(label.as_ptr(), bytes.as_mut_ptr(), bytes.len()) };
-        if !(1..=1024).contains(&length) {
-            return Err(Error::Cancelled);
-        }
-        Ok(Zeroizing::new(
-            std::str::from_utf8(&bytes[..length as usize])
-                .map_err(|_| Error::Input)?
-                .to_owned(),
-        ))
+        super::super::secure_input::password("个人 Passkey Vault", label).ok_or(Error::Cancelled)
     }
     #[cfg(windows)]
     {

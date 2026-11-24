@@ -31,3 +31,5 @@ mod supervisor;
 mod views;
 
 pub mod personal_vault;
+#[cfg(target_os = "macos")]
+mod secure_input;

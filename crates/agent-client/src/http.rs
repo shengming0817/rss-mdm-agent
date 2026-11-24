@@ -202,6 +202,10 @@ impl<E: Endpoint> Call<E> {
         self.builder = self.builder.header(name, value.as_ref());
         self
     }
+    pub fn query(mut self, value: &impl serde::Serialize) -> Self {
+        self.builder = self.builder.query(value);
+        self
+    }
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.builder = self.builder.timeout(timeout);
         self

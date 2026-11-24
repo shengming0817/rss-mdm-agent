@@ -463,7 +463,8 @@ impl Deployment {
         self.modules.mdm.enabled()
             || (cfg!(target_os = "macos")
                 && self.modules.da.enabled()
-                && self.platform_sso.is_some())
+                && (self.platform_sso.is_some()
+                    || self.modules.employee_portal().ok().flatten().is_some()))
     }
     pub(crate) fn helper_policy(&self) -> Option<PeerPolicy> {
         if self.helper_work_roots.is_empty() {

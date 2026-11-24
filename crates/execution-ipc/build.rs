@@ -11,6 +11,7 @@ fn main() {
             .compile("rss_execution_xpc");
         println!("cargo:rustc-link-lib=framework=Foundation");
         println!("cargo:rustc-link-lib=framework=CoreGraphics");
+        println!("cargo:rustc-link-lib=framework=AppKit");
         // Separate archive: only the acceptance example references this object.
         cc::Build::new()
             .file("src/macos_security_probe.m")

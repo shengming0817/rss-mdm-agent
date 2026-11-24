@@ -1,5 +1,7 @@
 // ref: Foundation/NSXPCConnection.h (macOS SDK). Transport facts are not product authority.
 #import <Foundation/Foundation.h>
+#import <AppKit/NSWorkspace.h>
+#import <CoreGraphics/CGSession.h>
 #include <stdint.h>
 #include <unistd.h>
 #include <time.h>
@@ -110,6 +112,47 @@ static void rss_publish_helper(NSXPCListener *listener, NSString *requirement) {
     [remote registerHelper:listener.endpoint reply:^(BOOL accepted){(void)accepted;[connection invalidate];}];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,5*NSEC_PER_SEC),dispatch_get_global_queue(QOS_CLASS_DEFAULT,0),^{[connection invalidate];});
 }
+// Per-process, per-login generation. A helper restart or an intervening lock/sleep/switch
+// invalidates every previously observed confirmation, including after the user returns.
+static NSUUID *presenceEpoch;
+static unsigned presenceUnavailable;
+static void rss_observe_presence(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        @synchronized(NSWorkspace.class) { presenceEpoch=[NSUUID UUID]; }
+        void (^observe)(NSNotificationCenter *,NSString *,unsigned,BOOL)=^(NSNotificationCenter *center,NSString *name,unsigned bit,BOOL unavailable){
+            [center addObserverForName:name object:nil queue:nil usingBlock:^(NSNotification *note){
+                (void)note;
+                @synchronized(NSWorkspace.class) {
+                    presenceEpoch=[NSUUID UUID];
+                    if(unavailable) presenceUnavailable|=bit; else presenceUnavailable&=~bit;
+                }
+            }];
+        };
+        NSNotificationCenter *workspace=NSWorkspace.sharedWorkspace.notificationCenter;
+        observe(workspace,NSWorkspaceWillSleepNotification,1,YES);
+        observe(workspace,NSWorkspaceDidWakeNotification,1,NO);
+        observe(workspace,NSWorkspaceSessionDidResignActiveNotification,2,YES);
+        observe(workspace,NSWorkspaceSessionDidBecomeActiveNotification,2,NO);
+        observe(NSDistributedNotificationCenter.defaultCenter,@"com.apple.screenIsLocked",4,YES);
+        observe(NSDistributedNotificationCenter.defaultCenter,@"com.apple.screenIsUnlocked",4,NO);
+    });
+}
+int rss_execution_presence_epoch(uint8_t *out) {
+    @autoreleasepool {
+        if(geteuid()==0 || !out)return 0;
+        @synchronized(NSWorkspace.class) {
+            if(!presenceEpoch || presenceUnavailable)return 0;
+            NSDictionary *session=CFBridgingRelease(CGSessionCopyCurrentDictionary());
+            if(!session || ![session[(__bridge NSString *)kCGSessionOnConsoleKey] boolValue] ||
+              ![session[(__bridge NSString *)kCGSessionLoginDoneKey] boolValue] ||
+              ![session[(__bridge NSString *)kCGSessionUserIDKey] isEqual:@(geteuid())] ||
+              [session[@"CGSSessionScreenIsLocked"] boolValue])return 0;
+            [presenceEpoch getUUIDBytes:out];
+            return 1;
+        }
+    }
+}
 int rss_execution_listen(const char *requirement){
     @autoreleasepool{
         RSSExecutionListener *delegate __attribute__((objc_precise_lifetime))=[RSSExecutionListener new];
@@ -118,6 +161,7 @@ int rss_execution_listen(const char *requirement){
         NSXPCListener *listener=[[NSXPCListener alloc]initWithMachServiceName:name];listener.delegate=delegate;[listener resume];
         NSTimer *registration=nil;
         if(geteuid()!=0){
+            rss_observe_presence();
             rss_publish_helper(listener,delegate.requirement);
             registration=[NSTimer scheduledTimerWithTimeInterval:2 repeats:YES block:^(NSTimer *timer){(void)timer;rss_publish_helper(listener,delegate.requirement);}];
         }

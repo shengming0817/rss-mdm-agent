@@ -1771,9 +1771,9 @@ export type Operation2 =
        */
       task: string;
       /**
-       * New account password, held only until native consumption.
+       * Exact attempt displayed in this employee's native session.
        */
-      password: string;
+      attempt: string;
       kind: "prepareMac";
     }
   | {
@@ -5009,6 +5009,10 @@ export interface SetupTask {
    * Exact backend task.
    */
   task: string;
+  /**
+   * Frozen attempt offered to this employee.
+   */
+  attempt: string;
   /**
    * Business association.
    */

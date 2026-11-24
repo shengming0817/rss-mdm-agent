@@ -1,11 +1,13 @@
 //! The existing system service drives DA on its own bounded worker. An unavailable DA
 //! endpoint cannot stall authenticated IPC, MDM enrollment, or the ordinary task owner.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "macos", test))]
 mod attempt;
 #[cfg(windows)]
 mod delivery;
 #[cfg(windows)]
 mod login;
+#[cfg(target_os = "macos")]
+pub(crate) mod mac_accounts;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
@@ -172,6 +174,8 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                 .map_err(|_| Error::Unavailable)?;
             runtime.block_on(async move {
                 let work = async {
+                    #[cfg(target_os="macos")]
+                    let mut retirement=crate::service::platform_sso::State::default();
                     loop {
                         // Only explicit provisioning may initialize a DA identity namespace.
                         let result = match channel_initialized(&d).and_then(|retained| {
@@ -200,18 +204,16 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                                     #[cfg(not(target_os="macos"))]
                                     let result = client.drive(&mut policy).await;
                                     #[cfg(target_os="macos")]
-                                    let result = {
-                                        let drive=client.drive(&mut policy);
-                                        tokio::pin!(drive);
-                                        loop {
-                                            tokio::select! {
-                                                result = &mut drive => break result,
-                                                Some(cmd) = native.rx.recv() => native.handle(&d,&client,cmd).await,
-                                            }
-                                        }
-                                    };
+                                    let result=native.during(&d,&client,client.drive(&mut policy)).await;
                                     #[cfg(target_os="macos")]
-                                    if d.platform_sso.is_some() {native.maintenance(&d,&client).await?;}
+                                    {
+                                        native.maintenance(&d,&client,&mut retirement).await?;
+                                        if client.registered()? {
+                                            let setup=native.accounts();
+                                            let operations=native.during(&d,&client,mac_accounts::drive(&d,&client,&setup)).await;
+                                            client.record_delivery(operations)?;
+                                        }
+                                    }
 
                                     #[cfg(windows)]
                                     {
@@ -241,7 +243,7 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                                             Ok(())
                                         }
                                         .await;
-                                        client.record_windows_delivery(operations)?;
+                                        client.record_delivery(operations)?;
                                         result
                                     }
                                     #[cfg(not(windows))]
@@ -266,11 +268,13 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                         tokio::select! {_=worker_login.wake.notified()=>(),_=tokio::time::sleep(Duration::from_secs(delay))=>()}
                         #[cfg(target_os="macos")]
                         {
+                            let setup = native.accounts();
                             let wait = tokio::time::sleep(Duration::from_secs(delay));
                             tokio::pin!(wait);
                             loop {
                                 tokio::select! {
                                     _=&mut wait => break,
+                                    _=setup.wake.notified()=>break,
                                     Some(cmd)=native.rx.recv() => {
                                         match channel_initialized(&d).and_then(|live| if live { open(&d) } else {Err(Error::Identity)}) {
                                             Ok(client) => native.handle(&d, &client, cmd).await,
@@ -303,18 +307,44 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
 fn settle_mac_request(
     request: Request,
     native: impl FnOnce() -> Reply + Send + 'static,
-    mdm: impl FnOnce(Request) -> Option<Reply>,
+    mdm: impl FnOnce(Request) -> Option<execution_ipc::host::DeferredReply>,
 ) -> execution_ipc::host::DeferredReply {
-    let other = if matches!(request, Request::BindContext { .. }) {
+    let other = if matches!(
+        request,
+        Request::BindContext { .. }
+            | Request::DeviceAccess {
+                input: execution_ipc::device_access::Operation::Tasks {},
+                ..
+            }
+    ) {
         mdm(request)
     } else {
         None
     };
     Box::new(move || {
         let result = native();
-        match other {
-            Some(bound @ Reply::ContextBound { .. }) => bound,
-            _ => result,
+        match (other.map(|wait| wait()), result) {
+            (Some(bound @ Reply::ContextBound { .. }), _) => bound,
+            (
+                Some(Reply::DeviceAccess {
+                    value: execution_ipc::device_access::Response::Tasks { mut tasks },
+                }),
+                Reply::DeviceAccess {
+                    value: execution_ipc::device_access::Response::Tasks { tasks: da },
+                },
+            ) => {
+                tasks.extend(da);
+                Reply::DeviceAccess {
+                    value: execution_ipc::device_access::Response::Tasks { tasks },
+                }
+            }
+            (
+                Some(Reply::Unavailable),
+                Reply::DeviceAccess {
+                    value: execution_ipc::device_access::Response::Tasks { .. },
+                },
+            ) => Reply::Unavailable,
+            (_, result) => result,
         }
     })
 }
@@ -330,12 +360,12 @@ fn shared_login_preserves_mdm_context_and_native_rejection_never_retries_with_md
         login,
         || Reply::Unavailable,
         |_| {
-            Some(Reply::ContextBound {
+            Some(Box::new(move || Reply::ContextBound {
                 value: execution_contract::NativeContextRef {
                     id: id.clone(),
                     generation: id,
                 },
-            })
+            }))
         },
     );
     assert!(matches!(bound(), Reply::ContextBound { .. }));
@@ -347,6 +377,63 @@ fn shared_login_preserves_mdm_context_and_native_rejection_never_retries_with_md
     };
     assert!(matches!(
         settle_mac_request(callback, || Reply::Rejected, |_| panic!("second issuer"))(),
+        Reply::Rejected
+    ));
+}
+#[cfg(all(test, target_os = "macos"))]
+#[test]
+fn account_tasks_merge_after_enqueue_and_a_denied_da_input_is_never_forwarded() {
+    use execution_ipc::device_access::{Operation, Response, SetupTask};
+    let id = execution_contract::Id::new("login").unwrap();
+    let request = |input| Request::DeviceAccess {
+        context: execution_contract::NativeContextRef {
+            id: id.clone(),
+            generation: id.clone(),
+        },
+        origin: execution_ipc::host::ClientOrigin::Desktop {},
+        input,
+        mac_password: None,
+        mac_confirmation: None,
+    };
+    let tasks = || Reply::DeviceAccess {
+        value: Response::Tasks {
+            tasks: vec![SetupTask {
+                mac_confirmation: None,
+                task: Uuid::new_v4(),
+                attempt: Uuid::new_v4(),
+                binding: Uuid::new_v4(),
+                create_name: Some("employee".into()),
+            }],
+        },
+    };
+    let called = Arc::new(AtomicBool::new(false));
+    let read = called.clone();
+    let waiter = settle_mac_request(request(Operation::Tasks {}), tasks, move |_| {
+        Some(Box::new(move || {
+            read.store(true, Ordering::Release);
+            tasks()
+        }))
+    });
+    assert!(matches!(
+        settle_mac_request(
+            request(Operation::Tasks {}),
+            || Reply::Unavailable,
+            |_| Some(Box::new(tasks))
+        )(),
+        Reply::Unavailable
+    ));
+    assert!(!called.load(Ordering::Acquire));
+    assert!(matches!(waiter(),Reply::DeviceAccess{value:Response::Tasks{tasks}} if tasks.len()==2));
+    assert!(called.load(Ordering::Acquire));
+    assert!(matches!(
+        settle_mac_request(
+            request(Operation::PrepareMac {
+                task: Uuid::new_v4(),
+                attempt: Uuid::new_v4()
+            }),
+            || Reply::Rejected,
+            |_| panic!("password forwarded")
+        )(),
         Reply::Rejected
     ));
 }
@@ -372,7 +459,19 @@ impl Service {
         Some(settle_mac_request(
             request.clone(),
             move || pending.map_or_else(|e| e, |call| call.wait()),
-            |r| self.mdm.as_mut().map(|m| m.handle(peer, r)),
+            |r| {
+                let mdm = self.mdm.as_mut()?;
+                let generation = match &r {
+                    Request::BindContext { value, .. } => Some(value.generation.clone()),
+                    _ => None,
+                };
+                let bytes = execution_ipc::host::encode(r.clone()).ok()?;
+                let wait = mdm.deferred_reply(peer, &bytes).unwrap_or_else(|| {
+                    let immediate = mdm.handle(peer, r);
+                    Box::new(move || immediate)
+                });
+                Some(self.endpoint.track_mdm(generation, wait))
+            },
         ))
     }
 }

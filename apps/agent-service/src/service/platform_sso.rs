@@ -1644,6 +1644,24 @@ pub(crate) fn save_binding(
     root: &std::path::Path,
     next: &::platform_sso::LocalBinding,
 ) -> Result<(), Error> {
+    settle_binding(root, next, false)
+}
+/// Finish only previously authorized local bookkeeping once both the remote and native
+/// retirement observations exist. Never initiate a retirement from an expired permit.
+pub(crate) fn finish_disabled_binding(
+    root: &std::path::Path,
+    next: &::platform_sso::LocalBinding,
+) -> Result<(), Error> {
+    if next.enabled {
+        return Err(Error::Identity);
+    }
+    settle_binding(root, next, true)
+}
+fn settle_binding(
+    root: &std::path::Path,
+    next: &::platform_sso::LocalBinding,
+    observe_only: bool,
+) -> Result<(), Error> {
     require_owner(
         root,
         (
@@ -1655,6 +1673,13 @@ pub(crate) fn save_binding(
     )?;
     let name = binding_name(&next.generated_uid)?;
     let previous: Option<::platform_sso::LocalBinding> = state::read_optional(root, &name)?;
+    if observe_only
+        && previous
+            .as_ref()
+            .is_none_or(|old| old.enabled || old.binding != next.binding)
+    {
+        return Err(Error::Identity);
+    }
     if let Some(old) = previous.as_ref() {
         if old.authority != next.authority
             || old.installation != next.installation
@@ -1675,7 +1700,9 @@ pub(crate) fn save_binding(
         {
             let mut disabled = old.clone();
             disabled.enabled = false;
-            state::write(root, &name, &disabled)?;
+            if !observe_only {
+                state::write(root, &name, &disabled)?;
+            }
             let prefix = next.generated_uid.clone();
             let mut complete = true;
             for entry in std::fs::read_dir(root)? {
@@ -1707,7 +1734,7 @@ pub(crate) fn save_binding(
                 if retired.is_some() && native_done {
                     clear_coordinate(root, &coordinate, file.ends_with(".psso-registering"))?;
                 } else {
-                    if retired.is_none() {
+                    if retired.is_none() && !observe_only {
                         state::write(root, &coordinate.file("retire")?, &coordinate)?;
                     }
                     complete = false;

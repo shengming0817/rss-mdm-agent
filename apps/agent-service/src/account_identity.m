@@ -32,6 +32,15 @@ static ODRecord *rss_access_record(ODNode *node, NSString *attribute, NSString *
     if(!*error && records.count>1)*error=[NSError errorWithDomain:@"com.rss.account" code:1 userInfo:nil];
     return !*error && records.count==1 ? records[0] : nil;
 }
+int rss_access_name_exists(const char *name) {
+    @autoreleasepool {
+        NSError *error = nil;
+        ODNode *node = [ODNode nodeWithSession:ODSession.defaultSession name:@"/Local/Default" error:&error];
+        if (!node || error || !name) return -1;
+        ODRecord *record = rss_access_record(node, kODAttributeTypeRecordName, [NSString stringWithUTF8String:name], &error);
+        return error ? -1 : (record ? 1 : 0);
+    }
+}
 int rss_access_account(const char *value, int byName, uint8_t *output, size_t capacity) {
     @autoreleasepool {
         NSError *error=nil;ODNode *node=[ODNode nodeWithSession:ODSession.defaultSession name:@"/Local/Default" error:&error];
@@ -41,6 +50,7 @@ int rss_access_account(const char *value, int byName, uint8_t *output, size_t ca
         NSArray *ids=[record valuesForAttribute:kODAttributeTypeGUID error:&error],*uids=[record valuesForAttribute:kODAttributeTypeUniqueID error:&error];
         if(error || ids.count!=1 || uids.count!=1)return -1;
         ODRecord *admins=[node recordWithRecordType:kODRecordTypeGroups name:@"admin" attributes:nil error:&error];
+        if(!admins || error)return -1;
         BOOL administrator=[admins isMemberRecord:record error:&error];if(error)return -1;
         NSArray *authorities=[record valuesForAttribute:kODAttributeTypeAuthenticationAuthority error:&error];
         NSInteger token=error?-1:0;

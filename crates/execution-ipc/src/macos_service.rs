@@ -346,6 +346,19 @@ fn handle_call(
     }
     result
 }
+/// Read this GUI helper's current unlocked-session generation.
+pub fn presence_epoch() -> Result<uuid::Uuid, Error> {
+    unsafe extern "C" {
+        fn rss_execution_presence_epoch(out: *mut u8) -> i32;
+    }
+    let mut bytes = [0u8; 16];
+    // SAFETY: native code writes the sixteen UUID bytes synchronously into this buffer.
+    if unsafe { rss_execution_presence_epoch(bytes.as_mut_ptr()) } != 1 {
+        return Err(Error::Unbound);
+    }
+    Ok(uuid::Uuid::from_bytes(bytes))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

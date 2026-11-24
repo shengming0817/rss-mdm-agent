@@ -3,6 +3,7 @@ import { Alert, Button, Form, Input, Modal, Tag } from "antd";
 import { UserOutlined, PlusOutlined } from "@ant-design/icons";
 import { useSnapshot } from "valtio";
 import { PageHeader, SectionCard, StatePanel } from "@rss-mdm-agent/ui";
+import { MacAccountSetup } from "./MacAccountSetup";
 import { WindowsLoginSetup } from "./WindowsLoginSetup";
 import { useDesktop, usePlatform } from "../state/react";
 import type { Workspace } from "../state/workspace";
@@ -48,6 +49,14 @@ export function AccountPage({
         workspace.identity.identity.mode === "user_device" &&
         workspace.deviceAccess && (
           <WindowsLoginSetup port={workspace.deviceAccess} />
+        )}
+      {platform === "macos" &&
+        workspace.identity.identity.mode === "user_device" &&
+        workspace.deviceAccess && (
+          <MacAccountSetup
+            key={workspace.identity.generation}
+            port={workspace.deviceAccess}
+          />
         )}
       <BindingNotice />
       <OrganizationManager />

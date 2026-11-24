@@ -11,6 +11,8 @@ fn slow_native_helper_publication_is_coalesced_and_released_on_ack_or_loss() {
             "Foundation",
             "-framework",
             "CoreGraphics",
+            "-framework",
+            "AppKit",
         ])
         .arg(concat!(
             env!("CARGO_MANIFEST_DIR"),

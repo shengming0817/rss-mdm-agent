@@ -69,7 +69,9 @@ mod configuration;
 mod operations;
 mod platform_sso;
 mod registration;
-pub use operations::{verify_employee, AccountCompletion, Operations, RecoveryUseDisposition};
+pub use operations::{
+    verify_employee, AccountCompletion, Operations, RecoveryUseDisposition, RejectedMacAccount,
+};
 pub use registration::validate_keys;
 mod storage;
 use crate::{
@@ -127,14 +129,16 @@ pub struct Status {
     pub renewal_error: Option<Error>,
     /// Most recent closed local or protocol failure.
     pub diagnostic: Option<Error>,
-    /// Last Windows native delivery failure, independent of configuration maintenance.
-    pub windows_delivery_error: Option<Error>,
+    /// Last native delivery failure, independent of configuration maintenance.
+    pub delivery_error: Option<Error>,
     /// Latest confirmed account and attempt with its original terminal settlement.
     pub account_settlement: Option<(Uuid, Uuid, wire::AccountSettlement)>,
     /// Latest confirmed recovery operation and attempt with its original settlement.
     pub credential_settlement: Option<(Uuid, Uuid, wire::CredentialSettlement)>,
     /// Last rejected account event and its exact attempt.
     pub rejected_account_event: Option<(Uuid, Uuid, Uuid, Error)>,
+    /// Original Mac operation and any result that could not be settled.
+    pub rejected_mac_account: Option<RejectedMacAccount>,
     /// Last definitively rejected offline use for this registration.
     pub rejected_recovery_use: Option<(Uuid, Error)>,
 }
@@ -162,21 +166,25 @@ pub fn inspect(
     let valid = valid_until.is_some_and(|until| now < until)
         && read::<i64>(&c, "clock")?.is_some_and(|seen| now >= seen);
     let device = active.as_ref().map(|a| a.receipt.device);
-    let windows_key = |kind: &str| device.map(|d| format!("windows/{d}/{kind}"));
+    let delivery_key = |kind: &str| device.map(|d| operations::operation_key(d, kind));
     Ok(Some(Status {
-        account_settlement: windows_key("last-account-settlement")
+        account_settlement: delivery_key("last-account-settlement")
             .map(|k| read(&c, &k))
             .transpose()?
             .flatten(),
-        credential_settlement: windows_key("last-credential-settlement")
+        credential_settlement: delivery_key("last-credential-settlement")
             .map(|k| read(&c, &k))
             .transpose()?
             .flatten(),
-        rejected_account_event: windows_key("last-rejected-account")
+        rejected_mac_account: delivery_key("last-rejected-mac")
             .map(|k| read(&c, &k))
             .transpose()?
             .flatten(),
-        rejected_recovery_use: windows_key("last-rejected-use")
+        rejected_account_event: delivery_key("last-rejected-account")
+            .map(|k| read(&c, &k))
+            .transpose()?
+            .flatten(),
+        rejected_recovery_use: delivery_key("last-rejected-use")
             .map(|k| read(&c, &k))
             .transpose()?
             .flatten(),
@@ -196,7 +204,7 @@ pub fn inspect(
             None
         },
         diagnostic: read(&c, "last-error")?.flatten(),
-        windows_delivery_error: read(&c, "windows-delivery-error")?.flatten(),
+        delivery_error: read(&c, "delivery-error")?.flatten(),
         renewal_error: read(&c, "renewal-error")?.flatten(),
     }))
 }

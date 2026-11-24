@@ -1,5 +1,6 @@
 //! Root-only signed account execution. PSSO callbacks and private keys stay in the extension.
 use super::*;
+pub(crate) mod creation;
 use std::{
     ffi::CString,
     io::{Read, Write},
@@ -61,6 +62,41 @@ fn tool(
     password: Option<&str>,
     seconds: u64,
 ) -> Result<Zeroizing<Vec<u8>>, Error> {
+    struct Prompt<'a>(&'a str);
+    impl TerminalInput for Prompt<'_> {
+        fn start(&mut self, spawn: &mut dyn FnMut() -> Result<u32, Error>) -> Result<(), Error> {
+            spawn().map(|_| ())
+        }
+        fn send(&mut self, sink: &mut dyn Write) -> Result<(), Error> {
+            write_password(self.0, sink)
+        }
+    }
+    let mut prompt = password.map(Prompt);
+    terminal_tool(
+        program,
+        args,
+        prompt.as_mut().map(|p| p as &mut dyn TerminalInput),
+        seconds,
+    )
+}
+trait TerminalInput {
+    fn start(&mut self, spawn: &mut dyn FnMut() -> Result<u32, Error>) -> Result<(), Error>;
+    fn send(&mut self, sink: &mut dyn Write) -> Result<(), Error>;
+}
+fn write_password(password: &str, sink: &mut dyn Write) -> Result<(), Error> {
+    if password.is_empty() || password.len() > 1024 || password.chars().any(char::is_control) {
+        return Err(Error::Denied);
+    }
+    sink.write_all(password.as_bytes())?;
+    sink.write_all(b"\n")?;
+    Ok(())
+}
+fn terminal_tool(
+    program: &str,
+    args: &[&str],
+    mut password: Option<&mut dyn TerminalInput>,
+    seconds: u64,
+) -> Result<Zeroizing<Vec<u8>>, Error> {
     let mut master = -1;
     let mut slave = -1;
     // SAFETY: openpty initializes two descriptors; each is immediately owned by a File.
@@ -82,6 +118,7 @@ fn tool(
     if unsafe { libc::tcgetattr(slave.as_raw_fd(), &mut term) } != 0 {
         return Err(Error::Unavailable);
     }
+    term.c_oflag &= !libc::OPOST;
     term.c_lflag &= !(libc::ECHO | libc::ECHONL);
     if unsafe { libc::tcsetattr(slave.as_raw_fd(), libc::TCSANOW, &term) } != 0 {
         return Err(Error::Unavailable);
@@ -94,7 +131,11 @@ fn tool(
         .env("LANG", "C")
         .stdin(Stdio::from(slave.try_clone()?))
         .stdout(Stdio::from(slave.try_clone()?))
-        .stderr(Stdio::from(slave));
+        .stderr(if password.is_some() {
+            Stdio::from(slave)
+        } else {
+            Stdio::null()
+        });
     let _terminal_group = native_process::TerminalGroup::configure(&mut command)?;
     struct Child(std::process::Child);
     impl std::ops::Deref for Child {
@@ -116,7 +157,20 @@ fn tool(
             }
         }
     }
-    let mut child = Child(command.spawn()?);
+    let mut launched = None;
+    let mut spawn = || {
+        let process = Child(command.spawn()?);
+        let id = process.id();
+        launched = Some(process);
+        Ok(id)
+    };
+    match password.as_deref_mut() {
+        Some(auth) => auth.start(&mut spawn)?,
+        None => {
+            spawn()?;
+        }
+    }
+    let mut child = launched.ok_or(Error::Protocol)?;
     if unsafe { libc::fcntl(master.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) } < 0 {
         let _ = child.kill();
         let _ = child.wait();
@@ -144,9 +198,10 @@ fn tool(
                 .any(|v| v.eq_ignore_ascii_case(b"password"))
             && output.trim_ascii_end().last() == Some(&b':')
         {
-            let password = password.ok_or(Error::Protocol)?;
-            master.write_all(password.as_bytes())?;
-            master.write_all(b"\n")?;
+            password
+                .as_deref_mut()
+                .ok_or(Error::Protocol)?
+                .send(&mut master)?;
             sent = true;
         }
         if let Some(status) = child.try_wait()? {
@@ -160,7 +215,7 @@ fn tool(
                     return Err(Error::Capacity);
                 }
             }
-            return if status.success() {
+            return if status.success() && (password.is_none() || sent) {
                 Ok(output)
             } else {
                 Err(Error::Unavailable)
@@ -169,10 +224,23 @@ fn tool(
         std::thread::sleep(Duration::from_millis(10));
     }
 }
-#[derive(Serialize, Deserialize)]
-struct Creation {
-    task: w::AccessTaskSpec,
-    generated_uid: Option<String>,
+fn filevault_list(bytes: &[u8], uid: &str) -> Option<Observation> {
+    let target = uuid::Uuid::parse_str(uid).ok()?;
+    let mut found = false;
+    let mut seen = false;
+    for line in std::str::from_utf8(bytes).ok()?.lines() {
+        let (name, value) = line.split_once(',')?;
+        if name.trim().is_empty() {
+            return None;
+        }
+        found |= uuid::Uuid::parse_str(value.trim()).ok()? == target;
+        seen = true;
+    }
+    seen.then_some(if found {
+        Observation::Present
+    } else {
+        Observation::Absent
+    })
 }
 pub(crate) fn facts(account: &NativeAccount) -> w::AccessMacFacts {
     let secure_token = match account.secure_token {
@@ -180,23 +248,10 @@ pub(crate) fn facts(account: &NativeAccount) -> w::AccessMacFacts {
         0 => Observation::NeedsAdministrator,
         _ => Observation::Unknown,
     };
-    let filevault_unlock = match tool("/usr/bin/fdesetup", &["list"], None, 10) {
-        Ok(bytes) => match std::str::from_utf8(&bytes) {
-            Ok(text) => {
-                if text.lines().any(|l| {
-                    l.split_once(',').is_some_and(|(_, id)| {
-                        id.trim().eq_ignore_ascii_case(&account.generated_uid)
-                    })
-                }) {
-                    Observation::Present
-                } else {
-                    Observation::Absent
-                }
-            }
-            Err(_) => Observation::Unknown,
-        },
-        Err(_) => Observation::Unknown,
-    };
+    let filevault_unlock = tool("/usr/bin/fdesetup", &["list"], None, 10)
+        .ok()
+        .and_then(|bytes| filevault_list(&bytes, &account.generated_uid))
+        .unwrap_or(Observation::Unknown);
     let volume_owner = tool(
         "/usr/sbin/diskutil",
         &["apfs", "listUsers", "/", "-plist"],
@@ -314,66 +369,19 @@ fn apply(input: &Input) -> Result<Effect, Error> {
             name: account_name,
             configuration,
         } => {
-            let marker = name(task, "creation");
-            let id = match state::read_optional::<Creation>(&input.root, &marker)? {
-                Some(record) if record.task == *task => {
-                    record.generated_uid.ok_or(Error::Conflict)?
-                }
-                Some(_) => return Err(Error::Identity),
-                None => {
-                    if account_name.is_empty()
-                        || account_name.starts_with('-')
-                        || account_name.len() > 64
-                        || !account_name.bytes().all(|b| {
-                            b.is_ascii_alphanumeric() || b == b'_' || b == b'-' || b == b'.'
-                        })
-                    {
-                        return Err(Error::Protocol);
-                    }
-                    match inspect(account_name, true) {
-                        Ok(_) => {
-                            return Ok(Effect::Failed {
-                                reason: w::AccessFailure::NameConflict,
-                            })
-                        }
-                        Err(Error::NotFound) => (),
-                        Err(e) => return Err(e),
-                    }
-                    let mut password = Zeroizing::new(String::new());
-                    std::io::stdin().take(1025).read_to_string(&mut password)?;
-                    if password.is_empty()
-                        || password.len() > 1024
-                        || password.chars().any(char::is_control)
-                    {
-                        return Err(Error::Protocol);
-                    }
-                    state::write(
-                        &input.root,
-                        &marker,
-                        &Creation {
-                            task: task.clone(),
-                            generated_uid: None,
-                        },
-                    )?;
-                    tool(
-                        "/usr/sbin/sysadminctl",
-                        &["-addUser", account_name, "-password", "-"],
-                        Some(&password),
-                        60,
-                    )?;
-                    let account = inspect(account_name, true)?;
-                    state::write(
-                        &input.root,
-                        &marker,
-                        &Creation {
-                            task: task.clone(),
-                            generated_uid: Some(account.generated_uid.clone()),
-                        },
-                    )?;
-                    account.generated_uid
+            let account = match creation::create(&input.root, task, account_name, || {
+                let mut password = Zeroizing::new(String::new());
+                std::io::stdin().take(1025).read_to_string(&mut password)?;
+                Ok(password)
+            })? {
+                creation::Outcome::Created(account) => account,
+                creation::Outcome::NameConflict => {
+                    return Ok(Effect::Failed {
+                        reason: w::AccessFailure::NameConflict,
+                    })
                 }
             };
-            (inspect(&id, false)?, configuration)
+            (account, configuration)
         }
         Action::Unbind {
             account: Account::Macos { generated_uid },
@@ -415,22 +423,8 @@ fn apply(input: &Input) -> Result<Effect, Error> {
         }
         _ => return Err(Error::Unsupported),
     };
-    if let Some(role) = configuration.role {
-        unsafe extern "C" {
-            fn rss_access_role(uuid: *const std::ffi::c_char, administrator: i32) -> i32;
-        }
-        let id = CString::new(account.generated_uid.as_str()).map_err(|_| Error::Identity)?;
-        let result = unsafe {
-            rss_access_role(id.as_ptr(), i32::from(role == w::AccessRole::Administrator))
-        };
-        if result == -2 {
-            return Ok(Effect::Failed {
-                reason: w::AccessFailure::RecoveryAccountProtected,
-            });
-        }
-        if result != 0 {
-            return Err(Error::Unavailable);
-        }
+    if let Some(reason) = change_role(&account, configuration.role)? {
+        return Ok(Effect::Failed { reason });
     }
     let account = inspect(&account.generated_uid, false)?;
     let identity = Account::Macos {
@@ -473,6 +467,28 @@ fn apply(input: &Input) -> Result<Effect, Error> {
         mac: Some(observed_facts(&input.root, &account)?),
         windows: None,
     })
+}
+
+pub(crate) fn change_role(
+    account: &NativeAccount,
+    role: Option<w::AccessRole>,
+) -> Result<Option<w::AccessFailure>, Error> {
+    if let Some(role) = role {
+        unsafe extern "C" {
+            fn rss_access_role(uuid: *const std::ffi::c_char, administrator: i32) -> i32;
+        }
+        let id = CString::new(account.generated_uid.as_str()).map_err(|_| Error::Identity)?;
+        let result = unsafe {
+            rss_access_role(id.as_ptr(), i32::from(role == w::AccessRole::Administrator))
+        };
+        if result == -2 {
+            return Ok(Some(w::AccessFailure::RecoveryAccountProtected));
+        }
+        if result != 0 {
+            return Err(Error::Unavailable);
+        }
+    }
+    Ok(None)
 }
 
 fn observed_facts(

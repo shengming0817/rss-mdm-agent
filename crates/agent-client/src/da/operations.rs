@@ -1,4 +1,4 @@
-//! Windows delivery on the DA listener. Its single writer retains the offer and exact events.
+//! Device delivery on the DA listener. Its single writer retains the offer and exact events.
 use super::*;
 use crate::http as h;
 use rss_mdm_agent_wire::runtime as w;
@@ -23,6 +23,20 @@ pub enum AccountCompletion {
     },
     /// A native result or observed absence was accepted.
     Observed,
+    /// Definitive protocol rejection. Quarantine native evidence that could still describe a real effect.
+    Rejected,
+}
+/// Secret-free evidence for the most recently rejected original Mac operation.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct RejectedMacAccount {
+    /// Exact delivery returned by this registration.
+    pub offer: wire::AccountOffer,
+    /// Original event rejected by the device listener.
+    pub event_id: Uuid,
+    /// Native evidence in the rejected result, when the event reported an effect.
+    pub result: Option<wire::AccountResult>,
+    /// Definitive rejection returned by the server.
+    pub reason: Error,
 }
 /// An mTLS session bound to the current registration and its single writer.
 pub struct Operations<'a> {
@@ -33,13 +47,17 @@ pub struct Operations<'a> {
 }
 impl<S: Credentials, C: Clock> Client<S, C> {
     /// Save the closed delivery error for installation status and preserve the normal retry signal.
-    pub fn record_windows_delivery(&self, result: Result<(), Error>) -> Result<(), Error> {
+    pub fn record_delivery(&self, result: Result<(), Error>) -> Result<(), Error> {
         write(
             &self.journal.db,
-            "windows-delivery-error",
+            "delivery-error",
             &result.as_ref().err().copied(),
         )?;
         result
+    }
+    /// Whether this installation has an activated DA registration.
+    pub fn registered(&self) -> Result<bool, Error> {
+        Ok(self.active()?.is_some())
     }
     /// Open the current credential for device operations. Never use the Agent identity here.
     pub fn operations(&self) -> Result<Operations<'_>, Error> {
@@ -150,6 +168,16 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         self.release_settled()
     }
 }
+#[derive(serde::Deserialize, serde::Serialize, PartialEq)]
+struct RetainedOffer {
+    platform: w::TaskPlatform,
+    offer: wire::AccountOffer,
+}
+
+pub(super) fn operation_key(device: rss_mdm_agent_wire::DeviceId, item: &str) -> String {
+    format!("delivery/{device}/{item}")
+}
+
 impl Operations<'_> {
     /// Identity actually authenticated by this device session.
     pub fn registration(&self) -> &wire::Registration {
@@ -188,7 +216,7 @@ impl Operations<'_> {
         crate::store::decode(&crate::client::bounded(response, 262144).await?)
     }
     fn key(&self, item: &str) -> String {
-        format!("windows/{}/{item}", self.registration.device)
+        operation_key(self.registration.device, item)
     }
     fn save<T: Serialize>(&self, item: &str, value: &T) -> Result<(), Error> {
         write(self.db, &self.key(item), value)
@@ -222,9 +250,16 @@ impl Operations<'_> {
     /// Journal a server offer before the received event can be sent.
     pub async fn account(
         &self,
+        platform: w::TaskPlatform,
         confirmed: Option<(Uuid, Uuid)>,
     ) -> Result<Option<wire::AccountOffer>, Error> {
-        let offer = self.send::<h::DaAccountNext>(&[], None).await?;
+        let call = Call::<h::DaAccountNext>::new(&self.http, self.origin, &[], None, None)?;
+        let call = match platform {
+            w::TaskPlatform::Macos => call.query(&wire::AccountClaim { platform }),
+            w::TaskPlatform::Windows => call,
+        };
+        let response = call.timeout(Duration::from_secs(5)).send().await?;
+        let offer: Option<wire::AccountOffer> = Self::decode(response).await?;
         if let Some(o) = &offer {
             if [o.operation_id, o.task_id, o.attempt_id, o.binding_id]
                 .iter()
@@ -233,17 +268,24 @@ impl Operations<'_> {
                 return Err(Error::Protocol);
             }
             let key = format!("offer/{}/{}", o.task_id, o.attempt_id);
+            let retained = RetainedOffer {
+                platform,
+                offer: o.clone(),
+            };
             if self
-                .load::<wire::AccountOffer>(&key)?
-                .is_some_and(|old| old != *o)
+                .load::<RetainedOffer>(&key)?
+                .is_some_and(|old| old != retained)
             {
                 return Err(Error::Conflict);
             }
-            self.save(&key, o)?;
+            self.save(&key, &retained)?;
         }
         if let Some((task, attempt)) = confirmed {
-            if let Some(o) = self.load(&format!("offer/{task}/{attempt}"))? {
-                return Ok(Some(o));
+            if let Some(o) = self.load::<RetainedOffer>(&format!("offer/{task}/{attempt}"))? {
+                if o.platform != platform {
+                    return Err(Error::Identity);
+                }
+                return Ok(Some(o.offer));
             }
         }
         // A server may keep returning its oldest started task. Rotate the retained offers
@@ -259,9 +301,12 @@ impl Operations<'_> {
             )
             .optional()?;
         if let Some((key, bytes)) = next {
-            let offer = crate::store::decode(&bytes)?;
+            let offer: RetainedOffer = crate::store::decode(&bytes)?;
+            if offer.platform != platform {
+                return Err(Error::Identity);
+            }
             self.save("offer-cursor", &key)?;
-            Ok(Some(offer))
+            Ok(Some(offer.offer))
         } else {
             Ok(None)
         }
@@ -273,8 +318,9 @@ impl Operations<'_> {
         event: wire::AccountObservation,
     ) -> Result<wire::AccountSettlement, Error> {
         if self
-            .load::<wire::AccountOffer>(&format!("offer/{}/{}", o.task_id, o.attempt_id))?
+            .load::<RetainedOffer>(&format!("offer/{}/{}", o.task_id, o.attempt_id))?
             .as_ref()
+            .map(|r| &r.offer)
             != Some(o)
         {
             return Err(Error::Identity);
@@ -326,9 +372,22 @@ impl Operations<'_> {
             }
             wire::AccountObservation::CreateAbsent { .. }
             | wire::AccountObservation::Result(w::AccessResult {
-                effect: w::AccessEffect::Applied { .. } | w::AccessEffect::Unbound { .. },
+                effect:
+                    wire::AccountEffect::MacAccountCreated { .. }
+                    | wire::AccountEffect::Access(
+                        w::AccessEffect::Applied { .. } | w::AccessEffect::Unbound { .. },
+                    ),
                 ..
             }) => Some(AccountCompletion::Observed),
+            wire::AccountObservation::Result(w::AccessResult {
+                effect: wire::AccountEffect::Access(w::AccessEffect::Failed { .. }),
+                ..
+            }) if self
+                .load::<RetainedOffer>(&format!("offer/{task}/{}", body.attempt_id))?
+                .is_some_and(|r| r.platform == w::TaskPlatform::Macos) =>
+            {
+                Some(AccountCompletion::Observed)
+            }
             _ => None,
         };
         if let Some(completion) = completion {
@@ -363,7 +422,33 @@ impl Operations<'_> {
                         &self.key("last-rejected-account"),
                         &(task, body.attempt_id, body.event_id, reason),
                     )?;
-                    self.forget_account(&tx, task, body.attempt_id)?;
+                    let offered = self
+                        .load::<RetainedOffer>(&format!("offer/{task}/{}", body.attempt_id))?
+                        .ok_or(Error::Storage)?;
+                    if offered.platform == w::TaskPlatform::Macos {
+                        let evidence = RejectedMacAccount {
+                            offer: offered.offer,
+                            event_id: body.event_id,
+                            reason,
+                            result: match &body.event {
+                                wire::AccountObservation::Result(r) => Some(r.clone()),
+                                _ => None,
+                            },
+                        };
+                        write(
+                            &tx,
+                            &self.key(&format!("rejected-mac/{task}/{}", body.attempt_id)),
+                            &evidence,
+                        )?;
+                        write(&tx, &self.key("last-rejected-mac"), &evidence)?;
+                        write(
+                            &tx,
+                            &self.key("account-cleanup"),
+                            &(task, body.attempt_id, AccountCompletion::Rejected),
+                        )?;
+                    } else {
+                        self.forget_account(&tx, task, body.attempt_id)?;
+                    }
                     tx.execute(
                         "DELETE FROM state WHERE name=?1",
                         [self.key("account-pending")],
@@ -501,7 +586,19 @@ impl Operations<'_> {
         if let Some((id, attempt, completion)) = read(self.db, &key)? {
             clean(id, attempt, completion)?;
             let tx = self.db.unchecked_transaction()?;
-            self.forget_account(&tx, id, attempt)?;
+            if completion == AccountCompletion::Rejected {
+                // The server can reoffer the exact attempt. Preserve event identity for that case.
+                tx.execute(
+                    "DELETE FROM state WHERE name=?1",
+                    [self.key(&format!("offer/{id}/{attempt}"))],
+                )?;
+            } else {
+                self.forget_account(&tx, id, attempt)?;
+                tx.execute(
+                    "DELETE FROM state WHERE name=?1",
+                    [self.key(&format!("rejected-mac/{id}/{attempt}"))],
+                )?;
+            }
             tx.execute("DELETE FROM state WHERE name=?1", [key])?;
             tx.commit()?;
         }
