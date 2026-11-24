@@ -205,6 +205,67 @@ fn mac_operation(
     )
         .into_response()
 }
+fn mac_account_operation(
+    s: &mut Server,
+    other: &str,
+    uri: &Uri,
+    input: &Value,
+) -> Option<Response> {
+    if other == "account-operations/next" {
+        assert!(input.is_null());
+        if uri.query() == Some("platform=macos") {
+            return Some(Json(s.mac_offer.clone()).into_response());
+        }
+        assert!(uri.query().is_none());
+    }
+    if s.mac_offer
+        .as_ref()
+        .is_some_and(|o| other == format!("account-operations/{}/events", o.task_id))
+    {
+        let event: wire::AccountEvent = serde_json::from_value(input.clone()).unwrap();
+        assert_eq!(event.attempt_id, s.mac_offer.as_ref().unwrap().attempt_id);
+        if s.reject_mac {
+            return Some(
+                (
+                    axum::http::StatusCode::CONFLICT,
+                    Json(json!({"code":"operation_conflict"})),
+                )
+                    .into_response(),
+            );
+        }
+        if matches!(
+            event.event,
+            wire::AccountObservation::Result(w::AccessResult {
+                effect: wire::AccountEffect::MacAccountCreated { .. },
+                ..
+            })
+        ) {
+            if let Some(old) = &s.mac_report {
+                assert_eq!(input, old);
+            } else {
+                s.mac_report = Some(input.clone());
+                return Some(
+                    (
+                        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                        Json(json!({"code":"service_unavailable"})),
+                    )
+                        .into_response(),
+                );
+            }
+            s.mac_offer = None;
+        }
+        return Some(
+            Json(wire::AccountSettlement {
+                event_id: event.event_id,
+                permit: None,
+                issued_expires_at: None,
+                receipt: None,
+            })
+            .into_response(),
+        );
+    }
+    None
+}
 async fn endpoint(
     State(state): State<Arc<Mutex<Server>>>,
     ConnectInfo(peer): ConnectInfo<TlsIdentity>,
@@ -243,52 +304,8 @@ async fn endpoint(
         "activate" => return activation_response(&mut s, &grant, tenant, peer, input),
         other => {
             assert!(s.active.is_some() && peer.0 == s.active);
-            if other == "account-operations/next" {
-                assert!(body.is_empty());
-                if uri.query() == Some("platform=macos") {
-                    return Json(s.mac_offer.clone()).into_response();
-                }
-                assert!(uri.query().is_none());
-            }
-            if s.mac_offer
-                .as_ref()
-                .is_some_and(|o| other == format!("account-operations/{}/events", o.task_id))
-            {
-                let event: wire::AccountEvent = serde_json::from_value(input.clone()).unwrap();
-                assert_eq!(event.attempt_id, s.mac_offer.as_ref().unwrap().attempt_id);
-                if s.reject_mac {
-                    return (
-                        axum::http::StatusCode::CONFLICT,
-                        Json(json!({"code":"operation_conflict"})),
-                    )
-                        .into_response();
-                }
-                if matches!(
-                    event.event,
-                    wire::AccountObservation::Result(w::AccessResult {
-                        effect: wire::AccountEffect::MacAccountCreated { .. },
-                        ..
-                    })
-                ) {
-                    if let Some(old) = &s.mac_report {
-                        assert_eq!(&input, old);
-                    } else {
-                        s.mac_report = Some(input);
-                        return (
-                            axum::http::StatusCode::SERVICE_UNAVAILABLE,
-                            Json(json!({"code":"service_unavailable"})),
-                        )
-                            .into_response();
-                    }
-                    s.mac_offer = None;
-                }
-                return Json(wire::AccountSettlement {
-                    event_id: event.event_id,
-                    permit: None,
-                    issued_expires_at: None,
-                    receipt: None,
-                })
-                .into_response();
+            if let Some(reply) = mac_account_operation(&mut s, other, &uri, &input) {
+                return reply;
             }
             if let Some(reply) = windows_operation(&mut s, other, &input) {
                 return reply;
