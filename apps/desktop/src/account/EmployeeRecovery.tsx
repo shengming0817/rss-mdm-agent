@@ -10,53 +10,30 @@ import type {
   SelfServiceCommands,
 } from "../self-service/types";
 
-type Intent = SelfServiceCommands["employee_change"]["input"];
+type Intent = NonNullable<SelfServiceCommands["employee_change"]["input"]>;
 
-const executionLabel: Record<string, string> = {
-  not_started: "等待执行",
-  running: "执行中",
-  succeeded: "执行成功",
-  failed: "执行失败",
-  waiting_reboot: "等待重启",
-  unknown: "执行状态未知",
-};
-function savedIntent(key: string): Intent | null {
-  try {
-    const value = JSON.parse(localStorage.getItem(key) ?? "null");
-    return value &&
-      typeof value.binding === "string" &&
-      Number.isSafeInteger(value.revision) &&
-      value.revision > 0 &&
-      ["reset_factors", "repair_binding"].includes(value.change)
-      ? {
-          binding: value.binding,
-          revision: value.revision,
-          change: value.change,
-          stage: "open",
-        }
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-export function EmployeeRecovery({
-  port,
-  subject,
-}: {
-  port: DeviceAccessPort;
-  subject: string;
-}) {
-  const key = "rss.employee.operation." + subject;
+const labels = new Map(
+  Object.entries({
+    not_started: "等待执行",
+    running: "执行中",
+    succeeded: "执行成功",
+    failed: "执行失败",
+    waiting_reboot: "等待重启",
+    unknown: "执行状态未知",
+  }),
+);
+export function EmployeeRecovery({ port }: { port: DeviceAccessPort }) {
   const [application, setApplication] = useState(false);
   const [bindings, setBindings] = useState<AccessBindingStatus[]>([]);
-  const [pending, setPending] = useState<Intent | null>(() => savedIntent(key));
+  const [pending, setPending] = useState<Intent | null>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
 
   async function refresh() {
     setBusy(true);
     try {
+      const stored = await nativeEmployeeChange(null);
+      if (stored?.kind === "stored") setPending(stored.intent ?? null);
       const reply = await port({ kind: "ownBindings" });
       if (reply.kind !== "ownBindings") throw Error();
       setBindings(reply.bindings);
@@ -75,10 +52,10 @@ export function EmployeeRecovery({
   async function act(input: Intent) {
     setBusy(true);
     try {
-      const receipt = await nativeEmployeeChange(input);
+      const response = await nativeEmployeeChange(input);
+      const receipt = response.kind === "progress" ? response.value : null;
       if (input.stage === "open") {
         setPending(input);
-        localStorage.setItem(key, JSON.stringify(input));
       }
       setMessage(
         input.stage === "open"
@@ -86,7 +63,7 @@ export function EmployeeRecovery({
           : input.stage === "verify"
             ? "在验证窗口完成本人验证，然后返回此处提交。"
             : input.stage === "status" && receipt
-              ? `原操作修订 ${receipt.revision} · ${receipt.received ? "设备已接收" : "等待设备接收"} · ${executionLabel[receipt.execution] ?? "执行状态未知"} · ${receipt.effectObserved ? "已收到本机效果回报" : "尚无本机效果回报"}${receipt.cancellation === "confirmed" ? " · 已取消" : receipt.cancellation === "requested" ? " · 等待取消" : ""}${receipt.cleanupPending ? " · 等待清理" : ""}`
+              ? `原操作修订 ${receipt.revision} · ${receipt.received ? "设备已接收" : "等待设备接收"} · ${labels.get(receipt.execution) ?? "执行状态未知"} · ${receipt.effectObserved ? "已收到本机效果回报" : "尚无本机效果回报"}${receipt.cancellation === "confirmed" ? " · 已取消" : receipt.cancellation === "requested" ? " · 等待取消" : ""}${receipt.cleanupPending ? " · 等待清理" : ""}`
               : "服务端已受理本次操作。刷新本人绑定查看本机应用状态。",
       );
     } catch (e) {
@@ -227,15 +204,19 @@ export function EmployeeRecovery({
           </Button>
           <Button
             disabled={busy}
-            onClick={() => {
-              void nativeEmployeeChange({ ...pending, stage: "close" }).catch(
-                () => {},
-              );
-              localStorage.removeItem(key);
-              setPending(null);
-              setMessage(
-                "已清除本机保存的操作编号。已提交的操作仍可刷新绑定查看。",
-              );
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await nativeEmployeeChange({ ...pending, stage: "close" });
+                setPending(null);
+                setMessage(
+                  "已清除本机保存的操作编号。已提交的操作仍可刷新绑定查看。",
+                );
+              } catch {
+                setMessage("未能清除本次操作记录，请重试。");
+              } finally {
+                setBusy(false);
+              }
             }}
           >
             清除本次操作记录

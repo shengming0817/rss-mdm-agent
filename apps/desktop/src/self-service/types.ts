@@ -12,6 +12,22 @@ export type Change = "reset_factors" | "repair_binding";
 export type Stage = "open" | "verify" | "submit" | "status" | "close";
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Output".
+ */
+export type Output =
+  | {
+      kind: "done";
+    }
+  | {
+      intent: Input | null;
+      kind: "stored";
+    }
+  | {
+      value: Progress;
+      kind: "progress";
+    };
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "NavigationOperation".
  */
 export type NavigationOperation =
@@ -2651,8 +2667,8 @@ export interface SelfServiceCommands {
  * via the `definition` "Command".
  */
 export interface Command {
-  input: Input;
-  output: Progress | null;
+  input: Input | null;
+  output: Output;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema

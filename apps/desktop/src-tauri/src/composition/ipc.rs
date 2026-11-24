@@ -18,7 +18,7 @@ async fn employee_change<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     generation: String,
     input: serde_json::Value,
-) -> Result<Option<super::employee::Progress>> {
+) -> Result<super::employee::Output> {
     super::employee::dispatch(app, generation, decode(input)?).await
 }
 #[tauri::command]
@@ -71,7 +71,7 @@ macro_rules! commands {
             struct Command<I: schemars::JsonSchema, O: schemars::JsonSchema> { input: I, output: O }
             #[derive(schemars::JsonSchema)]
             #[allow(dead_code)]
-            struct SelfServiceCommands { employee_change: Command<super::employee::Input, Option<super::employee::Progress>>, navigation: Command<super::navigation::NavigationOperation, super::navigation::NavigationResponse>, personal_vault: Command<super::personal_vault::Operation, super::personal_vault::Status>, $($name: Command<$input, $output>),+, diagnostics_prepare: Command<super::diagnostics::Scopes, super::diagnostics::Preview>, diagnostics_export: Command<super::diagnostics::Selection,bool>, diagnostics_discard: Command<super::diagnostics::Selection,()>, appearance_snapshot: Command<(), AppearanceSnapshot>, device_overview: Command<(), execution_ipc::host::DeviceOverview> }
+            struct SelfServiceCommands { employee_change: Command<Option<super::employee::Input>, super::employee::Output>, navigation: Command<super::navigation::NavigationOperation, super::navigation::NavigationResponse>, personal_vault: Command<super::personal_vault::Operation, super::personal_vault::Status>, $($name: Command<$input, $output>),+, diagnostics_prepare: Command<super::diagnostics::Scopes, super::diagnostics::Preview>, diagnostics_export: Command<super::diagnostics::Selection,bool>, diagnostics_discard: Command<super::diagnostics::Selection,()>, appearance_snapshot: Command<(), AppearanceSnapshot>, device_overview: Command<(), execution_ipc::host::DeviceOverview> }
             schemars::generate::SchemaSettings::draft07().for_serialize().into_generator().into_root_schema_for::<SelfServiceCommands>()
         }
     }

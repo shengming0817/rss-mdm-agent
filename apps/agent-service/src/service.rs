@@ -1289,7 +1289,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                 _ => continue,
             };
             values.push(wire::FieldValue {
-                field: field.key.clone(),
+                field: field.key,
                 value: wire::CollectedValue::Value(value),
             });
         }

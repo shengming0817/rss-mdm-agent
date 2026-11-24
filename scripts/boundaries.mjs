@@ -71,6 +71,7 @@ const compositionCommands = [
   ...new Set([...selfServiceCommands, ...assistantCommands]),
   ...userCommands,
   ...settingsCommands,
+  "employee_change",
   "appearance_snapshot",
   "navigation",
   "device_overview",
@@ -84,7 +85,10 @@ const nativeAdapters = new Map([
   ["apps/desktop/src/appearance.ts", ["appearance_snapshot"]],
   ["apps/desktop/src/settings/native.ts", settingsCommands],
   ["apps/desktop/src/test-users.ts", userCommands],
-  ["apps/desktop/src/self-service/native.ts", selfServiceCommands],
+  [
+    "apps/desktop/src/self-service/native.ts",
+    [...selfServiceCommands, "employee_change"],
+  ],
   ["apps/desktop/src/assistant/native.ts", assistantCommands],
 ]);
 const uiDependencies = {

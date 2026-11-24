@@ -23,6 +23,7 @@ pub struct DesktopRuntime {
     pub(super) diagnostics: super::diagnostics::Store,
     pub users: Arc<std::sync::Mutex<super::users::Users>>,
     switching: Mutex<()>,
+    pub(super) employee_directory: std::path::PathBuf,
     employee_window: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>,
     registration_epoch: AtomicU64,
     pub organizations: std::sync::Mutex<super::account::Organizations>,
@@ -92,6 +93,7 @@ impl DesktopRuntime {
             identity: super::identity::IdentityOwner::new(users.clone()),
             users,
             switching: Mutex::new(()),
+            employee_directory: root.to_owned(),
             employee_window: Default::default(),
             registration_epoch: AtomicU64::new(0),
             organizations: std::sync::Mutex::new(

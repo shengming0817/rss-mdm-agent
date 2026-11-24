@@ -212,20 +212,24 @@ function ServiceStatus({
     state.service?.phase === "connected"
       ? state.service.status.installation
       : null;
-  const registered = {
-    registered: "已有注册回执",
-    unregistered: "待注册",
-    expired: "注册凭据已过期",
-    revoked: "注册已撤销",
-    unknown: "注册状态未知",
-  };
-  const applied = {
-    unknown: "结果未知",
-    received: "已受理",
-    pending: "处理中",
-    applied: "已应用",
-    rejected: "已拒绝",
-  };
+  const registered = new Map(
+    Object.entries({
+      registered: "已有注册回执",
+      unregistered: "待注册",
+      expired: "注册凭据已过期",
+      revoked: "注册已撤销",
+      unknown: "注册状态未知",
+    }),
+  );
+  const applied = new Map(
+    Object.entries({
+      unknown: "结果未知",
+      received: "已受理",
+      pending: "处理中",
+      applied: "已应用",
+      rejected: "已拒绝",
+    }),
+  );
   return (
     <>
       <div className="rss-setting-row">
@@ -245,11 +249,15 @@ function ServiceStatus({
         <div className="rss-setting-row">
           <span>
             <strong>本机模块</strong>
-            {(["da", "mdm"] as const).map((key) => {
-              const value = sample.modules[key];
+            {(
+              [
+                ["设备访问", sample.modules.da, sample.daRegistration],
+                ["设备管理", sample.modules.mdm, sample.mdmRegistration],
+              ] as const
+            ).map(([name, value, registration]) => {
               return (
-                <small key={key}>
-                  {key === "da" ? "设备访问" : "设备管理"} ·{" "}
+                <small key={name}>
+                  {name} ·{" "}
                   {value.installed === true
                     ? "已安装"
                     : value.installed === false
@@ -261,14 +269,7 @@ function ServiceStatus({
                     : value.enabled === false
                       ? "未启用"
                       : "启用状态未知"}{" "}
-                  ·{" "}
-                  {
-                    registered[
-                      key === "da"
-                        ? sample.daRegistration
-                        : sample.mdmRegistration
-                    ]
-                  }
+                  · {registered.get(registration)}
                 </small>
               );
             })}
@@ -276,7 +277,7 @@ function ServiceStatus({
               <small>配置应用失败 · {sample.applicationFailure}</small>
             )}
             <small>
-              安装配置{applied[sample.modules.application]} · 系统服务于{" "}
+              安装配置{applied.get(sample.modules.application)} · 系统服务于{" "}
               {new Date(sample.observedAt * 1000).toLocaleString()} 读取
             </small>
           </span>

@@ -39,13 +39,42 @@ pub struct Progress {
     pub effect_observed: bool,
 }
 
-#[derive(Deserialize, schemars::JsonSchema)]
+#[derive(Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Input {
     pub binding: Uuid,
     pub revision: i64,
     pub change: Change,
     pub stage: Stage,
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum Output {
+    Done,
+    Stored { intent: Option<Input> },
+    Progress { value: Progress },
+}
+
+// This file contains only a retry coordinate. Every action resolves fresh credentials and device ownership.
+fn read_intent(path: &std::path::Path) -> Result<Option<Input>> {
+    match platform_private_storage::read(path, 1024) {
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .map(Some)
+            .map_err(|_| error("storage", "无法读取本次操作记录")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err(error("storage", "无法读取本次操作记录")),
+    }
+}
+fn save_intent(path: &std::path::Path, input: &Input) -> Result<()> {
+    let temp = path.with_extension(format!("{}.tmp", Uuid::new_v4()));
+    let bytes = serde_json::to_vec(input).map_err(|_| error("storage", "无法保存本次操作记录"))?;
+    let result = platform_private_storage::write_new(&temp, &bytes)
+        .and_then(|()| platform_private_storage::replace(&temp, path));
+    if result.is_err() {
+        let _ = std::fs::remove_file(temp);
+    }
+    result.map_err(|_| error("storage", "无法保存本次操作记录"))
 }
 
 fn intent(binding: Uuid, device: Uuid, principal: &str, revision: i64, change: Change) -> Uuid {
@@ -66,21 +95,37 @@ fn intent(binding: Uuid, device: Uuid, principal: &str, revision: i64, change: C
 pub async fn dispatch<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     generation: String,
-    input: Input,
-) -> Result<Option<Progress>> {
+    input: Option<Input>,
+) -> Result<Output> {
     let denied = || error("binding_changed", "当前账号或设备绑定已更改，请刷新");
     let unavailable = || error("employee_browser", "请打开本人验证窗口并完成组织登录");
     let state = app.state::<DesktopRuntime>();
     let session = state.employee_session(&generation)?;
     let (origin, tenant, principal) = session.employee_scope();
+    let actor = state.current(&generation)?.user.user_id;
+    let path = state.employee_directory.join(format!(
+        "employee-{:x}.json",
+        Sha256::digest(actor.as_str().as_bytes())
+    ));
+    let Some(input) = input else {
+        let _guard = state.employee_guard(&generation).await?;
+        return Ok(Output::Stored {
+            intent: read_intent(&path)?,
+        });
+    };
     let label = format!(
         "employee-{}",
         Uuid::parse_str(&generation).map_err(|_| denied())?
     );
     if matches!(input.stage, Stage::Close) {
         let _guard = state.employee_guard(&generation).await?;
+        match std::fs::remove_file(&path) {
+            Ok(()) => (),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+            Err(_) => return Err(error("storage", "无法清除本次操作记录")),
+        }
         state.close_employee_window()?;
-        return Ok(None);
+        return Ok(Output::Done);
     }
     let handle = state.execution_for(&generation).await?;
     let Response::OwnBindings {
@@ -125,7 +170,7 @@ pub async fn dispatch<R: tauri::Runtime>(
         return session
             .employee_operation(device.into_uuid(), b.id, op)
             .await
-            .map(Some);
+            .map(|value| Output::Progress { value });
     }
     let origin_url = url::Url::parse(origin).map_err(|_| denied())?;
     let window = match app.get_webview_window(&label) {
@@ -156,7 +201,8 @@ pub async fn dispatch<R: tauri::Runtime>(
     };
     window.set_focus().map_err(|_| unavailable())?;
     if matches!(input.stage, Stage::Open) {
-        return Ok(None);
+        save_intent(&path, &input)?;
+        return Ok(Output::Done);
     }
     if window.url().map_err(|_| unavailable())?.origin() != origin_url.origin() {
         return Err(unavailable());
@@ -200,7 +246,7 @@ pub async fn dispatch<R: tauri::Runtime>(
         session
             .submit_employee_change(&cookie, &csrf, device.into_uuid(), b.id, &change)
             .await?;
-        return Ok(None);
+        return Ok(Output::Done);
     }
     let config = serde_json::json!({
         "origin":origin,"tenant":tenant,"principal":principal,"device":device,"binding":b.id,
@@ -210,12 +256,36 @@ pub async fn dispatch<R: tauri::Runtime>(
     window
         .eval(format!("({script})({config})"))
         .map_err(|_| unavailable())?;
-    Ok(None)
+    Ok(Output::Done)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_retry_coordinate_survives_reopen_and_is_private_to_the_actor() {
+        let root = std::env::temp_dir().join(Uuid::new_v4().to_string());
+        platform_private_storage::directory(&root).unwrap();
+        let path = root.join("actor.json");
+        let binding = Uuid::new_v4();
+        for revision in [3, 4] {
+            save_intent(
+                &path,
+                &Input {
+                    binding,
+                    revision,
+                    change: Change::ResetFactors,
+                    stage: Stage::Open,
+                },
+            )
+            .unwrap();
+            let recovered = read_intent(&path).unwrap().unwrap();
+            assert_eq!((recovered.binding, recovered.revision), (binding, revision));
+        }
+        assert!(read_intent(&root.join("other.json")).unwrap().is_none());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn replay_uses_one_operation_per_subject_revision_and_purpose() {
         let b = Uuid::new_v4();

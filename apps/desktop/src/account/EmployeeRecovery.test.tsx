@@ -15,7 +15,7 @@ it("does not offer a mutation when the native session has no matching binding", 
     device: "3a0ea62c-fa31-4ba0-a8c5-b744543192bc",
     applicationAvailable: false,
   }));
-  render(<EmployeeRecovery subject="employee-test" port={port} />);
+  render(<EmployeeRecovery port={port} />);
   fireEvent.click(screen.getByText("刷新本人绑定"));
   expect(
     await screen.findByText("当前企业账号与本机账号没有可管理的绑定。"),
@@ -31,16 +31,26 @@ it("resumes the original reset after restart even when the server has no receipt
     change: "reset_factors",
     stage: "open",
   };
-  localStorage.setItem("rss.employee.operation.alice", JSON.stringify(intent));
-  vi.mocked(nativeEmployeeChange).mockRejectedValueOnce({
-    code: "operation_absent",
-  });
-  render(<EmployeeRecovery subject="alice" port={vi.fn()} />);
-  fireEvent.click(screen.getByText("查询原操作"));
+  vi.mocked(nativeEmployeeChange)
+    .mockResolvedValueOnce({
+      kind: "stored",
+      intent: { ...intent, change: "reset_factors", stage: "open" },
+    })
+    .mockRejectedValueOnce({ code: "operation_absent" });
+  render(
+    <EmployeeRecovery
+      port={vi.fn().mockResolvedValue({
+        kind: "ownBindings",
+        bindings: [],
+        applicationAvailable: false,
+      })}
+    />,
+  );
+  fireEvent.click(screen.getByText("刷新本人绑定"));
+  fireEvent.click(await screen.findByText("查询原操作"));
   expect(await screen.findByText(/服务端尚未登记这次操作/)).toBeTruthy();
   expect(nativeEmployeeChange).toHaveBeenCalledWith({
     ...intent,
     stage: "status",
   });
-  localStorage.removeItem("rss.employee.operation.alice");
 });
