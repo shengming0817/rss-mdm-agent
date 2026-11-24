@@ -278,6 +278,7 @@ fn keep(
             b.enabled = false;
             b.binding_generation = t.binding_generation;
             b.revision = t.revision;
+            b.definition_digest = t.definition_digest;
             let settlement = if authorized {
                 save_binding(root, &b)
             } else {
@@ -541,6 +542,8 @@ pub(crate) mod tests {
             disposition: w::AccessAccountDisposition::Keep,
         };
         let b = platform_sso::LocalBinding {
+            definition_digest: t.definition_digest,
+            required_role: None,
             authority: rss_mdm_agent_wire::platform_sso::RegistrationTrust::DaDevicePop,
             installation: service,
             tenant: t.tenant_id,

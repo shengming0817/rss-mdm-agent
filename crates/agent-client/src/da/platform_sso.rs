@@ -9,6 +9,27 @@ use std::time::Duration;
 use uuid::Uuid;
 
 impl Operations<'_> {
+    /// Renew an existing public key for the employee's exact operation on this DA registration.
+    pub async fn employee_windows_key(
+        &self,
+        proof: &str,
+        operation: Uuid,
+        key: &rss_mdm_agent_wire::enterprise::KeyRegistration,
+    ) -> Result<rss_mdm_agent_wire::enterprise::KeyRenewal, Error> {
+        let response = Call::<h::DaAccessKey>::new(
+            &self.http,
+            self.origin,
+            &[&operation.to_string()],
+            None,
+            Some(key),
+        )?
+        .header("x-rss-user-session", proof)
+        .timeout(Duration::from_secs(2))
+        .send()
+        .await?;
+        Self::decode(response).await
+    }
+
     /// Discover existing bindings for the authenticated employee on this DA device.
     pub async fn employee_bindings(&self, proof: &str) -> Result<runtime::AccessDirectory, Error> {
         if proof.len() != 64

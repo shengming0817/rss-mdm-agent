@@ -415,6 +415,7 @@ fn apply(input: &Input) -> Result<Effect, Error> {
                 binding.enabled = false;
                 binding.binding_generation = task.binding_generation;
                 binding.revision = task.revision;
+                binding.definition_digest = task.definition_digest;
                 crate::service::platform_sso::save_binding(&input.root, &binding)?;
             }
             return Ok(Effect::Unbound {
@@ -445,6 +446,8 @@ fn apply(input: &Input) -> Result<Effect, Error> {
     crate::service::platform_sso::save_binding(
         &input.root,
         &platform_sso::LocalBinding {
+            definition_digest: task.definition_digest,
+            required_role: configuration.role,
             authority: rss_mdm_agent_wire::platform_sso::RegistrationTrust::MdmBootstrapPop,
             installation: input.installation,
             tenant: task.tenant_id,
@@ -576,6 +579,8 @@ pub(crate) fn refresh_with(
                 }
             }
             let next = platform_sso::LocalBinding {
+                definition_digest: task.definition_digest,
+                required_role: configuration.role,
                 authority: rss_mdm_agent_wire::platform_sso::RegistrationTrust::MdmBootstrapPop,
                 installation,
                 tenant: task.tenant_id,
@@ -619,6 +624,7 @@ pub(crate) fn refresh_with(
                 binding.enabled = false;
                 binding.binding_generation = task.binding_generation;
                 binding.revision = task.revision;
+                binding.definition_digest = task.definition_digest;
                 crate::service::platform_sso::save_binding(root, &binding)?;
             }
             Effect::Unbound {

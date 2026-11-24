@@ -326,7 +326,11 @@ impl Endpoint {
             },
             Request::DeviceAccess {
                 origin: execution_ipc::host::ClientOrigin::Desktop {},
-                input: AccountOp::MacStatus {} | AccountOp::Tasks {} | AccountOp::OwnBindings {},
+                input:
+                    AccountOp::MacStatus {}
+                    | AccountOp::Tasks {}
+                    | AccountOp::OwnBindings {}
+                    | AccountOp::OpenApplication { .. },
                 ..
             } => peer.authenticate(&d.registration_clients).ok(),
             Request::BindContext { value, .. } => {
@@ -350,7 +354,8 @@ impl Endpoint {
         };
         if let Request::DeviceAccess {
             context,
-            input: AccountOp::Tasks {} | AccountOp::OwnBindings {},
+            input:
+                AccountOp::Tasks {} | AccountOp::OwnBindings {} | AccountOp::OpenApplication { .. },
             ..
         } = request
         {
@@ -595,7 +600,7 @@ impl Worker {
                 }
                 Some(Request::DeviceAccess {
                     context,
-                    input: AccountOp::OwnBindings {},
+                    input: input @ (AccountOp::OwnBindings {} | AccountOp::OpenApplication { .. }),
                     ..
                 }) => {
                     let bound = self.bound.as_ref().ok_or(Error::Identity)?;
@@ -607,9 +612,35 @@ impl Worker {
                     if !bound.permits(&command, context, &self.fence) {
                         return Err(Error::Identity);
                     }
-                    Ok(Reply::DeviceAccess {
-                        value: crate::service::access::own_bindings(directory, &command.subject)?,
-                    })
+                    let backend = d.modules.da.backend()?;
+                    let employee = rss_mdm_agent_wire::runtime::SelfServiceUser {
+                        principal_id: bound.principal.ok_or(Error::Identity)?,
+                        tenant_id: backend.tenant,
+                        instance_id: backend.instance,
+                    };
+                    let rows = crate::service::access::own_bindings(
+                        directory,
+                        &command.subject,
+                        &employee,
+                    )?;
+                    let value = if let AccountOp::OpenApplication { binding } = input {
+                        let current = bound.current.clone();
+                        let epoch = self.fence.epoch.clone();
+                        let expected = bound.epoch;
+                        super::broker::select(
+                            rows,
+                            *binding,
+                            crate::service::login_binding_id(&bound.binding),
+                            &employee,
+                            move || {
+                                current.credential().is_ok()
+                                    && epoch.lock().is_ok_and(|v| *v == expected)
+                            },
+                        )?
+                    } else {
+                        rows
+                    };
+                    Ok(Reply::DeviceAccess { value })
                 }
                 Some(Request::DeviceAccess {
                     context,
@@ -918,6 +949,7 @@ fn admit_existing(
         }) {
             old.enabled = false;
             old.revision = revoked.revision;
+            old.definition_digest = revoked.definition_digest;
             old.binding_generation = revoked.binding_generation;
             save_binding(root, &old)?;
         }
@@ -939,6 +971,8 @@ fn admit_existing(
     save_binding(
         root,
         &::platform_sso::LocalBinding {
+            definition_digest: found.definition_digest,
+            required_role: found.configuration.role,
             authority: w::RegistrationTrust::DaDevicePop,
             installation: id.service_id,
             tenant: id.tenant,

@@ -27,6 +27,18 @@ pub enum Operation {
     OpenWindowsHello {},
     /// Existing bindings for both the authenticated enterprise employee and the current OS account.
     OwnBindings {},
+    /// Authorize the configured enterprise application for this account and console login.
+    OpenApplication {
+        /// Existing employee binding.
+        binding: Uuid,
+    },
+    /// Continue the original applied operation using the employee's already registered public key.
+    RenewWindowsKey {
+        /// Original repair or reset.
+        operation: Uuid,
+        /// Domain-separated proof of possession and public binding coordinates.
+        key: rss_mdm_agent_wire::enterprise::KeyRegistration,
+    },
     /// Discover eligible first-enrollment policies and own binding states.
     Directory {
         /// Policy cursor.
@@ -102,10 +114,22 @@ pub enum Response {
     },
     /// Device and bindings from the authenticated device directory, filtered by native identity.
     OwnBindings {
+        /// A fixed employee application was installed for this issuer.
+        application_available: bool,
         /// Device registration owning these binding operations.
         device: rss_mdm_agent_wire::DeviceId,
         /// Bindings on the current stable native account.
         bindings: Vec<w::AccessBindingStatus>,
+    },
+    /// Public start page from the protected installation, never a callback or session credential.
+    Application {
+        /// Registered start page.
+        launch_url: String,
+    },
+    /// Server disposition of the already registered enterprise key.
+    WindowsKey {
+        /// Current or explicit registration required.
+        renewal: rss_mdm_agent_wire::enterprise::KeyRenewal,
     },
     /// Confirmed desired binding; not evidence of Applied.
     Binding(Box<w::AccessBindingStatus>),
@@ -243,6 +267,8 @@ pub struct WindowsHelloStatus {
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EmployeePortal {
+    /// Single organization-selected employee RP and its public start page.
+    pub application: Option<EmployeeApplication>,
     /// Exact public HTTPS browser origin.
     pub origin: String,
     /// Optional public trust root.
@@ -252,6 +278,32 @@ pub struct EmployeePortal {
     /// Tenant at this issuer.
     pub tenant: Uuid,
     product: PortalProduct,
+}
+/// Public deployment coordinates for the one supported employee application.
+#[derive(Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EmployeeApplication {
+    /// Registered Broker RP identifier.
+    pub relying_party: String,
+    /// Exact public HTTPS entry. No ticket or credential travels in this URL.
+    pub launch_url: url::Url,
+}
+impl EmployeeApplication {
+    fn valid(&self) -> bool {
+        !self.relying_party.is_empty()
+            && self.relying_party.len() <= 128
+            && self
+                .relying_party
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
+            && self.launch_url.scheme() == "https"
+            && self.launch_url.host().is_some()
+            && self.launch_url.username().is_empty()
+            && self.launch_url.password().is_none()
+            && self.launch_url.query().is_none()
+            && self.launch_url.fragment().is_none()
+            && self.launch_url.as_str().len() <= 2048
+    }
 }
 #[derive(Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -318,18 +370,23 @@ impl EmployeePortal {
             .transpose()
             .map_err(|_| Rejected)?;
         if let Some(p) = &mut package {
+            if p.application.as_ref().is_some_and(|app| !app.valid()) {
+                return Err(Rejected);
+            }
             p.origin = Self::origin(&p.origin).ok_or(Rejected)?;
         }
         let Some((origin, ca)) = browser else {
             return Ok(package.filter(|p| (p.tenant, p.instance) == (tenant, instance)));
         };
         let origin = Self::origin(origin).ok_or(Rejected)?;
-        let product = match package.filter(|p| p.origin == origin && p.tenant == tenant) {
-            Some(p) if p.instance != instance => return Err(Rejected),
-            Some(p) => p.product,
-            None => PortalProduct::Da,
-        };
+        let (product, application) =
+            match package.filter(|p| p.origin == origin && p.tenant == tenant) {
+                Some(p) if p.instance != instance => return Err(Rejected),
+                Some(p) => (p.product, p.application),
+                None => (PortalProduct::Da, None),
+            };
         Ok(Some(Self {
+            application,
             product,
             origin,
             instance,

@@ -598,3 +598,21 @@ JSON 输出为版本化 envelope，业务结果在 result，诊断写 stderr。�
 外部导航唯一 scheme 为 `rssmdm`，语法由共享 Rust 契约持有，例如 `rssmdm://view/v1/node/settings.account`。页面与任务详情可复制链接或 `rssmdm open` 命令。共享事件打开只读名称，活动批次展示可见的原记录与分页，任务步骤沿原 task/attempt 打开。单独的点段名称 `.` 和 `..` 在链接里编码为 `~.` 和 `~..`。企业目标链接携带 instance、tenant 和规范 UUID device，接收端只核对当前设备绑定，不据链接切换身份；旧 registration/generation 参数直接拒绝。`invoke` 链接只打开精确原表单，必须由用户再次点击提交；链接不承载凭据、确认票据或秘密字段。首次启动与已启动桌面均经当前真实 OS 登录会话交接，队列有界、过期丢弃，登录后重新解析授权；旧 scheme、未知字段和旧格式直接拒绝。
 
 本地工具 `invoke` 的 `parameters` 使用原操作 schema 的建议值，并省略 `request`：网络接受 `run` 的 `target`；设置接受 `change` 的原 `expected`/`patch`，以及 `refresh`/`openNative` 的 `section`；软件接受 `prepare` 的 `input.software`/`input.action`。原生接缝解码后只交付类型化显示数据，URI 中的请求 ID、保留显示配置或软件 submit 被拒绝。设置快照变化时不采用旧建议；软件只从原目录的保留清单精确解析，不隐式采集。空参数进入原页面的填写/选择状态。实际请求由用户在原页面点击后生成，原风险确认、显示预览恢复与软件二次提交流程继续生效。
+
+## 员工设备登录与恢复
+
+在桌面「账号与组织」登录后，选择「刷新本人绑定」。系统服务用当前设备凭据和员工会话读取目录，并按当前登录的 SID 或 GeneratedUID 筛选。全新安装或更换使用人应从当前员工的新注册开始。受保护的安装配置和原操作日志分别记录模块启用选择、应用阶段和失败原因。「设置」中的设备访问与设备管理注册回执来自本机，最后一次观察时间随结果显示。离线时可用性仍需各平台的登录组件确认。
+
+Windows x64 的 RSS 本地账号可选择「更换或重置验证器」。在组织验证窗口用同一企业账号登录，使用既有通行密钥或受配置的独立 IdP 验证，返回桌面提交。收到受理后，按「Windows 登录」的待办设置并确认新因子，刷新绑定查看应用结果。企业证明密钥续用读取当前用户 TPM 提供程序中原先登记的 P-256 密钥，名称为 `RSS.DeviceAccess.<binding UUID>`。原钥缺失时需重新登记企业证明密钥。Windows Hello 和 macOS 平台登录因子由系统管理。
+
+macOS 的「修复本人注册」沿用原绑定和注册流程。管理员可从 `platform-sso inspect` 读取当前账号、签名定义摘要和本地效果，由已有部署观察发布者签发。账号、登录配置或原生注册尚待确认时，应用效果留空。
+
+macOS arm64 的 Safari 员工应用入口使用同一安装器的组织输入。部署方在顶层 `employeeApplication` 提供正式的 `relyingParty` 和固定 HTTPS `launchUrl`，并配置员工浏览器组织。已接入的应用在原浏览器事务中发起 Broker 挑战。用于该组织的 Apple SSO 配置需要覆盖其租户的 `/device-access/broker/complete` URL。应用向该地址发出原操作、挑战和 nonce 的完成请求，以空签名及空 accessToken 请求本机证明。用户先在桌面选择本人的已应用绑定；扩展需要当前 Secure Enclave 用户注册和 LoginManager 凭据。桌面选择有效 120 秒，退出或切换登录会话会使其失效。应用按自己的回调合同接收一次性交接，由其后端领取并复核会话。
+
+| 配置 | 本机核对入口 | 本次真实验收 |
+| --- | --- | --- |
+| 仅 DA | 安装器受保护配置、module-status、设备访问注册回执与账号页 | 未执行 |
+| 仅 MDM | 同一安装器、module-status、MDM 注册回执与 channel.mdm.enrollment 集合 | 未执行 |
+| 共存 | 同一安装器、两条通道的各自回执、原配置应用操作 | 未执行 |
+
+目标应用为 RSS 员工自助 Web，目标组合为 macOS arm64、Safari、Secure Enclave PSSO 和 Keycloak。尚缺该应用正式 RP 的注册及浏览器回调合同。本次没有发布固定安装文件，也没有真实 RP 会话或双平台安装、升级、登录、解锁结果。

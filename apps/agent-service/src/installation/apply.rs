@@ -302,7 +302,7 @@ pub(super) fn status(config: &Path, id: Uuid) -> Result<bool, Error> {
     }
 }
 
-fn binding(d: &Deployment) -> Result<Option<(Uuid, Uuid)>, Error> {
+pub(super) fn binding(d: &Deployment) -> Result<Option<(Uuid, Uuid)>, Error> {
     if !d.modules.mdm.enabled() || !d.state_root.join("communication").try_exists()? {
         return Ok(None);
     }
@@ -336,7 +336,7 @@ fn latest_record(config: &Path, deployment: &Deployment) -> Option<Record> {
 pub(crate) fn observe_modules(
     config: &Path,
     d: &Deployment,
-) -> rss_mdm_agent_wire::da::ClientModules {
+) -> (rss_mdm_agent_wire::da::ClientModules, Option<String>) {
     use rss_mdm_agent_wire::da::{ClientModules, ModuleApplication, ModuleObservation};
     let installed = Candidate::retained(config, d).ok().and_then(|candidate| {
         candidate.validate_trust().ok()?;
@@ -354,18 +354,26 @@ pub(crate) fn observe_modules(
         installed,
         enabled: Some(enabled),
     };
-    let application = match latest_record(config, d).map(|r| r.phase) {
+    let record = latest_record(config, d);
+    let failure = record
+        .as_ref()
+        .and_then(|r| r.failure)
+        .map(|e| e.to_string());
+    let application = match record.map(|r| r.phase) {
         Some(Phase::Received) => ModuleApplication::Received,
         Some(Phase::Applied) => ModuleApplication::Applied,
         Some(Phase::Rejected) => ModuleApplication::Rejected,
         Some(_) => ModuleApplication::Pending,
         None => ModuleApplication::Unknown,
     };
-    ClientModules {
-        da: module(d.modules.da.enabled()),
-        mdm: module(d.modules.mdm.enabled()),
-        application,
-    }
+    (
+        ClientModules {
+            da: module(d.modules.da.enabled()),
+            mdm: module(d.modules.mdm.enabled()),
+            application,
+        },
+        failure,
+    )
 }
 
 pub(super) fn module_status(config: &Path) -> Result<(), Error> {
@@ -377,7 +385,7 @@ pub(super) fn module_status(config: &Path) -> Result<(), Error> {
         return Ok(());
     }
     let deployment = Deployment::metadata(config)?;
-    let modules = observe_modules(config, &deployment);
+    let (modules, application_failure) = observe_modules(config, &deployment);
     let registered = deployment
         .modules
         .mdm
@@ -392,7 +400,7 @@ pub(super) fn module_status(config: &Path) -> Result<(), Error> {
         .filter(|r| !r.terminal())
         .map(|r| r.operation);
     outcome::details(serde_json::json!({
-        "modules":modules,"observedAt":SystemClock::new()?.now()?,
+        "modules":modules,"applicationFailure":application_failure,"observedAt":SystemClock::new()?.now()?,
         "daEmployeePortalOrigin":deployment.modules.employee_portal()?.map(|p|p.origin),
         "mdmRegistered":registered,"da":da.as_ref().ok().and_then(|state|state.as_ref()),"daError":da.as_ref().err(),"pendingOperation":pending,
         "revision":deployment.modules.revision,

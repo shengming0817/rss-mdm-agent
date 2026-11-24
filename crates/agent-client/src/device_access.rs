@@ -3,6 +3,16 @@ use crate::http as h;
 use crate::{store::encode, wire, Client, Clock, Error, IdentityProvider};
 use uuid::Uuid;
 impl<S: IdentityProvider, C: Clock> Client<S, C> {
+    /// Renew exactly the employee's original Windows proof key over this device registration.
+    pub async fn employee_windows_key(
+        &self,
+        secret: &str,
+        operation: Uuid,
+        key: &rss_mdm_agent_wire::enterprise::KeyRegistration,
+    ) -> Result<rss_mdm_agent_wire::enterprise::KeyRenewal, Error> {
+        self.employee_json::<h::AccessKey>(Some(secret), &[&operation.to_string()], None, Some(key))
+            .await
+    }
     /// Upload a durable offline usage fact; transport acknowledgement never grants login access.
     pub async fn access_recovery_use(&self, input: &wire::AccessRecoveryUse) -> Result<(), Error> {
         input.validate()?;

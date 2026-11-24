@@ -9,7 +9,13 @@ export type Change = "reset_factors" | "repair_binding";
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "Stage".
  */
-export type Stage = "open" | "verify" | "submit" | "status";
+export type Stage =
+  | "open"
+  | "verify"
+  | "submit"
+  | "status"
+  | "renewKey"
+  | "close";
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "NavigationOperation".
@@ -1800,6 +1806,24 @@ export type Operation2 =
     }
   | {
       /**
+       * Existing employee binding.
+       */
+      binding: string;
+      kind: "openApplication";
+    }
+  | {
+      /**
+       * Original repair or reset.
+       */
+      operation: string;
+      /**
+       * Domain-separated proof of possession and public binding coordinates.
+       */
+      key: KeyRegistration;
+      kind: "renewWindowsKey";
+    }
+  | {
+      /**
        * Policy cursor.
        */
       cursor: string | null;
@@ -1956,6 +1980,10 @@ export type Response =
     }
   | {
       /**
+       * A fixed employee application was installed for this issuer.
+       */
+      applicationAvailable: boolean;
+      /**
        * Device registration owning these binding operations.
        */
       device: DeviceId;
@@ -1964,6 +1992,20 @@ export type Response =
        */
       bindings: AccessBindingStatus[];
       kind: "ownBindings";
+    }
+  | {
+      /**
+       * Registered start page.
+       */
+      launchUrl: string;
+      kind: "application";
+    }
+  | {
+      /**
+       * Current or explicit registration required.
+       */
+      renewal: KeyRenewal;
+      kind: "windowsKey";
     }
   | {
       /**
@@ -2375,6 +2417,13 @@ export type AccessFailure =
   | "recovery_account_protected"
   | "needs_user"
   | "native_failure";
+/**
+ * Outcome of continuing a previously registered Windows key after employee recovery.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "KeyRenewal".
+ */
+export type KeyRenewal = "current" | "registration_required";
 /**
  * Select an existing snapshot without starting collection.
  *
@@ -4792,6 +4841,62 @@ export interface SettingsOption {
 export interface Command11 {
   input: Operation2;
   output: Response;
+}
+/**
+ * Register a user-held key against the exact applied Windows account binding.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "KeyRegistration".
+ */
+export interface KeyRegistration {
+  /**
+   * Existing business binding, never an account name.
+   */
+  bindingId: string;
+  /**
+   * Personnel association generation.
+   */
+  bindingGeneration: number;
+  /**
+   * Native factor generation.
+   */
+  factorGeneration: number;
+  /**
+   * Exact applied configuration revision.
+   */
+  bindingRevision: number;
+  /**
+   * P-256 public key only; no private material reaches the service.
+   */
+  publicKey: PublicKey;
+  /**
+   * Unpadded base64url ES256 fixed-width signature of signing_bytes.
+   */
+  signature: string;
+}
+/**
+ * Public key only. The verifier validates the curve, point and Apple's derived key id.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "PublicKey".
+ */
+export interface PublicKey {
+  /**
+   * JWK key type, EC.
+   */
+  kty: string;
+  /**
+   * JWK curve, P-256.
+   */
+  crv: string;
+  /**
+   * Canonical unpadded Base64URL x coordinate.
+   */
+  x: string;
+  /**
+   * Canonical unpadded Base64URL y coordinate.
+   */
+  y: string;
 }
 /**
  * Business configuration compiled into one device-wide System profile. No deployment secrets.

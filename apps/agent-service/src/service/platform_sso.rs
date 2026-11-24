@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, VecDeque};
 use uuid::Uuid;
 
+pub(crate) mod broker;
+
 impl crate::deployment::PlatformSsoConfiguration {
     pub fn verify(&self) -> Result<(), Error> {
         if !cfg!(all(target_os = "macos", target_arch = "aarch64")) {
@@ -377,6 +379,9 @@ pub(crate) trait Owner {
             }
         }
         match input {
+            Operation::BrokerChallenge { operation, browser } => {
+                broker::challenge(self, command, *operation, browser).await
+            }
             Operation::Bootstrap {
                 callback_generation,
                 scope,
@@ -1689,7 +1694,11 @@ fn settle_binding(
             || (old.binding == next.binding && old.revision > next.revision)
             || (old.binding == next.binding
                 && old.revision == next.revision
-                && (old.configuration != next.configuration || old.enabled != next.enabled))
+                && (old.configuration != next.configuration
+                    || old.enabled != next.enabled
+                    || old.definition_digest != next.definition_digest
+                    || old.required_role != next.required_role
+                    || old.binding_generation != next.binding_generation))
         {
             return Err(Error::Identity);
         }
@@ -2113,12 +2122,46 @@ fn component_state(deployment: &crate::deployment::Deployment, action: &str) -> 
             if facts.len() >= 256 {
                 return Err(Error::Capacity);
             }
-            let native=crate::access_worker::macos::inspect(&binding.generated_uid,false).ok().map(|a|{
-                let mut facts=crate::access_worker::macos::facts(&a);
-                facts.platform_sso=native_facts(&root,&binding).ok().flatten();
-                serde_json::json!({"role":if a.administrator {"administrator"}else{"standard"},"facts":facts})
+            let native = crate::access_worker::macos::inspect(&binding.generated_uid, false)
+                .ok()
+                .map(|a| {
+                    let mut facts = crate::access_worker::macos::facts(&a);
+                    facts.platform_sso = native_facts(&root, &binding).ok().flatten();
+                    let role = if a.administrator {
+                        wire::AccessRole::Administrator
+                    } else {
+                        wire::AccessRole::Standard
+                    };
+                    (role, facts)
+                });
+            let observation = native
+                .as_ref()
+                .map(|(role, facts)| serde_json::json!({"role":role,"facts":facts}));
+            let application = native.and_then(|(role, facts)| {
+                let uid = Uuid::parse_str(&binding.generated_uid).ok()?;
+                let effect = wire::AccessEffect::Applied {
+                    account: wire::AccessAccount::Macos { generated_uid: uid },
+                    role,
+                    mac: Some(facts),
+                    windows: None,
+                };
+                let expected = wire::AccessConfiguration {
+                    enabled: binding.enabled,
+                    role: binding.required_role,
+                    mac: Some(binding.configuration.clone()),
+                    windows: wire::AccessWindowsConfiguration::Disabled,
+                    self_enrollment: false,
+                };
+                (binding.enabled && effect.complete(&expected, wire::TaskPlatform::Macos))
+                    .then_some(wire::AccessResult {
+                        binding_id: binding.binding,
+                        binding_generation: binding.binding_generation,
+                        revision: binding.revision,
+                        definition_digest: binding.definition_digest,
+                        effect,
+                    })
             });
-            facts.push(serde_json::json!({"binding":binding.binding,"revision":binding.revision,"generatedUid":binding.generated_uid,"bindingGeneration":binding.binding_generation,"observation":native}));
+            facts.push(serde_json::json!({"binding":binding.binding,"revision":binding.revision,"generatedUid":binding.generated_uid,"bindingGeneration":binding.binding_generation,"observation":observation,"application":application}));
         }
         Some(facts)
     } else {
@@ -2315,6 +2358,8 @@ mod tests {
     pub(super) fn binding() -> ::platform_sso::LocalBinding {
         let c = coordinate().context;
         ::platform_sso::LocalBinding {
+            definition_digest: [4; 32],
+            required_role: None,
             authority: rss_mdm_agent_wire::platform_sso::RegistrationTrust::MdmBootstrapPop,
             installation: c.installation,
             tenant: c.tenant,

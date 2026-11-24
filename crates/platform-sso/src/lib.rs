@@ -284,6 +284,10 @@ pub fn public_key(point: &[u8]) -> Result<w::PublicKey, Error> {
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LocalBinding {
+    /// Exact definition observed by the device directory or signed task.
+    pub definition_digest: [u8; 32],
+    /// Requested native role; absent when policy preserves it.
+    pub required_role: Option<rss_mdm_agent_wire::runtime::AccessRole>,
     /// Registration authority bound to this installation and source.
     pub authority: w::RegistrationTrust,
     pub installation: Uuid,

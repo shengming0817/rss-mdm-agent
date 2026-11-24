@@ -4199,6 +4199,7 @@ dependencies = [
 name = "platform-sso-extension"
 version = "0.1.0"
 dependencies = [
+ "base64 0.23.1",
  "execution-ipc",
  "platform-sso",
  "rss-mdm-agent-wire",
@@ -4798,6 +4799,7 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "ai-session-contract",
+ "base64 0.23.1",
  "cc",
  "constant_time_eq",
  "execution-app",

@@ -13,6 +13,7 @@ import type {
 type Intent = SelfServiceCommands["employee_change"]["input"];
 
 export function EmployeeRecovery({ port }: { port: DeviceAccessPort }) {
+  const [application, setApplication] = useState(false);
   const [bindings, setBindings] = useState<AccessBindingStatus[]>([]);
   const [pending, setPending] = useState<Intent | null>(null);
   const [message, setMessage] = useState("");
@@ -24,6 +25,7 @@ export function EmployeeRecovery({ port }: { port: DeviceAccessPort }) {
       const reply = await port({ kind: "ownBindings" });
       if (reply.kind !== "ownBindings") throw Error();
       setBindings(reply.bindings);
+      setApplication(reply.applicationAvailable);
       setMessage(
         reply.bindings.length ? "" : "当前企业账号与本机账号没有可管理的绑定。",
       );
@@ -103,6 +105,62 @@ export function EmployeeRecovery({ port }: { port: DeviceAccessPort }) {
               </p>
             )}
             <div className="rss-account-actions">
+              {rss && b.appliedRevision === b.revision && (
+                <Button
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    try {
+                      await nativeEmployeeChange({
+                        binding: b.id,
+                        revision: b.revision,
+                        stage: "renewKey",
+                        change: "repair_binding",
+                      });
+                      setMessage("企业应用证明密钥已获服务端确认。");
+                    } catch (e) {
+                      setMessage(
+                        e &&
+                          typeof e === "object" &&
+                          "code" in e &&
+                          e.code === "registration_required"
+                          ? "原企业证明密钥缺失或已失效，请重新登记企业密钥。本机验证器可单独设置。"
+                          : "尚未确认企业证明密钥，请检查原操作后重试。",
+                      );
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  续用企业证明密钥
+                </Button>
+              )}
+              {application && b.account?.platform === "macos" && (
+                <Button
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    try {
+                      const r = await port({
+                        kind: "openApplication",
+                        binding: b.id,
+                      });
+                      if (r.kind !== "application") throw Error();
+                      setMessage(
+                        "已在 Safari 打开员工应用。应用会话由该应用确认。",
+                      );
+                    } catch {
+                      setMessage(
+                        "设备未批准本次应用登录，请检查平台单点登录注册和当前账号。",
+                      );
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  登录 RSS 员工自助 Web
+                </Button>
+              )}
               {rss && (
                 <Button disabled={busy} onClick={() => open("reset_factors")}>
                   更换或重置验证器
@@ -146,6 +204,9 @@ export function EmployeeRecovery({ port }: { port: DeviceAccessPort }) {
           <Button
             disabled={busy}
             onClick={() => {
+              void nativeEmployeeChange({ ...pending, stage: "close" }).catch(
+                () => {},
+              );
               setPending(null);
               setMessage("本次交互已结束。已提交的操作可刷新查询。");
             }}

@@ -24,6 +24,8 @@ pub use redaction::CredentialRedactor;
 mod client;
 mod configuration;
 mod connections;
+/// Enterprise Broker transport for trusted native proof.
+pub mod enterprise;
 mod http;
 pub use connections::{verify_connections, ConnectionStatus};
 mod enrollment;

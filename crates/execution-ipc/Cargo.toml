@@ -7,7 +7,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
-url.workspace = true
+url = { workspace = true, features = ["serde"] }
 platform-sso = { path = "../platform-sso" }
 uuid = { version = "=1.26.0", features = ["serde"] }
 rss-mdm-agent-wire.workspace = true

@@ -192,20 +192,29 @@ static NSString *nativeConfiguration(ASAuthorizationProviderExtensionLoginManage
     if([request.callerBundleIdentifier isEqual:NSBundle.mainBundle.bundleIdentifier]){[request doNotHandle];return;}
     ASAuthorizationProviderExtensionLoginManager *manager=request.loginManager;
     NSString *metadata=[NSUserDefaults.standardUserDefaults stringForKey:@"registration"];
-    if(!manager || !metadata || ![request.url.path hasSuffix:@"/browser/complete"]){[request doNotHandle];return;}
+    BOOL broker=[request.url.path hasSuffix:@"/device-access/broker/complete"];
+    if(broker && ![request.callerBundleIdentifier isEqual:@"com.apple.Safari"]){[request doNotHandle];return;}
+    if(!manager || !metadata || (!broker && ![request.url.path hasSuffix:@"/browser/complete"])){[request doNotHandle];return;}
     if(self.authorization || self.registrationCompletion || request.httpBody.length>65536){[request completeWithError:failure()];return;}
     NSString *body=[[NSString alloc]initWithData:request.httpBody encoding:NSUTF8StringEncoding];
     NSString *token=manager.ssoTokens[@"access_token"];
     if(![token isKindOfClass:NSString.class] || !body){[manager userNeedsReauthenticationWithCompletion:^(NSError *e){}];[request completeWithError:failure()];return;}
     ASAuthorizationProviderExtensionAuthenticationMethod method=manager.authenticationMethod;
-    if(method!=ASAuthorizationProviderExtensionAuthenticationMethodPassword && method!=ASAuthorizationProviderExtensionAuthenticationMethodUserSecureEnclaveKey){[request completeWithError:failure()];return;}
+    if((broker && method!=ASAuthorizationProviderExtensionAuthenticationMethodUserSecureEnclaveKey) || (method!=ASAuthorizationProviderExtensionAuthenticationMethodPassword && method!=ASAuthorizationProviderExtensionAuthenticationMethodUserSecureEnclaveKey)){[request completeWithError:failure()];return;}
     SecKeyRef signing=[manager copyKeyForKeyType:method==ASAuthorizationProviderExtensionAuthenticationMethodPassword ? ASAuthorizationProviderExtensionKeyTypeCurrentDeviceSigning : ASAuthorizationProviderExtensionKeyTypeUserSecureEnclaveKey];
     NSData *signingPoint=publicPoint(signing);
     if(!signingPoint){if(signing)CFRelease(signing);[request completeWithError:failure()];return;}
     self.authorization=request;NSUInteger generation=++self.generation;
     NSString *issuer=manager.loginConfiguration.issuer;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0), ^{
-        char *bytes=rss_psso_browser((uint32_t)method,signingPoint.bytes,metadata.UTF8String,issuer.UTF8String,request.url.absoluteString.UTF8String,body.UTF8String,token.UTF8String,signMessage,(void *)signing);CFRelease(signing);
+        NSString *origin=nil,*cookie=nil;
+        for(NSString *header in request.httpHeaders){
+            if([header caseInsensitiveCompare:@"Origin"]==NSOrderedSame)origin=request.httpHeaders[header];
+            if([header caseInsensitiveCompare:@"Cookie"]==NSOrderedSame)cookie=request.httpHeaders[header];
+        }
+        char *bytes=broker ? rss_psso_broker(signingPoint.bytes,metadata.UTF8String,issuer.UTF8String,request.url.absoluteString.UTF8String,origin.UTF8String,cookie.UTF8String,body.UTF8String,token.UTF8String,signMessage,(void *)signing) :
+            rss_psso_browser((uint32_t)method,signingPoint.bytes,metadata.UTF8String,issuer.UTF8String,request.url.absoluteString.UTF8String,body.UTF8String,token.UTF8String,signMessage,(void *)signing);
+        CFRelease(signing);
         NSData *encoded=bytes?[NSData dataWithBytes:bytes length:strlen(bytes)]:nil;rss_psso_string_free(bytes);
         dispatch_async(dispatch_get_main_queue(), ^{
             if(generation!=self.generation || self.authorization!=request)return;

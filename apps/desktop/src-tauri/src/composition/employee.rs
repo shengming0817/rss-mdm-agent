@@ -1,6 +1,8 @@
 //! Browser-owned proof cookies stay on the registered organization origin. The main window
 //! only selects a change to a binding returned by protected native IPC.
 //! ref: tauri 2.11.2 WebviewWindowBuilder::{incognito,on_navigation,on_new_window}.
+#[cfg(windows)]
+mod windows;
 use super::runtime::DesktopRuntime;
 use crate::self_service::{error, Result};
 use execution_ipc::device_access::{Operation, Response};
@@ -24,6 +26,8 @@ pub enum Stage {
     Verify,
     Submit,
     Status,
+    RenewKey,
+    Close,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -60,9 +64,20 @@ pub async fn dispatch<R: tauri::Runtime>(
     let state = app.state::<DesktopRuntime>();
     let session = state.employee_session(&generation)?;
     let (origin, tenant, principal) = session.employee_scope();
+    let label = format!(
+        "employee-{}",
+        Uuid::parse_str(&generation).map_err(|_| denied())?
+    );
+    if matches!(input.stage, Stage::Close) {
+        if let Some(window) = app.get_webview_window(&label) {
+            window.destroy().map_err(|_| unavailable())?;
+        }
+        return Ok(());
+    }
     let handle = state.execution_for(&generation).await?;
-    let Response::OwnBindings { device, bindings } =
-        handle.device_access(Operation::OwnBindings {}).await?
+    let Response::OwnBindings {
+        device, bindings, ..
+    } = handle.device_access(Operation::OwnBindings {}).await?
     else {
         return Err(denied());
     };
@@ -71,6 +86,52 @@ pub async fn dispatch<R: tauri::Runtime>(
         .iter()
         .find(|b| b.id == input.binding)
         .ok_or_else(denied)?;
+    if matches!(input.stage, Stage::RenewKey) {
+        #[cfg(windows)]
+        {
+            if input.revision != b.revision
+                || b.applied_revision != Some(b.revision)
+                || !matches!(&b.effect,Some(wire::AccessEffect::Applied{account,..}) if Some(account)==b.account.as_ref())
+                || !matches!(
+                    b.account,
+                    Some(wire::AccessAccount::Windows {
+                        authority: wire::AccessWindowsAuthority::Local,
+                        ..
+                    })
+                )
+            {
+                return Err(denied());
+            }
+            let native = session.native_session(&generation)?;
+            let employee = native.user().ok_or_else(denied)?.clone();
+            let binding = b.clone();
+            let key = tokio::task::spawn_blocking(move || windows::sign(&binding, &employee))
+                .await
+                .map_err(|_| denied())??;
+            state.current(&generation)?;
+            let response = handle
+                .device_access(Operation::RenewWindowsKey {
+                    operation: b.operation_id,
+                    key,
+                })
+                .await?;
+            state.current(&generation)?;
+            return match response {
+                Response::WindowsKey {
+                    renewal: rss_mdm_agent_wire::enterprise::KeyRenewal::Current,
+                } => Ok(()),
+                Response::WindowsKey {
+                    renewal: rss_mdm_agent_wire::enterprise::KeyRenewal::RegistrationRequired,
+                } => Err(error(
+                    "registration_required",
+                    "需要重新登记当前账号的企业证明密钥",
+                )),
+                _ => Err(denied()),
+            };
+        }
+        #[cfg(not(windows))]
+        return Err(denied());
+    }
     let op = intent(
         b.id,
         device.into_uuid(),
@@ -97,10 +158,6 @@ pub async fn dispatch<R: tauri::Runtime>(
     {
         return Err(error("factor", "此登录机制由系统或身份提供方管理"));
     }
-    let label = format!(
-        "employee-{}",
-        Uuid::parse_str(&generation).map_err(|_| denied())?
-    );
     let origin_url = url::Url::parse(origin).map_err(|_| denied())?;
     let window = match app.get_webview_window(&label) {
         Some(w) => w,

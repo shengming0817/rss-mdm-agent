@@ -72,7 +72,7 @@ if (format === "windows_msix" && !process.env.RSS_WINDOWS_PUBLISHER)
 const organization = JSON.parse(readFileSync(resolve(args[input + 1]), "utf8"));
 if (
   Object.keys(organization).some(
-    (key) => !["modules", "desktop"].includes(key),
+    (key) => !["modules", "desktop", "employeeApplication"].includes(key),
   ) ||
   !organization.modules
 )
@@ -81,6 +81,33 @@ const defaults = organization.modules;
 const desktopConfiguration =
   organization.desktop ??
   (defaults.mdm?.state === "enabled" ? organizationConfiguration(root) : null);
+const application = organization.employeeApplication;
+if (application !== undefined) {
+  if (
+    !desktopConfiguration ||
+    !application ||
+    typeof application !== "object" ||
+    Object.keys(application).some(
+      (k) => !["relyingParty", "launchUrl"].includes(k),
+    ) ||
+    typeof application.relyingParty !== "string" ||
+    !/^[a-zA-Z0-9_.-]{1,128}$/.test(application.relyingParty) ||
+    typeof application.launchUrl !== "string" ||
+    application.launchUrl.length > 2048
+  )
+    throw Error(
+      "Employee application requires the deployed RP ID and its fixed HTTPS launch URL",
+    );
+  const url = new URL(application.launchUrl);
+  if (
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  )
+    throw Error("Invalid employee application launch URL");
+}
 if (desktopConfiguration?.ca_pem !== undefined)
   desktopConfiguration.ca_pem = publicCa(desktopConfiguration.ca_pem);
 const env = { ...process.env };
@@ -98,6 +125,7 @@ if (desktopConfiguration) {
     tenant: owner.tenant,
     origin: desktopConfiguration.origin,
     ca_pem: desktopConfiguration.ca_pem,
+    application,
   });
 }
 // The outer build runner retains the worktree/target locks for this entire package build.

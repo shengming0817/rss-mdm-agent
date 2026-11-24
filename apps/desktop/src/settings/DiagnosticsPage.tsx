@@ -205,6 +205,12 @@ function ServiceStatus({
     state.service?.phase === "connected"
       ? state.service.status.installation
       : null;
+  const registered = {
+    registered: "已有注册回执",
+    unregistered: "待注册",
+    revoked: "注册已撤销",
+    unknown: "注册状态未知",
+  };
   const applied = {
     unknown: "结果未知",
     received: "已受理",
@@ -246,16 +252,30 @@ function ServiceStatus({
                     ? "已启用"
                     : value.enabled === false
                       ? "未启用"
-                      : "启用状态未知"}
+                      : "启用状态未知"}{" "}
+                  ·{" "}
+                  {
+                    registered[
+                      key === "da"
+                        ? sample.daRegistration
+                        : sample.mdmRegistration
+                    ]
+                  }
                 </small>
               );
             })}
+            {sample.applicationFailure && (
+              <small>配置应用失败 · {sample.applicationFailure}</small>
+            )}
             <small>
               安装配置{applied[sample.modules.application]} · 系统服务于{" "}
               {new Date(sample.observedAt * 1000).toLocaleString()} 读取
             </small>
           </span>
         </div>
+      )}
+      {!sample && (
+        <small>尚无本机模块观察。可重新连接设备系统服务后刷新。</small>
       )}
       {state.serviceError && (
         <Alert type="warning" title={state.serviceError} />

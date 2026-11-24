@@ -22,6 +22,13 @@ pub enum NativeSave {
 )]
 /// Finite extension-only operations.
 pub enum Operation {
+    /// Recover the origin-authenticated challenge for the application selected in the desktop.
+    BrokerChallenge {
+        /// Browser operation from the original completion.
+        operation: Uuid,
+        /// Opaque possession cookie; never returned to the desktop or logged.
+        browser: rss_mdm_agent_wire::runtime::Secret,
+    },
     /// Obtain a device- or current-user-scoped registration challenge.
     Bootstrap {
         /// Native registration callback generation, not an observation challenge.
@@ -85,6 +92,11 @@ pub enum Operation {
 )]
 /// Finite extension-only results.
 pub enum Response {
+    /// Exact server-returned bytes for the authenticated PSSO extension.
+    BrokerChallenge {
+        /// Never accepted from a renderer.
+        challenge: rss_mdm_agent_wire::enterprise::Challenge,
+    },
     /// The native account must first complete RSS association.
     NeedsAccount {},
     /// Trusted device/account coordinates and server bootstrap; never forwarded to the renderer.

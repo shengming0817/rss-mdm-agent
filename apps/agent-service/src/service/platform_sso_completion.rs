@@ -115,6 +115,8 @@ async fn native_observation_refresh_settles_original_journal_after_restart_and_a
     let access_root = root.path.join("access");
     platform_private_storage::directory(&access_root).unwrap();
     let local_binding = ::platform_sso::LocalBinding {
+        definition_digest: task.definition_digest,
+        required_role: Some(r::AccessRole::Standard),
         authority: rss_mdm_agent_wire::platform_sso::RegistrationTrust::MdmBootstrapPop,
         installation,
         tenant: task.tenant_id,

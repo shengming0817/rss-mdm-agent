@@ -297,9 +297,20 @@ fn console(subject: &str, session: u32, binding: &execution_contract::Id) -> Res
 pub(crate) fn own_bindings(
     directory: w::AccessDirectory,
     subject: &str,
+    user: &w::SelfServiceUser,
 ) -> Result<execution_ipc::device_access::Response, Error> {
     let account = native_account(subject)?;
+    let application_available = cfg!(all(target_os = "macos", target_arch = "aarch64"))
+        && execution_ipc::device_access::EmployeePortal::configured(
+            user.tenant_id,
+            user.instance_id,
+            None,
+        )
+        .ok()
+        .flatten()
+        .is_some_and(|p| p.application.is_some());
     Ok(execution_ipc::device_access::Response::OwnBindings {
+        application_available,
         device: directory.device_id,
         bindings: directory
             .bindings
@@ -307,6 +318,20 @@ pub(crate) fn own_bindings(
             .filter(|b| !b.revoked && b.account.as_ref() == Some(&account))
             .collect(),
     })
+}
+
+pub(crate) fn check_key(
+    rows: &execution_ipc::device_access::Response,
+    operation: Uuid,
+    key: &rss_mdm_agent_wire::enterprise::KeyRegistration,
+) -> Result<(), Error> {
+    let execution_ipc::device_access::Response::OwnBindings { bindings, .. } = rows else {
+        return Err(Error::Identity);
+    };
+    if bindings.iter().any(|b| b.id == key.binding_id && b.operation_id == operation && b.revision == key.binding_revision
+        && b.binding_generation == key.binding_generation && b.factor_generation == key.factor_generation && b.applied_revision == Some(b.revision)
+        && matches!(b.account,Some(w::AccessAccount::Windows{authority:w::AccessWindowsAuthority::Local,..}))
+        && matches!(&b.effect,Some(w::AccessEffect::Applied{account,..}) if Some(account)==b.account.as_ref())) {Ok(())} else {Err(Error::Denied)}
 }
 
 fn native_account(subject: &str) -> Result<w::AccessAccount, Error> {
@@ -511,7 +536,7 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
                 #[cfg(not(windows))]
                 return Err(Error::Unsupported);
             }
-            Op::OwnBindings {} => {
+            Op::OwnBindings {} | Op::OpenApplication { .. } | Op::RenewWindowsKey { .. } => {
                 let directory = super::network(
                     self.client.access_directory(&proof, None),
                     &mut self.core,
@@ -519,7 +544,30 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
                 )
                 .await?;
                 owner.validate(&self.core.access.fences)?;
-                own_bindings(directory, &owner.subject)?
+                let rows = own_bindings(directory, &owner.subject, &user)?;
+                if let Op::RenewWindowsKey { operation, key } = input {
+                    check_key(&rows, *operation, key)?;
+                    let renewal = super::network(
+                        self.client.employee_windows_key(&proof, *operation, key),
+                        &mut self.core,
+                        commands,
+                    )
+                    .await?;
+                    owner.validate(&self.core.access.fences)?;
+                    Out::WindowsKey { renewal }
+                } else if let Op::OpenApplication { binding } = input {
+                    let fences = self.core.access.fences.clone();
+                    let selected = owner.clone();
+                    super::platform_sso::broker::select(
+                        rows,
+                        *binding,
+                        super::login_binding_id(&owner.binding),
+                        &user,
+                        move || selected.validate(&fences).is_ok(),
+                    )?
+                } else {
+                    rows
+                }
             }
             Op::Directory { cursor } => Out::Directory(
                 super::network(

@@ -10,9 +10,33 @@ pub(crate) fn observation(d: &Deployment) -> Option<execution_ipc::host::Install
     {
         return None;
     }
+    use execution_ipc::host::RegistrationObservation as R;
+    let mdm_registration = if current.modules.mdm.enabled() {
+        match apply::binding(&current) {
+            Ok(Some(_)) => R::Registered,
+            Ok(None) => R::Unregistered,
+            Err(_) => R::Unknown,
+        }
+    } else {
+        R::Unknown
+    };
+    let da_registration = if current.modules.da.enabled() {
+        match crate::da_service::status(&current) {
+            Ok(Some(s)) if s.registration.is_some() => R::Registered,
+            Ok(Some(s)) if s.revocation.is_some() => R::Revoked,
+            Ok(_) => R::Unregistered,
+            Err(_) => R::Unknown,
+        }
+    } else {
+        R::Unknown
+    };
+    let (modules, application_failure) = apply::observe_modules(&path, &current);
     Some(execution_ipc::host::InstallationObservation {
+        da_registration,
+        mdm_registration,
+        application_failure,
         observed_at: SystemClock::new().ok()?.now().ok()?,
-        modules: apply::observe_modules(&path, &current),
+        modules,
     })
 }
 pub use apply::{apply_authorized_profile, AuthorizedProfile};

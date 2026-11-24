@@ -65,6 +65,18 @@ export interface ServiceStatus {
  * Non-authorizing observations sampled by the protected installation service.
  */
 export interface InstallationObservation {
+  /**
+   * Closed diagnostic from the installation profile journal, if the operation failed.
+   */
+  applicationFailure?: string | null;
+  /**
+   * The DA store's last confirmed registration state.
+   */
+  daRegistration: "registered" | "unregistered" | "revoked" | "unknown";
+  /**
+   * The MDM agent store's last confirmed registration state.
+   */
+  mdmRegistration: "registered" | "unregistered" | "revoked" | "unknown";
   modules: ClientModules;
   /**
    * Device observation time, UTC seconds.

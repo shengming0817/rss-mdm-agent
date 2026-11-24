@@ -320,3 +320,113 @@ pub unsafe extern "C" fn rss_psso_unregister(metadata: *const c_char) -> i32 {
     .and_then(Result::ok)
     .map_or(-1, |_| 0)
 }
+
+/// Apple owns the signing handle and the PSSO token. Only bytes recovered by the service
+/// from the original browser transaction can reach the signer.
+/// # Safety
+/// Native strings and the 65-byte public point remain valid for this synchronous call.
+#[no_mangle]
+pub unsafe extern "C" fn rss_psso_broker(
+    signing: *const u8,
+    metadata: *const c_char,
+    issuer: *const c_char,
+    url: *const c_char,
+    origin: *const c_char,
+    cookies: *const c_char,
+    body: *const c_char,
+    token: *const c_char,
+    sign: Option<Sign>,
+    context: *mut c_void,
+) -> *mut c_char {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    use rss_mdm_agent_wire::{enterprise as broker, runtime::Secret};
+    catch_unwind(AssertUnwindSafe(|| -> Result<CString, ()> {
+        let registration: Registration = serde_json::from_str(text(metadata)?).map_err(|_| ())?;
+        let owner = &registration.context;
+        owner.validate().map_err(|_| ())?;
+        if signing.is_null()
+            || owner.kind != w::Kind::User
+            || registration.authentication != w::AuthenticationMode::SecureEnclave
+            || registration.proof_key
+                != platform_sso::public_key(std::slice::from_raw_parts(signing, 65))
+                    .map_err(|_| ())?
+            || text(origin)? != owner.origin
+            || text(issuer)?
+                != w::Endpoints::new(&owner.origin, owner.tenant)
+                    .map_err(|_| ())?
+                    .issuer
+            || text(url)?
+                != format!(
+                    "{}/api/v1/tenants/{}/device-access/broker/complete",
+                    owner.origin, owner.tenant
+                )
+        {
+            return Err(());
+        }
+        let mut complete: broker::Complete = serde_json::from_str(text(body)?).map_err(|_| ())?;
+        if complete.operation_id.is_nil()
+            || complete.challenge_id.is_nil()
+            || !complete.proof.signature.is_empty()
+            || complete.proof.access_token.is_some()
+        {
+            return Err(());
+        }
+        let mut values = text(cookies)?
+            .split(';')
+            .filter_map(|p| p.trim().strip_prefix("__Host-rss-broker="));
+        let browser = Secret::parse(values.next().ok_or(())?).map_err(|_| ())?;
+        if values.next().is_some() {
+            return Err(());
+        }
+        let token = Secret::parse(text(token)?).map_err(|_| ())?;
+        let client = ServiceClient::installed().map_err(|_| ())?;
+        let Response::Status { value } = request(
+            &client,
+            Operation::Status {
+                operation: registration.operation,
+                scope: w::Kind::User,
+            },
+        )?
+        else {
+            return Err(());
+        };
+        if !value.login_ready || !registration.recovered(&value) {
+            return Err(());
+        }
+        let Response::BrokerChallenge { challenge: c } = request(
+            &client,
+            Operation::BrokerChallenge {
+                operation: complete.operation_id,
+                browser,
+            },
+        )?
+        else {
+            return Err(());
+        };
+        if c.operation_id != complete.operation_id
+            || c.challenge_id != complete.challenge_id
+            || c.nonce != complete.nonce
+            || c.expires_at <= now()?
+        {
+            return Err(());
+        }
+        let mut signature = [0; 64];
+        if sign.ok_or(())?(
+            context,
+            c.signing_payload.as_ptr(),
+            c.signing_payload.len(),
+            signature.as_mut_ptr(),
+        ) != 0
+        {
+            return Err(());
+        }
+        complete.proof = broker::NativeProof {
+            signature: URL_SAFE_NO_PAD.encode(signature),
+            access_token: Some(token),
+        };
+        CString::new(serde_json::to_vec(&complete).map_err(|_| ())?).map_err(|_| ())
+    }))
+    .ok()
+    .and_then(Result::ok)
+    .map_or(std::ptr::null_mut(), CString::into_raw)
+}
