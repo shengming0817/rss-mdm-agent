@@ -95,6 +95,24 @@ pub struct Modules {
     pub da: Module<agent_client::da::Backend>,
 }
 impl Modules {
+    pub(crate) fn employee_portal(
+        &self,
+    ) -> Result<Option<execution_ipc::device_access::EmployeePortal>, Error> {
+        match &self.da {
+            Module::Disabled => Ok(None),
+            Module::Enabled { backend } => {
+                execution_ipc::device_access::EmployeePortal::configured(
+                    backend.tenant,
+                    backend.instance,
+                    backend
+                        .browser
+                        .as_ref()
+                        .map(|b| (b.origin.as_str(), b.ca_pem.as_deref())),
+                )
+                .map_err(|_| Error::Configuration)
+            }
+        }
+    }
     pub(crate) fn validate_for(&self, assembly: Assembly) -> Result<(), Error> {
         assembly.accepts(self)?;
         if self.revision == 0 {
@@ -105,6 +123,7 @@ impl Modules {
         }
         if let Module::Enabled { backend } = &self.da {
             backend.validate()?;
+            self.employee_portal()?;
         }
         Ok(())
     }

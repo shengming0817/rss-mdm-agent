@@ -48,11 +48,11 @@ export function WindowsLoginSetup({ port }: { port: DeviceAccessPort }) {
     setTasks([]);
     setComponent(null);
     setActive(null);
-    const status = await port({ kind: "windowsStatus" });
-    if (status.kind !== "windowsStatus") throw Error();
-    setComponent(status.component);
-    setActive(status.factorActive);
-    if (status.component !== "ready") return;
+    const status = await port({ kind: "windowsStatus" }).catch(() => null);
+    setComponent(
+      status?.kind === "windowsStatus" ? status.component : "unavailable",
+    );
+    setActive(status?.kind === "windowsStatus" ? status.factorActive : null);
     const result = await port({ kind: "tasks" });
     if (result.kind !== "tasks") throw Error();
     setTasks(result.tasks);
@@ -63,7 +63,6 @@ export function WindowsLoginSetup({ port }: { port: DeviceAccessPort }) {
     const result = await port({ kind: "prepare", task: task.task });
     if (result.kind === "windowsStatus") {
       clear();
-      setTasks([]);
       setComponent(result.component);
       setActive(result.factorActive);
       return;
@@ -84,14 +83,15 @@ export function WindowsLoginSetup({ port }: { port: DeviceAccessPort }) {
     const result = await pending;
     if (result.kind === "windowsStatus") {
       clear();
-      setTasks([]);
       setComponent(result.component);
       setActive(result.factorActive);
       return;
     }
     if (result.kind !== "prepared") throw Error();
     clear();
-    setTasks([]);
+    setTasks((previous) =>
+      previous.filter((task) => task.task !== setup.task.task),
+    );
     setMessage("验证码已确认，等待本机应用和托管回执。");
   }
   return (
@@ -115,7 +115,7 @@ export function WindowsLoginSetup({ port }: { port: DeviceAccessPort }) {
       {tasks.map((task) => (
         <Button
           key={task.task}
-          disabled={busy}
+          disabled={busy || component !== "ready"}
           onClick={() => void run(() => prepare(task))}
         >
           {task.createName

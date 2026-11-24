@@ -419,6 +419,34 @@ fn initialize_preserve_and_unbind_use_real_factor_state_and_exact_ack() {
     assert_eq!(native.creates, 0);
 }
 #[test]
+fn a_second_apply_for_an_owned_sid_returns_a_definite_rejection() {
+    let (_root, mut input, mut native, _, recovery) = fixture(false);
+    let custody = ack(&input, recovery);
+    let original = engine::execute(&input, &mut native).unwrap();
+    custody.join().unwrap();
+    assert!(matches!(original.effect, w::AccessEffect::Applied { .. }));
+    let mut store = Store::open(&input.root, input.installation).unwrap();
+    let owner = store.authority(SID).unwrap().unwrap();
+    input.channel = device_access::Channel::Da;
+    input.task.binding_id = Uuid::new_v4();
+    input.task.task_id = Uuid::new_v4();
+    input.task.attempt_id = Uuid::new_v4();
+    store
+        .bind_registration(device_access::Registration {
+            channel: input.channel,
+            ..owner.registration()
+        })
+        .unwrap();
+    let refused = engine::execute(&input, &mut native).unwrap();
+    assert_eq!(
+        refused.effect,
+        w::AccessEffect::Failed {
+            reason: w::AccessFailure::AccountChanged
+        }
+    );
+    assert_eq!(store.authority(SID).unwrap(), Some(owner));
+}
+#[test]
 fn creation_activates_before_enable_and_replay_does_not_recreate_account() {
     let (_root, input, mut native, _, recovery) = fixture(true);
     let ack = ack(&input, recovery);

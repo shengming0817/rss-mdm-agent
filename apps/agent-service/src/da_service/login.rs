@@ -3,7 +3,7 @@ use super::*;
 use device_access::{Candidate, Store, SystemProtector};
 use execution_contract::{Id, NativeContextRef};
 use execution_ipc::{
-    device_access::{Operation, Response, SetupTask},
+    device_access::{EmployeePortal, Operation, Response, SetupTask},
     host::{ClientOrigin, NativeContextSession},
 };
 use rss_mdm_agent_wire::runtime as w;
@@ -58,7 +58,6 @@ struct Offer {
     password: Option<Zeroizing<String>>,
 }
 struct Check {
-    mdm_status_tried: bool,
     revision: u64,
     started: Instant,
     result: mpsc::Receiver<Result<(), Error>>,
@@ -83,6 +82,7 @@ impl State {
 }
 pub(super) struct Login {
     deployment: Deployment,
+    portal: Option<EmployeePortal>,
     state: Mutex<State>,
     verifier: mpsc::SyncSender<Verify>,
     pub(super) wake: tokio::sync::Notify,
@@ -90,46 +90,43 @@ pub(super) struct Login {
 }
 impl Login {
     pub(super) fn new(d: &Deployment, other: Option<Arc<dyn SessionFence>>) -> Result<Self, Error> {
-        let deployment = d.clone();
+        let portal = d.modules.employee_portal()?;
+        let issuer = portal.clone();
         let (verifier, queue) = mpsc::sync_channel::<Verify>(1);
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|_| Error::Unavailable)?;
         thread::Builder::new()
             .name("da-employee-verifier".into())
             .spawn(move || {
                 while let Ok(job) = queue.recv() {
-                    let result = Self::verify(&deployment, &job.employee);
+                    let result = rt.block_on(Self::verify(issuer.as_ref(), &job.employee));
                     let _ = job.result.send(result);
                 }
             })?;
         Ok(Self {
             deployment: d.clone(),
+            portal,
             state: Mutex::default(),
             other,
             verifier,
             wake: tokio::sync::Notify::new(),
         })
     }
-    fn verify(d: &Deployment, employee: &Employee) -> Result<(), Error> {
-        let user = &employee.identity;
-        let portal = execution_ipc::device_access::EmployeePortal::installed()
-            .ok_or(Error::Configuration)?;
-        let backend = d.modules.da.backend()?;
-        if (portal.tenant, portal.instance) != (backend.tenant, backend.instance)
-            || (user.tenant_id, user.instance_id) != (portal.tenant, portal.instance)
-            || !employee.current()
-        {
+    async fn verify(portal: Option<&EmployeePortal>, employee: &Employee) -> Result<(), Error> {
+        let portal = portal.ok_or(Error::Configuration)?;
+        if !portal.accepts(&employee.identity) || !employee.current() {
             return Err(Error::Identity);
         }
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(|_| Error::Unavailable)?;
-        let expiry = rt.block_on(da::verify_employee(
+        let expiry = da::verify_employee(
             &portal.origin,
             portal.ca_pem.as_deref(),
             portal.tenant,
-            user.principal_id,
+            employee.identity.principal_id,
             &employee.credential,
-        ))?;
+        )
+        .await?;
         if expiry <= utc()? {
             return Err(Error::Expired);
         }
@@ -162,21 +159,11 @@ impl Login {
             })
             .map_err(|_| Error::Capacity)?;
         s.checking = Some(Check {
-            mdm_status_tried: false,
             revision: s.revision,
             started: Instant::now(),
             result: rx,
         });
         Ok(false)
-    }
-    pub(super) fn first_status_probe(&self) -> bool {
-        let Ok(mut s) = self.state.lock() else {
-            return false;
-        };
-        let revision = s.revision;
-        s.checking.as_mut().is_some_and(|check| {
-            check.revision == revision && !std::mem::replace(&mut check.mdm_status_tried, true)
-        })
     }
     fn store(&self) -> Result<Store, Error> {
         Store::open(
@@ -236,8 +223,7 @@ impl Login {
         s.revision = s.revision.checked_add(1).ok_or(Error::Capacity)?;
         Ok(())
     }
-    /// Release one confirmed creation password on the delivery worker after fresh authentication.
-    pub(super) fn input(&self, t: &w::AccessTaskSpec) -> Result<Option<Zeroizing<String>>, Error> {
+    pub(super) async fn authorize_input(&self, t: &w::AccessTaskSpec) -> Result<u64, Error> {
         let (employee, revision) = {
             let s = self.state.lock().map_err(|_| Error::Unavailable)?;
             let e = s
@@ -254,15 +240,17 @@ impl Login {
             }
             (e.clone(), s.revision)
         };
-        // The delivery worker already runs a Tokio runtime. The shared IPC thread never joins this call.
-        thread::scope(|scope| {
-            scope
-                .spawn(|| Self::verify(&self.deployment, &employee))
-                .join()
-                .map_err(|_| Error::Unavailable)
-        })??;
+        Self::verify(self.portal.as_ref(), &employee).await?;
+        Ok(revision)
+    }
+    /// Consume once under the native worker lock after rechecking the verified console context.
+    pub(super) fn input(
+        &self,
+        t: &w::AccessTaskSpec,
+        revision: u64,
+    ) -> Result<Option<Zeroizing<String>>, Error> {
         let mut s = self.state.lock().map_err(|_| Error::Unavailable)?;
-        if revision != s.revision || !employee.permits(t) {
+        if s.revision != revision || !s.employee.as_ref().is_some_and(|e| e.permits(t)) {
             return Err(Error::Identity);
         }
         let o = s
@@ -286,7 +274,6 @@ impl Login {
         expected: Option<&Id>,
         revision: u64,
     ) -> Result<Reply, Error> {
-        let backend = self.deployment.modules.da.backend()?;
         let binding = peer.session_binding().map_err(|_| Error::Identity)?;
         execution_ipc::windows_identity::verify_unlocked_console(
             &subject,
@@ -317,8 +304,7 @@ impl Login {
             s.logout();
             return Ok(Reply::ContextBound { value: context });
         };
-        if user.tenant_id != backend.tenant
-            || user.instance_id != backend.instance
+        if !self.portal.as_ref().is_some_and(|p| p.accepts(user))
             || user.principal_id.is_nil()
             || value.expires_at_unix_ms <= crate::wall()?
             || value.expires_at_unix_ms > execution_contract::MAX_SAFE_INTEGER
@@ -469,6 +455,18 @@ impl Login {
         {
             return Ok(None);
         }
+        let root = crate::access_worker::root(&self.deployment.execution);
+        let installation = self.deployment.installation_id;
+        // This observation uses the current bound console SID, just like the MDM read.
+        if matches!(input, Operation::WindowsStatus {}) {
+            return Ok(Some(Reply::DeviceAccess {
+                value: Response::WindowsStatus(crate::access_component::status(
+                    &root,
+                    installation,
+                    subject,
+                )?),
+            }));
+        }
         let now = utc()?;
         s.offers
             .retain(|_, o| o.task.expires_at.min(o.task.deadline) > now);
@@ -490,13 +488,9 @@ impl Login {
         if !e.current() {
             return Err(Error::Identity);
         }
-        let root = crate::access_worker::root(&self.deployment.execution);
-        let installation = self.deployment.installation_id;
-        if matches!(input, Operation::WindowsStatus {}) || target.is_some() {
+        if target.is_some() {
             let status = crate::access_component::status(&root, installation, subject)?;
-            if matches!(input, Operation::WindowsStatus {})
-                || status.component != execution_ipc::device_access::WindowsComponentState::Ready
-            {
+            if status.component != execution_ipc::device_access::WindowsComponentState::Ready {
                 return Ok(Some(Reply::DeviceAccess {
                     value: Response::WindowsStatus(status),
                 }));

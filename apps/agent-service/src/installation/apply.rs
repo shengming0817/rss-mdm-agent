@@ -312,6 +312,7 @@ pub(super) fn module_status(config: &Path) -> Result<(), Error> {
     outcome::details(serde_json::json!({
         "available": available,
         "enabled": { "mdm":deployment.modules.mdm.enabled(), "da":deployment.modules.da.enabled() },
+        "daEmployeePortalOrigin":deployment.modules.employee_portal()?.map(|p|p.origin),
         "mdmRegistered":registered,"da":da.as_ref().ok().and_then(|state|state.as_ref()),"daError":da.as_ref().err(),"pendingOperation":pending,
         "revision":deployment.modules.revision,
     }))?;

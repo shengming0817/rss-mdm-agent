@@ -8,7 +8,7 @@
 
 `pnpm build:installer --organization /absolute/public-organization.json` 在当前原生平台构建 macOS arm64 PKG 或 Windows amd64 / arm64 的 perMachine NSIS EXE，不套用 MSI。macOS 构建命令通过 `python3 scripts/build-run.py -- pnpm build:installer ...` 复用本地 Cargo 槽位；Windows 使用 `pnpm exec node scripts/build-installers.mjs ...`。Windows 构建进程、Rust 工具链和 Node 必须为目标原生架构，不接受仿真进程或混合 PE。目标设备须预装 machine-wide WebView2；安装器缺失时明确拒绝。当前机器有匹配架构、受保护的 PowerShell 7 时才登记该解释器与相关能力。
 
-候选清单使用 v3，部署使用 v8。组织输入的 `modules` 明确给出首装默认选择，结构与下面 profile 的 `modules` 相同。启用 MDM 时，`modules.mdm.backend` 包含 `instance`、`tenant`、完整的签名 `connections`、`signing_keys` 和 HTTPS 公共 `ca_pem`。仅 DA 打包使用 DA 设备 listener 和公共 CA；可选 `desktop` 提供单独的浏览器 origin、租户、显示名与 HTTPS CA。安装后服务和桌面按受保护部署的实际模块选择员工登录路径。管理员可用 profile 的 `modules.da.backend.browser` 指定浏览器 `origin` 和可选的 `ca_pem`。双模块使用独立 DA 门户时，在桌面选择该门户对应的组织，员工会话关联 DA 实例。包内浏览器记录所属产品、实例和租户。省略浏览器配置时沿用与实际部署相符的包内 `desktop` 配置。设备注册秘密单独移交。
+候选清单使用 v3，部署使用 v8。组织输入的 `modules` 明确给出首装默认选择，结构与下面 profile 的 `modules` 相同。启用 MDM 时，`modules.mdm.backend` 包含 `instance`、`tenant`、完整的签名 `connections`、`signing_keys` 和 HTTPS 公共 `ca_pem`。仅 DA 打包使用 DA 设备 listener 和公共 CA；可选 `desktop` 提供单独的浏览器 origin、租户、显示名与 HTTPS CA。安装后服务和桌面按受保护部署的实际模块选择员工登录路径。管理员可用 profile 的 `modules.da.backend.browser` 指定浏览器 `origin` 和可选的 `ca_pem`。双模块使用独立 DA 门户时，在桌面选择该门户对应的组织，员工会话关联 DA 实例。包内浏览器记录所属产品、实例和租户。省略浏览器配置时，仅采用租户和实例均匹配的包内 `desktop` 配置。模块状态的 `daEmployeePortalOrigin` 为空时，DA 设备协议仍可运行；要开通员工登录，管理员可配置实际 DA 门户。设备注册秘密单独移交。
 
 
 开发与生产包均不强制发布者证书或公证：macOS 默认 ad-hoc，可使用自签名或 Apple Development；Windows 未提供签名材料时生成未签名包。`--release` 只标记包模式，不提高证书准入要求；该模式仍用于阻止 SIT 重置入口清理 release 安装。macOS 签名身份依次读取 `RSS_MACOS_APP_SIGNING_IDENTITY`、`RSS_MACOS_DEVELOPMENT_SIGNING_IDENTITY`，均缺失时使用 ad-hoc；`RSS_MACOS_INSTALLER_SIGNING_IDENTITY` 和已有的 `RSS_MACOS_NOTARY_PROFILE` Keychain 引用分别显式启用安装包签名、公证与 stapling。Windows 提供 `RSS_WINDOWS_SIGNING_THUMBPRINT` 才执行签名，可用 `RSS_SIGNTOOL` 指定工具。显式选择的签名或公证操作失败仍报错，构建不接收证书密码。固定路径、SHA-256/CDHash 和实际进程身份继续校验；系统加载、MDM、entitlement 和设备安全策略的实际接纳须独立取证。
@@ -406,7 +406,7 @@ Windows 登录增强使用单个 Credential Provider 和同一个受保护离线
 
 Windows x64 NSIS 候选包含 CP DLL；其他架构及 MSI/MSIX 未装配该组件，不得据 Agent 安装成功宣称 RSS 登录可用。开发与生产均不要求 Agent、Desktop、CP DLL 或安装包持有发布者证书；显式提供材料时可签名，运行时核对受保护固定路径和摘要，登录健康检查不强制 Authenticode Valid 或同发布者。候选、离线库均只支持当前格式，旧格式在切换服务/组件前拒绝，无自动迁移、双读或清库重建。拒绝升级时保留原部署及材料，由管理员通过原部署的正式退役流程处理。
 
-组件由 SYSTEM 服务在离线库初始化后从同一个固定安装候选注册；独立维修也消费已安装候选，不接受任意 DLL 路径作为另一条准入入口。新安装或 DLL 候选变化后须重启 Windows，重启前组件不宣称可用于认证。版本目录避免覆盖 LogonUI 已加载的 DLL；升级保留安装身份、限速、因子和撤销记录。
+组件由 SYSTEM 安装流程在建立系统服务注册时从固定候选注册。普通服务启动沿用已有组件；组件局部故障可从维修入口处理。独立维修也消费已安装候选，不接受任意 DLL 路径作为另一条准入入口。新安装或 DLL 候选变化后须重启 Windows，重启前组件不宣称可用于认证。版本目录避免覆盖 LogonUI 已加载的 DLL；升级保留安装身份、限速、因子和撤销记录。
 
 以 LocalSystem 主体使用固定服务镜像执行：
 

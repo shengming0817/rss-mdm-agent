@@ -129,7 +129,7 @@ pub(crate) fn renew(d: &Deployment) -> Result<(), Error> {
 
 pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
     #[cfg(windows)]
-    if let Err(e) = crate::access_component::prepare(&d) {
+    if let Err(e) = crate::access_component::prepare_store(&d) {
         return Ok(Deployment::startup_diagnostic(d.clients.clone(), e));
     }
     if !d.modules.da.enabled() {
@@ -264,23 +264,6 @@ struct Service {
     stop: Option<tokio::sync::oneshot::Sender<()>>,
     worker: Option<thread::JoinHandle<Result<(), Error>>>,
 }
-// The MDM owner can authorize this read from its local employee context while DA
-// verifies in parallel. Setup secrets and mutations never enter this route.
-#[cfg(any(windows, test))]
-fn available_status(da: Reply, mdm: impl FnOnce() -> Reply) -> Reply {
-    if !matches!(
-        da,
-        Reply::DaVerificationPending {} | Reply::Rejected | Reply::Unavailable
-    ) {
-        return da;
-    }
-    match mdm() {
-        reply @ Reply::DeviceAccess {
-            value: execution_ipc::device_access::Response::WindowsStatus(_),
-        } => reply,
-        _ => da,
-    }
-}
 impl Handler for Service {
     fn session_fence(&self) -> Option<Arc<dyn SessionFence>> {
         #[cfg(windows)]
@@ -315,22 +298,6 @@ impl Handler for Service {
             use execution_ipc::device_access::Response;
             match (&mut self.mdm, reply) {
                 (None, reply) => return reply,
-                (Some(mdm), da)
-                    if matches!(
-                        request,
-                        Request::DeviceAccess {
-                            input: execution_ipc::device_access::Operation::WindowsStatus {},
-                            ..
-                        }
-                    ) =>
-                {
-                    if matches!(da, Reply::DaVerificationPending {})
-                        && !self.login.first_status_probe()
-                    {
-                        return da;
-                    }
-                    return available_status(da, || mdm.handle(peer, request));
-                }
                 (Some(mdm), Reply::ContextBound { value }) => {
                     let original = mdm.handle(peer, request);
                     return if matches!(original, Reply::ContextBound { .. }) {
@@ -412,55 +379,5 @@ impl Handler for Service {
                 .map_err(|_| execution_app::Error::Unavailable)?;
         }
         mdm.map(|_| ())
-    }
-}
-
-#[cfg(test)]
-mod local_status_tests {
-    use super::*;
-    use execution_ipc::device_access::{
-        Response, WindowsComponentState, WindowsHelloAvailability, WindowsHelloStatus,
-        WindowsStatus,
-    };
-    fn ready() -> Reply {
-        Reply::DeviceAccess {
-            value: Response::WindowsStatus(WindowsStatus {
-                component: WindowsComponentState::Ready,
-                factor_active: None,
-                sign_in_required: false,
-                hello: WindowsHelloStatus {
-                    availability: WindowsHelloAvailability::Unavailable,
-                    desired_enabled: None,
-                    retired: false,
-                    replacement_required: false,
-                    facts: None,
-                },
-            }),
-        }
-    }
-    #[test]
-    fn diagnostics_and_identity_outages_preserve_the_other_authorized_status() {
-        assert!(matches!(
-            available_status(Reply::DaVerificationPending {}, || Reply::Rejected),
-            Reply::DaVerificationPending {}
-        ));
-        assert!(matches!(
-            available_status(ready(), || panic!("DA supplied native status")),
-            Reply::DeviceAccess {
-                value: Response::WindowsStatus(_)
-            }
-        ));
-        for da in [Reply::DaVerificationPending {}, Reply::Rejected] {
-            assert!(matches!(
-                available_status(da, ready),
-                Reply::DeviceAccess {
-                    value: Response::WindowsStatus(_)
-                }
-            ));
-        }
-        assert!(matches!(
-            available_status(Reply::Rejected, || Reply::ContextRevoked),
-            Reply::Rejected
-        ));
     }
 }

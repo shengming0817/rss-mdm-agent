@@ -201,6 +201,10 @@ fn register_verified(binary: &Path, config: &Path, deployment: &Deployment) -> R
         handle
     } else {
         let manager = manager()?;
+        // Install the login component with a new SCM registration, including program rollback.
+        // Restarting an owned service needs no Provider registry writes.
+        crate::access_component::prepare_store(deployment)?;
+        crate::access_component::install_for(deployment, false)?;
         let image = wide(program(binary, config)?);
         let handle = unsafe {
             CreateServiceW(

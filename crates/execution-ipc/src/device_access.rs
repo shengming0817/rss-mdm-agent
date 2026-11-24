@@ -225,100 +225,102 @@ pub struct WindowsHelloStatus {
 
 /// Employee session issuer installed with the desktop and the SYSTEM service. IPC requests
 /// cannot select this endpoint. Pinning it separately keeps browser cookies off the mTLS listener.
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EmployeePortal {
     /// Exact public HTTPS browser origin.
     pub origin: String,
-    /// Optional private browser root.
+    /// Optional public trust root.
     pub ca_pem: Option<String>,
-    /// Product instance that mounts the Identity routes.
+    /// Product installation owning the portal.
     pub instance: Uuid,
     /// Tenant at this issuer.
     pub tenant: Uuid,
-    /// The selected portal authenticates employees for DA operation grants.
-    pub da_session: bool,
+    product: PortalProduct,
 }
-#[derive(Deserialize, PartialEq, Eq)]
+#[derive(Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 enum PortalProduct {
     Mdm,
     Da,
 }
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct PackagePortal {
-    product: PortalProduct,
-    instance: Uuid,
-    tenant: Uuid,
-    origin: String,
-    ca_pem: Option<String>,
-}
 impl EmployeePortal {
-    /// Both images read the same effective administrator-protected deployment. The package
-    /// supplies only a default browser origin, never the installed module selection.
+    /// Whether the issuer supplies DA employee login directly.
+    pub fn dedicated(&self) -> bool {
+        self.product == PortalProduct::Da
+    }
+    /// Compare a desktop IPC identity to this configured employee issuer.
+    pub fn accepts(&self, user: &w::SelfServiceUser) -> bool {
+        (self.tenant, self.instance) == (user.tenant_id, user.instance_id)
+    }
+    /// The desktop uses the same protected DA profile and packaged issuer as the service.
     pub fn installed() -> Option<Self> {
         let path = installation_security::deployment_path().ok()?;
         let bytes = installation_security::read_protected(&path).ok()?;
-        let deployment: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-        Self::resolve(&deployment, option_env!("RSS_BUILD_EMPLOYEE_PORTAL"))
-    }
-    fn resolve(d: &serde_json::Value, packaged: Option<&str>) -> Option<Self> {
+        let d: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
         if d["version"].as_u64() != Some(u64::from(crate::host::DEPLOYMENT_VERSION))
             || d["ipc_version"].as_u64() != Some(u64::from(crate::host::IPC_VERSION))
+            || d["modules"]["da"]["state"] != "enabled"
         {
             return None;
         }
-        let modules = &d["modules"];
-        if modules["da"]["state"] != "enabled" {
-            return None;
-        }
-        let backend = &modules["da"]["backend"];
-        let tenant: Uuid = serde_json::from_value(backend["tenant"].clone()).ok()?;
-        let instance: Uuid = serde_json::from_value(backend["instance"].clone()).ok()?;
-        if tenant.is_nil() || instance.is_nil() {
-            return None;
-        }
-        let mdm = match modules["mdm"]["state"].as_str()? {
-            "disabled" => None,
-            "enabled" => Some((
-                serde_json::from_value::<Uuid>(modules["mdm"]["backend"]["tenant"].clone()).ok()?,
-                serde_json::from_value::<Uuid>(modules["mdm"]["backend"]["instance"].clone())
-                    .ok()?,
-            )),
-            _ => return None,
+        let da = &d["modules"]["da"]["backend"];
+        let browser = match da.get("browser").filter(|b| !b.is_null()) {
+            Some(b) => Some((b["origin"].as_str()?, b["ca_pem"].as_str())),
+            None => None,
         };
-        let packaged = packaged.and_then(|raw| serde_json::from_str::<PackagePortal>(raw).ok());
-        let (origin, ca_pem) =
-            if let Some(browser) = backend.get("browser").filter(|b| !b.is_null()) {
-                (
-                    Self::origin(browser["origin"].as_str()?)?,
-                    browser["ca_pem"].as_str().map(String::from),
-                )
-            } else {
-                let p = packaged.as_ref()?;
-                let packaged_identity = (p.tenant, p.instance);
-                if p.tenant != tenant
-                    || packaged_identity != (tenant, instance)
-                        && !(p.product == PortalProduct::Mdm && mdm == Some(packaged_identity))
-                {
-                    return None;
-                }
-                (Self::origin(&p.origin)?, p.ca_pem.clone())
-            };
-        let shared_mdm = packaged.as_ref().is_some_and(|p| {
-            p.product == PortalProduct::Mdm
-                && p.tenant == tenant
-                && mdm == Some((p.tenant, p.instance))
-                && Self::origin(&p.origin).as_ref() == Some(&origin)
-        });
-        Some(Self {
+        Self::configured(
+            serde_json::from_value(da["tenant"].clone()).ok()?,
+            serde_json::from_value(da["instance"].clone()).ok()?,
+            browser,
+        )
+        .ok()
+        .flatten()
+    }
+    /// Resolve employee login independently of the device listener or other enabled modules.
+    /// A device-only profile has no employee portal.
+    pub fn configured(
+        tenant: Uuid,
+        instance: Uuid,
+        browser: Option<(&str, Option<&str>)>,
+    ) -> Result<Option<Self>, installation_security::Rejected> {
+        Self::resolve(
+            tenant,
+            instance,
+            browser,
+            option_env!("RSS_BUILD_EMPLOYEE_PORTAL"),
+        )
+    }
+    fn resolve(
+        tenant: Uuid,
+        instance: Uuid,
+        browser: Option<(&str, Option<&str>)>,
+        packaged: Option<&str>,
+    ) -> Result<Option<Self>, installation_security::Rejected> {
+        use installation_security::Rejected;
+        let mut package = packaged
+            .map(serde_json::from_str::<Self>)
+            .transpose()
+            .map_err(|_| Rejected)?;
+        if let Some(p) = &mut package {
+            p.origin = Self::origin(&p.origin).ok_or(Rejected)?;
+        }
+        let Some((origin, ca)) = browser else {
+            return Ok(package.filter(|p| (p.tenant, p.instance) == (tenant, instance)));
+        };
+        let origin = Self::origin(origin).ok_or(Rejected)?;
+        let product = match package.filter(|p| p.origin == origin && p.tenant == tenant) {
+            Some(p) if p.instance != instance => return Err(Rejected),
+            Some(p) => p.product,
+            None => PortalProduct::Da,
+        };
+        Ok(Some(Self {
+            product,
             origin,
             instance,
             tenant,
-            ca_pem,
-            da_session: !shared_mdm,
-        })
+            ca_pem: ca.map(String::from),
+        }))
     }
     fn origin(raw: &str) -> Option<String> {
         let mut url = url::Url::parse(raw).ok()?;
@@ -344,48 +346,25 @@ mod portal_tests {
     use super::*;
     use serde_json::json;
     #[test]
-    fn installed_modules_and_the_pinned_browser_issuer_choose_the_session_route() {
+    fn employee_portal_belongs_to_one_instance_regardless_of_coinstalled_modules() {
         let tenant = Uuid::new_v4();
-        let da = Uuid::new_v4();
-        let mdm = Uuid::new_v4();
-        let mut d = json!({"version":crate::host::DEPLOYMENT_VERSION,"ipc_version":crate::host::IPC_VERSION,
-            "modules":{"mdm":{"state":"disabled"},"da":{"state":"enabled","backend":{"tenant":tenant,"instance":da}}}});
-        let package = |product: &str, instance: Uuid, origin: &str| {
-            json!({"product":product,"instance":instance,"tenant":tenant,"origin":origin})
-                .to_string()
-        };
-        let da_package = package("da", da, "https://da.test");
-        assert!(
-            EmployeePortal::resolve(&d, Some(&da_package))
+        let a = Uuid::new_v4();
+        let b = Uuid::new_v4();
+        for (product, instance) in [("mdm", a), ("da", b)] {
+            let package=json!({"product":product,"tenant":tenant,"instance":instance,"origin":"https://package.test"}).to_string();
+            let resolve = |instance, browser| {
+                EmployeePortal::resolve(tenant, instance, browser, Some(&package))
+            };
+            let same = resolve(instance, None).unwrap().unwrap();
+            assert_eq!(same.dedicated(), product == "da");
+            let other = if instance == a { b } else { a };
+            assert!(resolve(other, None).unwrap().is_none());
+            assert!(resolve(other, Some(("https://PACKAGE.test./", None))).is_err());
+            let distinct = resolve(other, Some(("https://other.test", None)))
                 .unwrap()
-                .da_session
-        );
-        d["modules"]["mdm"] = json!({"state":"enabled","backend":{"instance":mdm,"tenant":tenant}});
-        for browser in [
-            serde_json::Value::Null,
-            json!({"origin":"https://DA.test./","ca_pem":"profile CA"}),
-        ] {
-            d["modules"]["da"]["backend"]["browser"] = browser;
-            let p = EmployeePortal::resolve(&d, Some(&da_package)).unwrap();
-            assert!(p.da_session);
-            assert_eq!(p.origin, "https://da.test");
-            assert_eq!(p.instance, da);
+                .unwrap();
+            assert!(distinct.dedicated());
+            assert_eq!(distinct.instance, other);
         }
-        let mdm_package = package("mdm", mdm, "https://mdm.test");
-        assert!(
-            EmployeePortal::resolve(&d, Some(&mdm_package))
-                .unwrap()
-                .da_session
-        );
-        d["modules"]["da"]["backend"]["browser"] = serde_json::Value::Null;
-        assert!(
-            !EmployeePortal::resolve(&d, Some(&mdm_package))
-                .unwrap()
-                .da_session
-        );
-        let foreign = package("da", Uuid::new_v4(), "https://da.test");
-        assert!(EmployeePortal::resolve(&d, Some(&foreign)).is_none());
-        d["modules"]["da"]["state"] = json!("disabled");
-        assert!(EmployeePortal::resolve(&d, Some(&da_package)).is_none());
     }
 }

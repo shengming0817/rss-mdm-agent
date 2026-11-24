@@ -518,7 +518,7 @@ impl EnterpriseSession {
         // returned by its authenticated device listener, independently of employee login.
         if let Some(portal) =
             execution_ipc::device_access::EmployeePortal::installed().filter(|p| {
-                p.da_session
+                p.dedicated()
                     && p.origin == self.organization.origin
                     && p.tenant.to_string() == self.organization.tenant_id
             })
@@ -1051,6 +1051,18 @@ pub(super) mod http_tests {
             native.user().unwrap().instance_id.to_string(),
             session.instance
         );
+        let user = native.user().unwrap();
+        // Use the identity actually returned by /authorization and serialized for BindContext.
+        for instance in [user.instance_id, Uuid::new_v4()] {
+            let portal = execution_ipc::device_access::EmployeePortal::configured(
+                user.tenant_id,
+                instance,
+                Some(("https://employee.example.test", None)),
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(portal.accepts(user), instance == user.instance_id);
+        }
         let context = serde_json::to_string(&session.context().unwrap()).unwrap();
         for secret in [
             "password-canary",

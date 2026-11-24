@@ -254,7 +254,7 @@ pub(crate) fn remove_for(deployment: &crate::deployment::Deployment) -> Result<(
 }
 
 /// Open the single installation-bound login store before either delivery owner starts.
-pub(crate) fn prepare(deployment: &crate::deployment::Deployment) -> Result<(), Error> {
+pub(crate) fn prepare_store(deployment: &crate::deployment::Deployment) -> Result<(), Error> {
     let root = crate::access_worker::root(&deployment.execution);
     if root.try_exists()? {
         device_access::Store::open(&root, deployment.installation_id)
@@ -275,7 +275,7 @@ pub(crate) fn prepare(deployment: &crate::deployment::Deployment) -> Result<(), 
         device_access::Store::create(&root, deployment.installation_id)
             .map_err(|_| Error::Storage)?;
     }
-    install_for(deployment, false)
+    Ok(())
 }
 
 /// Both unattended installation and explicit repair consume the same frozen candidate.
@@ -320,6 +320,16 @@ pub(crate) fn install_for(
         )?;
     }
     let unchanged = old.is_some() && get(CONFIG_KEY, "ImageSha256")? == digest;
+    let inproc = format!("{}\\InprocServer32", class());
+    if !repair
+        && unchanged
+        && get(&inproc, "").is_ok_and(|path| Path::new(&path) == dll.path)
+        && old
+            .as_ref()
+            .is_some_and(|config| health_for(config).is_ok())
+    {
+        return Ok(());
+    }
     let config = Installation {
         root,
         id: deployment.installation_id,
@@ -339,7 +349,6 @@ pub(crate) fn install_for(
     )?;
     set(CONFIG_KEY, "ImageSha256", &digest)?;
     set(CONFIG_KEY, "MaintenanceDisabled", "0")?;
-    let inproc = format!("{}\\InprocServer32", class());
     set(&inproc, "", dll.path.to_str().ok_or(Error::Configuration)?)?;
     set(&inproc, "ThreadingModel", "Apartment")?;
     set(&provider(), "", "RSS Device Access")?;

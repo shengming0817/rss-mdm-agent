@@ -219,8 +219,20 @@ async fn account(
         },
         session: SessionRequirement::NotRequired {},
     };
+    let employee = if needs_input {
+        match login.authorize_input(&t).await {
+            Ok(revision) => Some(revision),
+            Err(Error::Denied) => return Ok(()),
+            Err(e) => return Err(e),
+        }
+    } else {
+        None
+    };
     let step = access::drive_da(&input, || {
-        let password = if needs_input { login.input(&t)? } else { None };
+        let password = match employee {
+            Some(revision) => login.input(&t, revision)?,
+            None => None,
+        };
         if t.expires_at.min(t.deadline) <= now()? {
             return Err(Error::Expired);
         }

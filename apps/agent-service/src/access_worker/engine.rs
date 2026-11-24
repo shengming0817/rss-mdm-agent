@@ -155,7 +155,18 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
             Err(reason) => Effect::Failed { reason },
         });
     }
-    store.admit_task(input.channel, task).map_err(storage)?;
+    match store.admit_task(input.channel, task) {
+        Err(device_access::Error::Changed)
+            if matches!(task.action, Action::Apply { .. })
+                && prepared(&input.root, task)?.is_none() =>
+        {
+            return Ok(Effect::Failed {
+                reason: Failure::AccountChanged,
+            });
+        }
+        admitted => admitted.map_err(storage)?,
+    }
+
     // Require already confirmed setup before touching an OS account.
     if matches!(task.windows, Some(Plan::Initialize { .. })) {
         store
