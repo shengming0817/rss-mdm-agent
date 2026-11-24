@@ -792,6 +792,64 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
 }
 
 #[test]
+fn mac_uninstall_requires_the_released_operation_of_this_installation() {
+    let root = Root::new();
+    let backend = Backend {
+        browser: None,
+        instance: SERVICE_ID,
+        tenant: Uuid::new_v4(),
+        origin: "https://da.test".into(),
+        ca_pem: String::from_utf8(fixture::ca()).unwrap(),
+    };
+    let install = Uuid::new_v4();
+    let client = Client::open(
+        &root.path,
+        backend.clone(),
+        install,
+        Secrets::new(),
+        Time(Arc::new(AtomicI64::new(2_000_000_000))),
+    )
+    .unwrap();
+    let r = wire::Registration {
+        service_id: SERVICE_ID,
+        tenant: backend.tenant,
+        device: rss_mdm_agent_wire::DeviceId::new_v4(),
+        credential: Uuid::new_v4(),
+        issuance_id: Uuid::new_v4(),
+        operation_id: Uuid::new_v4(),
+    };
+    let withdrawal = wire::RevocationReceipt {
+        service_id: r.service_id,
+        tenant: r.tenant,
+        device: r.device,
+        credential: r.credential,
+        operation_id: Uuid::new_v4(),
+    };
+    let op = withdrawal.operation_id;
+    write(
+        &client.journal.db,
+        "active",
+        &registration::Active {
+            receipt: r,
+            chain: vec![],
+            key: "original".into(),
+            validity: (1, 3_000_000_000),
+        },
+    )
+    .unwrap();
+    write(&client.journal.db, "revocation", &withdrawal).unwrap();
+    assert!(retired_receipt(&root.path, &backend, install, op).is_err());
+    client.retire(&withdrawal).unwrap();
+    assert_eq!(
+        retired_receipt(&root.path, &backend, install, op).unwrap(),
+        withdrawal
+    );
+    assert!(retired_receipt(&root.path, &backend, Uuid::new_v4(), op).is_err());
+    assert!(retired_receipt(&root.path, &backend, install, Uuid::new_v4()).is_err());
+    client.prepare(Uuid::new_v4(), Ok).unwrap();
+    assert!(retired_receipt(&root.path, &backend, install, op).is_err());
+}
+#[test]
 fn expired_unsubmitted_grant_allows_new_authorization_without_reusing_its_key() {
     let root = Root::new();
     let time = Time(Arc::new(AtomicI64::new(2_000_000_000)));

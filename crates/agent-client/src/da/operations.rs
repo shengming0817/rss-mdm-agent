@@ -140,6 +140,7 @@ impl<S: Credentials, C: Clock> Client<S, C> {
         let mut release: Vec<(String, bool)> = read(&tx, "release")?.unwrap_or_default();
         release.push((active.key, true));
         write(&tx, "release", &release)?;
+        write(&tx, "retired-registration", receipt)?;
         tx.execute(
             "DELETE FROM state WHERE name IN ('active','applied-proof','effective-digest')",
             [],

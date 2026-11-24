@@ -685,7 +685,7 @@ fn validate_markers(root: &Path, namespace: &str) -> Result<(), Error> {
     Ok(())
 }
 
-fn never_initialized(root: &Path) -> Result<bool, Error> {
+pub(crate) fn never_initialized(root: &Path) -> Result<bool, Error> {
     match std::fs::symlink_metadata(root) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             installation_security::protected(root.parent().ok_or(Error::Configuration)?)

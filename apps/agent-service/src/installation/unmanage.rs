@@ -12,13 +12,67 @@ enum Phase {
     StateRemoved,
     Finished,
 }
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(
+    tag = "channel",
+    content = "proof",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+enum RemovalPermit {
+    Mdm(Box<UnmanagePermit>),
+    #[cfg(target_os = "macos")]
+    Da(rss_mdm_agent_wire::da::RevocationReceipt),
+}
+impl RemovalPermit {
+    fn operation(&self) -> uuid::Uuid {
+        match self {
+            Self::Mdm(p) => p.task().task_id,
+            #[cfg(target_os = "macos")]
+            Self::Da(r) => r.operation_id,
+        }
+    }
+    fn verify(&self, d: &Deployment) -> Result<(), Error> {
+        match self {
+            Self::Mdm(p) => p.verify_handoff(&d.network()?, d.installation_id),
+            #[cfg(target_os = "macos")]
+            Self::Da(r) => {
+                let backend = d.modules.da.backend()?;
+                if d.modules.mdm.enabled()
+                    || r.operation_id.is_nil()
+                    || r.credential.is_nil()
+                    || (r.tenant, r.service_id) != (backend.tenant, backend.instance)
+                {
+                    return Err(Error::Identity);
+                }
+                Ok(())
+            }
+        }
+    }
+}
+#[cfg(target_os = "macos")]
+fn released_da(
+    d: &Deployment,
+    operation: uuid::Uuid,
+) -> Result<rss_mdm_agent_wire::da::RevocationReceipt, Error> {
+    if d.modules.mdm.enabled() || !crate::deployment::never_initialized(&d.state_root)? {
+        return Err(Error::Denied);
+    }
+    agent_client::da::retired_receipt(
+        &d.da_root()?,
+        d.modules.da.backend()?,
+        d.installation_id,
+        operation,
+    )
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Recovery {
     version: u8,
     deployment: Deployment,
     candidate: Candidate,
-    permit: UnmanagePermit,
+    permit: RemovalPermit,
     package_managed: bool,
     phase: Phase,
     outcome: Option<UnmanageOutcome>,
@@ -36,7 +90,7 @@ fn path(task: uuid::Uuid) -> Result<PathBuf, Error> {
     Ok(root()?.join(format!("{task}.retirement-work.json")))
 }
 fn persist(record: &Recovery) -> Result<(), Error> {
-    publish(&path(record.permit.task().task_id)?, &json(record)?)
+    publish(&path(record.permit.operation())?, &json(record)?)
 }
 fn load(task: uuid::Uuid) -> Result<Recovery, Error> {
     let bytes = installation_security::read_protected(&path(task)?).map_err(|_| Error::Identity)?;
@@ -45,13 +99,11 @@ fn load(task: uuid::Uuid) -> Result<Recovery, Error> {
     Ok(record)
 }
 fn validate(r: &Recovery, task: uuid::Uuid) -> Result<(), Error> {
-    r.deployment.require_mdm_assembly()?;
     if r.version != 1 {
         return Err(Error::Configuration);
     }
-    r.permit
-        .verify_handoff(&r.deployment.network()?, r.deployment.installation_id)?;
-    if r.permit.task().task_id != task
+    r.permit.verify(&r.deployment)?;
+    if r.permit.operation() != task
         || r.candidate.service.path != r.deployment.service.path
         || r.candidate.root.parent() != Some(platform::payload_parent()?.as_path())
         || r.candidate.root.as_path()
@@ -83,10 +135,10 @@ pub(crate) fn supported(d: &Deployment) -> bool {
         .and_then(|c| c.format())
         .is_ok_and(|f| matches!(f.as_str(), "macos_pkg" | "windows_exe"))
 }
-fn prepare(d: &Deployment, permit: &UnmanagePermit, package_managed: bool) -> Result<(), Error> {
-    d.require_mdm_assembly()?;
-    if path(permit.task().task_id)?.exists() {
-        let old = load(permit.task().task_id)?;
+fn prepare(d: &Deployment, permit: RemovalPermit, package_managed: bool) -> Result<(), Error> {
+    permit.verify(d)?;
+    if path(permit.operation())?.exists() {
+        let old = load(permit.operation())?;
         if old.deployment.installation_id != d.installation_id
             || old.package_managed != package_managed
         {
@@ -97,7 +149,7 @@ fn prepare(d: &Deployment, permit: &UnmanagePermit, package_managed: bool) -> Re
     if crate::da_service::has_retained_identity(d)? {
         return Err(Error::Denied);
     }
-    if !package_managed && !supported(d) {
+    if matches!(permit, RemovalPermit::Mdm(_)) && !package_managed && !supported(d) {
         return Err(Error::Unsupported);
     }
     let current = Deployment::metadata(&Deployment::default_path()?)?;
@@ -107,16 +159,31 @@ fn prepare(d: &Deployment, permit: &UnmanagePermit, package_managed: bool) -> Re
     {
         return Err(Error::Identity);
     }
-    let checked = agent_client::inspect_unmanage(
-        &d.state_root.join("communication"),
-        &d.network()?,
-        d.installation_id,
-        permit.task().task_id,
-    )?;
     let candidate = Candidate::retained(&Deployment::default_path()?, d)?;
-    if package_managed && candidate.format()? != "windows_msi" {
-        return Err(Error::Denied);
-    }
+    let checked = match permit {
+        RemovalPermit::Mdm(ref p) => {
+            if package_managed && candidate.format()? != "windows_msi" {
+                return Err(Error::Denied);
+            }
+            RemovalPermit::Mdm(Box::new(agent_client::inspect_unmanage(
+                &d.state_root.join("communication"),
+                &d.network()?,
+                d.installation_id,
+                p.task().task_id,
+            )?))
+        }
+        #[cfg(target_os = "macos")]
+        RemovalPermit::Da(ref receipt) => {
+            if package_managed
+                || candidate.format()? != "macos_pkg"
+                || &released_da(d, receipt.operation_id)? != receipt
+            {
+                return Err(Error::Denied);
+            }
+            crate::service::platform_sso::uninstall_preflight(d)?;
+            permit.clone()
+        }
+    };
     let record = Recovery {
         version: 1,
         deployment: d.clone(),
@@ -129,12 +196,12 @@ fn prepare(d: &Deployment, permit: &UnmanagePermit, package_managed: bool) -> Re
         credentials_complete: None,
         carrier_released: false,
     };
-    validate(&record, permit.task().task_id)?;
+    validate(&record, permit.operation())?;
     platform::public_directory(&root()?)?;
     d.service
         .verify(&d.service.path)
         .map_err(|_| Error::Identity)?;
-    let image = platform::unmanage_binary(d, permit.task().task_id)?;
+    let image = platform::unmanage_binary(d, permit.operation())?;
     match std::fs::symlink_metadata(&image) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             publish_new(&image, &read_image(&d.service.path, &d.service.sha256)?)?
@@ -155,10 +222,10 @@ fn prepare(d: &Deployment, permit: &UnmanagePermit, package_managed: bool) -> Re
     }
     .verify(&image)
     .map_err(|_| Error::Identity)?;
-    publish_new(&path(permit.task().task_id)?, &json(&record)?)
+    publish_new(&path(permit.operation())?, &json(&record)?)
 }
 pub(crate) fn launch(d: &Deployment, permit: &UnmanagePermit) -> Result<(), Error> {
-    prepare(d, permit, false)?;
+    prepare(d, RemovalPermit::Mdm(Box::new(permit.clone())), false)?;
     if !load(permit.task().task_id)?.carrier_released {
         platform::launch_unmanage(d, permit.task().task_id)?;
     }
@@ -177,7 +244,7 @@ pub(super) fn package_remove(config: &Path, binary: &Path, task: uuid::Uuid) -> 
         d.installation_id,
         task,
     )?;
-    prepare(&d, &permit, true)?;
+    prepare(&d, RemovalPermit::Mdm(Box::new(permit)), true)?;
     // Register the independent recovery carrier before the package process can stop us.
     platform::launch_unmanage(&d, task)?;
     execute(task, true)
@@ -255,7 +322,21 @@ fn execute(task: uuid::Uuid, package_entry: bool) -> Result<(), Error> {
     match std::fs::symlink_metadata(&config) {
         Ok(_) => {
             let current = Deployment::metadata(&config)?;
-            current.require_mdm_assembly()?;
+            r.permit.verify(&current)?;
+            #[cfg(target_os = "macos")]
+            if let RemovalPermit::Da(receipt) = &r.permit {
+                if !crate::deployment::never_initialized(&current.state_root)? {
+                    return Err(Error::Denied);
+                }
+                // The carrier owns a validated receipt after the channel directory itself was removed.
+                if r.phase != Phase::CredentialsRemoved
+                    && r.phase != Phase::StateRemoved
+                    && r.phase != Phase::Finished
+                    && &released_da(&current, task)? != receipt
+                {
+                    return Err(Error::Identity);
+                }
+            }
             if crate::da_service::has_retained_identity(&current)? {
                 return Err(Error::Denied);
             }
@@ -295,6 +376,11 @@ fn execute(task: uuid::Uuid, package_entry: bool) -> Result<(), Error> {
     // depends on reviving those keys; absent transport leaves the server unconfirmed.
     let transport = (|| {
         let d = &r.deployment;
+        let permit = match &r.permit {
+            RemovalPermit::Mdm(p) => p,
+            #[cfg(target_os = "macos")]
+            RemovalPermit::Da(_) => return Err(Error::Unsupported),
+        };
         let provider = crate::DeviceSecrets::open(&d.state_root.join("secrets"), &d.namespace()?)?;
         let client = agent_client::Client::open(
             &d.state_root.join("communication"),
@@ -303,7 +389,7 @@ fn execute(task: uuid::Uuid, package_entry: bool) -> Result<(), Error> {
             provider,
             SystemClock::new()?,
         )?;
-        client.unmanage_transport(&r.permit)
+        client.unmanage_transport(permit)
     })()
     .ok();
     let deployment = r.deployment.clone();
@@ -326,11 +412,20 @@ fn execute(task: uuid::Uuid, package_entry: bool) -> Result<(), Error> {
                 }
                 Phase::PayloadRemoved => {
                     outcome::phase("retirement-credentials")?;
-                    let secrets = crate::DeviceSecrets::open(
-                        &deployment.state_root.join("secrets"),
-                        &deployment.namespace()?,
-                    )?;
-                    complete.set(Some(secrets.0.retire(permit.credentials())?));
+                    let done = match &permit {
+                        RemovalPermit::Mdm(p) => {
+                            let secrets = crate::DeviceSecrets::open(
+                                &deployment.state_root.join("secrets"),
+                                &deployment.namespace()?,
+                            )?;
+                            secrets.0.retire(p.credentials())?
+                        }
+                        #[cfg(target_os = "macos")]
+                        RemovalPermit::Da(_) => {
+                            crate::da_service::release_installation(&deployment)?
+                        }
+                    };
+                    complete.set(Some(done));
                 }
                 Phase::CredentialsRemoved => {
                     outcome::phase("retirement-state")?;
@@ -343,6 +438,10 @@ fn execute(task: uuid::Uuid, package_entry: bool) -> Result<(), Error> {
                     roots.dedup();
                     for root in roots {
                         remove_tree(root)?;
+                    }
+                    #[cfg(target_os = "macos")]
+                    if matches!(permit, RemovalPermit::Da(_)) {
+                        remove_tree(&deployment.da_root()?)?;
                     }
                     remove_file(&config)?;
                 }
@@ -388,13 +487,24 @@ pub(super) fn run(task: uuid::Uuid, binary: &Path) -> Result<(), Error> {
         if d.service.path != binary {
             return Err(Error::Identity);
         }
-        let permit = agent_client::inspect_unmanage(
-            &d.state_root.join("communication"),
-            &d.network()?,
-            d.installation_id,
-            task,
-        )?;
-        prepare(&d, &permit, false)?;
+        let permit = if d.modules.mdm.enabled() {
+            RemovalPermit::Mdm(Box::new(agent_client::inspect_unmanage(
+                &d.state_root.join("communication"),
+                &d.network()?,
+                d.installation_id,
+                task,
+            )?))
+        } else {
+            #[cfg(target_os = "macos")]
+            {
+                RemovalPermit::Da(released_da(&d, task)?)
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                return Err(Error::Unsupported);
+            }
+        };
+        prepare(&d, permit, false)?;
     }
     let recovery = load(task)?;
     if recovery.deployment.service.path != binary {
@@ -403,7 +513,10 @@ pub(super) fn run(task: uuid::Uuid, binary: &Path) -> Result<(), Error> {
     if std::env::current_exe()? == recovery.deployment.service.path {
         // Authorized product uninstall hands off to the same independent carrier;
         // it never attempts to delete its own active payload inline.
-        return launch(&recovery.deployment, &recovery.permit);
+        if !recovery.carrier_released {
+            platform::launch_unmanage(&recovery.deployment, task)?;
+        }
+        return Ok(());
     }
     let result = execute(task, false);
     if let Err(error) = result {

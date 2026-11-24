@@ -11,6 +11,25 @@ use std::{
     time::Duration,
 };
 
+pub(super) fn mdm_assigned(d: &Deployment, root: &Path) -> Result<bool, Error> {
+    if !d.modules.da.enabled() {
+        return Ok(true);
+    }
+    if !d.modules.mdm.enabled() || has_authority(root, w::RegistrationTrust::DaDevicePop)? {
+        return Ok(false);
+    }
+    match da::mac_assigned(
+        &d.da_root()?,
+        d.modules.da.backend()?,
+        d.installation_id,
+        SystemClock::new()?.now()?,
+    ) {
+        Ok(None | Some(false)) => Ok(true),
+        Ok(Some(true)) | Err(Error::Untrusted | Error::Identity) => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
 type Client = da::Client<DeviceSecrets, SystemClock>;
 
 /// Logout fences a directory lookup even while its HTTPS response is outstanding.
@@ -36,9 +55,34 @@ impl SessionFence for Fence {
     }
 }
 
+pub(crate) struct Work {
+    command: Command,
+    deadline: tokio::time::Instant,
+}
+pub(crate) struct Pending {
+    reply: tokio::sync::oneshot::Receiver<Reply>,
+    deadline: tokio::time::Instant,
+}
+impl Pending {
+    pub fn wait(self) -> Reply {
+        let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+        else {
+            return Reply::Unavailable;
+        };
+        runtime.block_on(async {
+            tokio::time::timeout_at(self.deadline, self.reply)
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .unwrap_or(Reply::Unavailable)
+        })
+    }
+}
 pub(crate) struct Endpoint {
     pub fence: Arc<Fence>,
-    sender: tokio::sync::mpsc::Sender<Command>,
+    sender: tokio::sync::mpsc::Sender<Work>,
     deployment: Deployment,
 }
 impl Endpoint {
@@ -99,7 +143,7 @@ impl Endpoint {
         )?;
         Ok(())
     }
-    fn mdm_owns(&self, request: &Request) -> Result<bool, Error> {
+    fn mdm_owns(&self, peer: &Peer, request: &Request) -> Result<bool, Error> {
         let d = &self.deployment;
         if !d.modules.mdm.enabled() {
             return Ok(false);
@@ -120,36 +164,30 @@ impl Endpoint {
                 },
         } = request
         {
+            let scope = match request {
+                Request::PlatformSso {
+                    input: Operation::Observe { scope, .. } | Operation::Unregister { scope, .. },
+                } => *scope,
+                _ => unreachable!(),
+            };
+            let account = match scope {
+                w::Kind::Device => "device".to_owned(),
+                w::Kind::User => crate::account_identity::generated_uid(
+                    &peer.uid().ok_or(Error::Identity)?.to_string(),
+                )?
+                .ok_or(Error::Identity)?,
+            };
+            if let Some(r) = retired_by_source(&root, &account, *source, *source_version)? {
+                return Ok(r.coordinate.context.authority == w::RegistrationTrust::MdmBootstrapPop);
+            }
             if let Some(c) = find_source(&root, *source, *source_version)? {
                 return Ok(c.context.authority == w::RegistrationTrust::MdmBootstrapPop);
             }
         }
-        let backend = d.modules.da.backend()?;
-        let channel = d.da_root()?;
-        let Some(status) = agent_client::da::inspect(
-            &channel,
-            backend,
-            d.installation_id,
-            SystemClock::new()?.now()?,
-        )?
-        else {
-            // A combined package can have only its MDM registration provisioned.
-            return Ok(!has_authority(&root, w::RegistrationTrust::DaDevicePop)?);
-        };
-        if status.valid_until.is_none() || status.effective_digest.is_none() {
-            return Ok(false);
-        }
-        let selection =
-            state::read_optional::<Option<da::Selection>>(&channel, "selected-configuration.json")?
-                .flatten();
-        Ok(selection.is_some_and(|s| {
-            Some(s.identity.device_id) == status.registration.as_ref().map(|r| r.device)
-                && s.identity.tenant == backend.tenant
-                && s.identity.service_id == backend.instance
-                && s.settings.mac.is_none()
-        }) && !has_authority(&root, w::RegistrationTrust::DaDevicePop)?)
+        mdm_assigned(d, &root)
     }
-    pub fn handle(&self, peer: &Peer, request: &Request) -> Option<Reply> {
+    pub fn start(&self, peer: &Peer, request: &Request) -> Option<Result<Pending, Reply>> {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(4);
         let d = &self.deployment;
         let config = d.platform_sso.as_ref()?;
         if matches!(
@@ -161,9 +199,9 @@ impl Endpoint {
                     ..
                 }
         ) {
-            match self.mdm_owns(request) {
+            match self.mdm_owns(peer, request) {
                 Ok(true) => return None,
-                Err(_) => return Some(Reply::Rejected),
+                Err(_) => return Some(Err(Reply::Rejected)),
                 Ok(false) => (),
             }
         }
@@ -194,40 +232,33 @@ impl Endpoint {
             _ => return None,
         };
         let (Some(subject), Ok(binding)) = (subject, peer.session_binding()) else {
-            return Some(Reply::Rejected);
+            return Some(Err(Reply::Rejected));
         };
         let Ok(epoch) = self.fence.epoch.lock().map(|g| *g) else {
-            return Some(Reply::Unavailable);
+            return Some(Err(Reply::Unavailable));
         };
         let (reply, rx) = tokio::sync::oneshot::channel();
         if self
             .sender
-            .try_send(Command {
-                request: LocalRequest::operation(request.clone()),
-                subject,
-                session: peer.session(),
-                binding: Some(binding),
-                fence_epoch: epoch,
-                reply,
+            .try_send(Work {
+                deadline,
+                command: Command {
+                    request: LocalRequest::operation(request.clone()),
+                    subject,
+                    session: peer.session(),
+                    binding: Some(binding),
+                    fence_epoch: epoch,
+                    reply,
+                },
             })
             .is_err()
         {
-            return Some(Reply::Unavailable);
+            return Some(Err(Reply::Unavailable));
         }
-        let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .build()
-        else {
-            return Some(Reply::Unavailable);
-        };
-        let result = runtime.block_on(async {
-            tokio::time::timeout(Duration::from_secs(3), rx)
-                .await
-                .ok()
-                .and_then(Result::ok)
-                .unwrap_or(Reply::Unavailable)
-        });
-        Some(result)
+        Some(Ok(Pending {
+            reply: rx,
+            deadline,
+        }))
     }
 }
 
@@ -262,13 +293,14 @@ impl BoundEmployee {
     }
 }
 pub(crate) struct Worker {
-    pub rx: tokio::sync::mpsc::Receiver<Command>,
+    pub rx: tokio::sync::mpsc::Receiver<Work>,
     fence: Arc<Fence>,
     state: State,
     employee: Option<BoundEmployee>,
 }
 impl Worker {
-    pub async fn handle(&mut self, d: &Deployment, client: &Client, command: Command) {
+    pub async fn handle(&mut self, d: &Deployment, client: &Client, work: Work) {
+        let Work { command, deadline } = work;
         if command.reply.is_closed() {
             return;
         }
@@ -277,8 +309,9 @@ impl Worker {
             client,
             root: crate::access_worker::root(&d.execution),
             state: &mut self.state,
+            inventory: Default::default(),
         };
-        let result = async {
+        let result = tokio::time::timeout_at(deadline, async {
             platform_private_storage::directory(&d.execution.material_root)?;
             platform_private_storage::directory(&owner.root)?;
             match command.request.as_operation() {
@@ -348,8 +381,9 @@ impl Worker {
                 }
                 _ => Err(Error::Denied),
             }
-        }
-        .await;
+        })
+        .await
+        .unwrap_or(Err(Error::Unavailable));
         let _ = command.reply.send(match result {
             Ok(reply) => reply,
             Err(Error::Unavailable | Error::Network | Error::Storage) => Reply::Unavailable,
@@ -359,45 +393,7 @@ impl Worker {
     pub async fn maintenance(&mut self, d: &Deployment, client: &Client) -> Result<(), Error> {
         let root = crate::access_worker::root(&d.execution);
         if let Some(r) = client.revocation().await? {
-            if has_authority(&root, w::RegistrationTrust::DaDevicePop)? {
-                // Persist the exact withdrawal separately from source revocation before releasing the device key.
-                let mut sources = Vec::new();
-                visit_live_sources(&root, |c| {
-                    if (
-                        c.context.authority,
-                        c.context.installation,
-                        c.context.tenant,
-                        c.context.device_id,
-                    ) != (
-                        w::RegistrationTrust::DaDevicePop,
-                        r.service_id,
-                        r.tenant,
-                        r.device,
-                    ) {
-                        return Err(Error::Conflict);
-                    }
-                    if !sources.contains(&c) {
-                        sources.push(c);
-                    }
-                    Ok(())
-                })?;
-                for c in sources {
-                    if resolution(&root, &c)?.is_none() {
-                        let c = queue_retirement(&root, c)?;
-                        finish_retirement(
-                            &root,
-                            &c,
-                            RemoteRetirement::RegistrationWithdrawn {
-                                operation: r.operation_id,
-                                credential: r.credential,
-                            },
-                        )?;
-                    }
-                }
-                if !sweep_retirement(&root, r.service_id)? {
-                    return Err(Error::Unavailable);
-                }
-            }
+            withdraw_sources(&root, &r)?;
             return client.retire(&r);
         }
         Da {
@@ -405,21 +401,69 @@ impl Worker {
             client,
             root,
             state: &mut self.state,
+            inventory: Default::default(),
         }
         .retry_retirement()
         .await;
         Ok(())
     }
 }
+pub(super) fn withdraw_sources(
+    root: &Path,
+    r: &rss_mdm_agent_wire::da::RevocationReceipt,
+) -> Result<(), Error> {
+    if has_authority(root, w::RegistrationTrust::DaDevicePop)? {
+        // Persist the exact withdrawal separately from source revocation before releasing the device key.
+        let mut sources = Vec::new();
+        visit_live_sources(root, |c| {
+            if (
+                c.context.authority,
+                c.context.installation,
+                c.context.tenant,
+                c.context.device_id,
+            ) != (
+                w::RegistrationTrust::DaDevicePop,
+                r.service_id,
+                r.tenant,
+                r.device,
+            ) {
+                return Err(Error::Conflict);
+            }
+            if !sources.contains(&c) {
+                sources.push(c);
+            }
+            Ok(())
+        })?;
+        for c in sources {
+            if resolution(root, &c)?.is_none() {
+                let c = queue_retirement(root, c)?;
+                finish_retirement(
+                    root,
+                    &c,
+                    RemoteRetirement::RegistrationWithdrawn {
+                        operation: r.operation_id,
+                        credential: r.credential,
+                    },
+                )?;
+            }
+        }
+        if !sweep_retirement(root, r.service_id)? {
+            return Err(Error::Unavailable);
+        }
+    }
+    Ok(())
+}
 struct Da<'a> {
     d: &'a Deployment,
     client: &'a Client,
     root: PathBuf,
     state: &'a mut State,
+    inventory: tokio::sync::OnceCell<Machine>,
 }
 impl Da<'_> {
     async fn selected(&self) -> Result<da::Selection, Error> {
-        let machine = Machine::observe(self.d.da_root()?).await;
+        let root = self.d.da_root()?;
+        let machine = self.inventory.get_or_init(|| Machine::observe(root)).await;
         let selected = self
             .client
             .platform_configuration(&machine.managed_snapshot())?;
@@ -469,20 +513,21 @@ impl Da<'_> {
             return Err(Error::Identity);
         }
         let proof = value.credential().ok_or(Error::Identity)?;
-        let expires = da::verify_employee(
-            &issuer.origin,
-            issuer.ca_pem.as_deref(),
-            issuer.tenant,
-            employee.principal_id,
-            proof,
-        )
-        .await?;
         let account =
             crate::account_identity::generated_uid(&command.subject)?.ok_or(Error::Identity)?;
         let uid = Uuid::parse_str(&account).map_err(|_| Error::Identity)?;
         let operations = self.client.operations()?;
-        let directory = operations.mac_bindings(proof).await?;
-        let selected = self.selected().await?;
+        let (expires, directory, selected) = tokio::try_join!(
+            da::verify_employee(
+                &issuer.origin,
+                issuer.ca_pem.as_deref(),
+                issuer.tenant,
+                employee.principal_id,
+                proof
+            ),
+            operations.mac_bindings(proof),
+            self.selected()
+        )?;
         let _lock = state::lock(&self.root)?;
         let old = state::read_optional::<::platform_sso::LocalBinding>(
             &self.root,
@@ -564,6 +609,10 @@ impl Owner for Da<'_> {
             r.tenant,
             r.device,
         ))
+    }
+    fn identity_hint(&self) -> Result<(w::RegistrationTrust, Uuid, Uuid), Error> {
+        let b = self.d.modules.da.backend()?;
+        Ok((w::RegistrationTrust::DaDevicePop, b.instance, b.tenant))
     }
     async fn context(
         &self,

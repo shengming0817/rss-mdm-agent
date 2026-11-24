@@ -177,8 +177,12 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         Ok(refs)
     }
     pub(crate) fn retiring(&self) -> Result<bool, Error> {
-        Ok(self.store.get::<Record>("unmanage")?.is_some())
+        retiring(&self.store.conn)
     }
+}
+
+pub(crate) fn retiring(conn: &rusqlite::Connection) -> Result<bool, Error> {
+    Ok(crate::store::read_value::<Record>(conn, "unmanage")?.is_some())
 }
 
 fn validate_record(

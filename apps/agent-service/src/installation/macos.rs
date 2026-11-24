@@ -43,8 +43,7 @@ pub(super) fn dispatch(_: &[OsString]) -> Result<bool, Error> {
     }
     Ok(false)
 }
-pub(super) fn operation_status(id: uuid::Uuid) -> Result<(), Error> {
-    let config = Deployment::default_path()?;
+pub(super) fn operation_status(config: &Path, id: uuid::Uuid) -> Result<(), Error> {
     let dir = config
         .parent()
         .ok_or(Error::Configuration)?
@@ -61,7 +60,7 @@ pub(super) fn operation_status(id: uuid::Uuid) -> Result<(), Error> {
         }
     }
     if config.try_exists()? {
-        let d = Deployment::metadata(&config)?;
+        let d = Deployment::metadata(config)?;
         let root = crate::access_worker::root(&d.execution);
         if root.try_exists()? {
             if let Some(receipt) = crate::credential_worker::state::read_optional::<

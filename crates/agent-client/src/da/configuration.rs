@@ -87,6 +87,34 @@ pub(super) struct AppliedProof {
     effective: Selection,
 }
 
+/// Inspect the signed platform assignment and registration together before routing a mixed installation.
+pub fn mac_assigned(
+    root: &std::path::Path,
+    backend: &Backend,
+    installation: Uuid,
+    now: i64,
+) -> Result<Option<bool>, Error> {
+    let Some(mut db) = super::storage::inspect(root, backend, installation)? else {
+        return Ok(None);
+    };
+    let tx = db.transaction()?;
+    let active = read::<super::registration::Active>(&tx, "active")?.ok_or(Error::Identity)?;
+    let proof = read::<Option<AppliedProof>>(&tx, "applied-proof")?
+        .flatten()
+        .ok_or(Error::Untrusted)?;
+    if now <= 0
+        || now >= proof.until
+        || read::<i64>(&tx, "clock")?.is_none_or(|last| last > now)
+        || (
+            proof.effective.identity.service_id,
+            proof.effective.identity.tenant,
+            proof.effective.identity.device_id,
+        ) != (backend.instance, backend.tenant, active.receipt.device)
+    {
+        return Err(Error::Untrusted);
+    }
+    Ok(Some(proof.effective.settings.mac.is_some()))
+}
 fn fingerprints(snapshot: &ManagedSnapshot) -> Result<BTreeSet<String>, Error> {
     snapshot
         .sources

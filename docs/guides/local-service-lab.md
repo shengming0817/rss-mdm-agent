@@ -466,7 +466,7 @@ P6 可由 root 对固定安装的 Agent 调用：
 "$Agent" --platform-sso-component cleanup
 ```
 
-`enable` 仅在已核验当前签名组件且没有保留注册／在途记录时解除维护停用；账号仍需有效签名绑定。`disable` 持久阻止新注册；`retire` 将已记录的精确 source/version 交给现有服务恢复循环。远端注销使用原子版本条件，回执丢失可回读，不能撤销替换注册。首次注册结果未知且查询尚无 source 时，保留在途坐标，不能把单次未查到视为远端已清理；须等待已注册／已撤销或替换源等确定证据。明确拒绝且未提交的注册会结清对应在途记录。诊断中的 `registrationRecord` 仅区分在途与服务端接受记录，不表示 Apple 已保存配置。`cleanup` 只有在远端撤销与对应原生清理观察均被确认后才移除本机公共元数据，否则返回未完成并保留事实。它不模拟 LoginManager，不删除 OS 账号或私钥。Apple 配置移除及系统材料清理必须通过合法扩展上下文；网络、服务或该上下文不可用时不能报告注销完成。
+`enable` 仅在已核验当前签名组件且没有保留注册／在途记录时解除维护停用；账号仍需有效签名绑定。`disable` 持久阻止新注册；`retire` 将已记录的精确 source/version 交给现有服务恢复循环。远端注销使用原子版本条件，回执丢失可回读，不能撤销替换注册。首次注册结果未知且查询尚无 source 时，保留在途坐标，不能把单次未查到视为远端已清理；须等待已注册／已撤销或替换源等确定证据。明确拒绝且未提交的注册会结清对应在途记录。诊断中 `nativeCleanupConfirmed` 为空表示该次在途注册没有被授权保存到系统；已有来源分别记录原生清理观察和远端处理结果。`cleanup` 只有在远端撤销与对应原生清理观察均被确认后才移除本机公共元数据，否则返回未完成并保留事实。它不模拟 LoginManager，不删除 OS 账号或私钥。Apple 配置移除及系统材料清理必须通过合法扩展上下文；网络、服务或该上下文不可用时不能报告注销完成。
 
 正式支持证据必须包含签名嵌入、系统识别、系统发起的设备/用户注册回调、已有账号与受控建号、注册/认证/修复/解绑、锁屏及会话切换、旧代/重放/取消/中断/回执丢失/换钥/撤销，以及 Desktop 或 Agent 停止时的本地登录。构建与协议测试不能替代这些证据；缺受管测试机、有效签名、配置或域关联时保留真实加载/回调阻塞。来源：[Apple 注册设备和用户](https://developer.apple.com/documentation/authenticationservices/registering-devices-and-users)，SDK 26.4 AuthenticationServices 头文件。
 
@@ -476,9 +476,9 @@ Password 用户注册不登记用户签名密钥：注册与浏览器证明由�
 
 模式或配置切换先禁用原绑定、退休精确用户源，等待原生清理确认后发布新配置；其他用户及共享设备源不由该用户切换清理。网络返回后重新核对当前绑定。未决注册、撤销与清理保留，不能用删除记录恢复“正常”。卸载在停止服务前检查 PSSO 清理；未完成时保留服务和扩展供恢复。
 
-组件的 `inspect` 显示当前绑定、独立系统事实及可获得的托管状态。远端退休和本机清理完成后，可用注册时的 operation UUID 调用 `--installation operation-status --operation <UUID>` 查询；授权卸载会把完成回执保留到载荷以外。DA 注册先被撤销时，回执保存该撤销操作，独立 PSSO 来源的远端状态仍可能未知；本机清理单独核对。维修停用和恢复不会更改本地账号密码、删除钥匙串或轮换 PRK。
+组件的 `inspect` 显示当前绑定、独立系统事实及可获得的托管状态。远端退休和本机清理完成后，可用注册时的 operation UUID 调用 `--installation operation-status --operation <UUID>` 查询；授权卸载会把完成回执保留到载荷以外。DA 注册先被撤销时，回执保存该撤销操作，独立 PSSO 来源的远端状态仍可能未知；本机清理单独核对。仅 DA、从未注册 MDM 的安装先由管理员撤销 DA 注册，待设备确认精确凭据已释放及原生清理完成，再由本机管理员调用固定服务的 `--installation uninstall --operation <DA撤销UUID> --binary <已安装服务绝对路径>`。可用同一 UUID 查询安装结果。维修停用和恢复不会更改本地账号密码、删除钥匙串或轮换 PRK。
 
-项目预检沿用 `native-candidate.mjs freeze` 及 `verify-execution-macos.py --psso-preflight`。固定扩展和 PKG 后，在目标 OS／架构上核对候选与文件摘要。预检通过时仍为 `systemAccepted:false`，各系统旅程保持 `notExecuted`。生产签名授权、公证、包内映像、实际安装副本和系统识别由部署方独立核对。
+使用 `node scripts/native-candidate.mjs freeze` 固定包含扩展和安装包的候选，再运行 `python3 scripts/service/verify-execution-macos.py --binary <服务> --backend <探针> --candidate <候选JSON> --output <证据目录> --psso-preflight`。固定扩展和 PKG 后，在目标 OS／架构上核对候选与文件摘要。预检通过时仍为 `systemAccepted:false`，各系统旅程保持 `notExecuted`。生产签名授权、公证、包内映像、实际安装副本和系统识别由部署方独立核对。
 
 受管测试机按同一候选依次验收：匹配 Team／容器／扩展的 MDM profile 与 AASA → 系统设备注册 → 两种用户模式 → 真实登录与指定应用 SSO → 上游改密、本地离线改密、重新联网与冲突 → 登录钥匙串实际访问 → 双用户切换 → 登录窗口、锁屏和 FileVault 冷启动 → Agent／Desktop 停止 → 修复、升级中断与注销卸载。分别记录系统回调、source/version、绑定代际、实际操作及结果；禁止用 `app-sso --messages` 的样本密钥证明硬件持钥，也不将含令牌或密码的原始诊断输出写入证据。没有实际执行的场景保持 notExecuted；真实平台支持由独立平台验收取证，本轮实现与本地 CI 不代替这些证据。
 

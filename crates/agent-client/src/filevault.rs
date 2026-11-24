@@ -149,16 +149,15 @@ fn same_material(receipt: &w::Receipt, c: &w::Configuration, digest: &str) -> bo
 pub fn inspect(root: &std::path::Path, config: &crate::Config) -> Result<Status, Error> {
     let mut conn = crate::store::read_existing(root, config)?;
     let tx = conn.transaction()?;
-    if tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM state WHERE key='unmanage')",
-        [],
-        |r| r.get::<_, bool>(0),
-    )? {
+    status_on(&tx)
+}
+fn status_on(tx: &rusqlite::Connection) -> Result<Status, Error> {
+    if crate::unmanage::retiring(tx)? {
         return Ok(Status::Retired);
     }
-    let identity = crate::store::read_value::<crate::identity::IdentityState>(&tx, "identity")?
+    let identity = crate::store::read_value::<crate::identity::IdentityState>(tx, "identity")?
         .and_then(|s| s.active);
-    let state = crate::store::read_value::<State>(&tx, KEY)?;
+    let state = crate::store::read_value::<State>(tx, KEY)?;
     Ok(match (identity, state) {
         (Some(a), Some(s)) if a.receipt.runtime.device_id == s.device_id => s.status,
         _ => Status::NotConfigured,
@@ -167,22 +166,7 @@ pub fn inspect(root: &std::path::Path, config: &crate::Config) -> Result<Status,
 impl<S: IdentityProvider, C: Clock> Client<S, C> {
     /// Nonsecret durable diagnostic only; it never grants login or proves recovery validity.
     pub fn filevault_status(&self) -> Result<Status, Error> {
-        if self.retiring()? {
-            return Ok(Status::Retired);
-        }
-        let Some(state) = self.store.get::<State>(KEY)? else {
-            return Ok(Status::NotConfigured);
-        };
-        let current = match self.registration() {
-            Ok(value) => value,
-            Err(Error::Identity) => return Ok(Status::NotConfigured),
-            Err(error) => return Err(error),
-        };
-        Ok(if state.device_id == current.device_id {
-            state.status
-        } else {
-            Status::NotConfigured
-        })
+        status_on(&self.store.conn)
     }
     /// Start a bounded collection check immediately after host startup/configuration replacement.
     /// A frozen pending operation and its transport payload remain unchanged.

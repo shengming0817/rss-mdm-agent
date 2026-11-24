@@ -104,7 +104,10 @@ impl<S: Credentials, C: Clock> Client<S, C> {
             unknown: false,
             issuance_id: None,
         };
-        self.save(&p)?;
+        let tx = self.journal.db.unchecked_transaction()?;
+        write(&tx, "enrollment", &Some(&p))?;
+        tx.execute("DELETE FROM state WHERE name='retired-registration'", [])?;
+        tx.commit()?;
         Ok(p)
     }
     pub(super) fn release_settled(&self) -> Result<(), Error> {

@@ -266,6 +266,10 @@ pub(crate) trait Owner {
     fn state(&mut self) -> &mut State;
     fn root(&self) -> &std::path::Path;
     fn identity(&self) -> Result<Identity, Error>;
+    fn identity_hint(&self) -> Result<(w::RegistrationTrust, Uuid, Uuid), Error> {
+        let (a, i, t, _) = self.identity()?;
+        Ok((a, i, t))
+    }
     async fn context(
         &self,
         command: &Command,
@@ -347,6 +351,16 @@ pub(crate) trait Owner {
         let Some(Request::PlatformSso { input }) = command.request.as_operation() else {
             return Err(Error::Denied);
         };
+        if matches!(
+            input,
+            Operation::Observe { .. } | Operation::Unregister { .. }
+        ) {
+            if let Some(response) =
+                replay_cleanup(self.root(), input, command, self.identity_hint()?)?
+            {
+                return Ok(response);
+            }
+        }
         match input {
             Operation::Bootstrap {
                 callback_generation,
@@ -500,6 +514,9 @@ pub(crate) trait Owner {
                     // cannot reconstruct the expected native configuration.
                     let coordinate =
                         retained_coordinate(self.root(), &context, source.id, source.version)?;
+                    if !observation_owner(&coordinate.context, &context) {
+                        return Err(Error::Identity);
+                    }
                     if !retain_registration(self.root(), &coordinate)? {
                         return Err(Error::Denied);
                     }
@@ -799,7 +816,30 @@ fn sweep_retirement(root: &std::path::Path, installation: Uuid) -> Result<bool, 
             complete = false;
         }
     }
+    if complete {
+        release_bindings(root, installation)?;
+    }
     Ok(complete)
+}
+fn release_bindings(root: &Path, installation: Uuid) -> Result<(), Error> {
+    for entry in std::fs::read_dir(root)? {
+        let name = entry?
+            .file_name()
+            .into_string()
+            .map_err(|_| Error::Storage)?;
+        if !name.ends_with(".psso-binding") {
+            continue;
+        }
+        let b: ::platform_sso::LocalBinding =
+            state::read_optional(root, &name)?.ok_or(Error::Storage)?;
+        if binding_name(&b.generated_uid)? != name {
+            return Err(Error::Identity);
+        }
+        if b.installation == installation {
+            state::remove(root, &name)?;
+        }
+    }
+    Ok(())
 }
 fn native_cleared(c: &Coordinate, in_flight: bool, native: Option<&NativeObservation>) -> bool {
     in_flight
@@ -1097,6 +1137,105 @@ fn require_owner(root: &std::path::Path, identity: Identity) -> Result<(), Error
     })
 }
 
+fn retired_by_source(
+    root: &Path,
+    account: &str,
+    id: Uuid,
+    version: i64,
+) -> Result<Option<Retired>, Error> {
+    if account != "device" && !wire::generated_uid_valid(account) {
+        return Err(Error::Identity);
+    }
+    let name = format!("{account}-{id}-{version}.psso-retired");
+    let record = state::read_optional::<Retired>(root, &name)?;
+    if record
+        .as_ref()
+        .is_some_and(|r| r.coordinate.file("retired").ok().as_deref() != Some(&name))
+    {
+        return Err(Error::Identity);
+    }
+    Ok(record)
+}
+fn replay_cleanup(
+    root: &Path,
+    op: &Operation,
+    cmd: &Command,
+    owner: (w::RegistrationTrust, Uuid, Uuid),
+) -> Result<Option<Response>, Error> {
+    let (kind, id, version) = match op {
+        Operation::Observe {
+            scope,
+            source,
+            source_version,
+            ..
+        }
+        | Operation::Unregister {
+            scope,
+            source,
+            source_version,
+        } => (*scope, *source, *source_version),
+        _ => return Ok(None),
+    };
+    let account = match kind {
+        w::Kind::Device => "device".into(),
+        w::Kind::User if cmd.session != 0 => {
+            crate::account_identity::generated_uid(&cmd.subject)?.ok_or(Error::Identity)?
+        }
+        _ => return Err(Error::Identity),
+    };
+    let Some(r) = retired_by_source(root, &account, id, version)? else {
+        return Ok(None);
+    };
+    let c = &r.coordinate;
+    if (
+        c.context.authority,
+        c.context.installation,
+        c.context.tenant,
+    ) != owner
+        || c.context.kind != kind
+    {
+        return Err(Error::Identity);
+    }
+    match op {
+        Operation::Observe {
+            callback_generation,
+            device_registered,
+            user_registered,
+            ..
+        } => {
+            if c.callback_generation != *callback_generation {
+                return Err(Error::Identity);
+            }
+            // A live source still needs its final native readback written under the original lock.
+            if state::read_optional::<Coordinate>(root, &c.file("source")?)?.as_ref() == Some(c) {
+                return Ok(None);
+            }
+            if *user_registered || kind == w::Kind::Device && *device_registered {
+                return Err(Error::Conflict);
+            }
+            let complete = state::read_optional::<CleanupReceipt>(
+                root,
+                &format!("{}.psso-result", c.operation),
+            )?;
+            Ok(complete
+                .filter(|v| v.source == id && v.source_version == version && v.authority == owner.0)
+                .map(|_| Response::Observed {}))
+        }
+        Operation::Unregister { .. } => Ok(Some(match r.result {
+            RemoteRetirement::RegistrationWithdrawn { .. } => Response::RegistrationWithdrawn {},
+            RemoteRetirement::Superseded => Response::Retired {},
+            RemoteRetirement::Revoked => Response::Revoked {
+                receipt: w::RevocationReceipt {
+                    source_id: id,
+                    source_version: version.checked_add(1).ok_or(Error::Protocol)?,
+                    revoked: true,
+                },
+            },
+        })),
+        _ => Ok(None),
+    }
+}
+
 fn retained_coordinate(
     root: &std::path::Path,
     context: &::platform_sso::Context,
@@ -1274,6 +1413,46 @@ pub(crate) fn upgrade_preflight(
     Ok(())
 }
 
+fn supports_owner(
+    deployment: &crate::deployment::Deployment,
+    id: (w::RegistrationTrust, Uuid, Uuid),
+) -> bool {
+    match id.0 {
+        w::RegistrationTrust::DaDevicePop => deployment
+            .modules
+            .da
+            .backend()
+            .is_ok_and(|b| (b.instance, b.tenant) == (id.1, id.2)),
+        w::RegistrationTrust::MdmBootstrapPop => deployment
+            .mdm()
+            .is_ok_and(|b| (b.instance, b.tenant) == (id.1, id.2)),
+    }
+}
+#[cfg(target_os = "macos")]
+pub(crate) fn preflight_owner_change(
+    old: &crate::deployment::Deployment,
+    next: &crate::deployment::Deployment,
+) -> Result<(), Error> {
+    let root = crate::access_worker::root(&old.execution);
+    visit_live_sources(&root, |c| {
+        if supports_owner(
+            next,
+            (
+                c.context.authority,
+                c.context.installation,
+                c.context.tenant,
+            ),
+        ) && next
+            .platform_sso
+            .as_ref()
+            .is_some_and(|v| v.origin == c.context.origin)
+        {
+            Ok(())
+        } else {
+            Err(Error::Conflict)
+        }
+    })
+}
 fn configured_owner(
     deployment: &crate::deployment::Deployment,
 ) -> Result<(w::RegistrationTrust, Uuid, Uuid), Error> {
@@ -1285,25 +1464,40 @@ fn configured_owner(
             c.context.installation,
             c.context.tenant,
         );
-        let matches = match id.0 {
-            w::RegistrationTrust::DaDevicePop => deployment
-                .modules
-                .da
-                .backend()
-                .is_ok_and(|b| (b.instance, b.tenant) == (id.1, id.2)),
-            w::RegistrationTrust::MdmBootstrapPop => deployment
-                .mdm()
-                .is_ok_and(|b| (b.instance, b.tenant) == (id.1, id.2)),
-        };
+        let matches = supports_owner(deployment, id);
         if !matches || retained.replace(id).is_some_and(|old| old != id) {
             return Err(Error::Conflict);
         }
         Ok(())
     })?;
+    if retained.is_none() && root.try_exists()? {
+        for entry in std::fs::read_dir(&root)? {
+            let name = entry?
+                .file_name()
+                .into_string()
+                .map_err(|_| Error::Storage)?;
+            if !name.ends_with(".psso-binding") {
+                continue;
+            }
+            let b: ::platform_sso::LocalBinding =
+                state::read_optional(&root, &name)?.ok_or(Error::Storage)?;
+            let id = (b.authority, b.installation, b.tenant);
+            if binding_name(&b.generated_uid)? != name
+                || !supports_owner(deployment, id)
+                || retained.replace(id).is_some_and(|old| old != id)
+            {
+                return Err(Error::Conflict);
+            }
+        }
+    }
     if let Some(id) = retained {
         return Ok(id);
     }
-    if deployment.modules.da.enabled() {
+    #[cfg(target_os = "macos")]
+    let use_da = !da::mdm_assigned(deployment, &root)?;
+    #[cfg(not(target_os = "macos"))]
+    let use_da = deployment.modules.da.enabled();
+    if use_da {
         let da = deployment.modules.da.backend()?;
         Ok((w::RegistrationTrust::DaDevicePop, da.instance, da.tenant))
     } else {
@@ -1513,6 +1707,9 @@ pub(crate) fn component(
             }
         }
     }
+    if action == "cleanup" && complete {
+        release_bindings(&root, instance)?;
+    }
     let disabled = match enabled(&root, instance) {
         Ok(()) => false,
         Err(Error::Denied) => true,
@@ -1716,6 +1913,93 @@ mod tests {
         assert!(receipt.native_cleanup_confirmed.is_none());
         std::fs::remove_dir_all(root).unwrap();
     }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn da_withdrawal_waits_for_native_clear_and_replays_after_sweep() {
+        let root = crate::protocol_test_support::Root::new();
+        platform_private_storage::directory(&root.path).unwrap();
+        let mut c = coordinate();
+        c.context.authority = w::RegistrationTrust::DaDevicePop;
+        c.context.kind = w::Kind::Device;
+        c.context.generated_uid = None;
+        c.context.binding = None;
+        c.context.binding_generation = None;
+        c.context.binding_revision = 0;
+        c.context.configuration = None;
+        let owner = (
+            c.context.authority,
+            c.context.installation,
+            c.context.tenant,
+        );
+        let withdrawal = rss_mdm_agent_wire::da::RevocationReceipt {
+            service_id: owner.1,
+            tenant: owner.2,
+            device: c.context.device_id,
+            credential: Uuid::new_v4(),
+            operation_id: Uuid::new_v4(),
+        };
+        state::write(&root.path, &c.file("source").unwrap(), &c).unwrap();
+        let mut local = binding();
+        local.authority = owner.0;
+        save_binding(&root.path, &local).unwrap();
+        assert_eq!(
+            da::withdraw_sources(&root.path, &withdrawal),
+            Err(Error::Unavailable)
+        );
+        let observe = Operation::Observe {
+            scope: c.context.kind,
+            source: c.source,
+            source_version: c.source_version,
+            callback_generation: c.callback_generation,
+            device_registered: false,
+            user_registered: false,
+            configuration: None,
+        };
+        record_observation(&root.path, &c.context, &observe, "0", 1, None).unwrap();
+        da::withdraw_sources(&root.path, &withdrawal).unwrap();
+        let (reply, _rx) = tokio::sync::oneshot::channel();
+        let command = Command {
+            request: LocalRequest::operation(Request::PlatformSso {
+                input: observe.clone(),
+            }),
+            subject: "0".into(),
+            session: 1,
+            binding: None,
+            reply,
+            fence_epoch: 0,
+        };
+        assert!(matches!(
+            replay_cleanup(&root.path, &observe, &command, owner),
+            Ok(Some(Response::Observed {}))
+        ));
+        let unregister = Operation::Unregister {
+            scope: c.context.kind,
+            source: c.source,
+            source_version: c.source_version,
+        };
+        assert!(matches!(
+            replay_cleanup(&root.path, &unregister, &command, owner),
+            Ok(Some(Response::RegistrationWithdrawn {}))
+        ));
+        assert!(replay_cleanup(
+            &root.path,
+            &unregister,
+            &command,
+            (w::RegistrationTrust::MdmBootstrapPop, owner.1, owner.2)
+        )
+        .is_err());
+        let receipt: CleanupReceipt =
+            state::read_optional(&root.path, &format!("{}.psso-result", c.operation))
+                .unwrap()
+                .unwrap();
+        assert_eq!(receipt.native_cleanup_confirmed, Some(true));
+        assert!(
+            matches!(receipt.remote,Some(RemoteRetirement::RegistrationWithdrawn{operation,..}) if operation==withdrawal.operation_id)
+        );
+        // Same native user can now receive a scoped MDM binding.
+        save_binding(&root.path, &binding()).unwrap();
+    }
+
     #[test]
     fn mode_switch_waits_for_both_retirement_and_native_cleanup_without_touching_other_users() {
         let root = std::env::temp_dir().join(format!("psso-mode-{}", Uuid::new_v4()));

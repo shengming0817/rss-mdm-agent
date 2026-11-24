@@ -78,6 +78,12 @@ fn provider(d: &Deployment, root: &Path, backend: &da::Backend) -> Result<Device
     let secrets = root.join("secrets");
     DeviceSecrets::open(&secrets, &namespace)
 }
+#[cfg(target_os = "macos")]
+pub(crate) fn release_installation(d: &Deployment) -> Result<bool, Error> {
+    let root = d.da_root()?;
+    let store = provider(d, &root, d.modules.da.backend()?)?;
+    Ok(store.0.retire(&[])?)
+}
 fn open(d: &Deployment) -> Result<da::Client<DeviceSecrets, SystemClock>, Error> {
     let root = d.da_root()?;
     let backend = d.modules.da.backend()?;
@@ -350,18 +356,18 @@ impl Handler for Service {
                 .as_ref()
                 .is_some_and(|worker| !worker.is_finished());
         #[cfg(target_os = "macos")]
-        if let Some(reply) = self.endpoint.handle(peer, &request) {
-            if matches!(request, Request::BindContext { .. })
-                && matches!(reply, Reply::ContextBound { .. })
-            {
-                if let Some(mdm) = &mut self.mdm {
-                    let bound = mdm.handle(peer, request);
-                    if matches!(bound, Reply::ContextBound { .. }) {
-                        return bound;
-                    }
-                }
-            }
-            return reply;
+        if let Some(pending) = self.endpoint.start(peer, &request) {
+            // A Desktop session belongs to each product independently. A platform callback has one owner.
+            let mdm = if matches!(request, Request::BindContext { .. }) {
+                self.mdm.as_mut().map(|m| m.handle(peer, request))
+            } else {
+                None
+            };
+            let native = pending.map_or_else(|reply| reply, |call| call.wait());
+            return match mdm {
+                Some(bound @ Reply::ContextBound { .. }) => bound,
+                _ => native,
+            };
         }
         #[cfg(windows)]
         if let Some(reply) = self.login.handle(peer, &request) {

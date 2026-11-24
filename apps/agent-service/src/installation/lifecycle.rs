@@ -156,6 +156,9 @@ pub(super) fn run(args: &[OsString]) -> Result<(), Error> {
         if apply::status(&opts.config()?, id)? {
             return Ok(());
         }
+        #[cfg(target_os = "macos")]
+        return platform::operation_status(&opts.config()?, id);
+        #[cfg(not(target_os = "macos"))]
         return platform::operation_status(id);
     }
     if action == "validate-trust" {
@@ -505,6 +508,7 @@ pub(super) fn preflight_refresh(
         {
             return Err(Error::Configuration);
         }
+        crate::service::platform_sso::preflight_owner_change(old, next)?;
         crate::service::platform_sso::upgrade_preflight(old, next.platform_sso.is_some())?;
     }
     if old.service.path.exists() {

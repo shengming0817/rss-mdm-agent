@@ -77,10 +77,10 @@ use crate::{
     trust::VerifiedTrust,
     Clock, IdentityProvider,
 };
-pub use configuration::{ManagedSnapshot, ManagedSource, PolicyConsumer, Selection};
+pub use configuration::{mac_assigned, ManagedSnapshot, ManagedSource, PolicyConsumer, Selection};
 use rss_mdm_agent_wire::{da as wire, enroll, pki};
 use std::{path::Path, sync::Arc, time::Duration};
-pub use storage::has_live_credentials;
+pub use storage::{has_live_credentials, retired_receipt};
 use storage::{read, write};
 
 /// Machine credential storage with idempotent, single-reference release after DA settlement.
