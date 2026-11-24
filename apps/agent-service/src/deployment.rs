@@ -73,14 +73,18 @@ impl Deployment {
             .and_then(|_| crate::registration::RegistrationOwner::new(self))
         {
             Ok(owner) => Ok(Box::new(owner)),
-            Err(error) => {
-                execution_ipc::record_startup_failure(startup_failure(error));
-                Ok(Box::new(Diagnostic {
-                    policy,
-                    readiness: execution_ipc::host::Readiness::NotReady,
-                }))
-            }
+            Err(error) => Ok(Self::startup_diagnostic(policy, error)),
         }
+    }
+    pub(crate) fn startup_diagnostic(
+        policy: PeerPolicy,
+        error: Error,
+    ) -> Box<dyn execution_ipc::host::Handler> {
+        execution_ipc::record_startup_failure(startup_failure(error));
+        Box::new(Diagnostic {
+            policy,
+            readiness: execution_ipc::host::Readiness::NotReady,
+        })
     }
     pub fn default_path() -> Result<PathBuf, Error> {
         installation_security::deployment_path().map_err(|_| Error::Configuration)
@@ -818,16 +822,15 @@ pub(crate) mod tests {
         deployment.execution.material_root = root.clone();
         let offline = crate::access_worker::root(&deployment.execution);
         assert!(
-            validate_access_storage(&deployment.execution, deployment.mdm().unwrap().instance)
-                .is_err()
+            validate_access_storage(&deployment.execution, deployment.installation_id).is_err()
         );
         assert!(
             !offline.exists(),
             "preflight must not initialize missing state"
         );
         platform_private_storage::directory(&offline).unwrap();
-        device_access::Store::create(&offline, deployment.mdm().unwrap().instance).unwrap();
-        validate_access_storage(&deployment.execution, deployment.mdm().unwrap().instance).unwrap();
+        device_access::Store::create(&offline, deployment.installation_id).unwrap();
+        validate_access_storage(&deployment.execution, deployment.installation_id).unwrap();
         assert!(validate_access_storage(&deployment.execution, uuid::Uuid::new_v4()).is_err());
         std::fs::remove_dir_all(root).unwrap();
     }

@@ -105,6 +105,10 @@ public static class RssPasskeyRecoveryProbe {
             $Service=Get-CimInstance -ClassName Win32_Service -Filter "Name='RssExecution'"
             if (!$Service -or $Service.State -ne 'Running' -or $Service.ProcessId -eq 0) { throw 'Running installed service required' }
             $Installed=(Get-Process -Id $Service.ProcessId -ErrorAction Stop).Path
+            $ExpectedCommand='"' + $Installed + '" --config "' + $Config + '"'
+            $Running=Get-CimInstance -ClassName Win32_Process -Filter "ProcessId=$($Service.ProcessId)"
+            if ($Service.StartName -ne 'LocalSystem' -or $Service.PathName -ine $ExpectedCommand -or $Running.CommandLine -ine $ExpectedCommand) { throw 'Running service configuration or account differs' }
+            $Receipt.scenarios.configSha256=(Get-FileHash -LiteralPath $Config -Algorithm SHA256).Hash
             if ($Installed -ine $InstalledConfig.service.path) { throw 'SCM image differs from the deployment' }
             $Class='Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Classes\CLSID\{C61C6B95-9162-42A2-B80B-61EBCA730510}\InprocServer32'
             $ProviderDll=(Get-Item -LiteralPath $Class -ErrorAction Stop).GetValue('')

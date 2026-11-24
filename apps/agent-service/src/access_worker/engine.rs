@@ -45,7 +45,14 @@ fn storage(_: device_access::Error) -> Error {
     Error::Storage
 }
 pub(super) fn execute(input: &Input, native: &mut impl Native) -> Result<w::AccessResult, Error> {
-    let _lock = state::lock(&input.root)?;
+    let lock = state::lock(&input.root)?;
+    execute_locked(input, native, &lock)
+}
+pub(super) fn execute_locked(
+    input: &Input,
+    native: &mut impl Native,
+    _lock: &std::fs::File,
+) -> Result<w::AccessResult, Error> {
     let task = &input.task;
     task.validate()?;
     if let Some(result) = stored_result(&input.root, task)? {

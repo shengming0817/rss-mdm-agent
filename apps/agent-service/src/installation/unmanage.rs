@@ -277,7 +277,7 @@ fn execute(task: uuid::Uuid, package_entry: bool) -> Result<(), Error> {
             let root = crate::access_worker::root(&d.execution);
             // Preserve the service and durable fences while user/directory cleanup is pending.
             if root.exists()
-                && !device_access::Store::open(&root, d.mdm()?.instance)
+                && !device_access::Store::open(&root, d.installation_id)
                     .map_err(|_| Error::Identity)?
                     .hello_cleanup_complete()
                     .map_err(|_| Error::Identity)?

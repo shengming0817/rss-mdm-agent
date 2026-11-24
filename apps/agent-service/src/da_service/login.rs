@@ -10,7 +10,9 @@ use rss_mdm_agent_wire::runtime as w;
 use std::sync::Mutex;
 use zeroize::Zeroizing;
 
+#[derive(Clone)]
 struct Employee {
+    credential: Arc<Zeroizing<String>>,
     subject: String,
     session: u32,
     binding: Id,
@@ -39,6 +41,7 @@ impl Employee {
 }
 #[derive(Default)]
 struct State {
+    revision: u64,
     employee: Option<Employee>,
     task: Option<w::AccessTaskSpec>,
     setup: Option<Candidate>,
@@ -69,6 +72,57 @@ impl Login {
             other,
         }
     }
+    fn verify(&self, user: &w::SelfServiceUser, credential: &str) -> Result<(), Error> {
+        let portal =
+            execution_ipc::device_access::EmployeePortal::bundled().ok_or(Error::Configuration)?;
+        let backend = self.deployment.modules.da.backend()?;
+        if (portal.tenant, portal.instance) != (backend.tenant, backend.instance)
+            || (user.tenant_id, user.instance_id) != (portal.tenant, portal.instance)
+        {
+            return Err(Error::Identity);
+        }
+        let expiry = std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .map_err(|_| Error::Unavailable)?;
+                    rt.block_on(da::verify_employee(
+                        &portal.origin,
+                        portal.ca_pem.as_deref(),
+                        portal.tenant,
+                        user.principal_id,
+                        credential,
+                    ))
+                })
+                .join()
+                .map_err(|_| Error::Unavailable)
+        })??;
+        if expiry <= utc()? {
+            return Err(Error::Expired);
+        }
+        Ok(())
+    }
+    /// Release the state lock during Identity IO so logout can invalidate an in-flight check.
+    fn verified(&self) -> Result<std::sync::MutexGuard<'_, State>, Error> {
+        let (employee, revision) = {
+            let state = self.state.lock().map_err(|_| Error::Unavailable)?;
+            (
+                state.employee.clone().ok_or(Error::Identity)?,
+                state.revision,
+            )
+        };
+        if !employee.current() {
+            return Err(Error::Identity);
+        }
+        self.verify(&employee.identity, &employee.credential)?;
+        let state = self.state.lock().map_err(|_| Error::Unavailable)?;
+        if state.revision != revision || !employee.current() {
+            return Err(Error::Identity);
+        }
+        Ok(state)
+    }
     fn store(&self) -> Result<Store, Error> {
         Store::open(
             &crate::access_worker::root(&self.deployment.execution),
@@ -86,11 +140,14 @@ impl Login {
     }
     /// Release one confirmed creation password while the same console/employee binding is live.
     pub(super) fn input(&self, t: &w::AccessTaskSpec) -> Result<Option<Zeroizing<String>>, Error> {
-        let mut s = self.state.lock().map_err(|_| Error::Unavailable)?;
+        let mut s = self.verified()?;
         if s.task.as_ref() != Some(t)
             || !s.confirmed
             || !s.employee.as_ref().is_some_and(|e| e.permits(t))
         {
+            return Err(Error::Denied);
+        }
+        if matches!(t.action, w::AccessAction::Create { .. }) && s.password.is_none() {
             return Err(Error::Denied);
         }
         Ok(s.password.take())
@@ -101,6 +158,7 @@ impl Login {
         subject: String,
         value: &NativeContextSession,
         expected: Option<&Id>,
+        revision: u64,
     ) -> Result<Reply, Error> {
         let backend = self.deployment.modules.da.backend()?;
         let binding = peer.session_binding().map_err(|_| Error::Identity)?;
@@ -110,7 +168,14 @@ impl Login {
             &binding,
         )
         .map_err(|_| Error::Identity)?;
+        if let Some(user) = value.user() {
+            self.verify(user, value.credential().ok_or(Error::Identity)?)?;
+        }
         let mut s = self.state.lock().map_err(|_| Error::Unavailable)?;
+        if s.revision != revision {
+            return Err(Error::Identity);
+        }
+        s.revision = s.revision.checked_add(1).ok_or(Error::Capacity)?;
         if expected.is_some_and(|old| {
             !s.employee.as_ref().is_some_and(|e| {
                 &e.context.id == old
@@ -151,6 +216,7 @@ impl Login {
             s.clear_setup();
         }
         s.employee = Some(Employee {
+            credential: Arc::new(value.credential().ok_or(Error::Identity)?.clone()),
             subject,
             session: peer.session(),
             binding,
@@ -167,12 +233,13 @@ impl Login {
         ) {
             return None;
         }
+        let revision = self.state.lock().ok()?.revision;
         let subject = peer
             .authenticate(&self.deployment.registration_clients)
             .ok()?;
         match request {
             Request::BindContext { value, expected } => Some(
-                self.bind(peer, subject, value, expected.as_ref())
+                self.bind(peer, subject, value, expected.as_ref(), revision)
                     .unwrap_or(Reply::Rejected),
             ),
             Request::DeviceAccess {
@@ -192,7 +259,13 @@ impl Login {
         context: &NativeContextRef,
         input: &Operation,
     ) -> Result<Option<Reply>, Error> {
-        let mut s = self.state.lock().map_err(|_| Error::Unavailable)?;
+        if !matches!(
+            input,
+            Operation::Tasks {} | Operation::Prepare { .. } | Operation::ConfirmFactor { .. }
+        ) {
+            return Ok(None);
+        }
+        let mut s = self.verified()?;
         let e = s.employee.as_ref().ok_or(Error::Identity)?;
         if &e.context != context
             || e.subject != subject
@@ -296,6 +369,10 @@ impl SessionFence for Login {
             peer.session_binding(),
             self.state.lock(),
         ) {
+            let Some(revision) = s.revision.checked_add(1) else {
+                return Reply::Unavailable;
+            };
+            s.revision = revision;
             if s.employee
                 .as_ref()
                 .is_some_and(|e| e.subject == subject && e.binding == binding)

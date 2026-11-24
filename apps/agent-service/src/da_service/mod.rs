@@ -127,7 +127,9 @@ pub(crate) fn renew(d: &Deployment) -> Result<(), Error> {
 
 pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
     #[cfg(windows)]
-    crate::access_component::prepare(&d)?;
+    if let Err(e) = crate::access_component::prepare(&d) {
+        return Ok(Deployment::startup_diagnostic(d.clients.clone(), e));
+    }
     if !d.modules.da.enabled() {
         return d.mdm_owner();
     }

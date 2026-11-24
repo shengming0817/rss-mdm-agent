@@ -752,11 +752,52 @@ fn hot_offline_recovers_current_format_and_preserves_old_format_bytes() {
 #[test]
 fn a_second_channel_cannot_replace_a_live_sid_or_retire_its_registration() {
     let f = Fixture::new();
-    let (mut store, recovery, _, _, _) = f.setup();
+    let (mut store, recovery, _, op, mut facts) = f.setup();
     let mut da = f.authority.clone();
     da.channel = Channel::Da;
     store.bind_registration(da.registration()).unwrap();
+    da.factor_generation += 1;
+    facts.factor_generation = da.factor_generation;
+    assert!(store
+        .activate(
+            da.clone(),
+            2,
+            true,
+            op,
+            facts.clone(),
+            f.clock,
+            &TestProtector
+        )
+        .is_err());
+    da.binding = Uuid::new_v4();
+    facts.recovery.subject = CredentialSubject::RssLogin {
+        binding: da.binding,
+        binding_generation: da.binding_generation,
+        sid: da.sid.clone(),
+    };
+    assert!(store
+        .activate(
+            da.clone(),
+            2,
+            true,
+            op,
+            facts.clone(),
+            f.clock,
+            &TestProtector
+        )
+        .is_err());
+    da.sid = "S-1-5-21-1-2-3-1002".into();
+    facts.recovery.subject = CredentialSubject::RssLogin {
+        binding: da.binding,
+        binding_generation: da.binding_generation,
+        sid: da.sid.clone(),
+    };
+    store
+        .activate(da.clone(), 2, true, op, facts, f.clock, &TestProtector)
+        .unwrap();
+    assert_eq!(store.authority(&da.sid).unwrap(), Some(da.clone()));
     store.retire_registration(Channel::Da).unwrap();
+    assert_eq!(store.authority(&da.sid).unwrap(), None);
     assert!(store.bind_registration(da.registration()).is_err());
     assert_eq!(
         store.authority(&f.authority.sid).unwrap(),
@@ -773,6 +814,10 @@ fn a_second_channel_cannot_replace_a_live_sid_or_retire_its_registration() {
             .unwrap(),
         Decision::Accepted
     );
+    let event = store.recovery_uses(&f.authority.registration()).unwrap()[0].operation_id;
+    store
+        .acknowledge_recovery_use(&da.registration(), event)
+        .unwrap();
     assert!(store.recovery_uses(&da.registration()).unwrap().is_empty());
     assert_eq!(
         store

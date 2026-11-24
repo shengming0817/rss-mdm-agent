@@ -609,32 +609,41 @@ fn rss_ack(input: &Input, receipt: w::CredentialReceipt) -> std::thread::JoinHan
         panic!("RSS escrow missing")
     })
 }
-#[test]
-fn rss_rotation_changes_only_recovery_after_ack_and_verification_reuses_material() {
-    use device_access::{Authority, Candidate, Clock, Decision, Factor, Store};
-    let root = Root::new();
+struct RssFixture {
+    store: device_access::Store,
+    task: Input,
+    authority: device_access::Authority,
+    clock: device_access::Clock,
+    old: String,
+    totp: Vec<u8>,
+    receipt: w::CredentialReceipt,
+}
+fn rss_fixture(root: &Root, native: &Fake, channel: device_access::Channel) -> RssFixture {
+    use device_access::{Authority, Candidate, Clock, Store};
+
     let offline = root.0.join("offline");
     platform_private_storage::directory(&offline).unwrap();
     let installation = uuid::Uuid::new_v4();
     let mut store = Store::create(&offline, installation).unwrap();
-    let native = Fake::new();
+
     let binding = uuid::Uuid::new_v4();
     let sid = "S-1-5-21-1-2-3-1001".to_owned();
     let mut task = input(
-        &root,
+        root,
         Op::RotateRssLogin {
             binding,
             binding_generation: 1,
             sid: sid.clone(),
         },
     );
+    task.channel = channel;
     let subject = Subject::RssLogin {
         binding,
         binding_generation: 1,
         sid: sid.clone(),
     };
     let authority = Authority {
-        channel: device_access::Channel::Mdm,
+        channel,
         instance: uuid::Uuid::new_v4(),
         principal: uuid::Uuid::new_v4(),
         join: "local-machine".into(),
@@ -659,8 +668,8 @@ fn rss_rotation_changes_only_recovery_after_ack_and_verification_reuses_material
         .confirm(&factor_code(&totp, clock.utc), clock)
         .unwrap());
     let setup = uuid::Uuid::new_v4();
-    store.stage(setup, &candidate, &native).unwrap();
-    let mut receipt = w::CredentialReceipt {
+    store.stage(setup, &candidate, native).unwrap();
+    let receipt = w::CredentialReceipt {
         subject: subject.clone(),
         material: uuid::Uuid::new_v4(),
         version: 1,
@@ -677,7 +686,7 @@ fn rss_rotation_changes_only_recovery_after_ack_and_verification_reuses_material
                 recovery: receipt.clone(),
             },
             clock,
-            &native,
+            native,
         )
         .unwrap();
     task.task.expected = vec![w::CredentialVersion {
@@ -691,6 +700,107 @@ fn rss_rotation_changes_only_recovery_after_ack_and_verification_reuses_material
         &None,
     )
     .unwrap();
+    RssFixture {
+        store,
+        task,
+        authority,
+        clock,
+        old,
+        totp,
+        receipt,
+    }
+}
+#[test]
+fn da_reissued_lease_and_replacement_verify_use_the_original_sqlite_material() {
+    let root = Root::new();
+    let native = Fake::new();
+    let RssFixture {
+        mut store,
+        mut task,
+        receipt,
+        ..
+    } = rss_fixture(&root, &native, device_access::Channel::Da);
+    assert!(matches!(
+        super::rss::execute(&task, &native, &mut store),
+        Err(Error::Unavailable)
+    ));
+    let escrow = pending(&root.0, &task.task).unwrap().unwrap();
+    let mut next = receipt.clone();
+    next.version += 1;
+    acknowledge(&root.0, &task.task, &escrow, std::slice::from_ref(&next)).unwrap();
+    // The replaced task has custody, while its local material is still the predecessor.
+    let mut verify = input(
+        &root,
+        match &receipt.subject {
+            Subject::RssLogin {
+                binding,
+                binding_generation,
+                sid,
+            } => Op::VerifyRssLogin {
+                binding: *binding,
+                binding_generation: *binding_generation,
+                sid: sid.clone(),
+            },
+            _ => unreachable!(),
+        },
+    );
+    verify.channel = device_access::Channel::Da;
+    verify.task.expected = task.task.expected.clone();
+    verify.task.recovery = Some(w::CredentialRecovery {
+        task_id: task.task.task_id,
+        attempt_id: task.task.attempt_id,
+    });
+    verify.task.definition_digest = w::CredentialTaskSpec::digest(
+        &verify.task.operation,
+        &verify.task.recipient,
+        &verify.task.expected,
+        &verify.task.recovery,
+    )
+    .unwrap();
+    assert!(matches!(
+        super::rss::execute(&verify, &native, &mut store),
+        Err(Error::Unavailable)
+    ));
+    acknowledge(
+        &root.0,
+        &verify.task,
+        &pending(&root.0, &verify.task).unwrap().unwrap(),
+        std::slice::from_ref(&receipt),
+    )
+    .unwrap();
+    let observed = super::rss::execute(&verify, &native, &mut store).unwrap();
+    assert_eq!(
+        observed.recovery,
+        Some(w::CredentialRecoveryOutcome::Unchanged)
+    );
+    task.task.expires_at += 1;
+    let result = super::rss::execute(&task, &native, &mut store).unwrap();
+    assert!(result.complete);
+    assert_eq!(
+        store
+            .recovery_material(&task.task, &receipt.subject, &native)
+            .unwrap()
+            .1,
+        next
+    );
+}
+#[test]
+fn rss_rotation_changes_only_recovery_after_ack_and_verification_reuses_material() {
+    use device_access::{Clock, Decision, Factor};
+    let root = Root::new();
+    let native = Fake::new();
+    let RssFixture {
+        mut store,
+        task,
+        authority,
+        clock,
+        old,
+        totp,
+        mut receipt,
+    } = rss_fixture(&root, &native, device_access::Channel::Mdm);
+    let subject = receipt.subject.clone();
+    let sid = authority.sid.clone();
+    let binding = authority.binding;
     receipt.version = 2;
     let ack = rss_ack(&task, receipt.clone());
     let result = super::rss::execute(&task, &native, &mut store).unwrap();

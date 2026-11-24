@@ -509,6 +509,20 @@ impl EnterpriseSession {
         )
         .await?;
         self.accept_identity(&value, true)?;
+        // Standalone DA mounts the Identity SDK session route. Task authorization is
+        // returned by its authenticated device listener, independently of employee login.
+        if let Some(portal) = execution_ipc::device_access::EmployeePortal::bundled().filter(|p| {
+            p.standalone
+                && p.origin == self.organization.origin
+                && p.tenant.to_string() == self.organization.tenant_id
+        }) {
+            let instance = portal.instance.to_string();
+            if !self.instance.is_empty() && self.instance != instance {
+                return Err(failure(Stage::Authorization, Reason::Denied));
+            }
+            self.instance = instance;
+            return Ok(());
+        }
         let access = body(
             self.request(Stage::Authorization, Method::GET, "/api/v1/authorization")
                 .await?,

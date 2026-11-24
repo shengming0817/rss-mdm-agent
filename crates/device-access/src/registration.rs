@@ -278,6 +278,48 @@ impl Store {
         tx.commit()?;
         Ok(())
     }
+    /// Read-only recovery of an interrupted DA result. Require the exact locally
+    /// committed revision; observing the same SID later cannot settle this attempt.
+    pub fn observed_da_task(
+        &self,
+        task: &rss_mdm_agent_wire::runtime::AccessTaskSpec,
+        sid: &str,
+    ) -> Result<Option<(Authority, Option<AccessRssFacts>)>, Error> {
+        use rss_mdm_agent_wire::runtime::AccessAction;
+        self.check_files()?;
+        let Some(record) = load(&self.conn, sid)? else {
+            return Ok(None);
+        };
+        let a = record.authority;
+        if a.channel != Channel::Da
+            || a.tenant != task.tenant_id
+            || a.device != task.device_id
+            || a.principal != task.principal_id
+            || a.instance != task.instance_id
+            || a.binding != task.binding_id
+            || record.revision != task.revision
+        {
+            return Ok(None);
+        }
+        require(&self.conn, &a)?;
+        match &task.action {
+            AccessAction::Unbind { .. }
+                if record.revoked && a.binding_generation <= task.binding_generation =>
+            {
+                Ok(Some((a, None)))
+            }
+            AccessAction::Create { configuration, .. }
+            | AccessAction::Apply { configuration, .. }
+                if !record.revoked
+                    && record.enabled == configuration.enabled
+                    && a.binding_generation == task.binding_generation
+                    && a.factor_generation == task.factor_generation =>
+            {
+                Ok(Some((a, Some(record.facts))))
+            }
+            _ => Ok(None),
+        }
+    }
     /// Native execution can inspect an exact disabled binding to complete its authorized removal.
     pub fn stored_authority(&self, sid: &str) -> Result<Option<Authority>, Error> {
         self.check_files()?;

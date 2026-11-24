@@ -422,6 +422,8 @@ Windows x64 NSIS 候选包含 CP DLL；其他架构及 MSI/MSIX 未装配该组�
 
 普通组件卸载/禁用保留必要材料和防重放状态；正式设备退管按原有授权流程先撤销组件和本机授权，再清理材料。重新接入必须完成新的受信注册和绑定，不从旧候选恢复旧因子。
 
+Windows 包如需交互准备登录因子，构建时填写与 DA 租户一致的 `desktop` 浏览器 origin 和对应的 HTTPS 信任。Desktop 与 SYSTEM 服务按包内固定来源分别核对当前 Identity 会话；服务只向本次 DA 许可指定的员工和控制台账号开放设置。
+
 仅 DA 的本地 SAM 账号由管理员在当前 DA 注册下建立绑定。在桌面登录对应企业账号，从“账号与组织 → Windows 登录因子”读取待设置任务，录入验证器后确认动态码。创建新账号还需在本机输入密码。管理员按原操作核对设备收到、托管回执与实际应用，断网期间尚未落地的撤销记为离线待应用。账号解绑、恢复材料轮换及整个 DA 注册的撤销分别核对。设备所属 AD 域账号和纯 Entra joined 账号沿授权 Agent 投递路径验收。
 
 在 Windows 11 x64 用 `native-candidate.mjs freeze` 固定 service、CLI、backend、Desktop，并通过 `--windows-login` 和 `--installer` 绑定 CP DLL 与 NSIS 安装包。安装并按要求重启后，以 LocalSystem 运行 `verify-execution-windows.ps1 -Phase DeviceAccessHealth -Candidate <固定清单> -Config <已安装部署配置> -Output <新目录>`。回执包含 SCM 运行进程、COM 注册 DLL、安装包的 SHA-256 和实际 Authenticode 结果。固定包与已安装副本允许位于不同目录。组件健康仅证明此时的注册和存储可用。

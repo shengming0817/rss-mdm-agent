@@ -245,6 +245,16 @@ impl Operations<'_> {
             &self.key(&format!("account-receipt/{}", body.event_id)),
             &ack,
         )?;
+        if matches!(
+            &body.event,
+            wire::AccountObservation::CreateAbsent { .. }
+                | wire::AccountObservation::Result(w::AccessResult {
+                    effect: w::AccessEffect::Applied { .. } | w::AccessEffect::Unbound { .. },
+                    ..
+                })
+        ) {
+            write(&tx, &self.key("account-cleanup"), &(task, body.attempt_id))?;
+        }
         tx.execute(
             "DELETE FROM state WHERE name=?1",
             [self.key("account-pending")],
@@ -281,7 +291,14 @@ impl Operations<'_> {
             {
                 return Err(Error::Untrusted);
             }
-            self.save(&format!("credential/{}/{}", t.task_id, t.attempt_id), t)?;
+            let key = format!("credential/{}/{}", t.task_id, t.attempt_id);
+            if let Some(mut old) = self.load::<w::CredentialTaskSpec>(&key)? {
+                old.expires_at = t.expires_at;
+                if old != *t {
+                    return Err(Error::Conflict);
+                }
+            }
+            self.save(&key, t)?;
         }
         Ok(task)
     }
@@ -317,6 +334,21 @@ impl Operations<'_> {
         }
         let tx = self.db.unchecked_transaction()?;
         write(&tx, &self.key(&format!("credential-receipt/{id}")), &ack)?;
+        if let wire::CredentialEvent::Applied {
+            attempt_id,
+            receipt,
+            ..
+        } = event
+        {
+            if ack.state != wire::CredentialState::Applied || ack.receipt.as_ref() != Some(receipt)
+            {
+                return Err(Error::Protocol);
+            }
+            let spec: w::CredentialTaskSpec = self
+                .load(&format!("credential/{id}/{attempt_id}"))?
+                .ok_or(Error::Storage)?;
+            write(&tx, &self.key("credential-cleanup"), &spec)?;
+        }
         tx.execute(
             "DELETE FROM state WHERE name=?1",
             [self.key("credential-pending")],
@@ -337,6 +369,30 @@ impl Operations<'_> {
         }
         Ok(())
     }
+    /// Resume local retirement only from a durably accepted original event.
+    pub fn retire_account(
+        &self,
+        clean: impl FnOnce(Uuid, Uuid) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        let key = self.key("account-cleanup");
+        if let Some((id, attempt)) = read(self.db, &key)? {
+            clean(id, attempt)?;
+            self.db.execute("DELETE FROM state WHERE name=?1", [key])?;
+        }
+        Ok(())
+    }
+    /// Clear a confirmed credential attempt after its protected worker records are retired.
+    pub fn retire_credential(
+        &self,
+        clean: impl FnOnce(&w::CredentialTaskSpec) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        let key = self.key("credential-cleanup");
+        if let Some(spec) = read(self.db, &key)? {
+            clean(&spec)?;
+            self.db.execute("DELETE FROM state WHERE name=?1", [key])?;
+        }
+        Ok(())
+    }
     /// Acknowledge one original, durably recorded offline use.
     pub async fn recovery_use(&self, usage: &w::AccessRecoveryUse) -> Result<(), Error> {
         usage.validate()?;
@@ -349,4 +405,77 @@ impl Operations<'_> {
         }
         Ok(())
     }
+}
+
+/// Revalidate an employee at the administrator-pinned browser issuer without disclosing
+/// the machine key. Identity's tenant-scoped session GET returns the actual subject and expiry.
+/// ref: rss-identity identity-http-axum/src/handlers.rs (current).
+pub async fn verify_employee(
+    origin: &str,
+    ca: Option<&str>,
+    tenant: Uuid,
+    principal: Uuid,
+    secret: &str,
+) -> Result<i64, Error> {
+    let url = url::Url::parse(origin).map_err(|_| Error::Configuration)?;
+    if url.scheme() != "https"
+        || url.origin().ascii_serialization() != origin
+        || tenant.is_nil()
+        || principal.is_nil()
+        || secret.len() != 64
+        || !secret
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err(Error::Identity);
+    }
+    let budget = Duration::from_secs(3);
+    let http = if let Some(ca) = ca {
+        crate::tls::transport(Some(ca.as_bytes()), true, budget, budget, None)?
+    } else {
+        reqwest::Client::builder()
+            .https_only(true)
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(budget)
+            .build()
+            .map_err(|_| Error::Configuration)?
+    };
+    let cookie = zeroize::Zeroizing::new(format!("__Host-identity-session={secret}"));
+    let response = http
+        .get(format!("{origin}/api/v1/identity/tenants/{tenant}/session"))
+        .header("cookie", cookie.as_str())
+        .header("origin", origin)
+        .header("x-identity-request", "1")
+        .timeout(budget)
+        .send()
+        .await
+        .map_err(|_| Error::Network)?;
+    if response.status() != reqwest::StatusCode::OK {
+        return Err(Error::Denied);
+    }
+    #[derive(Deserialize)]
+    struct Identity {
+        #[serde(rename = "principalId")]
+        principal: Uuid,
+    }
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Lifetime {
+        idle_expires_at: i64,
+        absolute_expires_at: i64,
+    }
+    #[derive(Deserialize)]
+    struct Current {
+        identity: Identity,
+        session: Lifetime,
+    }
+    let current: Current = crate::store::decode(&crate::client::bounded(response, 16384).await?)?;
+    if current.identity.principal != principal {
+        return Err(Error::Identity);
+    }
+    Ok(current
+        .session
+        .idle_expires_at
+        .min(current.session.absolute_expires_at))
 }

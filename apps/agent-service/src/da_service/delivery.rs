@@ -56,6 +56,18 @@ async fn account(
     enable: bool,
 ) -> Result<(), Error> {
     ops.replay_account().await?;
+    ops.retire_account(|id, attempt| {
+        let key = format!("{id}.{attempt}.da-attempt");
+        if let Some(record) = state::read_optional::<Attempt>(root, &key)? {
+            let t = record.permit.ok_or(Error::Storage)?;
+            if (t.task_id, t.attempt_id) != (id, attempt) {
+                return Err(Error::Identity);
+            }
+            access::retire_native(root, d.installation_id, &t)?;
+            state::remove(root, &key)?;
+        }
+        Ok(())
+    })?;
     let Some(o) = ops.account().await? else {
         return login.offer(None);
     };
@@ -73,7 +85,7 @@ async fn account(
             if let Some(p) = access::prepared(root, old)? {
                 ops.account_event(&o, Observation::Prepared(p)).await?;
             }
-            if let Some(result) = access::stored_result(root, old)? {
+            if let Some(result) = access::observe_da(root, d.installation_id, old)? {
                 ops.account_event(&o, Observation::Result(result)).await?;
                 return Ok(());
             }
@@ -88,6 +100,11 @@ async fn account(
                 ops.account_event(&o, Observation::NotStarted { expires_at: exp })
                     .await?;
             } else if let Some(t) = &attempt.permit {
+                if access::create_absent(root, t)? {
+                    ops.account_event(&o, Observation::CreateAbsent { expires_at: exp })
+                        .await?;
+                    return Ok(());
+                }
                 ops.account_event(
                     &o,
                     Observation::Result(access::report(t, w::AccessEffect::Unknown)),
@@ -147,29 +164,16 @@ async fn account(
     }
     attempt.permit = Some(t.clone());
     state::write(root, &key, &attempt)?;
-    login.offer(Some(&t))?;
     if let Some(result) = access::stored_result(root, &t)? {
-        ops.account_event(&o, Observation::Result(result)).await?;
         login.offer(None)?;
+        ops.account_event(&o, Observation::Result(result)).await?;
         return Ok(());
     }
     let needs_setup = matches!(t.windows, Some(w::AccessWindowsPlan::Initialize { .. }));
-    let password = if needs_setup
-        && (!attempt.started
-            || matches!(t.action, w::AccessAction::Create { .. })
-                && access::prepared(root, &t)?.is_none())
-    {
-        match login.input(&t) {
-            Ok(p) => p,
-            Err(Error::Denied) => return Ok(()),
-            Err(e) => return Err(e),
-        }
+    if needs_setup && !attempt.started {
+        login.offer(Some(&t))?;
     } else {
-        None
-    };
-    if !attempt.started {
-        attempt.started = true;
-        state::write(root, &key, &attempt)?;
+        login.offer(None)?;
     }
     let input = access::Input {
         channel: Channel::Da,
@@ -182,7 +186,25 @@ async fn account(
         },
         session: SessionRequirement::NotRequired {},
     };
-    let mut result = access::drive_da(&input, password)?;
+    let step = access::drive_da(&input, || {
+        let password = if needs_setup && !attempt.started {
+            login.input(&t)?
+        } else {
+            None
+        };
+        if !attempt.started {
+            attempt.started = true;
+            state::write(root, &key, &attempt)?;
+        }
+        login.offer(None)?;
+        Ok(password)
+    });
+    let mut result = match step {
+        Ok(Some(v)) => v,
+        Ok(None) | Err(Error::Denied) => return Ok(()),
+        Err(e) => return Err(e),
+    };
+
     if let Some(p) = access::prepared(root, &t)? {
         ops.account_event(&o, Observation::Prepared(p)).await?;
     }
@@ -205,7 +227,10 @@ async fn account(
             {
                 return Err(Error::Expired);
             }
-            result = access::drive_da(&input, None)?;
+            let Some(next) = access::drive_da(&input, || Ok(None))? else {
+                return Ok(());
+            };
+            result = next;
         }
     }
     ops.account_event(&o, Observation::Result(result)).await?;
@@ -214,6 +239,7 @@ async fn account(
 
 async fn credentials(d: &Deployment, ops: &da::Operations<'_>) -> Result<(), Error> {
     ops.replay_credential().await?;
+    ops.retire_credential(|t| credential::retire(&credential::root(&d.execution), t))?;
     let Some(t) = ops.credential().await? else {
         return Ok(());
     };

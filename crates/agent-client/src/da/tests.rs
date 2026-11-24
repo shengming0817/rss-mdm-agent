@@ -30,6 +30,7 @@ impl Credentials for Secrets {
 struct Server {
     offer: wire::AccountOffer,
     account_event: Option<Value>,
+    deliveries: usize,
     grant: Option<wire::Grant>,
     candidate: Option<enroll::Candidate>,
     registration: Option<wire::Registration>,
@@ -112,6 +113,7 @@ async fn endpoint(
                 "account-operations/next" => json!(s.offer),
                 "credential-operations/next" => Value::Null,
                 path if path == format!("account-operations/{}/events", s.offer.task_id) => {
+                    s.deliveries += 1;
                     let event: wire::AccountEvent = serde_json::from_value(input.clone()).unwrap();
                     assert_eq!(event.attempt_id, s.offer.attempt_id);
                     if let Some(old) = s.account_event.as_ref() {
@@ -339,6 +341,7 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
             definition_digest: [17; 32],
         },
         account_event: None,
+        deliveries: 0,
         grant: None,
         candidate: None,
         registration: None,
@@ -434,11 +437,15 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
         .account_event(&offer, wire::AccountObservation::Received)
         .await
         .is_err());
+    assert_eq!(state.lock().unwrap().deliveries, 1);
     drop(ops);
     drop(client);
     let client = open();
     let ops = client.operations().unwrap();
     ops.replay_account().await.unwrap();
+    assert_eq!(state.lock().unwrap().deliveries, 2);
+    ops.replay_account().await.unwrap();
+    assert_eq!(state.lock().unwrap().deliveries, 2);
     assert!(ops.credential().await.unwrap().is_none());
     drop(ops);
     client.start_renewal().unwrap();

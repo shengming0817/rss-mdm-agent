@@ -25,8 +25,9 @@ export function WindowsLoginSetup({ port }: { port: DeviceAccessPort }) {
     try {
       await action();
     } catch {
-      clear();
-      setMessage("未能确认操作，请重新读取当前账号的任务。");
+      setCode("");
+      setPassword("");
+      setMessage("未能确认操作。请重试当前验证码，或刷新任务。");
     } finally {
       setBusy(false);
     }
@@ -53,9 +54,11 @@ export function WindowsLoginSetup({ port }: { port: DeviceAccessPort }) {
       code,
       password: setup.task.createName ? password : null,
     });
-    clear();
+    setCode("");
+    setPassword("");
     const result = await pending;
     if (result.kind !== "prepared") throw Error();
+    clear();
     setTasks([]);
     setMessage("验证码已确认，等待本机应用和托管回执。");
   }

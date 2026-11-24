@@ -47,6 +47,12 @@ pub(super) fn readback(
             if installed.id != installation || installed.root != root {
                 return Ok(false);
             }
+            if target.settings.enabled
+                && crate::access_component::readiness(root, installation)?
+                    != execution_ipc::device_access::WindowsComponentState::Ready
+            {
+                return Ok(false);
+            }
             let store = device_access::Store::open(&installed.root, installed.id)
                 .map_err(|_| Error::Storage)?;
             store

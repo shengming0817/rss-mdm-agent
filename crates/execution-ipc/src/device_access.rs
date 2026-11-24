@@ -222,3 +222,26 @@ pub struct WindowsHelloStatus {
     /// Current observations, not proof of an actual login.
     pub facts: Option<w::AccessWhfbFacts>,
 }
+
+/// Employee session issuer installed with the desktop and the SYSTEM service. IPC requests
+/// cannot select this endpoint. Pinning it separately keeps browser cookies off the mTLS listener.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EmployeePortal {
+    /// Exact public HTTPS browser origin.
+    pub origin: String,
+    /// Optional private browser root.
+    pub ca_pem: Option<String>,
+    /// Product instance that mounts the Identity routes.
+    pub instance: Uuid,
+    /// Tenant at this issuer.
+    pub tenant: Uuid,
+    /// Standalone installations use DA operation grants for product authorization.
+    pub standalone: bool,
+}
+impl EmployeePortal {
+    /// Packaging gives both pinned images the same public descriptor.
+    pub fn bundled() -> Option<Self> {
+        serde_json::from_str(option_env!("RSS_BUILD_DA_LOGIN")?).ok()
+    }
+}
