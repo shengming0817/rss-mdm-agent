@@ -22,10 +22,11 @@ import { runtimeTreeSha256 } from "./ai-host-artifacts.mjs";
 import { sourceEvidence } from "./native-evidence.mjs";
 import { msiSource, msixManifest } from "./windows-packages.mjs";
 import {
-  buildPlatformSso,
+  packagePlatformSso,
   containerEntitlements,
 } from "./build-platform-sso.mjs";
 import {
+  employeePortalConfiguration,
   organizationConfiguration,
   publicCa,
 } from "./desktop-organization.mjs";
@@ -88,67 +89,10 @@ const defaults = organization.modules;
 const desktopConfiguration =
   organization.desktop ??
   (defaults.mdm?.state === "enabled" ? organizationConfiguration(root) : null);
-const mdmEnabled = defaults.mdm?.state === "enabled";
-const daEnabled = defaults.da?.state === "enabled";
-const product = organization.employeeIssuer ?? (mdmEnabled ? "mdm" : "da");
-if (
-  !["mdm", "da"].includes(product) ||
-  (organization.employeeIssuer !== undefined &&
-    defaults[product]?.state !== "enabled")
-)
-  throw Error("Employee issuer must select an enabled DA or MDM module");
-if (
-  mdmEnabled &&
-  daEnabled &&
-  (organization.employeeApplication || organization.recoveryReturnTarget) &&
-  !organization.employeeIssuer
-)
-  throw Error("Select the employee issuer for the coinstalled modules");
-const owner = defaults[product]?.backend;
-const daBrowser = product === "da" ? owner?.browser : null;
-const issuer = daBrowser
-  ? { ...daBrowser, tenant: owner.tenant }
-  : desktopConfiguration;
-const recoveryReturnTarget = organization.recoveryReturnTarget;
-if (
-  recoveryReturnTarget !== undefined &&
-  (!issuer ||
-    typeof recoveryReturnTarget !== "string" ||
-    !/^[a-zA-Z0-9_.-]{1,128}$/.test(recoveryReturnTarget))
-) {
-  throw Error(
-    "Employee recovery requires the registered same-origin OIDC return target ID",
-  );
-}
-const application = organization.employeeApplication;
-if (application !== undefined) {
-  if (
-    !issuer ||
-    !application ||
-    typeof application !== "object" ||
-    Object.keys(application).some(
-      (k) => !["relyingParty", "launchUrl"].includes(k),
-    ) ||
-    typeof application.relyingParty !== "string" ||
-    !/^[a-zA-Z0-9_-]{1,64}$/.test(application.relyingParty) ||
-    typeof application.launchUrl !== "string" ||
-    application.launchUrl.length > 2048
-  )
-    throw Error(
-      "Employee application requires the deployed RP ID and its fixed HTTPS launch URL",
-    );
-  const url = new URL(application.launchUrl);
-  if (
-    url.protocol !== "https:" ||
-    url.username ||
-    url.password ||
-    url.href.includes("?") ||
-    url.href.includes("#") ||
-    url.href.length > 2048
-  )
-    throw Error("Invalid employee application launch URL");
-  application.launchUrl = url.href;
-}
+const employeePortal = employeePortalConfiguration(
+  organization,
+  desktopConfiguration,
+);
 if (desktopConfiguration?.ca_pem !== undefined)
   desktopConfiguration.ca_pem = publicCa(desktopConfiguration.ca_pem);
 const env = { ...process.env };
@@ -156,21 +100,8 @@ delete env.RSS_BUILD_MDM_ORGANIZATION;
 delete env.RSS_BUILD_EMPLOYEE_PORTAL;
 if (desktopConfiguration)
   env.RSS_BUILD_MDM_ORGANIZATION = JSON.stringify(desktopConfiguration);
-if (issuer) {
-  if (!owner || issuer.tenant?.toLowerCase() !== owner.tenant)
-    throw Error(
-      "Employee browser issuer must belong to the selected module tenant",
-    );
-  env.RSS_BUILD_EMPLOYEE_PORTAL = JSON.stringify({
-    product,
-    instance: owner.instance,
-    tenant: owner.tenant,
-    origin: issuer.origin,
-    ca_pem: issuer.ca_pem == null ? undefined : publicCa(issuer.ca_pem),
-    application,
-    recovery_return_target: recoveryReturnTarget,
-  });
-}
+if (employeePortal)
+  env.RSS_BUILD_EMPLOYEE_PORTAL = JSON.stringify(employeePortal);
 // The outer build runner retains the worktree/target locks for this entire package build.
 // pnpm descendants do not inherit their descriptors and must not claim a borrowed lease.
 delete env._AGENT_BUILD_LEASE;
@@ -353,14 +284,11 @@ if (windows) {
   packagedRuntime = join(app, "Contents/Resources/ai-host-runtime");
   sign(app, undefined, "com.rss.mdmagent");
   const nativeExtensions = appleSigned(app);
-  psso =
-    nativeExtensions && desktopConfiguration
-      ? buildPlatformSso({
-          output: join(app, "Contents/PlugIns/RSSPlatformSSO.appex"),
-          identity: macosIdentity,
-          release: true,
-        })
-      : null;
+  psso = packagePlatformSso(nativeExtensions, employeePortal, {
+    output: join(app, "Contents/PlugIns/RSSPlatformSSO.appex"),
+    identity: macosIdentity,
+    release: true,
+  });
   assemblePasskeyHost({
     app,
     output: join(output, "passkey-container-entitlements.plist"),
@@ -428,7 +356,7 @@ const candidate = {
   platform_sso: psso
     ? {
         extension: image(psso.binary),
-        origin: desktopConfiguration.origin,
+        origin: psso.origin,
       }
     : null,
   version: 3,

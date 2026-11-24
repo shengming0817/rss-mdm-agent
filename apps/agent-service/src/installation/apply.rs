@@ -256,13 +256,15 @@ impl Journal {
                 self.save(record)?;
             }
         }
-        // Publish the lookup before archiving. While this runs, readers still see active().
+        // An unlocked reader may have missed active() before this operation started.
+        // Publish the result before its pointer and keep the checkpoint until both
+        // writes succeed so a restart can finish the same archive.
+        self.replace(&self.file(record.operation, "result"), &json(record)?)?;
         self.replace(
             &self.root.join("last-operation"),
             record.operation.as_bytes(),
         )?;
-        // Atomically move the terminal checkpoint to immutable per-operation history.
-        platform_private_storage::replace(&self.active(), &self.file(record.operation, "result"))?;
+        std::fs::remove_file(self.active())?;
         if record.phase == Phase::Applied && self.recovery_identity().try_exists()? {
             std::fs::remove_file(self.recovery_identity())?;
         }
@@ -1149,6 +1151,23 @@ mod tests {
         r.phase = Phase::Rejected;
         r.failure = Some(Error::Unsupported);
         journal.save(&r).unwrap();
+        // A publication failure leaves the result queryable and the checkpoint replayable.
+        let pointer = journal.root.join("last-operation");
+        std::fs::create_dir(&pointer).unwrap();
+        assert!(journal.archive(&mut r).is_err());
+        assert_eq!(
+            journal
+                .read(&journal.file(r.operation, "result"))
+                .unwrap()
+                .unwrap()
+                .operation,
+            r.operation
+        );
+        assert_eq!(
+            latest_record(&config).unwrap().unwrap().operation,
+            r.operation
+        );
+        std::fs::remove_dir(&pointer).unwrap();
         journal.archive(&mut r).unwrap();
         assert!(journal.read(&journal.active()).unwrap().is_none());
         let archived = journal

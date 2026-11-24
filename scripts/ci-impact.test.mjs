@@ -359,11 +359,20 @@ test("shared Agent HTTP fixtures select both owners and backend changes select t
     const graph = workspaceGraph(
       f.root,
       cargo,
+      [
+        {
+          name: npm("desktop"),
+          path: join(f.root, "apps/desktop"),
+          manifest: {},
+        },
+      ],
       [],
-      [],
-      testOwners.filter(([, owner]) => rust.includes(owner)),
+      testOwners.filter(
+        ([, owner]) => rust.includes(owner) || owner === npm("desktop"),
+      ),
     );
-    for (const [path, expected] of [
+    for (const [path, expected, node = []] of [
+      ["tests/agent-protocol/http-v1.json", rust, [npm("desktop")]],
       ["tests/agent-protocol/mod.rs", rust],
       ["crates/agent-client/src/delivery.rs", rust],
       ["apps/agent-service/src/backend/bridge.rs", ["agent-service"]],
@@ -373,6 +382,7 @@ test("shared Agent HTTP fixtures select both owners and backend changes select t
       const result = f.select({ baseRef, graph: () => graph });
       assert.equal(result.full, false);
       assert.deepEqual(result.rustPackages, expected);
+      assert.deepEqual(result.nodePackages, node);
     }
   } finally {
     f.close();

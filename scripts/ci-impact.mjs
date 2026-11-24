@@ -118,7 +118,10 @@ export const testOwners = [
   ["scripts/installers", "rss-mdm-desktop"],
   ["tests/agent-protocol", "agent-client"],
   ["tests/agent-protocol", "agent-service"],
-  ["tests/agent-protocol/http-v1.json", npm("desktop")],
+  ...["agent-client", "agent-service", npm("desktop")].map((owner) => [
+    "tests/agent-protocol/http-v1.json",
+    owner,
+  ]),
   ["scripts/service/execution-macos.py", "agent-service"],
   ["scripts/service/verify-execution-macos.py", "agent-service"],
   ["scripts/service/verify-execution-macos.test.py", "agent-service"],

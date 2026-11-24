@@ -18,9 +18,11 @@ import {
   IPC_VERSION,
   DEPLOYMENT_VERSION,
 } from "../packages/execution-bindings/src/service-version.mjs";
+import { packagePlatformSso } from "./build-platform-sso.mjs";
 import { agentOrganizationConfiguration } from "./agent-organization.mjs";
 import {
   desktopBuildEnvironment,
+  employeePortalConfiguration,
   publicCa,
   organizationBuildInput,
 } from "./desktop-organization.mjs";
@@ -368,4 +370,39 @@ test("managed package formats use explicit machine service owners and escaped fi
       publisher: "CN=RSS",
     }),
   );
+});
+
+test("DA-only and coinstalled packages use the selected DA issuer for macOS PSSO", () => {
+  const tenant = "tenant";
+  const da = {
+    state: "enabled",
+    backend: {
+      instance: "da-1",
+      tenant,
+      browser: { origin: "https://da.example.test" },
+    },
+  };
+  const mdm = { state: "enabled", backend: { instance: "mdm-1", tenant } };
+  const desktop = { tenant, origin: "https://mdm.example.test" };
+  for (const [organization, desktopConfiguration] of [
+    [{ modules: { da } }, null],
+    [{ modules: { da, mdm }, employeeIssuer: "da" }, desktop],
+  ]) {
+    const portal = employeePortalConfiguration(
+      organization,
+      desktopConfiguration,
+    );
+    const options = { output: "RSSPlatformSSO.appex", release: true };
+    const artifact = packagePlatformSso(true, portal, options, (received) => {
+      assert.deepEqual(received, options);
+      return { binary: "extension-binary" };
+    });
+    assert.deepEqual(artifact, {
+      binary: "extension-binary",
+      origin: da.backend.browser.origin,
+    });
+    assert.equal(portal.origin, da.backend.browser.origin);
+    assert.equal(portal.instance, da.backend.instance);
+    assert.equal(portal.product, "da");
+  }
 });
