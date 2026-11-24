@@ -422,7 +422,11 @@ Windows x64 NSIS 候选包含 CP DLL；其他架构及 MSI/MSIX 未装配该组�
 
 普通组件卸载/禁用保留必要材料和防重放状态；正式设备退管按原有授权流程先撤销组件和本机授权，再清理材料。重新接入必须完成新的受信注册和绑定，不从旧候选恢复旧因子。
 
-人工验收分别记录本地、AD、Entra joined 的 Windows 版本、架构、加入状态、固定 revision、Agent/DLL/安装包 SHA256、签名身份与结果：登录/解锁/取消/用户切换、改密、域控/IdP 不可达、后台及服务停止、OTP 并发重放、重启限速、时钟异常、持久化失败、损坏、重绑/离职、升级中断、卸载和独立维修。使用 `native-candidate.mjs freeze --windows-login <DLL>` 将 DLL 纳入固定候选；`verify-execution-windows.ps1 -Phase DeviceAccessHealth` 从该候选读取 DLL，并要求服务与 DLL 签名有效、发布者一致，仍只作组件健康记录；交互效果须人工独立观察。本轮 Windows 原生构建、签名包与实机交互留待人工执行，不作为实现 PR ready 的阻塞，不得记为通过。
+仅 DA 的本地 SAM 账号由管理员在当前 DA 注册下建立绑定。在桌面登录对应企业账号，从“账号与组织 → Windows 登录因子”读取待设置任务，录入验证器后确认动态码。创建新账号还需在本机输入密码。管理员按原操作核对设备收到、托管回执与实际应用，断网期间尚未落地的撤销记为离线待应用。账号解绑、恢复材料轮换及整个 DA 注册的撤销分别核对。设备所属 AD 域账号和纯 Entra joined 账号沿授权 Agent 投递路径验收。
+
+在 Windows 11 x64 用 `native-candidate.mjs freeze` 固定 service、CLI、backend、Desktop，并通过 `--windows-login` 和 `--installer` 绑定 CP DLL 与 NSIS 安装包。安装并按要求重启后，以 LocalSystem 运行 `verify-execution-windows.ps1 -Phase DeviceAccessHealth -Candidate <固定清单> -Config <已安装部署配置> -Output <新目录>`。回执包含 SCM 运行进程、COM 注册 DLL、安装包的 SHA-256 和实际 Authenticode 结果。固定包与已安装副本允许位于不同目录。组件健康仅证明此时的注册和存储可用。
+
+产品验收逐项保存 UTC、账号来源、OS build／架构、注册和加入方式、候选 revision／摘要、签名状态、原操作及实测结果。在仅 DA 的 SAM、设备所属域、纯 Entra joined 三种组合分别实测密码加 RSS 因子的登录和解锁、离线动态码和恢复、原生维修；单列后台不可达、Agent 停止、维护失败、域控或 IdP 不可达。以两个采用当前格式的固定候选验证升级中断与程序回退，复用当前受保护离线库，逐项确认撤销的因子与已轮换旧恢复材料失效。格式不匹配时在切换前拒绝。WHfB 的策略、用户注册、PIN 登录、解锁与 PIN 恢复单独记录；未实测组合保留待验。
 
 ### Windows Hello for Business 实现边界
 
