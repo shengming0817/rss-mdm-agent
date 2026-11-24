@@ -1,7 +1,9 @@
 //! The existing system service drives DA on its own bounded worker. An unavailable DA
 //! endpoint cannot stall authenticated IPC, MDM enrollment, or the ordinary task owner.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os="macos", test))]
 mod attempt;
+#[cfg(target_os="macos")]
+pub(crate) mod mac_accounts;
 #[cfg(windows)]
 mod delivery;
 #[cfg(windows)]
@@ -211,7 +213,19 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                                         }
                                     };
                                     #[cfg(target_os="macos")]
-                                    if d.platform_sso.is_some() {native.maintenance(&d,&client).await?;}
+                                    {
+                                        native.maintenance(&d,&client).await?;
+                                        if client.operations().is_ok() {
+                                            let setup=native.accounts();
+                                            let delivery=mac_accounts::drive(&d,&client,&setup);
+                                            tokio::pin!(delivery);
+                                            let operations=loop {tokio::select! {
+                                                r=&mut delivery=>break r,
+                                                Some(cmd)=native.rx.recv()=>native.handle(&d,&client,cmd).await,
+                                            }};
+                                            client.record_delivery(operations)?;
+                                        }
+                                    }
 
                                     #[cfg(windows)]
                                     {
@@ -266,11 +280,13 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                         tokio::select! {_=worker_login.wake.notified()=>(),_=tokio::time::sleep(Duration::from_secs(delay))=>()}
                         #[cfg(target_os="macos")]
                         {
+                            let setup = native.accounts();
                             let wait = tokio::time::sleep(Duration::from_secs(delay));
                             tokio::pin!(wait);
                             loop {
                                 tokio::select! {
                                     _=&mut wait => break,
+                                    _=setup.wake.notified()=>break,
                                     Some(cmd)=native.rx.recv() => {
                                         match channel_initialized(&d).and_then(|live| if live { open(&d) } else {Err(Error::Identity)}) {
                                             Ok(client) => native.handle(&d, &client, cmd).await,
@@ -305,16 +321,20 @@ fn settle_mac_request(
     native: impl FnOnce() -> Reply + Send + 'static,
     mdm: impl FnOnce(Request) -> Option<Reply>,
 ) -> execution_ipc::host::DeferredReply {
-    let other = if matches!(request, Request::BindContext { .. }) {
+    let other = if matches!(request, Request::BindContext { .. } | Request::DeviceAccess {input:execution_ipc::device_access::Operation::Tasks{},..}) {
         mdm(request)
     } else {
         None
     };
     Box::new(move || {
         let result = native();
-        match other {
-            Some(bound @ Reply::ContextBound { .. }) => bound,
-            _ => result,
+        match (other,result) {
+            (Some(bound @ Reply::ContextBound { .. }),_) => bound,
+            (Some(Reply::DeviceAccess{value:execution_ipc::device_access::Response::Tasks{mut tasks}}), native)=>{
+                if let Reply::DeviceAccess{value:execution_ipc::device_access::Response::Tasks{tasks:da}}=native { tasks.extend(da); }
+                Reply::DeviceAccess{value:execution_ipc::device_access::Response::Tasks{tasks}}
+            }
+            (_,result) => result,
         }
     })
 }

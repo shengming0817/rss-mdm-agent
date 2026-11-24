@@ -1,7 +1,9 @@
 //! Independent device authentication for the existing macOS extension and registration engine.
 //! ref: Apple AuthenticationServices/ASAuthorizationProviderExtensionRegistrationHandler.h
 use super::*;
-use crate::da_service::policy::Machine;
+use crate::da_service::{policy::Machine, mac_accounts::{Employee,Setup}};
+use std::sync::atomic::{AtomicBool,Ordering};
+use execution_ipc::device_access::{Operation as AccountOp, Response as AccountReply};
 use crate::deployment::Deployment;
 use agent_client::da::{self, PolicyConsumer};
 use execution_ipc::host::{Peer, PeerPolicy, SessionFence};
@@ -35,7 +37,8 @@ type Client = da::Client<DeviceSecrets, SystemClock>;
 /// Logout fences a directory lookup even while its HTTPS response is outstanding.
 pub(crate) struct Fence {
     policy: PeerPolicy,
-    epoch: Mutex<u64>,
+    epoch: Arc<Mutex<u64>>,
+    pub accounts: Arc<Setup>,
     other: Option<Arc<dyn SessionFence>>,
 }
 impl SessionFence for Fence {
@@ -51,6 +54,8 @@ impl SessionFence for Fence {
             return Reply::Unavailable;
         };
         *epoch = next;
+        drop(epoch);
+        if self.accounts.clear_input().is_err() { return Reply::Unavailable; }
         Reply::ContextRevoked
     }
 }
@@ -90,7 +95,8 @@ impl Endpoint {
         let (sender, rx) = tokio::sync::mpsc::channel(16);
         let fence = Arc::new(Fence {
             policy: d.registration_clients.clone(),
-            epoch: Mutex::new(0),
+            epoch: Arc::new(Mutex::new(0)),
+            accounts:Arc::default(),
             other,
         });
         (
@@ -205,16 +211,15 @@ impl Endpoint {
     pub fn start(&self, peer: &Peer, request: &Request) -> Option<Result<Pending, Reply>> {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(4);
         let d = &self.deployment;
-        let config = d.platform_sso.as_ref()?;
         if matches!(
             request,
             Request::PlatformSso { .. }
-                | Request::BindContext { .. }
                 | Request::DeviceAccess {
                     input: execution_ipc::device_access::Operation::MacStatus {},
                     ..
                 }
         ) {
+            d.platform_sso.as_ref()?;
             match self.mdm_owns(peer, request) {
                 Ok(true) => return None,
                 Err(_) => return Some(Err(Reply::Rejected)),
@@ -222,13 +227,17 @@ impl Endpoint {
             }
         }
         let subject = match request {
-            Request::PlatformSso { .. } => config
-                .verify()
-                .ok()
-                .and_then(|()| peer.authenticate_extension(&config.extension).ok()),
+            Request::PlatformSso { .. } => { let config=d.platform_sso.as_ref()?; config.verify().ok().and_then(|()| peer.authenticate_extension(&config.extension).ok()) },
+            Request::DeviceAccess {origin:execution_ipc::host::ClientOrigin::Desktop {},input:AccountOp::PrepareMac{task,attempt},..} => {
+                match self.fence.accounts.owns((*task,*attempt)) {
+                    Ok(true)=>peer.authenticate(&d.registration_clients).ok(),
+                    Ok(false)=>return None,
+                    Err(_)=>return Some(Err(Reply::Unavailable)),
+                }
+            }
             Request::DeviceAccess {
                 origin: execution_ipc::host::ClientOrigin::Desktop {},
-                input: execution_ipc::device_access::Operation::MacStatus {},
+                input: AccountOp::MacStatus {} | AccountOp::Tasks {},
                 ..
             } => peer.authenticate(&d.registration_clients).ok(),
             Request::BindContext { value, .. } => {
@@ -279,6 +288,8 @@ impl Endpoint {
 }
 
 struct BoundContext {
+    credential: Option<zeroize::Zeroizing<String>>,
+    current: Arc<AtomicBool>,
     principal: Option<Uuid>,
     subject: String,
     session: u32,
@@ -286,6 +297,9 @@ struct BoundContext {
     generation: execution_contract::Id,
     epoch: u64,
     expires: u64,
+}
+impl Drop for BoundContext {
+    fn drop(&mut self){self.current.store(false, Ordering::Release);}
 }
 impl BoundContext {
     fn refreshes(
@@ -332,6 +346,7 @@ pub(crate) struct Worker {
     bound: Option<BoundContext>,
 }
 impl Worker {
+    pub fn accounts(&self)->Arc<Setup> { self.fence.accounts.clone() }
     pub async fn handle(&mut self, d: &Deployment, client: &Client, work: Work) {
         let Work { command, deadline } = work;
         if command.reply.is_closed() {
@@ -358,6 +373,7 @@ impl Worker {
                             return Err(Error::Identity);
                         }
                     }
+                    self.fence.accounts.clear_input()?;
                     self.bound = None;
                     let expires = owner.bind(&command, value, &self.fence).await?;
 
@@ -369,6 +385,7 @@ impl Worker {
                         return Err(Error::Identity);
                     }
                     self.bound = Some(BoundContext {
+                        credential:value.credential().cloned(), current: Arc::new(AtomicBool::new(true)),
                         principal: value.user().map(|u| u.principal_id),
                         subject: command.subject.clone(),
                         session: command.session,
@@ -383,6 +400,23 @@ impl Worker {
                             generation: value.generation.clone(),
                         },
                     })
+                }
+                Some(Request::DeviceAccess {context,input: input @ (AccountOp::Tasks{} | AccountOp::PrepareMac{..}), mac_password, ..})=>{
+                    let bound=self.bound.as_ref().ok_or(Error::Identity)?;
+                    if !bound.permits(&command,context,&self.fence) {return Err(Error::Identity);}
+                    let employee=Employee {portal:d.modules.employee_portal()?.ok_or(Error::Identity)?,
+                        principal:bound.principal.ok_or(Error::Identity)?, proof:bound.credential.clone().ok_or(Error::Identity)?,
+                        subject:bound.subject.clone(),session:bound.session,binding:bound.binding.clone(),epoch:self.fence.epoch.clone(),
+                        generation:bound.epoch,current:bound.current.clone(),expires:bound.expires};
+                    let value=match input {
+                        AccountOp::Tasks{}=>AccountReply::Tasks {tasks:self.fence.accounts.tasks(&employee)?},
+                        AccountOp::PrepareMac{task,attempt}=>{
+                            self.fence.accounts.prepare((*task,*attempt),employee,mac_password.as_ref().ok_or(Error::Denied)?)?;
+                            AccountReply::Prepared{}
+                        }
+                        _=>return Err(Error::Denied),
+                    };
+                    Ok(Reply::DeviceAccess{value})
                 }
                 Some(Request::DeviceAccess {
                     context,
@@ -444,6 +478,7 @@ impl Worker {
     pub async fn maintenance(&mut self, d: &Deployment, client: &Client) -> Result<(), Error> {
         let root = crate::access_worker::root(&d.execution);
         if let Some(r) = client.revocation().await? {
+            self.bound=None; self.fence.accounts.reset()?;
             withdraw_sources(&root, &r)?;
             return client.retire(&r);
         }
@@ -587,42 +622,33 @@ impl Da<'_> {
             return Err(Error::Identity);
         }
         let proof = value.credential().ok_or(Error::Identity)?;
-        let account =
-            crate::account_identity::generated_uid(&command.subject)?.ok_or(Error::Identity)?;
-        let uid = Uuid::parse_str(&account).map_err(|_| Error::Identity)?;
-        let operations = self.client.operations()?;
-        let (expires, directory, selected) = tokio::try_join!(
-            da::verify_employee(
-                &issuer.origin,
-                issuer.ca_pem.as_deref(),
-                issuer.tenant,
-                employee.principal_id,
-                proof
-            ),
-            operations.mac_bindings(proof),
-            self.selected()
-        )?;
-        let epoch = fence.epoch.lock().map_err(|_| Error::Unavailable)?;
-        admit_existing(
-            &self.root,
-            account,
-            uid,
-            &selected.identity,
-            &selected.settings,
-            &directory,
-            || {
-                verify()?;
-
-                if *epoch != command.fence_epoch
-                    || command.reply.is_closed()
-                    || value.expires_at_unix_ms <= crate::wall()?
-                    || expires <= (crate::wall()? / 1000) as i64
-                {
-                    return Err(Error::Identity);
-                }
-                Ok(())
-            },
-        )?;
+        let (expires, psso) = tokio::join!(
+            da::verify_employee(&issuer.origin,issuer.ca_pem.as_deref(),issuer.tenant,employee.principal_id,proof),
+            tokio::time::timeout(Duration::from_secs(2),async {
+                if self.d.platform_sso.is_none() || mdm_assigned(self.d)? {return Ok(None);}
+                let operations=self.client.operations()?;
+                let (directory,selected)=tokio::try_join!(operations.mac_bindings(proof),self.selected())?;
+                Ok::<_,Error>(Some((directory,selected)))
+            })
+        );
+        let expires=expires?;
+        let epoch=fence.epoch.lock().map_err(|_|Error::Unavailable)?;
+        let recheck=||{
+            verify()?;
+            if *epoch!=command.fence_epoch || command.reply.is_closed() || value.expires_at_unix_ms<=crate::wall()? || expires <= (crate::wall()?/1000) as i64 {return Err(Error::Identity);}
+            Ok(())
+        };
+        recheck()?;
+        // Existing-account PSSO materializes only from its own verified directory and policy.
+        // A valid employee session is independently useful to an administrator-assigned Create.
+        if let Ok(Ok(Some((directory,selected))))=psso {
+            let account=crate::account_identity::generated_uid(&command.subject)?.ok_or(Error::Identity)?;
+            let uid=Uuid::parse_str(&account).map_err(|_|Error::Identity)?;
+            match admit_existing(&self.root,account,uid,&selected.identity,&selected.settings,&directory,recheck) {
+                Ok(()) | Err(Error::NotFound)=>(),
+                Err(e)=>eprintln!("device_access: existing Mac binding: {e}"),
+            }
+        }
         Ok(value
             .expires_at_unix_ms
             .min((expires as u64).saturating_mul(1000)))
@@ -943,6 +969,7 @@ mod tests {
             fence_epoch: 1,
         };
         let bound = BoundContext {
+            credential:None,current:Arc::new(AtomicBool::new(true)),
             principal: None,
             subject: cmd.subject.clone(),
             session: cmd.session,
