@@ -10,12 +10,35 @@ pub enum Channel {
     Da = 2,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Registration {
     pub channel: Channel,
     pub tenant: Uuid,
     pub device: rss_mdm_agent_wire::DeviceId,
+}
+/// Identity of the exact setup attempt within the installation-bound store.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CandidateKey {
+    pub owner: Registration,
+    pub binding: Uuid,
+    pub task: Uuid,
+    pub attempt: Uuid,
+}
+impl CandidateKey {
+    pub fn for_task(channel: Channel, t: &rss_mdm_agent_wire::runtime::AccessTaskSpec) -> Self {
+        Self {
+            owner: Registration {
+                channel,
+                tenant: t.tenant_id,
+                device: t.device_id,
+            },
+            binding: t.binding_id,
+            task: t.task_id,
+            attempt: t.attempt_id,
+        }
+    }
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -63,8 +86,11 @@ fn current(conn: &Connection, channel: Channel) -> Result<Option<Current>, Error
         .transpose()
 }
 pub(super) fn require(conn: &Connection, authority: &Authority) -> Result<(), Error> {
-    let value = current(conn, authority.channel)?.ok_or(Error::Changed)?;
-    if value.retired || value.registration != authority.registration() {
+    require_registration(conn, authority.registration())
+}
+pub(super) fn require_registration(conn: &Connection, owner: Registration) -> Result<(), Error> {
+    let value = current(conn, owner.channel)?.ok_or(Error::Changed)?;
+    if value.retired || value.registration != owner {
         return Err(Error::Changed);
     }
     Ok(())
@@ -436,6 +462,9 @@ impl Store {
 }
 fn retire_records(conn: &Connection, registration: Option<&Registration>) -> Result<(), Error> {
     super::hello::retire_all(conn, registration)?;
+    if let Some(owner) = registration {
+        conn.execute("DELETE FROM candidates WHERE owner=?1", [encode(owner)?])?;
+    }
     let sids = conn
         .prepare("SELECT sid FROM bindings")?
         .query_map([], |r| r.get::<_, String>(0))?

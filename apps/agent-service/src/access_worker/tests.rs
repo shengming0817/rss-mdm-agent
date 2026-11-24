@@ -258,7 +258,11 @@ fn fixture(create: bool) -> (Root, Input, Fake, Vec<u8>, String) {
     let recovery = candidate.recovery_secret().to_owned();
     assert!(candidate.confirm(&otp(&secret, now), native.clock).unwrap());
     store
-        .stage(input.task.task_id, &candidate, &native)
+        .stage(
+            device_access::CandidateKey::for_task(input.channel, &input.task),
+            &candidate,
+            &native,
+        )
         .unwrap();
     (root, input, native, secret, recovery)
 }
@@ -842,4 +846,51 @@ fn hello_ignores_cp_and_totp_but_keeps_uncertain_hardware_pending() {
     assert!(prepared(&input.root, &input.task).unwrap().is_none());
     assert_eq!(native.creates, 0);
     assert_eq!(native.enables, 0);
+}
+
+#[test]
+fn da_creation_recovery_uses_exact_local_evidence() {
+    let (_root, mut input, mut native, _, _) = fixture(true);
+    let root = &input.root;
+    let task = &input.task;
+    assert!(needs_create_input(root, task).unwrap());
+    let marker = name(task, "creation");
+    state::write(
+        root,
+        &marker,
+        &engine::Creation {
+            task: task.clone(),
+            sid: None,
+        },
+    )
+    .unwrap();
+    assert!(!needs_create_input(root, task).unwrap());
+    assert!(inspect_absence(root, task, |_| Ok(true)).unwrap());
+    assert!(!inspect_absence(root, task, |_| Ok(false)).unwrap());
+    state::write(
+        root,
+        &marker,
+        &engine::Creation {
+            task: task.clone(),
+            sid: Some(SID.into()),
+        },
+    )
+    .unwrap();
+    assert!(!inspect_absence(root, task, |_| panic!("durable SID excludes absence")).unwrap());
+    state::remove(root, &marker).unwrap();
+    let mut store = Store::open(root, input.installation).unwrap();
+    let mdm_key = device_access::CandidateKey::for_task(input.channel, task);
+    let candidate = store.candidate(mdm_key, &native).unwrap();
+    input.channel = device_access::Channel::Da;
+    let da_key = device_access::CandidateKey::for_task(input.channel, task);
+    store.bind_registration(da_key.owner).unwrap();
+    store.stage(da_key, &candidate, &native).unwrap();
+    input.task.expires_at = (crate::wall().unwrap() / 1000) as i64 - 1;
+    input.task.deadline = input.task.expires_at;
+    assert_eq!(
+        engine::execute(&input, &mut native).unwrap().effect,
+        w::AccessEffect::Unknown
+    );
+    assert_eq!(native.creates, 0);
+    assert!(needs_create_input(root, &input.task).unwrap());
 }

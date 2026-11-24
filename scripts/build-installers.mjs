@@ -90,18 +90,6 @@ if (
 )
   throw Error("Desktop and Agent must belong to the same tenant");
 const env = { ...process.env };
-delete env.RSS_BUILD_DA_LOGIN;
-if (windows && desktopConfiguration && defaults.da?.state === "enabled") {
-  if (desktopConfiguration.tenant.toLowerCase() !== defaults.da.backend.tenant)
-    throw Error("Desktop and DA login must belong to the same tenant");
-  env.RSS_BUILD_DA_LOGIN = JSON.stringify({
-    origin: new URL(desktopConfiguration.origin).origin,
-    ca_pem: desktopConfiguration.ca_pem ?? null,
-    instance: defaults.da.backend.instance,
-    tenant: defaults.da.backend.tenant,
-    standalone: defaults.mdm.state === "disabled",
-  });
-}
 delete env.RSS_BUILD_MDM_ORGANIZATION;
 if (desktopConfiguration)
   env.RSS_BUILD_MDM_ORGANIZATION = JSON.stringify(desktopConfiguration);

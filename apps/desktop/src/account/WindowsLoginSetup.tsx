@@ -2,8 +2,15 @@ import { useState } from "react";
 import { Alert, Button, Form, Input } from "antd";
 import { SectionCard } from "@rss-mdm-agent/ui";
 import type { DeviceAccessPort } from "../self-service/native";
-import type { SetupTask } from "../self-service/types";
+import type { SetupTask, WindowsComponentState } from "../self-service/types";
 
+const components: Record<WindowsComponentState, string> = {
+  ready: "登录组件已就绪",
+  rebootRequired: "需要重启 Windows 后才能设置登录因子",
+  maintenanceDisabled: "登录组件已进入维修模式，请联系管理员恢复组件",
+  notInstalled: "尚未安装登录组件，请联系管理员安装",
+  unavailable: "无法读取登录组件状态，请联系管理员检查服务",
+};
 export function WindowsLoginSetup({ port }: { port: DeviceAccessPort }) {
   const [tasks, setTasks] = useState<SetupTask[]>([]);
   const [setup, setSetup] = useState<{
@@ -12,6 +19,10 @@ export function WindowsLoginSetup({ port }: { port: DeviceAccessPort }) {
   } | null>(null);
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
+  const [component, setComponent] = useState<WindowsComponentState | null>(
+    null,
+  );
+  const [active, setActive] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   function clear() {
@@ -35,6 +46,13 @@ export function WindowsLoginSetup({ port }: { port: DeviceAccessPort }) {
   async function refresh() {
     clear();
     setTasks([]);
+    setComponent(null);
+    setActive(null);
+    const status = await port({ kind: "windowsStatus" });
+    if (status.kind !== "windowsStatus") throw Error();
+    setComponent(status.component);
+    setActive(status.factorActive);
+    if (status.component !== "ready") return;
     const result = await port({ kind: "tasks" });
     if (result.kind !== "tasks") throw Error();
     setTasks(result.tasks);
@@ -43,6 +61,13 @@ export function WindowsLoginSetup({ port }: { port: DeviceAccessPort }) {
   async function prepare(task: SetupTask) {
     clear();
     const result = await port({ kind: "prepare", task: task.task });
+    if (result.kind === "windowsStatus") {
+      clear();
+      setTasks([]);
+      setComponent(result.component);
+      setActive(result.factorActive);
+      return;
+    }
     if (result.kind !== "setup" || result.task !== task.task) throw Error();
     setSetup({ task, secret: result.secret });
   }
@@ -57,6 +82,13 @@ export function WindowsLoginSetup({ port }: { port: DeviceAccessPort }) {
     setCode("");
     setPassword("");
     const result = await pending;
+    if (result.kind === "windowsStatus") {
+      clear();
+      setTasks([]);
+      setComponent(result.component);
+      setActive(result.factorActive);
+      return;
+    }
     if (result.kind !== "prepared") throw Error();
     clear();
     setTasks([]);
@@ -65,8 +97,21 @@ export function WindowsLoginSetup({ port }: { port: DeviceAccessPort }) {
   return (
     <SectionCard title="Windows 登录因子">
       <Button disabled={busy} onClick={() => void run(refresh)}>
-        读取待设置任务
+        刷新组件状态和待设置任务
       </Button>
+      {component && (
+        <Alert
+          type={component === "ready" ? "info" : "warning"}
+          title={components[component]}
+          description={
+            active === null
+              ? "当前账号的因子状态未知"
+              : active
+                ? "当前账号已启用登录因子"
+                : "当前账号未启用登录因子"
+          }
+        />
+      )}
       {tasks.map((task) => (
         <Button
           key={task.task}

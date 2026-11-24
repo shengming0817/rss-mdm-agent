@@ -118,10 +118,17 @@ pub fn run(args: &[OsString]) -> Result<(), Error> {
             delete(&class())?;
             println!("RSS component disabled and COM registration removed; installation and factor state preserved");
         }
-        ["health"] => {
-            let config =
-                device_access::windows::installation().map_err(|_| Error::Configuration)?;
-            let state = readiness(&config.root, config.id)?;
+        ["health", path] => {
+            let d = crate::deployment::Deployment::load(Path::new(path))?;
+            d.require_service()?;
+            let candidate = crate::installation::Candidate::installed(&d)?;
+            let dll = candidate.windows_login.ok_or(Error::Unsupported)?;
+            if Path::new(&get(&format!("{}\\InprocServer32", class()), "")?) != dll.path
+                || image(&dll.path)? != dll.sha256
+            {
+                return Err(Error::Identity);
+            }
+            let state = readiness(&crate::access_worker::root(&d.execution), d.installation_id)?;
             println!("RSS component: {state:?}; DLL not loaded");
             crate::access_worker::component_health(state)?;
         }

@@ -203,6 +203,9 @@ pub(crate) fn drive_da(
         return Ok(None);
     }
     let password = begin()?;
+    if task.expires_at.min(task.deadline) <= (crate::wall()? / 1000) as i64 {
+        return Err(Error::Expired);
+    }
     engine::execute_locked(
         input,
         &mut windows::NativeWindows {
@@ -216,21 +219,46 @@ pub(crate) fn drive_da(
     .map(Some)
 }
 
+/// No create intent was published before the crash, so the running permit may
+/// re-request the lost one-shot password. An existing intent never authorizes a second create.
+#[cfg(any(windows, test))]
+pub(crate) fn needs_create_input(root: &Path, t: &w::AccessTaskSpec) -> Result<bool, Error> {
+    if !matches!(t.action, w::AccessAction::Create { .. }) {
+        return Ok(false);
+    }
+    let _lock = state::lock(root)?;
+    Ok(
+        state::read_optional::<engine::Creation>(root, &name(t, "creation"))?.is_none()
+            && prepared(root, t)?.is_none()
+            && stored_result(root, t)?.is_none(),
+    )
+}
 /// Read the SAM and the stopped attempt without dispatching another account creation.
 #[cfg(windows)]
 pub(crate) fn create_absent(root: &Path, t: &w::AccessTaskSpec) -> Result<bool, Error> {
+    inspect_absence(root, t, |account| {
+        device_access::windows::account::local_name_absent(account).map_err(|_| Error::Unavailable)
+    })
+}
+#[cfg(any(windows, test))]
+fn inspect_absence(
+    root: &Path,
+    t: &w::AccessTaskSpec,
+    query: impl FnOnce(&str) -> Result<bool, Error>,
+) -> Result<bool, Error> {
     let w::AccessAction::Create { name: account, .. } = &t.action else {
         return Ok(false);
     };
     let _lock = state::lock(root)?;
-    if state::read_optional::<serde_json::Value>(root, &name(t, "creation"))?.is_some()
+    if state::read_optional::<engine::Creation>(root, &name(t, "creation"))?
+        .is_some_and(|c| c.task != *t || c.sid.is_some())
         || prepared(root, t)?.is_some()
         || stored_result(root, t)?
             .is_some_and(|v| matches!(v.effect, w::AccessEffect::Applied { .. }))
     {
         return Ok(false);
     }
-    device_access::windows::account::local_name_absent(account).map_err(|_| Error::Unavailable)
+    query(account)
 }
 
 /// Reconcile a stopped native attempt without issuing any operating-system change.
@@ -378,11 +406,12 @@ pub(crate) fn retire(
         }
         _ => return Err(Error::Untrusted),
     };
-    retire_native(&root, installation, task)
+    retire_native(&root, installation, device_access::Channel::Mdm, task)
 }
 pub(crate) fn retire_native(
     root: &Path,
     installation: uuid::Uuid,
+    channel: device_access::Channel,
     task: &w::AccessTaskSpec,
 ) -> Result<(), Error> {
     let _lock = state::lock(root)?;
@@ -392,10 +421,10 @@ pub(crate) fn retire_native(
     #[cfg(windows)]
     device_access::Store::open(root, installation)
         .map_err(|_| Error::Storage)?
-        .retire_candidate(task.task_id)
+        .retire_candidate(device_access::CandidateKey::for_task(channel, task))
         .map_err(|_| Error::Storage)?;
     #[cfg(not(windows))]
-    let _ = installation;
+    let _ = (installation, channel);
     for suffix in ["prepared", "escrow", "ack", "creation", "result"] {
         state::remove(root, &name(task, suffix))?;
     }

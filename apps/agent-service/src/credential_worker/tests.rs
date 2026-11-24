@@ -667,14 +667,19 @@ fn rss_fixture(root: &Root, native: &Fake, channel: device_access::Channel) -> R
     assert!(candidate
         .confirm(&factor_code(&totp, clock.utc), clock)
         .unwrap());
-    let setup = uuid::Uuid::new_v4();
+    let setup = device_access::CandidateKey {
+        owner: authority.registration(),
+        binding: authority.binding,
+        task: uuid::Uuid::new_v4(),
+        attempt: uuid::Uuid::new_v4(),
+    };
+    store.bind_registration(authority.registration()).unwrap();
     store.stage(setup, &candidate, native).unwrap();
     let receipt = w::CredentialReceipt {
         subject: subject.clone(),
         material: uuid::Uuid::new_v4(),
         version: 1,
     };
-    store.bind_registration(authority.registration()).unwrap();
     store
         .activate(
             authority.clone(),

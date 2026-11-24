@@ -321,6 +321,7 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
     let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin = format!("https://{}", socket.local_addr().unwrap());
     let backend = Backend {
+        browser: None,
         instance: SERVICE_ID,
         tenant,
         origin: origin.clone(),
@@ -436,7 +437,7 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
     );
     assert!(inspect(&root.path, &backend, Uuid::new_v4(), time.now().unwrap()).is_err());
     let ops = client.operations().unwrap();
-    let offer = ops.account().await.unwrap().unwrap();
+    let offer = ops.account(None).await.unwrap().unwrap();
     assert!(ops
         .account_event(&offer, wire::AccountObservation::Received)
         .await
@@ -450,6 +451,49 @@ async fn independent_tls_recovers_activation_reports_and_rotates_the_key() {
     assert_eq!(state.lock().unwrap().deliveries, 2);
     ops.replay_account().await.unwrap();
     assert_eq!(state.lock().unwrap().deliveries, 2);
+    let mut later = offer.clone();
+    later.task_id = Uuid::new_v4();
+    later.attempt_id = Uuid::new_v4();
+    state.lock().unwrap().offer = later.clone();
+    assert_eq!(ops.account(None).await.unwrap(), Some(later.clone()));
+    assert_eq!(ops.account(None).await.unwrap(), Some(offer.clone()));
+    assert_eq!(
+        ops.account(Some((later.task_id, later.attempt_id)))
+            .await
+            .unwrap(),
+        Some(later.clone())
+    );
+    let prefix = format!("windows/{}", grant.device);
+    let cleanup = format!("{prefix}/account-cleanup");
+    write(
+        &client.journal.db,
+        &cleanup,
+        &(offer.task_id, offer.attempt_id),
+    )
+    .unwrap();
+    assert_eq!(
+        ops.retire_account(|_, _| Err(Error::Storage)),
+        Err(Error::Storage)
+    );
+    ops.retire_account(|task, attempt| {
+        assert_eq!((task, attempt), (offer.task_id, offer.attempt_id));
+        Ok(())
+    })
+    .unwrap();
+    let remaining: i64 = client
+        .journal
+        .db
+        .query_row(
+            "SELECT count(*) FROM state WHERE name GLOB ?1",
+            [format!(
+                "{prefix}/*/{}/{}*",
+                offer.task_id, offer.attempt_id
+            )],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(remaining, 0);
+    assert_eq!(ops.account(None).await.unwrap(), Some(later));
     assert!(ops.credential().await.unwrap().is_none());
     drop(ops);
     client.start_renewal().unwrap();
@@ -557,6 +601,7 @@ fn expired_unsubmitted_grant_allows_new_authorization_without_reusing_its_key() 
     let time = Time(Arc::new(AtomicI64::new(2_000_000_000)));
     let secrets = Secrets::new();
     let backend = Backend {
+        browser: None,
         instance: SERVICE_ID,
         tenant: Uuid::new_v4(),
         origin: "https://da.test".into(),
@@ -607,6 +652,7 @@ fn field_locks_survive_disappearing_sources_and_reject_rollback_and_foreign_sign
     let client = Client::open(
         &root.path,
         Backend {
+            browser: None,
             instance: SERVICE_ID,
             tenant,
             origin: "https://da.test".into(),

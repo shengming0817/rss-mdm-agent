@@ -12,6 +12,15 @@ pub struct Operations<'a> {
     registration: wire::Registration,
 }
 impl<S: Credentials, C: Clock> Client<S, C> {
+    /// Save the closed delivery error for installation status and preserve the normal retry signal.
+    pub fn record_windows_delivery(&self, result: Result<(), Error>) -> Result<(), Error> {
+        write(
+            &self.journal.db,
+            "windows-delivery-error",
+            &result.as_ref().err().copied(),
+        )?;
+        result
+    }
     /// Open the current credential for device operations. Never use the Agent identity here.
     pub fn operations(&self) -> Result<Operations<'_>, Error> {
         let active = self.active()?.ok_or(Error::Identity)?;
@@ -136,7 +145,8 @@ impl Operations<'_> {
             .await?;
         if !response.status().is_success() {
             return Err(match response.status().as_u16() {
-                401 | 403 => Error::Denied,
+                401 => Error::Identity,
+                403 => Error::Denied,
                 404 => Error::NotFound,
                 409 => Error::Conflict,
                 _ => Error::Unavailable,
@@ -178,7 +188,10 @@ impl Operations<'_> {
         }
     }
     /// Journal a server offer before the received event can be sent.
-    pub async fn account(&self) -> Result<Option<wire::AccountOffer>, Error> {
+    pub async fn account(
+        &self,
+        confirmed: Option<(Uuid, Uuid)>,
+    ) -> Result<Option<wire::AccountOffer>, Error> {
         let offer = self.send::<h::DaAccountNext>(&[], None).await?;
         if let Some(o) = &offer {
             if [o.operation_id, o.task_id, o.attempt_id, o.binding_id]
@@ -196,7 +209,30 @@ impl Operations<'_> {
             }
             self.save(&key, o)?;
         }
-        Ok(offer)
+        if let Some((task, attempt)) = confirmed {
+            if let Some(o) = self.load(&format!("offer/{task}/{attempt}"))? {
+                return Ok(Some(o));
+            }
+        }
+        // A server may keep returning its oldest started task. Rotate the retained offers
+        // in stable key order and revalidate the chosen offer at the server before dispatch.
+        use rusqlite::OptionalExtension;
+        let cursor = self.load::<String>("offer-cursor")?.unwrap_or_default();
+        let next: Option<(String, Vec<u8>)> = self
+            .db
+            .query_row(
+                "SELECT name,body FROM state WHERE name GLOB ?1 ORDER BY name<=?2,name LIMIT 1",
+                rusqlite::params![self.key("offer/*"), cursor],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        if let Some((key, bytes)) = next {
+            let offer = crate::store::decode(&bytes)?;
+            self.save("offer-cursor", &key)?;
+            Ok(Some(offer))
+        } else {
+            Ok(None)
+        }
     }
     /// Settle the exact device event, retaining its key even across lost responses.
     pub async fn account_event(
@@ -242,7 +278,10 @@ impl Operations<'_> {
         let tx = self.db.unchecked_transaction()?;
         write(
             &tx,
-            &self.key(&format!("account-receipt/{}", body.event_id)),
+            &self.key(&format!(
+                "account-receipt/{task}/{}/{}",
+                body.attempt_id, body.event_id
+            )),
             &ack,
         )?;
         if matches!(
@@ -253,6 +292,11 @@ impl Operations<'_> {
                     ..
                 })
         ) {
+            write(
+                &tx,
+                &self.key("last-account-settlement"),
+                &(task, body.attempt_id, &ack),
+            )?;
             write(&tx, &self.key("account-cleanup"), &(task, body.attempt_id))?;
         }
         tx.execute(
@@ -265,11 +309,24 @@ impl Operations<'_> {
     /// A previously sent result can settle even after it disappears from the claim queue.
     pub async fn replay_account(&self) -> Result<(), Error> {
         if let Some((task, body)) = self.load::<(Uuid, wire::AccountEvent)>("account-pending")? {
-            self.finish_replay(
-                "account-pending",
-                &(task, &body),
-                self.send_account(task, &body).await,
-            )?;
+            let result = self.send_account(task, &body).await;
+            if matches!(
+                result,
+                Err(Error::Denied | Error::Conflict | Error::NotFound)
+            ) {
+                let tx = self.db.unchecked_transaction()?;
+                let key = self.key(&format!("offer/{task}/{}", body.attempt_id));
+                if let Some(o) = read::<wire::AccountOffer>(&tx, &key)? {
+                    write(
+                        &tx,
+                        &self.key(&format!("withdrawn/{task}/{}", body.attempt_id)),
+                        &o,
+                    )?;
+                    tx.execute("DELETE FROM state WHERE name=?1", [key])?;
+                }
+                tx.commit()?;
+            }
+            self.finish_replay("account-pending", &(task, &body), result)?;
         }
         Ok(())
     }
@@ -347,6 +404,11 @@ impl Operations<'_> {
             let spec: w::CredentialTaskSpec = self
                 .load(&format!("credential/{id}/{attempt_id}"))?
                 .ok_or(Error::Storage)?;
+            write(
+                &tx,
+                &self.key("last-credential-settlement"),
+                &(id, attempt_id, &ack),
+            )?;
             write(&tx, &self.key("credential-cleanup"), &spec)?;
         }
         tx.execute(
@@ -377,7 +439,17 @@ impl Operations<'_> {
         let key = self.key("account-cleanup");
         if let Some((id, attempt)) = read(self.db, &key)? {
             clean(id, attempt)?;
-            self.db.execute("DELETE FROM state WHERE name=?1", [key])?;
+            let tx = self.db.unchecked_transaction()?;
+            tx.execute(
+                "DELETE FROM state WHERE name IN (?1,?2) OR name GLOB ?3 OR name GLOB ?4",
+                rusqlite::params![
+                    key,
+                    self.key(&format!("offer/{id}/{attempt}")),
+                    self.key(&format!("event/{id}/{attempt}/*")),
+                    self.key(&format!("account-receipt/{id}/{attempt}/*"))
+                ],
+            )?;
+            tx.commit()?;
         }
         Ok(())
     }
@@ -389,9 +461,22 @@ impl Operations<'_> {
         let key = self.key("credential-cleanup");
         if let Some(spec) = read(self.db, &key)? {
             clean(&spec)?;
-            self.db.execute("DELETE FROM state WHERE name=?1", [key])?;
+            let tx = self.db.unchecked_transaction()?;
+            tx.execute(
+                "DELETE FROM state WHERE name IN (?1,?2,?3)",
+                rusqlite::params![
+                    key,
+                    self.key(&format!("credential/{}/{}", spec.task_id, spec.attempt_id)),
+                    self.key(&format!("credential-receipt/{}", spec.task_id))
+                ],
+            )?;
+            tx.commit()?;
         }
         Ok(())
+    }
+    /// Retain the most recent definitive per-item rejection for diagnostic readback.
+    pub fn rejected_use(&self, id: Uuid, reason: Error) -> Result<(), Error> {
+        self.save("last-rejected-use", &(id, reason))
     }
     /// Acknowledge one original, durably recorded offline use.
     pub async fn recovery_use(&self, usage: &w::AccessRecoveryUse) -> Result<(), Error> {

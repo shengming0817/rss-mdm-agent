@@ -7,7 +7,11 @@ use execution_ipc::{
     host::{ClientOrigin, NativeContextSession},
 };
 use rss_mdm_agent_wire::runtime as w;
-use std::sync::Mutex;
+use std::{
+    collections::BTreeMap,
+    sync::{mpsc, Mutex},
+    time::Instant,
+};
 use zeroize::Zeroizing;
 
 #[derive(Clone)]
@@ -43,16 +47,33 @@ impl Employee {
 struct State {
     revision: u64,
     employee: Option<Employee>,
-    task: Option<w::AccessTaskSpec>,
+    offers: BTreeMap<Uuid, Offer>,
+    checking: Option<Check>,
+    mdm_tasks: Option<(u64, Instant, Vec<SetupTask>)>,
+}
+struct Offer {
+    task: w::AccessTaskSpec,
     setup: Option<Candidate>,
     confirmed: bool,
     password: Option<Zeroizing<String>>,
 }
+struct Check {
+    revision: u64,
+    started: Instant,
+    result: mpsc::Receiver<Result<(), Error>>,
+}
+struct Verify {
+    employee: Employee,
+    result: mpsc::SyncSender<Result<(), Error>>,
+}
 impl State {
     fn clear_setup(&mut self) {
-        self.setup = None;
-        self.confirmed = false;
-        self.password = None;
+        for o in self.offers.values_mut() {
+            o.setup = None;
+            o.confirmed = false;
+            o.password = None;
+        }
+        self.checking = None;
     }
     fn logout(&mut self) {
         self.clear_setup();
@@ -62,66 +83,89 @@ impl State {
 pub(super) struct Login {
     deployment: Deployment,
     state: Mutex<State>,
+    verifier: mpsc::SyncSender<Verify>,
+    pub(super) wake: tokio::sync::Notify,
     other: Option<Arc<dyn SessionFence>>,
 }
 impl Login {
-    pub(super) fn new(d: &Deployment, other: Option<Arc<dyn SessionFence>>) -> Self {
-        Self {
+    pub(super) fn new(d: &Deployment, other: Option<Arc<dyn SessionFence>>) -> Result<Self, Error> {
+        let deployment = d.clone();
+        let (verifier, queue) = mpsc::sync_channel::<Verify>(1);
+        thread::Builder::new()
+            .name("da-employee-verifier".into())
+            .spawn(move || {
+                while let Ok(job) = queue.recv() {
+                    let result = Self::verify(&deployment, &job.employee);
+                    let _ = job.result.send(result);
+                }
+            })?;
+        Ok(Self {
             deployment: d.clone(),
             state: Mutex::default(),
             other,
-        }
+            verifier,
+            wake: tokio::sync::Notify::new(),
+        })
     }
-    fn verify(&self, user: &w::SelfServiceUser, credential: &str) -> Result<(), Error> {
-        let portal =
-            execution_ipc::device_access::EmployeePortal::bundled().ok_or(Error::Configuration)?;
-        let backend = self.deployment.modules.da.backend()?;
+    fn verify(d: &Deployment, employee: &Employee) -> Result<(), Error> {
+        let user = &employee.identity;
+        let portal = execution_ipc::device_access::EmployeePortal::installed()
+            .ok_or(Error::Configuration)?;
+        let backend = d.modules.da.backend()?;
         if (portal.tenant, portal.instance) != (backend.tenant, backend.instance)
             || (user.tenant_id, user.instance_id) != (portal.tenant, portal.instance)
+            || !employee.current()
         {
             return Err(Error::Identity);
         }
-        let expiry = std::thread::scope(|scope| {
-            scope
-                .spawn(|| {
-                    let rt = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .map_err(|_| Error::Unavailable)?;
-                    rt.block_on(da::verify_employee(
-                        &portal.origin,
-                        portal.ca_pem.as_deref(),
-                        portal.tenant,
-                        user.principal_id,
-                        credential,
-                    ))
-                })
-                .join()
-                .map_err(|_| Error::Unavailable)
-        })??;
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|_| Error::Unavailable)?;
+        let expiry = rt.block_on(da::verify_employee(
+            &portal.origin,
+            portal.ca_pem.as_deref(),
+            portal.tenant,
+            user.principal_id,
+            &employee.credential,
+        ))?;
         if expiry <= utc()? {
             return Err(Error::Expired);
         }
         Ok(())
     }
-    /// Release the state lock during Identity IO so logout can invalidate an in-flight check.
-    fn verified(&self) -> Result<std::sync::MutexGuard<'_, State>, Error> {
-        let (employee, revision) = {
-            let state = self.state.lock().map_err(|_| Error::Unavailable)?;
-            (
-                state.employee.clone().ok_or(Error::Identity)?,
-                state.revision,
-            )
-        };
-        if !employee.current() {
-            return Err(Error::Identity);
+    // Only the verifier thread performs browser IO. Each result authorizes one call in
+    // the same still-live native context. Expired results and superseded contexts are discarded.
+    fn checked(&self, s: &mut State, employee: &Employee) -> Result<bool, Error> {
+        if let Some(c) = &s.checking {
+            if c.revision == s.revision && c.started.elapsed() < Duration::from_secs(4) {
+                match c.result.try_recv() {
+                    Ok(result) => {
+                        s.checking = None;
+                        result?;
+                        return Ok(true);
+                    }
+                    Err(mpsc::TryRecvError::Empty) => return Ok(false),
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        s.checking = None;
+                        return Err(Error::Unavailable);
+                    }
+                }
+            }
         }
-        self.verify(&employee.identity, &employee.credential)?;
-        let state = self.state.lock().map_err(|_| Error::Unavailable)?;
-        if state.revision != revision || !employee.current() {
-            return Err(Error::Identity);
-        }
-        Ok(state)
+        let (result, rx) = mpsc::sync_channel(1);
+        self.verifier
+            .try_send(Verify {
+                employee: employee.clone(),
+                result,
+            })
+            .map_err(|_| Error::Capacity)?;
+        s.checking = Some(Check {
+            revision: s.revision,
+            started: Instant::now(),
+            result: rx,
+        });
+        Ok(false)
     }
     fn store(&self) -> Result<Store, Error> {
         Store::open(
@@ -130,27 +174,98 @@ impl Login {
         )
         .map_err(|_| Error::Storage)
     }
-    pub(super) fn offer(&self, t: Option<&w::AccessTaskSpec>) -> Result<(), Error> {
+    pub(super) fn offer(&self, t: &w::AccessTaskSpec) -> Result<(), Error> {
         let mut s = self.state.lock().map_err(|_| Error::Unavailable)?;
-        if s.task.as_ref() != t {
-            s.clear_setup();
-            s.task = t.cloned();
+        let now = utc()?;
+        s.offers
+            .retain(|_, o| o.task.expires_at.min(o.task.deadline) > now);
+        if s.offers.get(&t.task_id).is_some_and(|o| &o.task == t) {
+            return Ok(());
+        }
+        if s.offers.len() >= 128 && !s.offers.contains_key(&t.task_id) {
+            return Err(Error::Capacity);
+        }
+        s.offers.insert(
+            t.task_id,
+            Offer {
+                task: t.clone(),
+                setup: None,
+                confirmed: false,
+                password: None,
+            },
+        );
+        Ok(())
+    }
+    pub(super) fn confirmed(&self) -> Result<Option<(Uuid, Uuid)>, Error> {
+        let s = self.state.lock().map_err(|_| Error::Unavailable)?;
+        let now = utc()?;
+        Ok(s.offers
+            .values()
+            .find(|o| {
+                o.confirmed
+                    && o.task.expires_at.min(o.task.deadline) > now
+                    && s.employee.as_ref().is_some_and(|e| e.permits(&o.task))
+            })
+            .map(|o| (o.task.task_id, o.task.attempt_id)))
+    }
+    pub(super) fn withdraw(&self, id: Uuid, attempt: Uuid) -> Result<(), Error> {
+        let mut s = self.state.lock().map_err(|_| Error::Unavailable)?;
+        if s.offers
+            .get(&id)
+            .is_some_and(|o| o.task.attempt_id == attempt)
+        {
+            s.offers.remove(&id);
         }
         Ok(())
     }
-    /// Release one confirmed creation password while the same console/employee binding is live.
+    pub(super) fn reset(&self) -> Result<(), Error> {
+        let mut s = self.state.lock().map_err(|_| Error::Unavailable)?;
+        s.offers.clear();
+        s.logout();
+        s.revision = s.revision.checked_add(1).ok_or(Error::Capacity)?;
+        Ok(())
+    }
+    /// Release one confirmed creation password on the delivery worker after fresh authentication.
     pub(super) fn input(&self, t: &w::AccessTaskSpec) -> Result<Option<Zeroizing<String>>, Error> {
-        let mut s = self.verified()?;
-        if s.task.as_ref() != Some(t)
-            || !s.confirmed
-            || !s.employee.as_ref().is_some_and(|e| e.permits(t))
-        {
+        let (employee, revision) = {
+            let s = self.state.lock().map_err(|_| Error::Unavailable)?;
+            let e = s
+                .employee
+                .as_ref()
+                .filter(|e| e.permits(t))
+                .ok_or(Error::Denied)?;
+            if !s
+                .offers
+                .get(&t.task_id)
+                .is_some_and(|o| o.task == *t && o.confirmed)
+            {
+                return Err(Error::Denied);
+            }
+            (e.clone(), s.revision)
+        };
+        // The delivery worker already runs a Tokio runtime. The shared IPC thread never joins this call.
+        thread::scope(|scope| {
+            scope
+                .spawn(|| Self::verify(&self.deployment, &employee))
+                .join()
+                .map_err(|_| Error::Unavailable)
+        })??;
+        let mut s = self.state.lock().map_err(|_| Error::Unavailable)?;
+        if revision != s.revision || !employee.permits(t) {
+            return Err(Error::Identity);
+        }
+        let o = s
+            .offers
+            .get_mut(&t.task_id)
+            .filter(|o| o.task == *t && o.confirmed)
+            .ok_or(Error::Denied)?;
+        if matches!(t.action, w::AccessAction::Create { .. }) && o.password.is_none() {
             return Err(Error::Denied);
         }
-        if matches!(t.action, w::AccessAction::Create { .. }) && s.password.is_none() {
-            return Err(Error::Denied);
+        if t.expires_at.min(t.deadline) <= utc()? {
+            return Err(Error::Expired);
         }
-        Ok(s.password.take())
+        Ok(o.password.take())
     }
     fn bind(
         &self,
@@ -168,9 +283,6 @@ impl Login {
             &binding,
         )
         .map_err(|_| Error::Identity)?;
-        if let Some(user) = value.user() {
-            self.verify(user, value.credential().ok_or(Error::Identity)?)?;
-        }
         let mut s = self.state.lock().map_err(|_| Error::Unavailable)?;
         if s.revision != revision {
             return Err(Error::Identity);
@@ -252,6 +364,73 @@ impl Login {
             _ => None,
         }
     }
+    /// Start MDM's normal authenticated listing while the DA verifier is waiting on Identity.
+    /// Keep the response only for this live native context and the current bounded request.
+    pub(super) fn mdm_tasks(
+        &self,
+        peer: &Peer,
+        request: &Request,
+        mdm: &mut dyn Handler,
+        consume: bool,
+    ) -> Vec<SetupTask> {
+        let Request::DeviceAccess {
+            context,
+            input: Operation::Tasks {},
+            ..
+        } = request
+        else {
+            return Vec::new();
+        };
+        let Ok(mut s) = self.state.lock() else {
+            return Vec::new();
+        };
+        if !s.employee.as_ref().is_some_and(|e| {
+            &e.context == context
+                && peer
+                    .authenticate(&self.deployment.registration_clients)
+                    .ok()
+                    .as_ref()
+                    == Some(&e.subject)
+                && peer.session_binding().ok().as_ref() == Some(&e.binding)
+                && e.current()
+        }) {
+            return Vec::new();
+        }
+        let revision = s.revision;
+        if s.mdm_tasks
+            .as_ref()
+            .is_some_and(|(r, at, _)| *r == revision && at.elapsed() < Duration::from_secs(5))
+        {
+            return if consume {
+                s.mdm_tasks
+                    .take()
+                    .map(|(_, _, tasks)| tasks)
+                    .unwrap_or_default()
+            } else {
+                vec![]
+            };
+        }
+        drop(s);
+        let start = Instant::now();
+        let tasks = match mdm.handle(peer, request.clone()) {
+            Reply::DeviceAccess {
+                value: Response::Tasks { tasks },
+            } => tasks,
+            _ => vec![],
+        };
+        let Ok(mut s) = self.state.lock() else {
+            return Vec::new();
+        };
+        if s.revision != revision || !s.employee.as_ref().is_some_and(Employee::current) {
+            return Vec::new();
+        }
+        if consume {
+            tasks
+        } else {
+            s.mdm_tasks = Some((revision, start, tasks));
+            vec![]
+        }
+    }
     fn access(
         &self,
         peer: &Peer,
@@ -261,32 +440,74 @@ impl Login {
     ) -> Result<Option<Reply>, Error> {
         if !matches!(
             input,
-            Operation::Tasks {} | Operation::Prepare { .. } | Operation::ConfirmFactor { .. }
+            Operation::Tasks {}
+                | Operation::WindowsStatus {}
+                | Operation::Prepare { .. }
+                | Operation::ConfirmFactor { .. }
         ) {
             return Ok(None);
         }
-        let mut s = self.verified()?;
-        let e = s.employee.as_ref().ok_or(Error::Identity)?;
+        let mut s = self.state.lock().map_err(|_| Error::Unavailable)?;
+        let Some(e) = s.employee.clone() else {
+            return Ok(None);
+        };
         if &e.context != context
             || e.subject != subject
             || e.binding != peer.session_binding().map_err(|_| Error::Identity)?
             || !e.current()
         {
+            return Ok(None);
+        }
+        let now = utc()?;
+        s.offers
+            .retain(|_, o| o.task.expires_at.min(o.task.deadline) > now);
+        let target = match input {
+            Operation::Prepare { task } | Operation::ConfirmFactor { task, .. } => Some(*task),
+            _ => None,
+        };
+        if target.is_some_and(|id| !s.offers.get(&id).is_some_and(|o| e.permits(&o.task))) {
+            return Ok(None);
+        }
+        if matches!(input, Operation::Tasks {}) && !s.offers.values().any(|o| e.permits(&o.task)) {
+            return Ok(Some(Reply::DeviceAccess {
+                value: Response::Tasks { tasks: vec![] },
+            }));
+        }
+        // In a dual deployment MDM already provides the installation-wide native status.
+        if matches!(input, Operation::WindowsStatus {}) && self.deployment.modules.mdm.enabled() {
+            return Ok(None);
+        }
+        if !self.checked(&mut s, &e)? {
+            return Ok(Some(Reply::DaVerificationPending {}));
+        }
+        if !e.current() {
             return Err(Error::Identity);
         }
-        let task = s
-            .task
-            .as_ref()
-            .filter(|t| {
-                e.permits(t)
-                    && matches!(t.windows, Some(w::AccessWindowsPlan::Initialize { .. }))
-                    && t.expires_at > utc().unwrap_or(i64::MAX)
-            })
-            .cloned();
+        let root = crate::access_worker::root(&self.deployment.execution);
+        let installation = self.deployment.installation_id;
+        use execution_ipc::device_access::{WindowsComponentState, WindowsStatus};
+        let component = crate::access_component::readiness(&root, installation)
+            .unwrap_or(WindowsComponentState::Unavailable);
+        if matches!(input, Operation::WindowsStatus {})
+            || target.is_some() && !matches!(component, WindowsComponentState::Ready)
+        {
+            let status = WindowsStatus {
+                component,
+                factor_active: self.store().ok().and_then(|s| s.enabled(subject).ok()),
+                sign_in_required: false,
+                hello: crate::access_worker::windows::hello::status(&root, installation, subject),
+            };
+            return Ok(Some(Reply::DeviceAccess {
+                value: Response::WindowsStatus(status),
+            }));
+        }
         let value = match input {
             Operation::Tasks {} => Response::Tasks {
-                tasks: task
-                    .iter()
+                tasks: s
+                    .offers
+                    .values()
+                    .map(|o| &o.task)
+                    .filter(|t| e.permits(t))
                     .map(|t| SetupTask {
                         task: t.task_id,
                         binding: t.binding_id,
@@ -298,9 +519,11 @@ impl Login {
                     .collect(),
             },
             Operation::Prepare { task: id } | Operation::ConfirmFactor { task: id, .. } => {
-                let Some(t) = task.filter(|t| t.task_id == *id) else {
+                let Some(offer) = s.offers.get_mut(id) else {
                     return Ok(None);
                 };
+                let t = &offer.task;
+                let key = device_access::CandidateKey::for_task(device_access::Channel::Da, t);
                 let mut store = self.store()?;
                 if let Operation::ConfirmFactor { code, password, .. } = input {
                     let clock = device_access::windows::clock().map_err(|_| Error::Clock)?;
@@ -312,39 +535,41 @@ impl Login {
                     {
                         return Err(Error::Protocol);
                     }
-                    let candidate = s.setup.as_mut().ok_or(Error::Denied)?;
+                    let candidate = offer.setup.as_mut().ok_or(Error::Denied)?;
                     if !candidate
                         .confirm(code, clock)
                         .map_err(|_| Error::Protocol)?
                     {
                         return Err(Error::Denied);
                     }
-                    if store.has_candidate(*id).map_err(|_| Error::Storage)? {
+                    if store.has_candidate(key).map_err(|_| Error::Storage)? {
                         if !store
-                            .reconfirm(*id, code, clock, &SystemProtector)
+                            .reconfirm(key, code, clock, &SystemProtector)
                             .map_err(|_| Error::Storage)?
                         {
                             return Err(Error::Denied);
                         }
                     } else {
                         store
-                            .stage(*id, candidate, &SystemProtector)
+                            .stage(key, candidate, &SystemProtector)
                             .map_err(|_| Error::Storage)?;
                     }
-                    s.password = password.clone();
-                    s.confirmed = true;
+                    offer.password = password.clone();
+                    offer.confirmed = true;
+                    self.wake.notify_one();
                     Response::Prepared {}
                 } else {
-                    if s.setup.is_none() {
-                        s.setup = Some(if store.has_candidate(*id).map_err(|_| Error::Storage)? {
-                            store
-                                .candidate(*id, &SystemProtector)
-                                .map_err(|_| Error::Storage)?
-                        } else {
-                            Candidate::generate().map_err(|_| Error::Unavailable)?
-                        });
+                    if offer.setup.is_none() {
+                        offer.setup =
+                            Some(if store.has_candidate(key).map_err(|_| Error::Storage)? {
+                                store
+                                    .candidate(key, &SystemProtector)
+                                    .map_err(|_| Error::Storage)?
+                            } else {
+                                Candidate::generate().map_err(|_| Error::Unavailable)?
+                            });
                     }
-                    let candidate = s.setup.as_ref().ok_or(Error::Storage)?;
+                    let candidate = offer.setup.as_ref().ok_or(Error::Storage)?;
                     Response::Setup {
                         task: *id,
                         secret: Zeroizing::new(

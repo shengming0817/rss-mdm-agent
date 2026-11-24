@@ -281,6 +281,11 @@ fn configured_ca(
     Ok(config.ca_pem.map(String::into_bytes))
 }
 fn organization_ca(organization: &Organization) -> Result<Option<Vec<u8>>> {
+    if let Some(portal) = execution_ipc::device_access::EmployeePortal::installed().filter(|p| {
+        p.origin == organization.origin && p.tenant.to_string() == organization.tenant_id
+    }) {
+        return Ok(portal.ca_pem.map(String::into_bytes));
+    }
     let config = serde_json::from_str(include_str!(concat!(
         env!("OUT_DIR"),
         "/default_organization.json"
@@ -511,11 +516,13 @@ impl EnterpriseSession {
         self.accept_identity(&value, true)?;
         // Standalone DA mounts the Identity SDK session route. Task authorization is
         // returned by its authenticated device listener, independently of employee login.
-        if let Some(portal) = execution_ipc::device_access::EmployeePortal::bundled().filter(|p| {
-            p.standalone
-                && p.origin == self.organization.origin
-                && p.tenant.to_string() == self.organization.tenant_id
-        }) {
+        if let Some(portal) =
+            execution_ipc::device_access::EmployeePortal::installed().filter(|p| {
+                p.standalone
+                    && p.origin == self.organization.origin
+                    && p.tenant.to_string() == self.organization.tenant_id
+            })
+        {
             let instance = portal.instance.to_string();
             if !self.instance.is_empty() && self.instance != instance {
                 return Err(failure(Stage::Authorization, Reason::Denied));

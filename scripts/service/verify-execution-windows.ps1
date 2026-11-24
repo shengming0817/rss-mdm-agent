@@ -125,7 +125,11 @@ public static class RssPasskeyRecoveryProbe {
                 installer=(Measure-CandidateFile $Frozen.installer.path $Frozen.installer.sha256)
                 health='pending';interactiveLogin='unverified';modules=@{mdm=$InstalledConfig.modules.mdm.state;da=$InstalledConfig.modules.da.state}
             }
-            & $Installed --device-access-component health
+            $BuildManifest=Join-Path (Split-Path -Parent $Frozen.installer.path) 'package-manifest.json'
+            $Package=Get-Content -Raw -LiteralPath $BuildManifest | ConvertFrom-Json
+            if ($Package.packageSha256 -ine $Frozen.installer.sha256 -or $Package.installationManifestSha256 -ine $InstalledConfig.installation_artifact) { throw 'Installer and deployment manifest differ' }
+            $Receipt.scenarios.deviceAccess.packageManifestSha256=(Get-FileHash -LiteralPath $BuildManifest -Algorithm SHA256).Hash
+            & $Installed --device-access-component health $Config
             if ($LASTEXITCODE -ne 0) { throw 'Device Access component health failed' }
             $Receipt.scenarios.deviceAccess.health='passed'
             $Receipt.unexecuted+=@('LogonUI login/unlock and offline','wrong password consumes OTP','concurrent OTP replay','reboot throttling and clock rollback','recovery rotation','last administrator protection','provider disable and uninstall')

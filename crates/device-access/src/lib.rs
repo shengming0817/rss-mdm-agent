@@ -14,7 +14,7 @@ use zeroize::Zeroizing;
 pub mod hello;
 mod registration;
 mod storage;
-pub use registration::{Channel, Registration};
+pub use registration::{CandidateKey, Channel, Registration};
 
 /// Canonical Entra object coordinate encoded in a Windows cloud SID; not proof of its issuer.
 pub fn entra_object_id(sid: &str) -> Option<Uuid> {
@@ -176,6 +176,7 @@ impl Candidate {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SealedCandidate {
+    key: CandidateKey,
     secret: Vec<u8>,
     recovery: String,
     confirmed_step: i64,
@@ -241,15 +242,16 @@ impl Store {
     }
     pub fn stage(
         &mut self,
-        operation: Uuid,
+        operation: CandidateKey,
         candidate: &Candidate,
         protector: &impl Protector,
     ) -> Result<(), Error> {
-        if operation.is_nil() {
+        if operation.task.is_nil() || operation.attempt.is_nil() || operation.binding.is_nil() {
             return Err(Error::Invalid);
         }
         let confirmed_step = candidate.confirmed_step.ok_or(Error::Invalid)?;
         let plain = SealedCandidate {
+            key: operation,
             secret: candidate.secret.to_vec(),
             recovery: candidate.recovery.to_string(),
             confirmed_step,
@@ -258,15 +260,20 @@ impl Store {
         let sealed = protector.seal(&bytes)?;
         self.check_files()?;
         // Immutable operation identity: a retry must load its original candidate.
-        self.conn.execute(
-            "INSERT INTO candidates VALUES(?1,?2)",
-            params![operation.to_string(), sealed],
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        registration::require_registration(&tx, operation.owner)?;
+        tx.execute(
+            "INSERT INTO candidates VALUES(?1,?2,?3)",
+            params![encode(&operation)?, sealed, encode(&operation.owner)?],
         )?;
+        tx.commit()?;
         Ok(())
     }
     pub fn reconfirm(
         &mut self,
-        operation: Uuid,
+        operation: CandidateKey,
         code: &str,
         clock: Clock,
         protector: &impl Protector,
@@ -276,15 +283,16 @@ impl Store {
         let tx = self
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        registration::require_registration(&tx, operation.owner)?;
         let sealed: Vec<u8> = tx.query_row(
             "SELECT body FROM candidates WHERE id=?1 AND length(body)<=16384",
-            [operation.to_string()],
+            [encode(&operation)?],
             |r| r.get(0),
         )?;
         let bytes = protector.open(&sealed)?;
         let mut plain: SealedCandidate =
             serde_json::from_slice(&bytes).map_err(|_| Error::Invalid)?;
-        if plain.secret.len() != 20 || !valid_recovery(&plain.recovery) {
+        if plain.key != operation || plain.secret.len() != 20 || !valid_recovery(&plain.recovery) {
             return Err(Error::Invalid);
         }
         let Some(step) = matching_step(&plain.secret, code, clock.utc, -1) else {
@@ -294,17 +302,15 @@ impl Store {
         let bytes = Zeroizing::new(encode(&plain)?);
         tx.execute(
             "UPDATE candidates SET body=?2 WHERE id=?1",
-            params![operation.to_string(), protector.seal(&bytes)?],
+            params![encode(&operation)?, protector.seal(&bytes)?],
         )?;
         tx.commit()?;
         Ok(true)
     }
-    pub fn retire_candidate(&mut self, operation: Uuid) -> Result<(), Error> {
+    pub fn retire_candidate(&mut self, operation: CandidateKey) -> Result<(), Error> {
         self.check_files()?;
-        self.conn.execute(
-            "DELETE FROM candidates WHERE id=?1",
-            [operation.to_string()],
-        )?;
+        self.conn
+            .execute("DELETE FROM candidates WHERE id=?1", [encode(&operation)?])?;
         Ok(())
     }
     /// Replace only recovery material under an exact started credential task. TOTP state survives.
@@ -469,28 +475,32 @@ impl Store {
             && &record.facts.recovery == receipt
             && constant_equal(&record.recovery_hash, &recovery_hash(a, recovery)))
     }
-    pub fn has_candidate(&self, operation: Uuid) -> Result<bool, Error> {
+    pub fn has_candidate(&self, operation: CandidateKey) -> Result<bool, Error> {
         self.check_files()?;
         Ok(self.conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM candidates WHERE id=?1)",
-            [operation.to_string()],
+            [encode(&operation)?],
             |r| r.get(0),
         )?)
     }
     pub fn candidate(
         &self,
-        operation: Uuid,
+        operation: CandidateKey,
         protector: &impl Protector,
     ) -> Result<Candidate, Error> {
         self.check_files()?;
+        registration::require_registration(&self.conn, operation.owner)?;
         let sealed: Vec<u8> = self.conn.query_row(
             "SELECT body FROM candidates WHERE id=?1 AND length(body)<=16384",
-            [operation.to_string()],
+            [encode(&operation)?],
             |r| r.get(0),
         )?;
         let bytes = protector.open(&sealed)?;
         let plain: SealedCandidate = serde_json::from_slice(&bytes).map_err(|_| Error::Invalid)?;
-        if plain.secret.len() != 20 || !valid_recovery(&plain.recovery) || plain.confirmed_step < 0
+        if plain.key != operation
+            || plain.secret.len() != 20
+            || !valid_recovery(&plain.recovery)
+            || plain.confirmed_step < 0
         {
             return Err(Error::Invalid);
         }
@@ -508,7 +518,7 @@ impl Store {
         authority: Authority,
         revision: i64,
         enabled: bool,
-        operation: Uuid,
+        operation: CandidateKey,
         facts: AccessRssFacts,
         clock: Clock,
         protector: &impl Protector,
@@ -517,6 +527,9 @@ impl Store {
         clock.validate()?;
         if revision < 1 || !authority.accepts(&facts) {
             return Err(Error::Invalid);
+        }
+        if authority.registration() != operation.owner || authority.binding != operation.binding {
+            return Err(Error::Changed);
         }
         let candidate = self.candidate(operation, protector)?;
         let secret = protector.seal(&candidate.secret)?;
@@ -725,7 +738,7 @@ impl Store {
                         used_at: clock.utc,
                     };
                     tx.execute(
-                        "INSERT INTO recovery_uses VALUES(?1,?3,?2)",
+                        "INSERT INTO recovery_uses(id,owner,body) VALUES(?1,?3,?2)",
                         params![
                             event.operation_id.to_string(),
                             encode(&event)?,
@@ -760,10 +773,27 @@ impl Store {
         self.check_files()?;
         let mut query = self
             .conn
-            .prepare("SELECT body FROM recovery_uses WHERE owner=?1 ORDER BY rowid LIMIT 128")?;
+            .prepare("SELECT body FROM recovery_uses WHERE owner=?1 AND rejection IS NULL ORDER BY rowid LIMIT 128")?;
         let rows = query.query_map([encode(owner)?], |r| r.get::<_, Vec<u8>>(0))?;
         rows.map(|r| serde_json::from_slice(&r?).map_err(|_| Error::Invalid))
             .collect()
+    }
+    /// Preserve a permanently rejected use for diagnostics, independently of delivery of other rows.
+    pub fn reject_recovery_use(
+        &mut self,
+        owner: &Registration,
+        operation: Uuid,
+        reason: &str,
+    ) -> Result<(), Error> {
+        self.check_files()?;
+        if !matches!(reason, "denied" | "conflict" | "not_found") {
+            return Err(Error::Invalid);
+        }
+        self.conn.execute(
+            "UPDATE recovery_uses SET rejection=?3 WHERE id=?1 AND owner=?2",
+            params![operation.to_string(), encode(owner)?, reason],
+        )?;
+        Ok(())
     }
     pub fn acknowledge_recovery_use(
         &mut self,

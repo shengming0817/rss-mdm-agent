@@ -8,7 +8,7 @@
 
 `pnpm build:installer --organization /absolute/public-organization.json` 在当前原生平台构建 macOS arm64 PKG 或 Windows amd64 / arm64 的 perMachine NSIS EXE，不套用 MSI。macOS 构建命令通过 `python3 scripts/build-run.py -- pnpm build:installer ...` 复用本地 Cargo 槽位；Windows 使用 `pnpm exec node scripts/build-installers.mjs ...`。Windows 构建进程、Rust 工具链和 Node 必须为目标原生架构，不接受仿真进程或混合 PE。目标设备须预装 machine-wide WebView2；安装器缺失时明确拒绝。当前机器有匹配架构、受保护的 PowerShell 7 时才登记该解释器与相关能力。
 
-候选清单使用 v3，部署使用 v8。组织输入的 `modules` 明确给出首装默认选择，结构与下面 profile 的 `modules` 相同。启用 MDM 时，`modules.mdm.backend` 包含 `instance`、`tenant`、完整的签名 `connections`、`signing_keys` 和 HTTPS 公共 `ca_pem`。仅 DA 打包使用 DA 设备 listener 和公共 CA；可选 `desktop` 提供单独的浏览器 origin、租户、显示名与 HTTPS CA。设备注册秘密单独移交。
+候选清单使用 v3，部署使用 v8。组织输入的 `modules` 明确给出首装默认选择，结构与下面 profile 的 `modules` 相同。启用 MDM 时，`modules.mdm.backend` 包含 `instance`、`tenant`、完整的签名 `connections`、`signing_keys` 和 HTTPS 公共 `ca_pem`。仅 DA 打包使用 DA 设备 listener 和公共 CA；可选 `desktop` 提供单独的浏览器 origin、租户、显示名与 HTTPS CA。安装后服务和桌面按受保护部署的实际模块选择员工登录路径。管理员可用 profile 的 `modules.da.backend.browser` 指定浏览器 `origin` 和可选的 `ca_pem`。省略时采用同租户安装包中的 `desktop` 配置。设备注册秘密单独移交。
 
 
 开发与生产包均不强制发布者证书或公证：macOS 默认 ad-hoc，可使用自签名或 Apple Development；Windows 未提供签名材料时生成未签名包。`--release` 只标记包模式，不提高证书准入要求；该模式仍用于阻止 SIT 重置入口清理 release 安装。macOS 签名身份依次读取 `RSS_MACOS_APP_SIGNING_IDENTITY`、`RSS_MACOS_DEVELOPMENT_SIGNING_IDENTITY`，均缺失时使用 ad-hoc；`RSS_MACOS_INSTALLER_SIGNING_IDENTITY` 和已有的 `RSS_MACOS_NOTARY_PROFILE` Keychain 引用分别显式启用安装包签名、公证与 stapling。Windows 提供 `RSS_WINDOWS_SIGNING_THUMBPRINT` 才执行签名，可用 `RSS_SIGNTOOL` 指定工具。显式选择的签名或公证操作失败仍报错，构建不接收证书密码。固定路径、SHA-256/CDHash 和实际进程身份继续校验；系统加载、MDM、entitlement 和设备安全策略的实际接纳须独立取证。
@@ -412,7 +412,7 @@ Windows x64 NSIS 候选包含 CP DLL；其他架构及 MSI/MSIX 未装配该组�
 
 ```powershell
 & $Agent --device-access-component register $ProtectedDeploymentConfig
-& $Agent --device-access-component health
+& $Agent --device-access-component health $ProtectedDeploymentConfig
 # 维修不加载 DLL，保留系统登录 Provider：
 & $Agent --device-access-component disable
 & $Agent --device-access-component cleanup
@@ -426,7 +426,7 @@ Windows 包如需交互准备登录因子，构建时填写与 DA 租户一致�
 
 仅 DA 的本地 SAM 账号由管理员在当前 DA 注册下建立绑定。在桌面登录对应企业账号，从“账号与组织 → Windows 登录因子”读取待设置任务，录入验证器后确认动态码。创建新账号还需在本机输入密码。管理员按原操作核对设备收到、托管回执与实际应用，断网期间尚未落地的撤销记为离线待应用。账号解绑、恢复材料轮换及整个 DA 注册的撤销分别核对。设备所属 AD 域账号和纯 Entra joined 账号沿授权 Agent 投递路径验收。
 
-在 Windows 11 x64 用 `native-candidate.mjs freeze` 固定 service、CLI、backend、Desktop，并通过 `--windows-login` 和 `--installer` 绑定 CP DLL 与 NSIS 安装包。安装并按要求重启后，以 LocalSystem 运行 `verify-execution-windows.ps1 -Phase DeviceAccessHealth -Candidate <固定清单> -Config <已安装部署配置> -Output <新目录>`。回执包含 SCM 运行进程、COM 注册 DLL、安装包的 SHA-256 和实际 Authenticode 结果。固定包与已安装副本允许位于不同目录。组件健康仅证明此时的注册和存储可用。
+在 Windows 11 x64 用 `native-candidate.mjs freeze` 固定 service、CLI、backend、Desktop，并通过 `--windows-login` 和 `--installer` 绑定 CP DLL 与 NSIS 安装包。在安装包同目录保留构建生成的 `package-manifest.json`。安装并按要求重启后，以 LocalSystem 运行 `verify-execution-windows.ps1 -Phase DeviceAccessHealth -Candidate <固定清单> -Config <已安装部署配置> -Output <新目录>`。回执包含 SCM 运行进程、COM 注册 DLL、安装包的 SHA-256 和实际 Authenticode 结果。固定包与已安装副本允许位于不同目录。组件健康仅证明此时的注册和存储可用。
 
 产品验收逐项保存 UTC、账号来源、OS build／架构、注册和加入方式、候选 revision／摘要、签名状态、原操作及实测结果。在仅 DA 的 SAM、设备所属域、纯 Entra joined 三种组合分别实测密码加 RSS 因子的登录和解锁、离线动态码和恢复、原生维修；单列后台不可达、Agent 停止、维护失败、域控或 IdP 不可达。以两个采用当前格式的固定候选验证升级中断与程序回退，复用当前受保护离线库，逐项确认撤销的因子与已轮换旧恢复材料失效。格式不匹配时在切换前拒绝。WHfB 的策略、用户注册、PIN 登录、解锁与 PIN 恢复单独记录；未实测组合保留待验。
 

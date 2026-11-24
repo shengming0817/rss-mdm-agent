@@ -35,12 +35,24 @@ pub(super) async fn drive(
         device: r.device,
     };
     store
-        .bind_registration(owner.clone())
+        .bind_registration(owner)
         .map_err(|_| Error::Identity)?;
     let account = account(d, &ops, &root, login, enable).await;
     let credentials = credentials(d, &ops).await;
     for usage in store.recovery_uses(&owner).map_err(|_| Error::Storage)? {
-        ops.recovery_use(&usage).await?;
+        if let Err(error) = ops.recovery_use(&usage).await {
+            let reason = match error {
+                Error::Conflict => "conflict",
+                Error::NotFound => "not_found",
+                Error::Denied => "denied",
+                e => return Err(e),
+            };
+            ops.rejected_use(usage.operation_id, error)?;
+            store
+                .reject_recovery_use(&owner, usage.operation_id, reason)
+                .map_err(|_| Error::Storage)?;
+            continue;
+        }
         store
             .acknowledge_recovery_use(&owner, usage.operation_id)
             .map_err(|_| Error::Storage)?;
@@ -63,13 +75,13 @@ async fn account(
             if (t.task_id, t.attempt_id) != (id, attempt) {
                 return Err(Error::Identity);
             }
-            access::retire_native(root, d.installation_id, &t)?;
+            access::retire_native(root, d.installation_id, Channel::Da, &t)?;
             state::remove(root, &key)?;
         }
         Ok(())
     })?;
-    let Some(o) = ops.account().await? else {
-        return login.offer(None);
+    let Some(o) = ops.account(login.confirmed()?).await? else {
+        return Ok(());
     };
     let key = format!("{}.{}.da-attempt", o.task_id, o.attempt_id);
     let mut attempt: Attempt = state::read_optional(root, &key)?.unwrap_or_default();
@@ -78,9 +90,16 @@ async fn account(
         .map_or(Observation::Received, |expires_at| {
             Observation::NotStarted { expires_at }
         });
-    let ack = ops.account_event(&o, event).await?;
+    let ack = match ops.account_event(&o, event).await {
+        Ok(ack) => ack,
+        Err(e @ (Error::Denied | Error::Conflict | Error::NotFound)) => {
+            login.withdraw(o.task_id, o.attempt_id)?;
+            return Err(e);
+        }
+        Err(e) => return Err(e),
+    };
     let Some(t) = ack.permit else {
-        login.offer(None)?;
+        login.withdraw(o.task_id, o.attempt_id)?;
         if let Some(old) = &attempt.permit {
             if let Some(p) = access::prepared(root, old)? {
                 ops.account_event(&o, Observation::Prepared(p)).await?;
@@ -94,7 +113,12 @@ async fn account(
             .issued_expires_at
             .filter(|v| *v <= now().unwrap_or(i64::MIN))
         {
-            if !attempt.started {
+            let never_created = match &attempt.permit {
+                Some(t) if attempt.started => access::needs_create_input(root, t)?,
+                _ => false,
+            };
+            if !attempt.started || never_created {
+                attempt.started = false;
                 attempt.renew_from = Some(exp);
                 state::write(root, &key, &attempt)?;
                 ops.account_event(&o, Observation::NotStarted { expires_at: exp })
@@ -158,22 +182,23 @@ async fn account(
             ..
         } if t.windows.is_none() => (),
         _ => {
-            login.offer(None)?;
+            login.withdraw(o.task_id, o.attempt_id)?;
             return Err(Error::Denied);
         }
     }
     attempt.permit = Some(t.clone());
     state::write(root, &key, &attempt)?;
     if let Some(result) = access::stored_result(root, &t)? {
-        login.offer(None)?;
+        login.withdraw(o.task_id, o.attempt_id)?;
         ops.account_event(&o, Observation::Result(result)).await?;
         return Ok(());
     }
     let needs_setup = matches!(t.windows, Some(w::AccessWindowsPlan::Initialize { .. }));
-    if needs_setup && !attempt.started {
-        login.offer(Some(&t))?;
+    let needs_input = needs_setup && (!attempt.started || access::needs_create_input(root, &t)?);
+    if needs_input {
+        login.offer(&t)?;
     } else {
-        login.offer(None)?;
+        login.withdraw(o.task_id, o.attempt_id)?;
     }
     let input = access::Input {
         channel: Channel::Da,
@@ -187,16 +212,15 @@ async fn account(
         session: SessionRequirement::NotRequired {},
     };
     let step = access::drive_da(&input, || {
-        let password = if needs_setup && !attempt.started {
-            login.input(&t)?
-        } else {
-            None
-        };
+        let password = if needs_input { login.input(&t)? } else { None };
+        if t.expires_at.min(t.deadline) <= now()? {
+            return Err(Error::Expired);
+        }
         if !attempt.started {
             attempt.started = true;
             state::write(root, &key, &attempt)?;
         }
-        login.offer(None)?;
+        login.withdraw(o.task_id, o.attempt_id)?;
         Ok(password)
     });
     let mut result = match step {

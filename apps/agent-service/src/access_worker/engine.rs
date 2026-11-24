@@ -37,9 +37,9 @@ pub(super) trait Native: Protector {
     fn enable(&mut self, sid: &str) -> Result<(), Failure>;
 }
 #[derive(Serialize, Deserialize)]
-struct Creation {
-    task: w::AccessTaskSpec,
-    sid: Option<String>,
+pub(super) struct Creation {
+    pub(super) task: w::AccessTaskSpec,
+    pub(super) sid: Option<String>,
 }
 fn storage(_: device_access::Error) -> Error {
     Error::Storage
@@ -70,6 +70,15 @@ pub(super) fn execute_locked(
         state::write(&input.root, &name(task, "result"), &result)?;
     }
     Ok(result)
+}
+fn require_window(input: &Input) -> Result<(), Error> {
+    if input.channel == device_access::Channel::Da {
+        let now = (crate::wall()? / 1000) as i64;
+        if input.task.expires_at <= now || input.task.deadline <= now {
+            return Err(Error::Expired);
+        }
+    }
+    Ok(())
 }
 fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
     let task = &input.task;
@@ -110,7 +119,9 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
         account: account @ Account::Windows { .. },
     } = &task.action
     {
+        require_window(input)?;
         store.revoke_task(input.channel, task).map_err(storage)?;
+        require_window(input)?;
         return Ok(match native.dispose(account, *disposition) {
             Ok(()) => Effect::Unbound {
                 disposition: *disposition,
@@ -122,7 +133,12 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
     store.admit_task(input.channel, task).map_err(storage)?;
     // Require already confirmed setup before touching an OS account.
     if matches!(task.windows, Some(Plan::Initialize { .. })) {
-        store.candidate(task.task_id, native).map_err(storage)?;
+        store
+            .candidate(
+                device_access::CandidateKey::for_task(input.channel, task),
+                native,
+            )
+            .map_err(storage)?;
     }
     let (sid, configuration, created) = match &task.action {
         Action::Apply {
@@ -143,6 +159,7 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
                     previous.sid.ok_or(Error::Conflict)?
                 }
                 None => {
+                    require_window(input)?;
                     let password = native.password()?;
                     state::write(
                         &input.root,
@@ -152,6 +169,7 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
                             sid: None,
                         },
                     )?;
+                    require_window(input)?;
                     let sid = match native.create(account_name, &password) {
                         Ok(sid) => sid,
                         Err(Failure::NativeFailure) => return Err(Error::Unavailable),
@@ -191,6 +209,7 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
     let facts = match task.windows.as_ref().ok_or(Error::Protocol)? {
         Plan::Whfb { .. } => return Err(Error::Protocol),
         Plan::Preserve { facts } => {
+            require_window(input)?;
             store
                 .configure(
                     &authority(input.channel, task, &sid, native)?,
@@ -205,7 +224,12 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
             recipient,
             expected_revision,
         } => {
-            let candidate = store.candidate(task.task_id, native).map_err(storage)?;
+            let candidate = store
+                .candidate(
+                    device_access::CandidateKey::for_task(input.channel, task),
+                    native,
+                )
+                .map_err(storage)?;
             let subject = w::CredentialSubject::RssLogin {
                 binding: task.binding_id,
                 binding_generation: task.binding_generation,
@@ -263,12 +287,13 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
                 factor_generation: task.factor_generation,
                 recovery: receipt,
             };
+            require_window(input)?;
             store
                 .activate(
                     authority(input.channel, task, &sid, native)?,
                     task.revision,
                     configuration.enabled,
-                    task.task_id,
+                    device_access::CandidateKey::for_task(input.channel, task),
                     facts.clone(),
                     native.clock()?,
                     native,
@@ -282,10 +307,12 @@ fn apply(input: &Input, native: &mut impl Native) -> Result<Effect, Error> {
     } else {
         None
     }) {
+        require_window(input)?;
         if native.role(&sid, role).is_err() {
             return Ok(Effect::Unknown);
         }
     }
+    require_window(input)?;
     if created && native.enable(&sid).is_err() {
         return Ok(Effect::Unknown);
     }

@@ -19,6 +19,14 @@ struct Fixture {
     authority: Authority,
     clock: Clock,
 }
+fn candidate_key(a: &Authority) -> CandidateKey {
+    CandidateKey {
+        owner: a.registration(),
+        binding: a.binding,
+        task: Uuid::new_v4(),
+        attempt: Uuid::new_v4(),
+    }
+}
 impl Fixture {
     fn new() -> Self {
         let root = std::env::temp_dir().join(format!("rss-offline-{}", Uuid::new_v4()));
@@ -48,7 +56,7 @@ impl Fixture {
             },
         }
     }
-    fn setup(&self) -> (Store, String, Vec<u8>, Uuid, AccessRssFacts) {
+    fn setup(&self) -> (Store, String, Vec<u8>, CandidateKey, AccessRssFacts) {
         let mut store = Store::create(&self.root, self.id).unwrap();
         store
             .bind_registration(self.authority.registration())
@@ -59,7 +67,7 @@ impl Fixture {
             .confirm(&code(&secret, self.clock.utc), self.clock)
             .unwrap());
         let recovery = candidate.recovery_secret().to_owned();
-        let operation = Uuid::new_v4();
+        let operation = candidate_key(&self.authority);
         store.stage(operation, &candidate, &TestProtector).unwrap();
         assert!(store.stage(operation, &candidate, &TestProtector).is_err());
         let facts = AccessRssFacts {
@@ -202,16 +210,26 @@ fn recovery_is_repeatable_and_independent_of_wall_clock_rollback() {
     assert!(uses
         .iter()
         .all(|u| u.material == facts.recovery.material && u.version == 1));
+    let owner = f.authority.registration();
     store
-        .acknowledge_recovery_use(&f.authority.registration(), uses[0].operation_id)
+        .reject_recovery_use(&owner, uses[0].operation_id, "conflict")
         .unwrap();
-    assert_eq!(
-        store
-            .recovery_uses(&f.authority.registration())
-            .unwrap()
-            .len(),
-        1
-    );
+    let pending = store.recovery_uses(&owner).unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].operation_id, uses[1].operation_id);
+    store
+        .acknowledge_recovery_use(&owner, uses[1].operation_id)
+        .unwrap();
+    assert!(store.recovery_uses(&owner).unwrap().is_empty());
+    let db = rusqlite::Connection::open(f.root.join("device-access.sqlite")).unwrap();
+    let reason: String = db
+        .query_row(
+            "SELECT rejection FROM recovery_uses WHERE id=?1",
+            [uses[0].operation_id.to_string()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(reason, "conflict");
 }
 #[test]
 fn failure_budget_survives_reopen_reboot_and_configuration() {
@@ -441,9 +459,9 @@ fn device_replacement_retires_old_bindings_and_retirement_cannot_reopen() {
     let f = Fixture::new();
     let (mut store, _, _, operation, facts) = f.setup();
     let original = f.authority.registration();
-    let mut next = original.clone();
+    let mut next = original;
     next.device = rss_mdm_agent_wire::DeviceId::new_v4();
-    store.bind_registration(next.clone()).unwrap();
+    store.bind_registration(next).unwrap();
     // Only the communication owner binds the current ID; old factor authority remains fenced.
     assert!(store.authority(&f.authority.sid).unwrap().is_none());
     assert!(store
@@ -483,7 +501,7 @@ fn factor_replacement_preserves_a_locked_accounts_budget() {
         .confirm(&code(&secret, f.clock.utc), f.clock)
         .unwrap());
     let recovery = candidate.recovery_secret().to_owned();
-    let operation = Uuid::new_v4();
+    let operation = candidate_key(&f.authority);
     store.stage(operation, &candidate, &TestProtector).unwrap();
     let mut authority = f.authority.clone();
     authority.factor_generation += 1;
@@ -591,7 +609,7 @@ fn changed_join_retires_cloud_factors_durably_but_preserves_local_binding() {
     assert!(candidate
         .confirm(&code(&secret, f.clock.utc), f.clock)
         .unwrap());
-    let operation = Uuid::new_v4();
+    let operation = candidate_key(&cloud);
     store.stage(operation, &candidate, &TestProtector).unwrap();
     let facts = AccessRssFacts {
         factor_generation: 1,
@@ -690,7 +708,7 @@ fn hot_offline_recovers_current_format_and_preserves_old_format_bytes() {
         db.pragma_update(None, "user_version", version).unwrap();
         for i in 0..200 {
             db.execute(
-                "INSERT INTO candidates VALUES(?1,?2)",
+                "INSERT INTO candidates VALUES(?1,?2,x'00')",
                 rusqlite::params![i.to_string(), vec![b'x'; 2000]],
             )
             .unwrap();
@@ -786,6 +804,39 @@ fn a_second_channel_cannot_replace_a_live_sid_or_retire_its_registration() {
             &TestProtector
         )
         .is_err());
+    let mut candidate = Candidate::generate().unwrap();
+    let secret = candidate.totp_secret().to_vec();
+    candidate
+        .confirm(&code(&secret, f.clock.utc), f.clock)
+        .unwrap();
+    let da_key = CandidateKey {
+        owner: da.registration(),
+        binding: da.binding,
+        task: op.task,
+        attempt: op.attempt,
+    };
+    assert!(!store.has_candidate(da_key).unwrap());
+    store.stage(da_key, &candidate, &TestProtector).unwrap();
+    let other_attempt = CandidateKey {
+        attempt: Uuid::new_v4(),
+        ..da_key
+    };
+    assert!(store.candidate(other_attempt, &TestProtector).is_err());
+    store.retire_candidate(other_attempt).unwrap();
+    assert!(store.has_candidate(da_key).unwrap());
+    assert!(store
+        .activate(
+            da.clone(),
+            2,
+            true,
+            da_key,
+            facts.clone(),
+            f.clock,
+            &TestProtector
+        )
+        .is_err());
+    store.retire_candidate(op).unwrap();
+    assert!(store.has_candidate(da_key).unwrap());
     da.sid = "S-1-5-21-1-2-3-1002".into();
     facts.recovery.subject = CredentialSubject::RssLogin {
         binding: da.binding,
@@ -793,7 +844,7 @@ fn a_second_channel_cannot_replace_a_live_sid_or_retire_its_registration() {
         sid: da.sid.clone(),
     };
     store
-        .activate(da.clone(), 2, true, op, facts, f.clock, &TestProtector)
+        .activate(da.clone(), 2, true, da_key, facts, f.clock, &TestProtector)
         .unwrap();
     assert_eq!(store.authority(&da.sid).unwrap(), Some(da.clone()));
     store.retire_registration(Channel::Da).unwrap();

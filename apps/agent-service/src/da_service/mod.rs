@@ -142,7 +142,7 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
     let login = Arc::new(login::Login::new(
         &d,
         mdm.as_ref().and_then(|owner| owner.session_fence()),
-    ));
+    )?);
     #[cfg(windows)]
     let worker_login = login.clone();
     let policy = d.clients.clone();
@@ -187,25 +187,34 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                                     let result = client.drive(&mut policy).await;
                                     #[cfg(windows)]
                                     {
-                                        if let Some(r) = client.revocation().await? {
-                                            let native = crate::access_worker::root(&d.execution);
-                                            device_access::Store::open(&native, d.installation_id)
+                                        let operations = async {
+                                            if let Some(r) = client.revocation().await? {
+                                                let native =
+                                                    crate::access_worker::root(&d.execution);
+                                                device_access::Store::open(
+                                                    &native,
+                                                    d.installation_id,
+                                                )
                                                 .map_err(|_| Error::Storage)?
                                                 .retire_registration(device_access::Channel::Da)
                                                 .map_err(|_| Error::Storage)?;
-                                            worker_login.offer(None)?;
-                                            client.retire(&r)?;
-                                        } else if cfg!(target_arch = "x86_64") {
-                                            let operations = delivery::drive(
-                                                &d,
-                                                &client,
-                                                &worker_login,
-                                                policy.local_rss,
-                                            )
-                                            .await;
-                                            operations.and(result)?;
+                                                worker_login.reset()?;
+                                                client.retire(&r)?;
+                                            } else if cfg!(target_arch = "x86_64") {
+                                                let operations = delivery::drive(
+                                                    &d,
+                                                    &client,
+                                                    &worker_login,
+                                                    policy.local_rss,
+                                                )
+                                                .await;
+                                                operations?;
+                                            }
+                                            Ok(())
                                         }
-                                        Ok(())
+                                        .await;
+                                        client.record_windows_delivery(operations)?;
+                                        result
                                     }
                                     #[cfg(not(windows))]
                                     result
@@ -225,6 +234,9 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                                 10
                             }
                         };
+                        #[cfg(windows)]
+                        tokio::select! {_=worker_login.wake.notified()=>(),_=tokio::time::sleep(Duration::from_secs(delay))=>()}
+                        #[cfg(not(windows))]
                         tokio::time::sleep(Duration::from_secs(delay)).await;
                     }
                 };
@@ -298,17 +310,31 @@ impl Handler for Service {
                         value: Response::Tasks { mut tasks },
                     },
                 ) => {
-                    if let Reply::DeviceAccess {
-                        value: Response::Tasks { tasks: others },
-                    } = mdm.handle(peer, request)
-                    {
-                        tasks.extend(others);
-                    }
+                    tasks.extend(self.login.mdm_tasks(peer, &request, mdm.as_mut(), true));
                     return Reply::DeviceAccess {
                         value: Response::Tasks { tasks },
                     };
                 }
-                (Some(_), Reply::Rejected) => (),
+                (Some(mdm), Reply::DaVerificationPending {}) => {
+                    self.login.mdm_tasks(peer, &request, mdm.as_mut(), false);
+                    return Reply::DaVerificationPending {};
+                }
+                (Some(mdm), Reply::Rejected)
+                    if matches!(
+                        request,
+                        Request::DeviceAccess {
+                            input: execution_ipc::device_access::Operation::Tasks {},
+                            ..
+                        }
+                    ) =>
+                {
+                    return Reply::DeviceAccess {
+                        value: Response::Tasks {
+                            tasks: self.login.mdm_tasks(peer, &request, mdm.as_mut(), true),
+                        },
+                    };
+                }
+                (Some(_), Reply::Rejected) if matches!(request, Request::BindContext { .. }) => (),
                 (_, reply) => return reply,
             }
         }

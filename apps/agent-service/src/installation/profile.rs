@@ -163,6 +163,7 @@ mod tests {
         let mdm = package.defaults.mdm.clone();
         let da = Module::Enabled {
             backend: agent_client::da::Backend {
+                browser: None,
                 instance: Uuid::new_v4(),
                 tenant: Uuid::new_v4(),
                 origin: "https://da.example.test".into(),
