@@ -11,7 +11,7 @@ use rss_mdm_agent_wire::{
 };
 use std::path::PathBuf;
 mod input;
-pub(crate) use input::{Employee, Setup};
+pub(crate) use input::{Employee, Presence, Session, Setup};
 
 type Ids = (Uuid, Uuid);
 fn ids(t: &w::AccessTaskSpec) -> Ids {
@@ -218,6 +218,7 @@ impl Journal {
             return Ok(());
         }
         attempt::retire(&self.root, id, attempt_id, done, |t| {
+            state::remove(&self.root, &access::name(t, "keep"))?;
             state::remove(&self.root, &access::name(t, "creation"))?;
             state::remove(&self.root, &access::name(t, "result"))
         })
@@ -225,7 +226,7 @@ impl Journal {
 }
 
 fn keep(
-    root: &Path,
+    journal: &Journal,
     service: Uuid,
     t: &w::AccessTaskSpec,
     mutate: bool,
@@ -240,6 +241,7 @@ fn keep(
             reason: w::AccessFailure::Unsupported,
         });
     };
+    let root = &journal.native;
     let _lock = state::lock(root)?;
     let key = binding_name(&generated_uid.to_string())?;
     if let Some(mut b) = state::read_optional::<platform_sso::LocalBinding>(root, &key)? {
@@ -254,13 +256,38 @@ fn keep(
             });
         }
         if b.enabled || b.revision != t.revision || b.binding_generation != t.binding_generation {
-            if !mutate || t.expires_at <= seconds()? {
+            let proof_key = access::name(t, "keep");
+            let proof = state::read_optional::<(w::AccessTaskSpec, platform_sso::LocalBinding)>(
+                &journal.root,
+                &proof_key,
+            )?;
+            let authorized = mutate && seconds()? < t.expires_at;
+            if let Some((original, mut prior)) = proof {
+                prior.enabled = b.enabled;
+                if original != *t || prior != b {
+                    return Err(Error::Identity);
+                }
+            } else if authorized {
+                state::write(&journal.root, &proof_key, &(t, &b))?;
+            } else {
+                return Ok(w::AccessEffect::Unknown);
+            }
+            if !authorized && b.enabled {
                 return Ok(w::AccessEffect::Unknown);
             }
             b.enabled = false;
             b.binding_generation = t.binding_generation;
             b.revision = t.revision;
-            save_binding(root, &b)?;
+            let settlement = if authorized {
+                save_binding(root, &b)
+            } else {
+                crate::service::platform_sso::finish_disabled_binding(root, &b)
+            };
+            match settlement {
+                Ok(()) => (),
+                Err(Error::Unavailable) => return Ok(w::AccessEffect::Unknown),
+                Err(e) => return Err(e),
+            }
         }
     }
     Ok(w::AccessEffect::Unbound {
@@ -279,20 +306,6 @@ fn verify_installation(d: &Deployment, native: &Path) -> Result<(), Error> {
     {
         return Err(Error::Identity);
     }
-    Ok(())
-}
-
-fn apply_role(
-    native: &Path,
-    uid: &str,
-    role: w::AccessRole,
-    t: &w::AccessTaskSpec,
-    employee: &Employee,
-) -> Result<(), Error> {
-    let _lock = state::lock(native)?;
-    let account = macos::inspect(uid, false)?;
-    // A read-back still reports the real role if native policy refused this change.
-    employee.admit(t, || macos::change_role(&account, Some(role)).map(|_| ()))?;
     Ok(())
 }
 
@@ -336,7 +349,16 @@ pub(crate) async fn drive(
     let ack = match ops.account_event(&offer, request.clone()).await {
         Ok(ack) => ack,
         Err(e) => {
-            setup.withdraw(id)?;
+            if matches!(
+                e,
+                Error::Conflict
+                    | Error::Denied
+                    | Error::NotFound
+                    | Error::Identity
+                    | Error::CredentialRevoked
+            ) {
+                setup.withdraw(id)?;
+            }
             return Err(e);
         }
     };
@@ -401,11 +423,7 @@ pub(crate) async fn drive(
         }
         Evidence::Absent | Evidence::Unknown => Step::Effect(result(t, w::AccessEffect::Unknown)),
         Evidence::Unstarted => {
-            if let w::AccessAction::Create {
-                name,
-                configuration,
-            } = &t.action
-            {
+            if let w::AccessAction::Create { name, .. } = &t.action {
                 setup.offer(t)?;
                 let Some((_, mut employee)) = input.filter(|(confirmed, _)| confirmed == t) else {
                     return Ok(());
@@ -427,29 +445,12 @@ pub(crate) async fn drive(
                 let account_name = name.clone();
                 let setup = setup.clone();
                 let actor = employee.clone();
-                let new = blocking(move || j.create(&spec, &account_name, &setup, &actor)).await?;
-                if let Step::Created(ref account) = new {
-                    if let Some(role) = configuration
-                        .role
-                        .filter(|r| (*r == w::AccessRole::Administrator) != account.administrator)
-                    {
-                        if employee.permits(t)
-                            && ops.account_event(&offer, request).await?.permit.as_ref() == Some(t)
-                        {
-                            let native = journal.native.clone();
-                            let uid = account.generated_uid.clone();
-                            let spec = t.clone();
-                            blocking(move || apply_role(&native, &uid, role, &spec, &employee))
-                                .await?;
-                        }
-                    }
-                }
-                new
+                blocking(move || j.create(&spec, &account_name, &setup, &actor)).await?
             } else {
                 // Only the explicit disposition permit can change this DA-owned binding.
                 let may_start = permit.is_some();
                 let spec = t.clone();
-                let native = journal.native.clone();
+                let local = journal.clone();
                 let service = registration.service_id;
                 if may_start && !record.started {
                     record.started = true;
@@ -457,7 +458,7 @@ pub(crate) async fn drive(
                 }
                 Step::Effect(result(
                     t,
-                    blocking(move || keep(&native, service, &spec, may_start)).await?,
+                    blocking(move || keep(&local, service, &spec, may_start)).await?,
                 ))
             }
         }
@@ -526,6 +527,10 @@ pub(crate) mod tests {
     fn keep_requires_the_completed_generation_even_after_the_original_marked_start() {
         let root = std::env::temp_dir().join(format!("rss-da-keep-{}", Uuid::new_v4()));
         platform_private_storage::directory(&root).unwrap();
+        let journal = Journal {
+            root: root.clone(),
+            native: root.clone(),
+        };
         let mut t = task();
         t.revision = 2;
         t.binding_generation = 2;
@@ -550,15 +555,22 @@ pub(crate) mod tests {
         let key = crate::service::platform_sso::binding_name(&uid.to_string()).unwrap();
         state::write(&root, &key, &b).unwrap();
         assert_eq!(
-            keep(&root, service, &t, false).unwrap(),
+            keep(&journal, service, &t, false).unwrap(),
             w::AccessEffect::Unknown
         );
+        let mut prior = b.clone();
+        prior.enabled = true;
+        state::write(&root, &access::name(&t, "keep"), &(&t, &prior)).unwrap();
         assert!(matches!(
-            keep(&root, service, &t, true).unwrap(),
+            keep(&journal, service, &t, false).unwrap(),
             w::AccessEffect::Unbound { .. }
         ));
         assert!(matches!(
-            keep(&root, service, &t, false).unwrap(),
+            keep(&journal, service, &t, true).unwrap(),
+            w::AccessEffect::Unbound { .. }
+        ));
+        assert!(matches!(
+            keep(&journal, service, &t, false).unwrap(),
             w::AccessEffect::Unbound { .. }
         ));
         std::fs::remove_dir_all(root).unwrap();

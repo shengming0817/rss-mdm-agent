@@ -2,7 +2,7 @@
 //! ref: Apple AuthenticationServices/ASAuthorizationProviderExtensionRegistrationHandler.h
 use super::*;
 use crate::da_service::{
-    mac_accounts::{Employee, Setup},
+    mac_accounts::{Employee, Presence, Session, Setup},
     policy::Machine,
 };
 use crate::deployment::Deployment;
@@ -41,6 +41,7 @@ pub(crate) struct Fence {
     policy: PeerPolicy,
     epoch: Arc<Mutex<u64>>,
     pub accounts: Arc<Setup>,
+    active: Mutex<std::sync::Weak<Session>>,
     other: Option<Arc<dyn SessionFence>>,
 }
 impl SessionFence for Fence {
@@ -56,6 +57,9 @@ impl SessionFence for Fence {
             return Reply::Unavailable;
         };
         *epoch = next;
+        if let Some(session) = self.active.lock().ok().and_then(|s| s.upgrade()) {
+            session.revoke();
+        }
         drop(epoch);
         if self.accounts.clear_input().is_err() {
             return Reply::Unavailable;
@@ -93,6 +97,7 @@ pub(crate) struct Endpoint {
     pub fence: Arc<Fence>,
     sender: tokio::sync::mpsc::Sender<Work>,
     deployment: Deployment,
+    account_context: Mutex<Option<execution_contract::Id>>,
 }
 impl Endpoint {
     pub fn new(d: &Deployment, other: Option<Arc<dyn SessionFence>>) -> (Self, Worker) {
@@ -101,11 +106,13 @@ impl Endpoint {
             policy: d.registration_clients.clone(),
             epoch: Arc::new(Mutex::new(0)),
             accounts: Arc::default(),
+            active: Mutex::default(),
             other,
         });
         (
             Self {
                 deployment: d.clone(),
+                account_context: Mutex::default(),
                 fence: fence.clone(),
                 sender,
             },
@@ -271,6 +278,26 @@ impl Endpoint {
         let (Some(subject), Ok(binding)) = (subject, peer.session_binding()) else {
             return Some(Err(Reply::Rejected));
         };
+        if d.modules.mdm.enabled() {
+            let Ok(mut owner) = self.account_context.lock() else {
+                return Some(Err(Reply::Unavailable));
+            };
+            match request {
+                Request::BindContext { value, expected }
+                    if expected.is_none()
+                        || owner.is_none()
+                        || owner.as_ref() == expected.as_ref() =>
+                {
+                    *owner = Some(value.generation.clone());
+                }
+                Request::DeviceAccess {
+                    context,
+                    input: AccountOp::Tasks {},
+                    ..
+                } if owner.as_ref() != Some(&context.generation) => return None,
+                _ => (),
+            }
+        }
         let Ok(epoch) = self.fence.epoch.lock().map(|g| *g) else {
             return Some(Err(Reply::Unavailable));
         };
@@ -300,8 +327,7 @@ impl Endpoint {
 }
 
 struct BoundContext {
-    credential: Option<zeroize::Zeroizing<String>>,
-    current: Arc<Mutex<Option<u64>>>,
+    current: Arc<Session>,
     principal: Option<Uuid>,
     subject: String,
     session: u32,
@@ -312,9 +338,7 @@ struct BoundContext {
 }
 impl Drop for BoundContext {
     fn drop(&mut self) {
-        if let Ok(mut expiry) = self.current.lock() {
-            *expiry = None;
-        }
+        self.current.revoke();
     }
 }
 impl BoundContext {
@@ -385,27 +409,20 @@ impl Worker {
                     .await
                     .map(|value| Reply::PlatformSso { value }),
                 Some(Request::BindContext { value, expected }) => {
-                    let mut prior = self.bound.take();
-                    if let Some(generation) = expected {
-                        if !prior.as_ref().is_some_and(|b| {
-                            b.refreshes(
-                                &command,
-                                value,
-                                generation,
-                                crate::wall().unwrap_or(u64::MAX),
-                            )
-                        }) {
+                    let now = crate::wall()?;
+                    if let (Some(generation), Some(bound)) = (expected, self.bound.as_ref()) {
+                        if !bound.refreshes(&command, value, generation, now) {
                             return Err(Error::Identity);
                         }
                     }
-                    let same = prior.as_ref().is_some_and(|b| {
-                        b.refreshes(
-                            &command,
-                            value,
-                            &value.generation,
-                            crate::wall().unwrap_or(u64::MAX),
-                        ) && b.credential.as_ref() == value.credential()
+                    if expected.as_ref().is_some_and(|g| g != &value.generation) {
+                        return Err(Error::Identity);
+                    }
+                    let same = self.bound.as_ref().is_some_and(|b| {
+                        b.refreshes(&command, value, &value.generation, now)
+                            && b.current.same(value.credential())
                     });
+                    let mut prior = self.bound.take();
                     if !same {
                         drop(prior.take());
                         self.fence.accounts.clear_input()?;
@@ -420,13 +437,16 @@ impl Worker {
                         return Err(Error::Identity);
                     }
                     self.bound = Some(if let Some(mut bound) = prior {
-                        *bound.current.lock().map_err(|_| Error::Unavailable)? = Some(expires);
+                        bound.current.extend(expires)?;
                         bound.expires = expires;
                         bound
                     } else {
+                        let current = Session::new(expires, value.credential().cloned());
+                        *self.fence.active.lock().map_err(|_| Error::Unavailable)? =
+                            Arc::downgrade(&current);
+                        current.observe_deadline();
                         BoundContext {
-                            credential: value.credential().cloned(),
-                            current: Arc::new(Mutex::new(Some(expires))),
+                            current,
                             principal: value.user().map(|u| u.principal_id),
                             subject: command.subject.clone(),
                             session: command.session,
@@ -453,16 +473,16 @@ impl Worker {
                     if !bound.permits(&command, context, &self.fence) {
                         return Err(Error::Identity);
                     }
-                    let employee = Employee {
+                    let mut employee = Employee {
                         portal: d.modules.employee_portal()?.ok_or(Error::Identity)?,
                         principal: bound.principal.ok_or(Error::Identity)?,
-                        proof: bound.credential.clone().ok_or(Error::Identity)?,
                         subject: bound.subject.clone(),
                         session: bound.session,
                         binding: bound.binding.clone(),
                         epoch: self.fence.epoch.clone(),
                         generation: bound.epoch,
                         current: bound.current.clone(),
+                        presence: None,
                         console: execution_ipc::macos_identity::verify_console,
                         expires: bound.expires,
                     };
@@ -471,6 +491,18 @@ impl Worker {
                             tasks: self.fence.accounts.tasks(&employee)?,
                         },
                         AccountOp::PrepareMac { task, attempt } => {
+                            let mut pins = d
+                                .helper_policy()
+                                .filter(|p| p.subjects.contains(&bound.subject))
+                                .ok_or(Error::Identity)?;
+                            let subject = bound.subject.clone();
+                            let session = bound.session;
+                            let binding = bound.binding.clone();
+                            pins.subjects = vec![subject.clone()];
+                            employee.presence = Some(Presence::capture(move || {
+                                execution_ipc::helper::presence(&pins, &subject, session, &binding)
+                                    .map_err(|_| Error::Identity)
+                            })?);
                             self.fence.accounts.prepare(
                                 (*task, *attempt),
                                 employee,
@@ -539,22 +571,43 @@ impl Worker {
             Err(_) => Reply::Rejected,
         });
     }
+    pub async fn during<T>(
+        &mut self,
+        d: &Deployment,
+        client: &Client,
+        future: impl std::future::Future<Output = T>,
+    ) -> T {
+        tokio::pin!(future);
+        loop {
+            tokio::select! {biased;
+                result=&mut future=>return result,
+                Some(cmd)=self.rx.recv()=>self.handle(d,client,cmd).await,
+            }
+        }
+    }
     pub async fn maintenance(&mut self, d: &Deployment, client: &Client) -> Result<(), Error> {
         let root = crate::access_worker::root(&d.execution);
-        if let Some(r) = client.revocation().await? {
+        if let Some(r) = self.during(d, client, client.revocation()).await? {
             self.bound = None;
             self.fence.accounts.reset()?;
             withdraw_sources(&root, &r)?;
             return client.retire(&r);
         }
-        Da {
-            d,
-            client,
-            root,
-            state: &mut self.state,
+        let interruption = {
+            let mut owner = Da {
+                d,
+                client,
+                root,
+                state: &mut self.state,
+            };
+            tokio::select! {biased;
+                _=owner.retry_retirement()=>None,
+                cmd=self.rx.recv()=>cmd,
+            }
+        };
+        if let Some(cmd) = interruption {
+            self.handle(d, client, cmd).await;
         }
-        .retry_retirement()
-        .await;
         Ok(())
     }
 }
@@ -1058,8 +1111,7 @@ mod tests {
             fence_epoch: 1,
         };
         let bound = BoundContext {
-            credential: None,
-            current: Arc::new(Mutex::new(Some(99))),
+            current: Session::new(99, None),
             principal: None,
             subject: cmd.subject.clone(),
             session: cmd.session,

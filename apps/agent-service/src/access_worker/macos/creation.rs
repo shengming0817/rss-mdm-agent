@@ -7,6 +7,7 @@ use std::path::Path;
 struct Creation {
     task: w::AccessTaskSpec,
     boot: Id,
+    expected_uid: u32,
     group: Option<i32>,
     generated_uid: Option<String>,
 }
@@ -31,12 +32,22 @@ impl Credential for Zeroizing<String> {
     }
 }
 trait Directory {
+    fn guid_for_uid(&self, uid: u32) -> Result<Option<String>, Error>;
     fn exists(&self, name: &str) -> Result<bool, Error>;
     fn inspect(&self, key: &str, by_name: bool) -> Result<NativeAccount, Error>;
-    fn add(&self, name: &str, uid: u32, input: &mut dyn TerminalInput) -> Result<(), Error>;
+    fn add(
+        &self,
+        name: &str,
+        uid: u32,
+        admin: bool,
+        input: &mut dyn TerminalInput,
+    ) -> Result<(), Error>;
 }
 struct Local;
 impl Directory for Local {
+    fn guid_for_uid(&self, uid: u32) -> Result<Option<String>, Error> {
+        crate::account_identity::generated_uid(&uid.to_string())
+    }
     fn exists(&self, name: &str) -> Result<bool, Error> {
         unsafe extern "C" {
             fn rss_access_name_exists(name: *const std::ffi::c_char) -> i32;
@@ -52,14 +63,19 @@ impl Directory for Local {
     fn inspect(&self, key: &str, by_name: bool) -> Result<NativeAccount, Error> {
         inspect(key, by_name)
     }
-    fn add(&self, name: &str, uid: u32, input: &mut dyn TerminalInput) -> Result<(), Error> {
-        terminal_tool(
-            "/usr/sbin/sysadminctl",
-            &["-addUser", name, "-UID", &uid.to_string(), "-password", "-"],
-            Some(input),
-            60,
-        )
-        .map(|_| ())
+    fn add(
+        &self,
+        name: &str,
+        uid: u32,
+        admin: bool,
+        input: &mut dyn TerminalInput,
+    ) -> Result<(), Error> {
+        let numeric = uid.to_string();
+        let mut args = vec!["-addUser", name, "-UID", &numeric, "-password", "-"];
+        if admin {
+            args.push("-admin");
+        }
+        terminal_tool("/usr/sbin/sysadminctl", &args, Some(input), 60).map(|_| ())
     }
 }
 pub(crate) fn evidence(
@@ -75,15 +91,15 @@ fn evidence_with(
     task: &w::AccessTaskSpec,
     short_name: &str,
 ) -> Result<Evidence, Error> {
-    let Some(intent) = state::read_optional::<Creation>(root, &name(task, "creation"))? else {
+    let Some(mut intent) = state::read_optional::<Creation>(root, &name(task, "creation"))? else {
         return Ok(Evidence::Unstarted);
     };
     if intent.task != *task {
         return Err(Error::Identity);
     }
-    if let Some(uid) = intent.generated_uid {
+    if let Some(uid) = &intent.generated_uid {
         return Ok(native
-            .inspect(&uid, false)
+            .inspect(uid, false)
             .map_or(Evidence::Unknown, Evidence::Created));
     }
     // Owner death drops the terminal watchdog. A negative read only proves absence after
@@ -95,11 +111,27 @@ fn evidence_with(
                 && unsafe { libc::kill(-group, 0) } == -1
                 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
         });
-    if stopped && !native.exists(short_name)? {
-        Ok(Evidence::Absent)
-    } else {
-        Ok(Evidence::Unknown)
+    if !stopped {
+        return Ok(Evidence::Unknown);
     }
+    if !native.exists(short_name)? {
+        return Ok(Evidence::Absent);
+    }
+    let Some(account) = attributed(native, short_name, intent.expected_uid) else {
+        return Ok(Evidence::Unknown);
+    };
+    intent.generated_uid = Some(account.generated_uid.clone());
+    state::write(root, &name(task, "creation"), &intent)?;
+    Ok(Evidence::Created(account))
+}
+
+fn attributed(native: &impl Directory, name: &str, uid: u32) -> Option<NativeAccount> {
+    let account = native.inspect(name, true).ok()?;
+    let unique = native.guid_for_uid(uid).ok()??;
+    (account.uid == uid
+        && account.name.eq_ignore_ascii_case(name)
+        && account.generated_uid.eq_ignore_ascii_case(&unique))
+    .then_some(account)
 }
 
 pub(crate) enum Outcome {
@@ -165,6 +197,7 @@ fn create_with<P: Credential>(
     let uid = available_uid()?;
     let mut intent = Creation {
         task: task.clone(),
+        expected_uid: uid,
         boot: execution_ipc::host::boot_generation().map_err(|_| Error::Identity)?,
         group: None,
         generated_uid: None,
@@ -175,11 +208,9 @@ fn create_with<P: Credential>(
         marker: &marker,
         intent: &mut intent,
     };
-    native.add(short_name, uid, &mut launch)?;
-    let account = native.inspect(short_name, true)?;
-    if account.uid != uid || !account.name.eq_ignore_ascii_case(short_name) {
-        return Err(Error::Identity);
-    }
+    let admin = matches!(&task.action,w::AccessAction::Create{configuration,..} if configuration.role==Some(w::AccessRole::Administrator));
+    native.add(short_name, uid, admin, &mut launch)?;
+    let account = attributed(native, short_name, uid).ok_or(Error::Identity)?;
     intent.generated_uid = Some(account.generated_uid.clone());
     state::write(root, &marker, &intent)?;
     Ok(Outcome::Created(account))
@@ -231,6 +262,9 @@ mod tests {
         fail_after_add: bool,
     }
     impl Directory for Fake {
+        fn guid_for_uid(&self, uid: u32) -> Result<Option<String>, Error> {
+            Ok((self.uid.get() == Some(uid)).then(|| self.guid.to_string()))
+        }
         fn exists(&self, _: &str) -> Result<bool, Error> {
             Ok(self.uid.get().is_some())
         }
@@ -248,7 +282,14 @@ mod tests {
                 secure_token: -1,
             })
         }
-        fn add(&self, _: &str, uid: u32, input: &mut dyn TerminalInput) -> Result<(), Error> {
+        fn add(
+            &self,
+            _: &str,
+            uid: u32,
+            admin: bool,
+            input: &mut dyn TerminalInput,
+        ) -> Result<(), Error> {
+            assert!(admin);
             input.start(&mut || {
                 self.calls.set(self.calls.get() + 1);
                 Ok(1)
@@ -307,20 +348,29 @@ mod tests {
                 let key = name(&t, "creation");
                 let mut intent: Creation = state::read_optional(&root, &key).unwrap().unwrap();
                 intent.boot = Id::new("previous-boot").unwrap();
-                native.uid.set(None);
                 state::write(&root, &key, &intent).unwrap();
+                native.uid.set(Some(501));
+                assert!(matches!(
+                    evidence_with(&native, &root, &t, "employee").unwrap(),
+                    Evidence::Unknown
+                ));
+                native.uid.set(None);
                 assert!(matches!(
                     evidence_with(&native, &root, &t, "employee").unwrap(),
                     Evidence::Absent
                 ));
-                assert!(create_with(
-                    &native,
-                    &root,
-                    &t,
-                    "employee",
-                    || -> Result<Zeroizing<String>, Error> { panic!() }
-                )
-                .is_err());
+                native.uid.set(Some(intent.expected_uid));
+                assert!(matches!(
+                    evidence_with(&native, &root, &t, "employee").unwrap(),
+                    Evidence::Created(_)
+                ));
+                assert_eq!(
+                    state::read_optional::<Creation>(&root, &key)
+                        .unwrap()
+                        .unwrap()
+                        .generated_uid,
+                    Some(native.guid.to_string())
+                );
             } else {
                 let Outcome::Created(actual) = replay.unwrap() else {
                     panic!("wrong effect")
@@ -344,6 +394,7 @@ mod tests {
         let key = name(&t, "creation");
         let mut intent = Creation {
             task: t.clone(),
+            expected_uid: 550,
             boot: execution_ipc::host::boot_generation().unwrap(),
             group: None,
             generated_uid: None,

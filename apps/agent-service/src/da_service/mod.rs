@@ -202,27 +202,13 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                                     #[cfg(not(target_os="macos"))]
                                     let result = client.drive(&mut policy).await;
                                     #[cfg(target_os="macos")]
-                                    let result = {
-                                        let drive=client.drive(&mut policy);
-                                        tokio::pin!(drive);
-                                        loop {
-                                            tokio::select! {
-                                                result = &mut drive => break result,
-                                                Some(cmd) = native.rx.recv() => native.handle(&d,&client,cmd).await,
-                                            }
-                                        }
-                                    };
+                                    let result=native.during(&d,&client,client.drive(&mut policy)).await;
                                     #[cfg(target_os="macos")]
                                     {
                                         native.maintenance(&d,&client).await?;
                                         if client.registered()? {
                                             let setup=native.accounts();
-                                            let delivery=mac_accounts::drive(&d,&client,&setup);
-                                            tokio::pin!(delivery);
-                                            let operations=loop {tokio::select! {
-                                                r=&mut delivery=>break r,
-                                                Some(cmd)=native.rx.recv()=>native.handle(&d,&client,cmd).await,
-                                            }};
+                                            let operations=native.during(&d,&client,mac_accounts::drive(&d,&client,&setup)).await;
                                             client.record_delivery(operations)?;
                                         }
                                     }
@@ -341,18 +327,21 @@ fn settle_mac_request(
                 Some(Reply::DeviceAccess {
                     value: execution_ipc::device_access::Response::Tasks { mut tasks },
                 }),
-                native,
-            ) => {
-                if let Reply::DeviceAccess {
+                Reply::DeviceAccess {
                     value: execution_ipc::device_access::Response::Tasks { tasks: da },
-                } = native
-                {
-                    tasks.extend(da);
-                }
+                },
+            ) => {
+                tasks.extend(da);
                 Reply::DeviceAccess {
                     value: execution_ipc::device_access::Response::Tasks { tasks },
                 }
             }
+            (
+                Some(Reply::Unavailable),
+                Reply::DeviceAccess {
+                    value: execution_ipc::device_access::Response::Tasks { .. },
+                },
+            ) => Reply::Unavailable,
             (_, result) => result,
         }
     })
@@ -421,6 +410,14 @@ fn account_tasks_merge_after_enqueue_and_a_denied_da_input_is_never_forwarded() 
             tasks()
         }))
     });
+    assert!(matches!(
+        settle_mac_request(
+            request(Operation::Tasks {}),
+            || Reply::Unavailable,
+            |_| Some(Box::new(tasks))
+        )(),
+        Reply::Unavailable
+    ));
     assert!(!called.load(Ordering::Acquire));
     assert!(matches!(waiter(),Reply::DeviceAccess{value:Response::Tasks{tasks}} if tasks.len()==2));
     assert!(called.load(Ordering::Acquire));

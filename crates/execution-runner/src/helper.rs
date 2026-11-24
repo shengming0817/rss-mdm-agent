@@ -264,12 +264,25 @@ impl Helper {
                 }
                 Reply::Acknowledged
             }
-            Command::WindowsHello | Command::OpenWindowsHello | Command::MacKeychain
+            Command::WindowsHello
+            | Command::OpenWindowsHello
+            | Command::MacKeychain
+            | Command::MacPresence
                 if !host::active_login()
                     || host::current_subject()? != self.subject
                     || host::current_session_binding()? != self.binding =>
             {
                 return Err(Error::Unbound)
+            }
+            Command::MacPresence => {
+                #[cfg(target_os = "macos")]
+                {
+                    Reply::MacPresence(execution_ipc::macos_service::presence_epoch()?)
+                }
+                #[cfg(not(target_os = "macos"))]
+                {
+                    return Err(Error::Unsupported);
+                }
             }
             Command::MacKeychain => {
                 #[cfg(target_os = "macos")]

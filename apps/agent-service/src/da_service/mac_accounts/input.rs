@@ -5,17 +5,100 @@ use execution_ipc::device_access::{EmployeePortal, SetupTask};
 use std::{collections::BTreeMap, sync::Mutex};
 use zeroize::Zeroizing;
 
+struct Active {
+    expires: u64,
+    proof: Option<Zeroizing<String>>,
+}
+pub(crate) struct Session {
+    active: Mutex<Option<Active>>,
+    changed: Arc<tokio::sync::Notify>,
+}
+impl Session {
+    pub fn new(expires: u64, proof: Option<Zeroizing<String>>) -> Arc<Self> {
+        Arc::new(Self {
+            active: Mutex::new(Some(Active { expires, proof })),
+            changed: Arc::default(),
+        })
+    }
+    pub fn observe_deadline(self: &Arc<Self>) {
+        let weak = Arc::downgrade(self);
+        let wake = self.changed.clone();
+        tokio::spawn(async move {
+            loop {
+                let notified = wake.notified();
+                let remaining = weak.upgrade().and_then(|s| {
+                    let mut active = s.active.lock().ok()?;
+                    let until = active.as_ref()?.expires;
+                    let left = until.saturating_sub(crate::wall().unwrap_or(u64::MAX));
+                    if left == 0 {
+                        *active = None;
+                        return None;
+                    }
+                    Some(left)
+                });
+                let Some(left) = remaining else {
+                    return;
+                };
+                tokio::select! {_=tokio::time::sleep(Duration::from_millis(left.min(30_000)))=>(),_=notified=>()}
+            }
+        });
+    }
+    pub fn same(&self, proof: Option<&Zeroizing<String>>) -> bool {
+        self.active
+            .lock()
+            .is_ok_and(|a| a.as_ref().is_some_and(|v| v.proof.as_ref() == proof))
+    }
+    pub fn extend(&self, expires: u64) -> Result<(), Error> {
+        self.active
+            .lock()
+            .map_err(|_| Error::Storage)?
+            .as_mut()
+            .ok_or(Error::Identity)?
+            .expires = expires;
+        self.changed.notify_one();
+        Ok(())
+    }
+    pub fn revoke(&self) {
+        if let Ok(mut v) = self.active.lock() {
+            *v = None;
+        }
+        self.changed.notify_one();
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct Presence {
+    generation: Uuid,
+    read: Arc<dyn Fn() -> Result<Uuid, Error> + Send + Sync>,
+}
+impl Presence {
+    pub fn capture(
+        read: impl Fn() -> Result<Uuid, Error> + Send + Sync + 'static,
+    ) -> Result<Self, Error> {
+        Ok(Self {
+            generation: read()?,
+            read: Arc::new(read),
+        })
+    }
+    fn current(&self) -> bool {
+        (self.read)() == Ok(self.generation)
+    }
+}
+fn continuous() -> Result<u64, Error> {
+    execution_ipc::host::monotonic_millis().map_err(|_| Error::Clock)
+}
+
 #[derive(Clone)]
 pub(crate) struct Employee {
     pub portal: EmployeePortal,
     pub principal: Uuid,
-    pub proof: Zeroizing<String>,
     pub subject: String,
     pub session: u32,
     pub binding: Id,
     pub epoch: Arc<Mutex<u64>>,
     pub generation: u64,
-    pub current: Arc<Mutex<Option<u64>>>,
+    pub current: Arc<Session>,
+    pub presence: Option<Presence>,
     pub console: fn(&str, u32, &Id) -> Result<(), execution_app::Error>,
     pub expires: u64,
 }
@@ -25,11 +108,24 @@ impl Employee {
         task: &w::AccessTaskSpec,
         action: impl FnOnce() -> Result<T, Error>,
     ) -> Result<T, Error> {
+        self.with_lease(task, |_| action())
+    }
+    fn with_lease<T>(
+        &self,
+        task: &w::AccessTaskSpec,
+        action: impl FnOnce(&Active) -> Result<T, Error>,
+    ) -> Result<T, Error> {
         let epoch = self.epoch.lock().map_err(|_| Error::Unavailable)?;
-        let current = self.current.lock().map_err(|_| Error::Unavailable)?;
+        let mut current = self.current.active.lock().map_err(|_| Error::Unavailable)?;
+        if self.presence.as_ref().is_some_and(|p| !p.current()) {
+            return Err(Error::Identity);
+        }
         let now = crate::wall()?;
+        if current.as_ref().is_some_and(|v| now >= v.expires) {
+            *current = None;
+        }
+        let lease = current.as_ref().ok_or(Error::Identity)?;
         if *epoch != self.generation
-            || current.is_none_or(|until| now >= until)
             || now >= self.expires
             || (now / 1000) as i64 >= task.expires_at.min(task.deadline)
             || (self.portal.tenant, self.portal.instance, self.principal)
@@ -39,21 +135,19 @@ impl Employee {
             return Err(Error::Identity);
         }
         // Logout takes epoch, replacement takes current. Keep both through the actual native write.
-        action()
+        action(lease)
     }
     pub(super) fn permits(&self, task: &w::AccessTaskSpec) -> bool {
         self.admit(task, || Ok(())).is_ok()
     }
     pub(super) async fn verify(&mut self, t: &w::AccessTaskSpec) -> Result<(), Error> {
-        if !self.permits(t) {
-            return Err(Error::Identity);
-        }
+        let proof = self.with_lease(t, |v| v.proof.clone().ok_or(Error::Identity))?;
         let expires = da::verify_employee(
             &self.portal.origin,
             self.portal.ca_pem.as_deref(),
             self.portal.tenant,
             self.principal,
-            &self.proof,
+            &proof,
         )
         .await?;
         self.expires = self
@@ -69,7 +163,7 @@ struct Input {
     task: w::AccessTaskSpec,
     owner: Employee,
     bytes: Zeroizing<String>,
-    until: std::time::Instant,
+    until: u64,
 }
 #[derive(Default)]
 struct State {
@@ -119,6 +213,7 @@ impl Setup {
         let t = s.offers.get(&id).ok_or(Error::NotFound)?;
         if !e.permits(t)
             || t.expires_at <= seconds()?
+            || e.presence.is_none()
             || password.is_empty()
             || password.len() > 1024
             || password.chars().any(char::is_control)
@@ -127,11 +222,11 @@ impl Setup {
         }
         if s.input
             .as_ref()
-            .is_some_and(|i| i.until > std::time::Instant::now() && i.owner.permits(&i.task))
+            .is_some_and(|i| i.until > continuous().unwrap_or(u64::MAX) && i.owner.permits(&i.task))
         {
             return Err(Error::Conflict);
         }
-        let until = std::time::Instant::now() + Duration::from_secs(30);
+        let until = continuous()?.checked_add(30_000).ok_or(Error::Clock)?;
         s.input = Some(Input {
             task: t.clone(),
             owner: e,
@@ -140,16 +235,22 @@ impl Setup {
         });
         let setup = Arc::downgrade(self);
         tokio::spawn(async move {
-            tokio::time::sleep_until(until.into()).await;
-            if let Some(setup) = setup.upgrade() {
-                if let Ok(mut state) = setup.state.lock() {
-                    if state
-                        .input
-                        .as_ref()
-                        .is_some_and(|i| i.until <= std::time::Instant::now())
-                    {
-                        state.input = None;
-                    }
+            loop {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                let Some(setup) = setup.upgrade() else {
+                    return;
+                };
+                let Ok(mut state) = setup.state.lock() else {
+                    return;
+                };
+                let Some(input) = state.input.as_ref().filter(|i| i.until == until) else {
+                    return;
+                };
+                if !continuous().is_ok_and(|now| now < input.until)
+                    || !input.owner.permits(&input.task)
+                {
+                    state.input = None;
+                    return;
                 }
             }
         });
@@ -192,10 +293,9 @@ impl Setup {
     }
     pub(super) fn confirmed(&self) -> Result<Option<(w::AccessTaskSpec, Employee)>, Error> {
         let mut s = self.state.lock().map_err(|_| Error::Storage)?;
-        if s.input
-            .as_ref()
-            .is_some_and(|i| i.until <= std::time::Instant::now() || !i.owner.permits(&i.task))
-        {
+        if s.input.as_ref().is_some_and(|i| {
+            i.until <= continuous().unwrap_or(u64::MAX) || !i.owner.permits(&i.task)
+        }) {
             s.input = None;
         }
         Ok(s.input.as_ref().map(|i| (i.task.clone(), i.owner.clone())))
@@ -217,7 +317,7 @@ impl NativeInput<'_> {
             let i = state.input.as_ref().ok_or(Error::Denied)?;
             if i.task != *self.task
                 || !Arc::ptr_eq(&self.employee.current, &i.owner.current)
-                || i.until <= std::time::Instant::now()
+                || i.until <= continuous().unwrap_or(u64::MAX)
             {
                 return Err(Error::Denied);
             }
@@ -255,16 +355,49 @@ mod tests {
             .unwrap()
             .unwrap(),
             principal: t.principal_id,
-            proof: Zeroizing::new("fixture".into()),
             subject: "501".into(),
             session: 1,
             binding: Id::new("console").unwrap(),
             epoch: Arc::new(Mutex::new(1)),
             generation: 1,
-            current: Arc::new(Mutex::new(Some(expiry))),
+            current: Session::new(expiry, Some(Zeroizing::new("fixture".into()))),
             expires: expiry,
+            presence: Some(Presence::capture(|| Ok(Uuid::from_u128(42))).unwrap()),
             console: |_, _, _| Ok(()),
         }
+    }
+    #[tokio::test]
+    async fn locked_or_replaced_gui_and_sleep_deadline_fence_native_input() {
+        let t = super::super::tests::task();
+        let mut e = employee(&t);
+        let epoch = Arc::new(Mutex::new(Uuid::new_v4()));
+        let probe = epoch.clone();
+        e.presence = Some(Presence::capture(move || Ok(*probe.lock().unwrap())).unwrap());
+        let setup = Arc::new(Setup::default());
+        setup.offer(&t).unwrap();
+        let pw = Zeroizing::new("test".into());
+        setup.prepare(ids(&t), e.clone(), &pw).unwrap();
+        let mut input = NativeInput {
+            setup: &setup,
+            task: &t,
+            employee: &e,
+        };
+        input.admit(|| Ok(())).unwrap();
+        *epoch.lock().unwrap() = Uuid::new_v4();
+        assert!(input.send(&mut Vec::new()).is_err());
+        assert!(setup.confirmed().unwrap().is_none());
+        let e = employee(&t);
+        setup.prepare(ids(&t), e.clone(), &pw).unwrap();
+        setup.state.lock().unwrap().input.as_mut().unwrap().until = continuous().unwrap();
+        let mut input = NativeInput {
+            setup: &setup,
+            task: &t,
+            employee: &e,
+        };
+        assert!(input.send(&mut Vec::new()).is_err());
+        e.current.extend(1).unwrap();
+        assert!(!e.permits(&t));
+        assert!(e.current.active.lock().unwrap().is_none());
     }
     #[tokio::test]
     async fn employee_confirmation_is_exclusive_and_fenced_at_native_submission() {
@@ -297,7 +430,7 @@ mod tests {
         };
         native.admit(|| Ok(())).unwrap();
         // A same-login refresh updates the lifetime of this same confirmation.
-        *e.current.lock().unwrap() = Some(crate::wall().unwrap() + 31_000);
+        e.current.extend(crate::wall().unwrap() + 31_000).unwrap();
         let mut bytes = Vec::new();
         native.send(&mut bytes).unwrap();
         assert_eq!(bytes, b"private-test-input\n");

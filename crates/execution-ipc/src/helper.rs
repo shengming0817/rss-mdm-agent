@@ -26,6 +26,8 @@ pub struct Envelope {
 pub enum Command {
     /// Read the current user login-keychain state without accessing any item.
     MacKeychain,
+    /// Unlocked GUI helper generation; rotates on lock, sleep, user switch and helper restart.
+    MacPresence,
     /// Read this helper user's native Hello state; no caller-selected account or query.
     WindowsHello,
     /// User-requested native sign-in settings only; never clears a container.
@@ -155,6 +157,8 @@ pub enum Command {
 pub enum Reply {
     /// Local accessibility diagnostic; not proof of password synchronization.
     MacKeychain(crate::device_access::KeychainStatus),
+    /// Current generation observed in the exact authenticated GUI session.
+    MacPresence(uuid::Uuid),
     /// Independently sampled user registration; hardware provenance may be Unknown.
     WindowsHello(crate::device_access::WindowsHelloUser),
     /// Facts of the helper's current native login.
@@ -197,10 +201,51 @@ pub fn keychain_until(
     binding: &Id,
     deadline: std::time::Instant,
 ) -> Result<crate::device_access::KeychainStatus, Error> {
+    match native_query(
+        policy,
+        subject,
+        session,
+        binding,
+        Command::MacKeychain,
+        deadline,
+    )? {
+        Reply::MacKeychain(v) => Ok(v),
+        _ => Err(Error::Unavailable),
+    }
+}
+#[cfg(target_os = "macos")]
+/// Read the same pinned helper's unlocked GUI generation using a bounded local call.
+pub fn presence(
+    policy: &host::PeerPolicy,
+    subject: &str,
+    session: u32,
+    binding: &Id,
+) -> Result<uuid::Uuid, Error> {
+    match native_query(
+        policy,
+        subject,
+        session,
+        binding,
+        Command::MacPresence,
+        std::time::Instant::now() + std::time::Duration::from_millis(500),
+    )? {
+        Reply::MacPresence(v) if !v.is_nil() => Ok(v),
+        _ => Err(Error::Unbound),
+    }
+}
+#[cfg(target_os = "macos")]
+fn native_query(
+    policy: &host::PeerPolicy,
+    subject: &str,
+    session: u32,
+    binding: &Id,
+    command: Command,
+    deadline: std::time::Instant,
+) -> Result<Reply, Error> {
     crate::macos_identity::verify_console(subject, session, binding)?;
     let bytes = serde_json::to_vec(&Envelope {
         version: VERSION,
-        command: Command::MacKeychain,
+        command,
     })
     .map_err(|_| Error::InvalidInput)?;
     let reply = crate::macos_service::query_helper_until(
@@ -211,10 +256,7 @@ pub fn keychain_until(
         deadline,
     )?;
     crate::macos_identity::verify_console(subject, session, binding)?;
-    match serde_json::from_slice(&reply).map_err(|_| Error::InvalidInput)? {
-        Reply::MacKeychain(v) => Ok(v),
-        _ => Err(Error::Unavailable),
-    }
+    serde_json::from_slice(&reply).map_err(|_| Error::InvalidInput)
 }
 /// Observed login and private work directory of a pinned helper; no enterprise permission.
 #[derive(Clone, Serialize, Deserialize)]
