@@ -634,7 +634,15 @@ impl ExecutionHandle {
         password: Option<&zeroize::Zeroizing<String>>,
         mac_confirmation: Option<[u8; 32]>,
     ) -> ui::Result<execution_ipc::device_access::Response> {
-        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let timeout = if matches!(
+            input,
+            execution_ipc::device_access::Operation::OwnBindings {}
+        ) {
+            15
+        } else {
+            5
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(timeout), async {
             loop {
                 let reply = self
                     .request(Request::DeviceAccess {

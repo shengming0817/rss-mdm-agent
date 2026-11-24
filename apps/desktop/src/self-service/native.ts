@@ -128,7 +128,10 @@ export async function nativeEmployeeChange(
   const generation = userGeneration();
   return currentResult(
     generation,
-    invoke<void>("employee_change", { generation, input }),
+    invoke<import("./types").SelfServiceCommands["employee_change"]["output"]>(
+      "employee_change",
+      { generation, input },
+    ),
   );
 }
 

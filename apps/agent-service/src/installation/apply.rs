@@ -213,14 +213,17 @@ impl Journal {
         self.save(record)?;
         Ok(access)
     }
-    fn save(&self, record: &Record) -> Result<(), Error> {
+    fn replace(&self, destination: &Path, bytes: &[u8]) -> Result<(), Error> {
         let staged = self.root.join(format!("{}.tmp", Uuid::new_v4()));
-        platform_private_storage::write_new(&staged, &json(record)?)?;
-        let result = platform_private_storage::replace(&staged, &self.active());
+        platform_private_storage::write_new(&staged, bytes)?;
+        let result = platform_private_storage::replace(&staged, destination);
         if result.is_err() {
             let _ = std::fs::remove_file(staged);
         }
-        result?;
+        Ok(result?)
+    }
+    fn save(&self, record: &Record) -> Result<(), Error> {
+        self.replace(&self.active(), &json(record)?)?;
         if let (Some(step), Some(error)) = (record.failure_phase, record.failure) {
             outcome::profile_failure(step, error);
         }
@@ -254,9 +257,10 @@ impl Journal {
             }
         }
         // Publish the lookup before archiving. While this runs, readers still see active().
-        let staged = self.root.join(format!("{}.tmp", Uuid::new_v4()));
-        platform_private_storage::write_new(&staged, record.operation.as_bytes())?;
-        platform_private_storage::replace(&staged, &self.root.join("last-operation"))?;
+        self.replace(
+            &self.root.join("last-operation"),
+            record.operation.as_bytes(),
+        )?;
         // Atomically move the terminal checkpoint to immutable per-operation history.
         platform_private_storage::replace(&self.active(), &self.file(record.operation, "result"))?;
         if record.phase == Phase::Applied && self.recovery_identity().try_exists()? {
@@ -312,7 +316,7 @@ pub(super) fn binding(d: &Deployment) -> Result<Option<(Uuid, Uuid)>, Error> {
     Ok(binding.map(|b| (b.device_id.into_uuid(), b.epoch)))
 }
 
-fn latest_record(config: &Path, deployment: &Deployment) -> Option<Record> {
+fn latest_record(config: &Path) -> Option<Record> {
     let journal = Journal::new(config).ok()?;
     let current = match journal.read(&journal.active()).ok()? {
         Some(record) => record,
@@ -327,8 +331,7 @@ fn latest_record(config: &Path, deployment: &Deployment) -> Option<Record> {
             record
         }
     };
-    (current.installation == deployment.installation_id && current.config == config)
-        .then_some(current)
+    (current.config == config).then_some(current)
 }
 
 /// Both logical channels are shipped in the same authenticated service executable.
@@ -354,7 +357,7 @@ pub(crate) fn observe_modules(
         installed,
         enabled: Some(enabled),
     };
-    let record = latest_record(config, d);
+    let record = latest_record(config).filter(|r| r.installation == d.installation_id);
     let failure = record
         .as_ref()
         .and_then(|r| r.failure)
@@ -378,21 +381,15 @@ pub(crate) fn observe_modules(
 
 pub(super) fn module_status(config: &Path) -> Result<(), Error> {
     if optional(config)?.is_none() {
-        let j = Journal::new(config)?;
-        if let Some(record) = j.read(&j.active())? {
+        if let Some(record) = latest_record(config) {
             record.report()?;
         }
         return Ok(());
     }
     let deployment = Deployment::metadata(config)?;
     let (modules, application_failure) = observe_modules(config, &deployment);
-    let registered = deployment
-        .modules
-        .mdm
-        .enabled()
-        .then(|| binding(&deployment).ok())
-        .flatten()
-        .map(|v| v.is_some());
+    let observed_at = SystemClock::new()?.now()?;
+    let registered = super::mdm_registration(&deployment, observed_at);
     let da = crate::da_service::status(&deployment);
     let j = Journal::new(config)?;
     let pending = j
@@ -400,9 +397,9 @@ pub(super) fn module_status(config: &Path) -> Result<(), Error> {
         .filter(|r| !r.terminal())
         .map(|r| r.operation);
     outcome::details(serde_json::json!({
-        "modules":modules,"applicationFailure":application_failure,"observedAt":SystemClock::new()?.now()?,
+        "modules":modules,"applicationFailure":application_failure,"observedAt":observed_at,
         "daEmployeePortalOrigin":deployment.modules.employee_portal()?.map(|p|p.origin),
-        "mdmRegistered":registered,"da":da.as_ref().ok().and_then(|state|state.as_ref()),"daError":da.as_ref().err(),"pendingOperation":pending,
+        "mdmRegistration":registered,"da":da.as_ref().ok().and_then(|state|state.as_ref()),"daError":da.as_ref().err(),"pendingOperation":pending,
         "revision":deployment.modules.revision,
     }))?;
     Ok(())
@@ -1115,15 +1112,18 @@ mod tests {
     #[test]
     fn private_checkpoint_reopens_frozen_input_and_retains_original_result() {
         let temp = crate::protocol_test_support::Root::new();
-        let journal = Journal {
-            root: temp.path.join("profiles"),
-        };
+        let config = temp.path.join("execution.json");
+        let journal = Journal::new(&config).unwrap();
+        platform_private_storage::directory(journal.root.parent().unwrap()).unwrap();
         platform_private_storage::directory(&journal.root).unwrap();
         let mut r = record(Phase::Received);
+        r.config = config.clone();
+        assert!(latest_record(&config).is_none());
         r.input = Some("original profile".into());
         r.profile_digest = Some(hash(r.input.as_ref().unwrap().as_bytes()));
         journal.save(&r).unwrap();
         let recovered = journal.read(&journal.active()).unwrap().unwrap();
+        assert_eq!(latest_record(&config).unwrap().operation, r.operation);
         assert_eq!(recovered.input, r.input);
         assert_eq!(recovered.profile_digest, r.profile_digest);
         r.input = None;
@@ -1136,6 +1136,11 @@ mod tests {
             .read(&journal.file(r.operation, "result"))
             .unwrap()
             .unwrap();
+        assert_eq!(
+            latest_record(&config).unwrap().result(),
+            Err(Error::Unsupported)
+        );
+        assert!(latest_record(&config.with_file_name("other.json")).is_none());
         assert_eq!(archived.result(), Err(Error::Unsupported));
         assert!(archived.input.is_none());
     }

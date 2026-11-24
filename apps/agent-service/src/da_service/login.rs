@@ -49,16 +49,8 @@ struct State {
     employee: Option<Employee>,
     offers: BTreeMap<Uuid, Offer>,
     checking: Option<Check>,
-    directory: Option<(
-        Option<(Uuid, Uuid)>,
-        Instant,
-        mpsc::Receiver<Result<Response, Error>>,
-    )>,
-    lookup: Option<(
-        Employee,
-        Operation,
-        mpsc::SyncSender<Result<Response, Error>>,
-    )>,
+    directory: Option<(Instant, mpsc::Receiver<Result<Response, Error>>)>,
+    lookup: Option<(Employee, mpsc::SyncSender<Result<Response, Error>>)>,
     mdm_tasks: Option<(u64, Instant, Vec<SetupTask>)>,
 }
 struct Offer {
@@ -95,6 +87,7 @@ impl State {
 pub(super) struct Login {
     deployment: Deployment,
     portal: Option<EmployeePortal>,
+    pub(super) registered: AtomicBool,
     state: Mutex<State>,
     verifier: mpsc::SyncSender<Verify>,
     pub(super) wake: tokio::sync::Notify,
@@ -120,6 +113,7 @@ impl Login {
         Ok(Self {
             deployment: d.clone(),
             portal,
+            registered: AtomicBool::new(false),
             state: Mutex::default(),
             other,
             verifier,
@@ -183,34 +177,23 @@ impl Login {
         client: &da::Client<DeviceSecrets, SystemClock>,
     ) -> Result<(), Error> {
         let job = self.state.lock().map_err(|_| Error::Storage)?.lookup.take();
-        if let Some((employee, input, sender)) = job {
+        if let Some((employee, sender)) = job {
             let result = async {
                 Self::verify(self.portal.as_ref(), &employee).await?;
                 let ops = client.operations()?;
                 let d = ops.employee_bindings(&employee.credential).await?;
-                let rows =
-                    crate::service::access::own_bindings(d, &employee.subject, &employee.identity)?;
-                if let Operation::RenewWindowsKey { operation, key } = input {
-                    let state = self.state.lock().map_err(|_| Error::Storage)?;
-                    if !employee.current()
-                        || !state.employee.as_ref().is_some_and(|e| {
-                            e.context == employee.context
-                                && e.identity == employee.identity
-                                && e.binding == employee.binding
-                                && e.credential == employee.credential
-                        })
-                    {
-                        return Err(Error::Identity);
-                    }
-                    drop(state);
-                    crate::service::access::check_key(&rows, operation, &key)?;
-                    let renewal = ops
-                        .employee_windows_key(&employee.credential, operation, &key)
-                        .await?;
-                    Ok(Response::WindowsKey { renewal })
-                } else {
-                    Ok(rows)
+                let state = self.state.lock().map_err(|_| Error::Storage)?;
+                if !employee.current()
+                    || !state.employee.as_ref().is_some_and(|e| {
+                        e.context == employee.context
+                            && e.binding == employee.binding
+                            && e.identity == employee.identity
+                            && e.credential == employee.credential
+                    })
+                {
+                    return Err(Error::Identity);
                 }
+                crate::service::access::own_bindings(d, &employee.subject, &employee.identity)
             }
             .await;
             let _ = sender.send(result);
@@ -493,7 +476,6 @@ impl Login {
             input,
             Operation::Tasks {}
                 | Operation::OwnBindings {}
-                | Operation::RenewWindowsKey { .. }
                 | Operation::WindowsStatus {}
                 | Operation::Prepare { .. }
                 | Operation::ConfirmFactor { .. }
@@ -511,34 +493,28 @@ impl Login {
         {
             return Ok(None);
         }
-        if matches!(
-            input,
-            Operation::OwnBindings {} | Operation::RenewWindowsKey { .. }
-        ) {
-            let requested = match input {
-                Operation::RenewWindowsKey { operation, key } => Some((*operation, key.binding_id)),
-                _ => None,
-            };
-            if let Some((id, start, rx)) = &s.directory {
-                if *id != requested && start.elapsed() < Duration::from_secs(5) {
-                    return Err(Error::Capacity);
-                }
-                if *id == requested && start.elapsed() < Duration::from_secs(5) {
-                    match rx.try_recv() {
-                        Ok(result) => {
-                            s.directory = None;
-                            return Ok(Some(Reply::DeviceAccess { value: result? }));
-                        }
-                        Err(mpsc::TryRecvError::Empty) => {
-                            return Ok(Some(Reply::DaVerificationPending {}))
-                        }
-                        Err(mpsc::TryRecvError::Disconnected) => return Err(Error::Unavailable),
+        if matches!(input, Operation::OwnBindings {}) {
+            if !self.registered.load(Ordering::Acquire) {
+                return Ok(None);
+            }
+            if let Some((start, rx)) = &s.directory {
+                match rx.try_recv() {
+                    Ok(result) => {
+                        s.directory = None;
+                        return Ok(Some(Reply::DeviceAccess { value: result? }));
+                    }
+                    Err(mpsc::TryRecvError::Empty) if start.elapsed() < Duration::from_secs(12) => {
+                        return Ok(Some(Reply::DaVerificationPending {}))
+                    }
+                    _ => {
+                        s.directory = None;
+                        return Err(Error::Unavailable);
                     }
                 }
             }
             let (tx, rx) = mpsc::sync_channel(1);
-            s.lookup = Some((e, input.clone(), tx));
-            s.directory = Some((requested, Instant::now(), rx));
+            s.lookup = Some((e, tx));
+            s.directory = Some((Instant::now(), rx));
             self.wake.notify_one();
             return Ok(Some(Reply::DaVerificationPending {}));
         }

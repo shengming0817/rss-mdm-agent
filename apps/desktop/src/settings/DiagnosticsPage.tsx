@@ -62,6 +62,13 @@ export function DiagnosticsPage({
       <div className="rss-stack">
         <SectionCard title="本机服务">
           {registration && <ServiceStatus owner={registration} />}
+          {workspace.deviceAccess && (
+            <Button
+              onClick={() => workspace.navigation.select("settings", "account")}
+            >
+              查看本机登录状态与本人恢复
+            </Button>
+          )}
           <div className="rss-setting-row">
             <span>
               <strong>AI Host</strong>
@@ -208,6 +215,7 @@ function ServiceStatus({
   const registered = {
     registered: "已有注册回执",
     unregistered: "待注册",
+    expired: "注册凭据已过期",
     revoked: "注册已撤销",
     unknown: "注册状态未知",
   };

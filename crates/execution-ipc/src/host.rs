@@ -48,6 +48,8 @@ pub enum RegistrationObservation {
     Registered,
     /// No activation receipt has been committed.
     Unregistered,
+    /// The registered credential has expired.
+    Expired,
     /// A confirmed withdrawal is present.
     Revoked,
     /// The store is unavailable or the module is disabled.

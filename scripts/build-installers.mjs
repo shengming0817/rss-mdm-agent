@@ -72,7 +72,13 @@ if (format === "windows_msix" && !process.env.RSS_WINDOWS_PUBLISHER)
 const organization = JSON.parse(readFileSync(resolve(args[input + 1]), "utf8"));
 if (
   Object.keys(organization).some(
-    (key) => !["modules", "desktop", "employeeApplication"].includes(key),
+    (key) =>
+      ![
+        "modules",
+        "desktop",
+        "employeeApplication",
+        "recoveryReturnTarget",
+      ].includes(key),
   ) ||
   !organization.modules
 )
@@ -81,6 +87,17 @@ const defaults = organization.modules;
 const desktopConfiguration =
   organization.desktop ??
   (defaults.mdm?.state === "enabled" ? organizationConfiguration(root) : null);
+const recoveryReturnTarget = organization.recoveryReturnTarget;
+if (
+  recoveryReturnTarget !== undefined &&
+  (!desktopConfiguration ||
+    typeof recoveryReturnTarget !== "string" ||
+    !/^[a-zA-Z0-9_.-]{1,128}$/.test(recoveryReturnTarget))
+) {
+  throw Error(
+    "Employee recovery requires the registered same-origin OIDC return target ID",
+  );
+}
 const application = organization.employeeApplication;
 if (application !== undefined) {
   if (
@@ -91,7 +108,7 @@ if (application !== undefined) {
       (k) => !["relyingParty", "launchUrl"].includes(k),
     ) ||
     typeof application.relyingParty !== "string" ||
-    !/^[a-zA-Z0-9_.-]{1,128}$/.test(application.relyingParty) ||
+    !/^[a-zA-Z0-9_-]{1,64}$/.test(application.relyingParty) ||
     typeof application.launchUrl !== "string" ||
     application.launchUrl.length > 2048
   )
@@ -126,6 +143,7 @@ if (desktopConfiguration) {
     origin: desktopConfiguration.origin,
     ca_pem: desktopConfiguration.ca_pem,
     application,
+    recovery_return_target: recoveryReturnTarget,
   });
 }
 // The outer build runner retains the worktree/target locks for this entire package build.

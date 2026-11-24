@@ -187,6 +187,8 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                             }
                         }) {
                             Ok(None) => {
+                                #[cfg(windows)]
+                                worker_login.registered.store(false, Ordering::Release);
                                 available.store(true, Ordering::Release);
                                 tokio::time::sleep(Duration::from_secs(2)).await;
                                 continue;
@@ -194,7 +196,10 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                             Ok(Some(client)) => {
                                 available.store(true, Ordering::Release);
                                 #[cfg(windows)]
-                                worker_login.read_directory(&client).await?;
+                                {
+                                    worker_login.registered.store(client.registered()?, Ordering::Release);
+                                    worker_login.read_directory(&client).await?;
+                                }
                                 let mut policy = policy::Machine::observe(
                                     root.clone(),
                                     #[cfg(windows)]
@@ -256,6 +261,8 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                                 .await
                             }
                             Err(e) => {
+                                #[cfg(windows)]
+                                worker_login.registered.store(false, Ordering::Release);
                                 available.store(false, Ordering::Release);
                                 Err(e)
                             }
@@ -296,6 +303,7 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
             })
         })?;
     Ok(Box::new(Service {
+        observed: None,
         installation,
         mdm,
         #[cfg(target_os = "macos")]
@@ -443,6 +451,10 @@ fn account_tasks_merge_after_enqueue_and_a_denied_da_input_is_never_forwarded() 
     ));
 }
 struct Service {
+    observed: Option<(
+        std::time::Instant,
+        Option<execution_ipc::host::InstallationObservation>,
+    )>,
     installation: Deployment,
     #[cfg(target_os = "macos")]
     endpoint: native::Endpoint,
@@ -531,7 +543,35 @@ impl Service {
                         },
                     };
                 }
-                (Some(_), Reply::Rejected) if matches!(request, Request::BindContext { .. }) => (),
+                (
+                    Some(mdm),
+                    reply @ Reply::DeviceAccess {
+                        value: Response::OwnBindings { .. },
+                    },
+                ) => {
+                    if matches!(&reply, Reply::DeviceAccess {value: Response::OwnBindings{bindings,..}} if bindings.is_empty())
+                    {
+                        if let other @ Reply::DeviceAccess {
+                            value: Response::OwnBindings { .. },
+                        } = mdm.handle(peer, request)
+                        {
+                            return other;
+                        }
+                    }
+                    return reply;
+                }
+                (Some(_), Reply::Rejected)
+                    if matches!(
+                        request,
+                        Request::BindContext { .. }
+                            | Request::DeviceAccess {
+                                input: execution_ipc::device_access::Operation::OwnBindings {},
+                                ..
+                            }
+                    ) =>
+                {
+                    ()
+                }
                 (_, reply) => return reply,
             }
         }
@@ -554,7 +594,20 @@ impl Service {
                 } else {
                     Readiness::NotReady
                 });
-                value.installation = crate::installation::observation(&self.installation);
+                if self
+                    .observed
+                    .as_ref()
+                    .is_none_or(|(at, _)| at.elapsed() >= std::time::Duration::from_secs(30))
+                {
+                    self.observed = Some((
+                        std::time::Instant::now(),
+                        crate::installation::observation(&self.installation),
+                    ));
+                }
+                value.installation = self
+                    .observed
+                    .as_ref()
+                    .and_then(|(_, sample)| sample.clone());
                 Reply::ServiceStatus { value }
             }
             _ => Reply::Rejected,

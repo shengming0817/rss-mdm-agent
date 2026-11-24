@@ -1,25 +1,45 @@
 //! One installation owner; packages and lab harnesses only invoke this boundary.
 //! ref: tauri tauri-cli-v2.11.2 crates/tauri-bundler/src/bundle/windows/nsis/installer.nsi.
 mod apply;
-pub(crate) fn observation(d: &Deployment) -> Option<execution_ipc::host::InstallationObservation> {
+fn current_deployment(d: &Deployment) -> Option<(PathBuf, Deployment)> {
     let path = Deployment::default_path().ok()?;
     let current = Deployment::metadata(&path).ok()?;
-    if current.installation_id != d.installation_id
-        || current.installation_artifact != d.installation_artifact
-        || current.modules != d.modules
-    {
-        return None;
-    }
+    (current.installation_id == d.installation_id
+        && current.installation_artifact == d.installation_artifact
+        && current.modules == d.modules)
+        .then_some((path, current))
+}
+pub(crate) fn module_facts(d: &Deployment) -> Option<rss_mdm_agent_wire::da::ClientModules> {
+    let (path, current) = current_deployment(d)?;
+    Some(apply::observe_modules(&path, &current).0)
+}
+fn mdm_registration(d: &Deployment, now: i64) -> execution_ipc::host::RegistrationObservation {
     use execution_ipc::host::RegistrationObservation as R;
-    let mdm_registration = if current.modules.mdm.enabled() {
-        match apply::binding(&current) {
-            Ok(Some(_)) => R::Registered,
-            Ok(None) => R::Unregistered,
-            Err(_) => R::Unknown,
-        }
-    } else {
-        R::Unknown
-    };
+    if !d.modules.mdm.enabled() {
+        return R::Unknown;
+    }
+    let root = d.state_root.join("communication");
+    match root.try_exists() {
+        Ok(false) => return R::Unregistered,
+        Err(_) => return R::Unknown,
+        Ok(true) => (),
+    }
+    match d
+        .network()
+        .and_then(|cfg| agent_client::inspect_registration(&root, &cfg, now))
+    {
+        Ok(true) => R::Registered,
+        Ok(false) => R::Unregistered,
+        Err(Error::CredentialRevoked | Error::CredentialRetired) => R::Revoked,
+        Err(Error::CertificateExpired) => R::Expired,
+        Err(_) => R::Unknown,
+    }
+}
+pub(crate) fn observation(d: &Deployment) -> Option<execution_ipc::host::InstallationObservation> {
+    let (path, current) = current_deployment(d)?;
+    use execution_ipc::host::RegistrationObservation as R;
+    let observed_at = SystemClock::new().ok()?.now().ok()?;
+    let mdm_registration = mdm_registration(&current, observed_at);
     let da_registration = if current.modules.da.enabled() {
         match crate::da_service::status(&current) {
             Ok(Some(s)) if s.registration.is_some() => R::Registered,
@@ -35,7 +55,7 @@ pub(crate) fn observation(d: &Deployment) -> Option<execution_ipc::host::Install
         da_registration,
         mdm_registration,
         application_failure,
-        observed_at: SystemClock::new().ok()?.now().ok()?,
+        observed_at,
         modules,
     })
 }

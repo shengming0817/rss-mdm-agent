@@ -320,20 +320,6 @@ pub(crate) fn own_bindings(
     })
 }
 
-pub(crate) fn check_key(
-    rows: &execution_ipc::device_access::Response,
-    operation: Uuid,
-    key: &rss_mdm_agent_wire::enterprise::KeyRegistration,
-) -> Result<(), Error> {
-    let execution_ipc::device_access::Response::OwnBindings { bindings, .. } = rows else {
-        return Err(Error::Identity);
-    };
-    if bindings.iter().any(|b| b.id == key.binding_id && b.operation_id == operation && b.revision == key.binding_revision
-        && b.binding_generation == key.binding_generation && b.factor_generation == key.factor_generation && b.applied_revision == Some(b.revision)
-        && matches!(b.account,Some(w::AccessAccount::Windows{authority:w::AccessWindowsAuthority::Local,..}))
-        && matches!(&b.effect,Some(w::AccessEffect::Applied{account,..}) if Some(account)==b.account.as_ref())) {Ok(())} else {Err(Error::Denied)}
-}
-
 fn native_account(subject: &str) -> Result<w::AccessAccount, Error> {
     #[cfg(windows)]
     {
@@ -536,7 +522,7 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
                 #[cfg(not(windows))]
                 return Err(Error::Unsupported);
             }
-            Op::OwnBindings {} | Op::OpenApplication { .. } | Op::RenewWindowsKey { .. } => {
+            Op::OwnBindings {} | Op::OpenApplication { .. } => {
                 let directory = super::network(
                     self.client.access_directory(&proof, None),
                     &mut self.core,
@@ -545,17 +531,7 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
                 .await?;
                 owner.validate(&self.core.access.fences)?;
                 let rows = own_bindings(directory, &owner.subject, &user)?;
-                if let Op::RenewWindowsKey { operation, key } = input {
-                    check_key(&rows, *operation, key)?;
-                    let renewal = super::network(
-                        self.client.employee_windows_key(&proof, *operation, key),
-                        &mut self.core,
-                        commands,
-                    )
-                    .await?;
-                    owner.validate(&self.core.access.fences)?;
-                    Out::WindowsKey { renewal }
-                } else if let Op::OpenApplication { binding } = input {
+                if let Op::OpenApplication { binding } = input {
                     let fences = self.core.access.fences.clone();
                     let selected = owner.clone();
                     super::platform_sso::broker::select(

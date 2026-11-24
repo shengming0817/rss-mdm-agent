@@ -12,10 +12,45 @@ import type {
 
 type Intent = SelfServiceCommands["employee_change"]["input"];
 
-export function EmployeeRecovery({ port }: { port: DeviceAccessPort }) {
+const executionLabel: Record<string, string> = {
+  not_started: "等待执行",
+  running: "执行中",
+  succeeded: "执行成功",
+  failed: "执行失败",
+  waiting_reboot: "等待重启",
+  unknown: "执行状态未知",
+};
+function savedIntent(key: string): Intent | null {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) ?? "null");
+    return value &&
+      typeof value.binding === "string" &&
+      Number.isSafeInteger(value.revision) &&
+      value.revision > 0 &&
+      ["reset_factors", "repair_binding"].includes(value.change)
+      ? {
+          binding: value.binding,
+          revision: value.revision,
+          change: value.change,
+          stage: "open",
+        }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function EmployeeRecovery({
+  port,
+  subject,
+}: {
+  port: DeviceAccessPort;
+  subject: string;
+}) {
+  const key = "rss.employee.operation." + subject;
   const [application, setApplication] = useState(false);
   const [bindings, setBindings] = useState<AccessBindingStatus[]>([]);
-  const [pending, setPending] = useState<Intent | null>(null);
+  const [pending, setPending] = useState<Intent | null>(() => savedIntent(key));
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -40,18 +75,28 @@ export function EmployeeRecovery({ port }: { port: DeviceAccessPort }) {
   async function act(input: Intent) {
     setBusy(true);
     try {
-      await nativeEmployeeChange(input);
-      if (input.stage === "open") setPending(input);
+      const receipt = await nativeEmployeeChange(input);
+      if (input.stage === "open") {
+        setPending(input);
+        localStorage.setItem(key, JSON.stringify(input));
+      }
       setMessage(
         input.stage === "open"
           ? "在验证窗口登录同一组织账号，然后返回此处选择身份验证。"
           : input.stage === "verify"
-            ? "在验证窗口使用通行密钥或组织身份提供方完成验证，然后返回此处提交。"
-            : "请查看验证窗口中的服务端结果，返回后刷新本人绑定。",
+            ? "在验证窗口完成本人验证，然后返回此处提交。"
+            : input.stage === "status" && receipt
+              ? `原操作修订 ${receipt.revision} · ${receipt.received ? "设备已接收" : "等待设备接收"} · ${executionLabel[receipt.execution] ?? "执行状态未知"} · ${receipt.effectObserved ? "已收到本机效果回报" : "尚无本机效果回报"}${receipt.cancellation === "confirmed" ? " · 已取消" : receipt.cancellation === "requested" ? " · 等待取消" : ""}${receipt.cleanupPending ? " · 等待清理" : ""}`
+              : "服务端已受理本次操作。刷新本人绑定查看本机应用状态。",
       );
-    } catch {
+    } catch (e) {
       setMessage(
-        "未获得确认。请检查当前账号、验证窗口和网络，使用原操作重试。",
+        e &&
+          typeof e === "object" &&
+          "code" in e &&
+          e.code === "operation_absent"
+          ? "服务端尚未登记这次操作。可重新打开验证窗口，继续同一次操作。"
+          : "未获得确认。请检查当前账号、验证窗口和网络，使用原操作重试。",
       );
     } finally {
       setBusy(false);
@@ -98,6 +143,12 @@ export function EmployeeRecovery({ port }: { port: DeviceAccessPort }) {
                 换手机或遗失旧手机后，可使用已有通行密钥或组织身份提供方验证，再设置新的验证器。
               </p>
             )}
+            {b.account?.platform === "windows" && !rss && (
+              <p>
+                Windows Hello 请在 Windows 设置的“账号 →
+                登录选项”管理。组织账号的验证方式可在身份提供方的账号安全页恢复。
+              </p>
+            )}
             {b.account?.platform === "macos" && (
               <p>
                 Mac
@@ -105,36 +156,6 @@ export function EmployeeRecovery({ port }: { port: DeviceAccessPort }) {
               </p>
             )}
             <div className="rss-account-actions">
-              {rss && b.appliedRevision === b.revision && (
-                <Button
-                  disabled={busy}
-                  onClick={async () => {
-                    setBusy(true);
-                    try {
-                      await nativeEmployeeChange({
-                        binding: b.id,
-                        revision: b.revision,
-                        stage: "renewKey",
-                        change: "repair_binding",
-                      });
-                      setMessage("企业应用证明密钥已获服务端确认。");
-                    } catch (e) {
-                      setMessage(
-                        e &&
-                          typeof e === "object" &&
-                          "code" in e &&
-                          e.code === "registration_required"
-                          ? "原企业证明密钥缺失或已失效，请重新登记企业密钥。本机验证器可单独设置。"
-                          : "尚未确认企业证明密钥，请检查原操作后重试。",
-                      );
-                    } finally {
-                      setBusy(false);
-                    }
-                  }}
-                >
-                  续用企业证明密钥
-                </Button>
-              )}
               {application && b.account?.platform === "macos" && (
                 <Button
                   disabled={busy}
@@ -169,25 +190,28 @@ export function EmployeeRecovery({ port }: { port: DeviceAccessPort }) {
               <Button disabled={busy} onClick={() => open("repair_binding")}>
                 修复本人注册
               </Button>
-              <Button
-                disabled={busy}
-                onClick={() =>
-                  void act({
-                    binding: b.id,
-                    revision: b.revision,
-                    change: "repair_binding",
-                    stage: "status",
-                  })
-                }
-              >
-                查询原操作
-              </Button>
             </div>
           </div>
         );
       })}
       {pending && (
         <div className="rss-account-actions">
+          <p>
+            {pending.change === "reset_factors" ? "重置验证器" : "修复本人注册"}{" "}
+            · 发起时修订 {pending.revision}
+          </p>
+          <Button
+            disabled={busy}
+            onClick={() => void act({ ...pending, stage: "status" })}
+          >
+            查询原操作
+          </Button>
+          <Button
+            disabled={busy}
+            onClick={() => void act({ ...pending, stage: "open" })}
+          >
+            打开验证窗口
+          </Button>
           <Button
             disabled={busy}
             onClick={() => void act({ ...pending, stage: "verify" })}
@@ -207,11 +231,14 @@ export function EmployeeRecovery({ port }: { port: DeviceAccessPort }) {
               void nativeEmployeeChange({ ...pending, stage: "close" }).catch(
                 () => {},
               );
+              localStorage.removeItem(key);
               setPending(null);
-              setMessage("本次交互已结束。已提交的操作可刷新查询。");
+              setMessage(
+                "已清除本机保存的操作编号。已提交的操作仍可刷新绑定查看。",
+              );
             }}
           >
-            结束交互
+            清除本次操作记录
           </Button>
         </div>
       )}

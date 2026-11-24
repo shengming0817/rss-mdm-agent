@@ -72,11 +72,21 @@ export interface InstallationObservation {
   /**
    * The DA store's last confirmed registration state.
    */
-  daRegistration: "registered" | "unregistered" | "revoked" | "unknown";
+  daRegistration:
+    | "registered"
+    | "unregistered"
+    | "expired"
+    | "revoked"
+    | "unknown";
   /**
    * The MDM agent store's last confirmed registration state.
    */
-  mdmRegistration: "registered" | "unregistered" | "revoked" | "unknown";
+  mdmRegistration:
+    | "registered"
+    | "unregistered"
+    | "expired"
+    | "revoked"
+    | "unknown";
   modules: ClientModules;
   /**
    * Device observation time, UTC seconds.

@@ -317,6 +317,82 @@ impl EnterpriseSession {
             &self.principal,
         )
     }
+    /// Validate the isolated browser identity before admitting the write under the generation lock.
+    pub(super) async fn employee_browser_csrf(
+        &self,
+        cookie: &str,
+    ) -> Result<zeroize::Zeroizing<String>> {
+        let (origin, tenant, principal) = self.employee_scope();
+        let response = self
+            .client
+            .get(format!("{origin}/api/v1/identity/tenants/{tenant}/session"))
+            .header(header::COOKIE, cookie)
+            .header(header::ORIGIN, origin)
+            .header("x-identity-request", "1")
+            .send()
+            .await
+            .map_err(|_| failure(Stage::Session, Reason::Unavailable))?;
+        let value = body(response, Stage::Session).await?;
+        let mut browser = self.clone();
+        browser.accept_identity(&value, false)?;
+        if browser.principal != principal {
+            return Err(failure(Stage::Authorization, Reason::Denied));
+        }
+        Ok(zeroize::Zeroizing::new(browser.csrf))
+    }
+    pub(super) async fn submit_employee_change(
+        &self,
+        cookie: &str,
+        csrf: &str,
+        device: Uuid,
+        binding: Uuid,
+        change: &Value,
+    ) -> Result<()> {
+        let (origin, tenant, principal) = self.employee_scope();
+        let response = self.client.put(format!("{origin}/api/v1/tenants/{tenant}/devices/{device}/device-access/bindings/{binding}"))
+            .header(header::COOKIE, cookie).header(header::ORIGIN, origin).header("x-identity-request", "1")
+            .header("x-csrf-token", csrf).json(change).send().await.map_err(|_| failure(Stage::Authorization, Reason::Unavailable))?;
+        let receipt = body(response, Stage::Authorization).await?;
+        if receipt["id"] != json!(binding)
+            || receipt["device"] != json!(device)
+            || receipt["principal"] != principal
+            || receipt["instance"] != self.instance
+            || receipt["operationId"] != change["operationId"]
+        {
+            return Err(failure(Stage::Authorization, Reason::Contract));
+        }
+        Ok(())
+    }
+    pub(super) async fn employee_operation(
+        &self,
+        device: Uuid,
+        binding: Uuid,
+        operation: Uuid,
+    ) -> Result<super::employee::Progress> {
+        let tenant = &self.organization.tenant_id;
+        let path = format!("/api/v1/tenants/{tenant}/devices/{device}/device-access/operations/{operation}/execution");
+        let response = self
+            .request(Stage::Authorization, Method::GET, &path)
+            .await?;
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(error("operation_absent", "尚未查到这次操作的服务端回执"));
+        }
+        let value = body(response, Stage::Authorization).await?;
+        if value["operationId"] != json!(operation) || value["bindingId"] != json!(binding) {
+            return Err(failure(Stage::Authorization, Reason::Contract));
+        }
+        let mut value = value;
+        value["effectObserved"] = json!(!value["effect"].is_null());
+        serde_json::from_value(value).map_err(|_| failure(Stage::Authorization, Reason::Contract))
+    }
+    pub(super) fn employee_return_target(&self) -> Option<String> {
+        let tenant = Uuid::parse_str(&self.organization.tenant_id).ok()?;
+        let instance = Uuid::parse_str(&self.instance).ok()?;
+        execution_ipc::device_access::EmployeePortal::configured(tenant, instance, None)
+            .ok()?
+            .filter(|p| p.origin == self.organization.origin)?
+            .recovery_return_target
+    }
     pub(super) fn native_session(
         &self,
         generation: &str,
@@ -1092,6 +1168,57 @@ pub(super) mod http_tests {
             "POST /api/v1/identity/tenants/{TENANT}/session/logout "
         )));
         assert!(requests[3].contains("csrf-canary"));
+    }
+    #[tokio::test]
+    async fn employee_receipt_is_read_by_original_operation_and_is_scoped_to_browser_subject() {
+        let device = Uuid::new_v4();
+        let binding = Uuid::new_v4();
+        let operation = Uuid::new_v4();
+        let change = json!({"operationId":operation,"expectedRevision":2,"action":{"kind":"repair_binding"}});
+        let mut wrong = identity();
+        wrong["identity"]["principalId"] = json!(Uuid::new_v4());
+        let instance = access()["instanceId"].clone();
+        let (org, requests) = server(vec![(200,identity()),(200,identity()),(200,access()),(200,wrong),(200,identity()),
+            (200,json!({"id":binding,"principal":PRINCIPAL,"device":device,"instance":instance,"operationId":operation})),
+            (404,json!({})),(200,json!({"bindingId":binding,"operationId":operation,"revision":3,"received":true,"execution":"failed","cancellation":"none","cleanupPending":false,"effect":{"state":"failed"}}))]).await;
+        let session = EnterpriseSession::login_with_client(
+            Client::new(),
+            org,
+            "employee",
+            zeroize::Zeroizing::new("test-password".into()),
+        )
+        .await
+        .unwrap();
+        let cookie =
+            "__Host-identity-session=browser-fixture; __Host-identity-operation=purpose-fixture";
+        assert!(session.employee_browser_csrf(cookie).await.is_err());
+        let csrf = session.employee_browser_csrf(cookie).await.unwrap();
+        session
+            .submit_employee_change(cookie, &csrf, device, binding, &change)
+            .await
+            .unwrap();
+        assert_eq!(
+            session
+                .employee_operation(device, binding, operation)
+                .await
+                .err()
+                .unwrap()
+                .code,
+            "operation_absent"
+        );
+        let progress = session
+            .employee_operation(device, binding, operation)
+            .await
+            .unwrap();
+        assert!(progress.received && progress.effect_observed);
+        assert_eq!(progress.execution, "failed");
+        let requests = requests.await.unwrap();
+        assert!(requests[5].starts_with(&format!(
+            "PUT /api/v1/tenants/{TENANT}/devices/{device}/device-access/bindings/{binding} "
+        )));
+        assert!(requests[5].contains(cookie));
+        assert!(requests[6].contains(&format!("/operations/{operation}/execution ")));
+        assert_eq!(requests[6].lines().next(), requests[7].lines().next());
     }
     #[tokio::test]
     async fn native_registration_authorization_sends_stable_intent_only_to_the_user_api() {

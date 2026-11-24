@@ -197,6 +197,15 @@ pub fn inspect_optional_binding(
         .active
         .map(|active| active.receipt.runtime))
 }
+/// Observe current credential admission using the enrollment owner's persisted failure and expiry.
+pub fn inspect_registration(root: &Path, cfg: &Config, now: i64) -> Result<bool, Error> {
+    let identity = read_identity(root, cfg)?;
+    identity.check_runtime_failure()?;
+    if identity.active.is_none() {
+        return Ok(false);
+    }
+    identity.active_identity(now).map(|_| true)
+}
 /// Validate the current runtime identity without locks, writes, recovery or key creation.
 /// Historical binding inspection remains independent for local journal recovery.
 pub fn validate_identity(

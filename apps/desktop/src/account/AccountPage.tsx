@@ -65,6 +65,7 @@ export function AccountPage({
       {workspace.identity.identity.mode === "user_device" &&
         workspace.deviceAccess && (
           <EmployeeRecovery
+            subject={workspace.identity.user.userId}
             key={workspace.identity.generation}
             port={workspace.deviceAccess}
           />

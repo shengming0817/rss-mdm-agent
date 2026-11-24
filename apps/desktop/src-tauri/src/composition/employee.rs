@@ -1,8 +1,6 @@
 //! Browser-owned proof cookies stay on the registered organization origin. The main window
 //! only selects a change to a binding returned by protected native IPC.
 //! ref: tauri 2.11.2 WebviewWindowBuilder::{incognito,on_navigation,on_new_window}.
-#[cfg(windows)]
-mod windows;
 use super::runtime::DesktopRuntime;
 use crate::self_service::{error, Result};
 use execution_ipc::device_access::{Operation, Response};
@@ -26,8 +24,19 @@ pub enum Stage {
     Verify,
     Submit,
     Status,
-    RenewKey,
     Close,
+}
+
+/// Public progress for the exact employee operation, with no account or proof material.
+#[derive(Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct Progress {
+    pub revision: i64,
+    pub received: bool,
+    pub execution: String,
+    pub cancellation: String,
+    pub cleanup_pending: bool,
+    pub effect_observed: bool,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -58,7 +67,7 @@ pub async fn dispatch<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     generation: String,
     input: Input,
-) -> Result<()> {
+) -> Result<Option<Progress>> {
     let denied = || error("binding_changed", "当前账号或设备绑定已更改，请刷新");
     let unavailable = || error("employee_browser", "请打开本人验证窗口并完成组织登录");
     let state = app.state::<DesktopRuntime>();
@@ -69,10 +78,9 @@ pub async fn dispatch<R: tauri::Runtime>(
         Uuid::parse_str(&generation).map_err(|_| denied())?
     );
     if matches!(input.stage, Stage::Close) {
-        if let Some(window) = app.get_webview_window(&label) {
-            window.destroy().map_err(|_| unavailable())?;
-        }
-        return Ok(());
+        let _guard = state.employee_guard(&generation).await?;
+        state.close_employee_window()?;
+        return Ok(None);
     }
     let handle = state.execution_for(&generation).await?;
     let Response::OwnBindings {
@@ -81,57 +89,11 @@ pub async fn dispatch<R: tauri::Runtime>(
     else {
         return Err(denied());
     };
-    state.current(&generation)?;
+    let _guard = state.employee_guard(&generation).await?;
     let b = bindings
         .iter()
         .find(|b| b.id == input.binding)
         .ok_or_else(denied)?;
-    if matches!(input.stage, Stage::RenewKey) {
-        #[cfg(windows)]
-        {
-            if input.revision != b.revision
-                || b.applied_revision != Some(b.revision)
-                || !matches!(&b.effect,Some(wire::AccessEffect::Applied{account,..}) if Some(account)==b.account.as_ref())
-                || !matches!(
-                    b.account,
-                    Some(wire::AccessAccount::Windows {
-                        authority: wire::AccessWindowsAuthority::Local,
-                        ..
-                    })
-                )
-            {
-                return Err(denied());
-            }
-            let native = session.native_session(&generation)?;
-            let employee = native.user().ok_or_else(denied)?.clone();
-            let binding = b.clone();
-            let key = tokio::task::spawn_blocking(move || windows::sign(&binding, &employee))
-                .await
-                .map_err(|_| denied())??;
-            state.current(&generation)?;
-            let response = handle
-                .device_access(Operation::RenewWindowsKey {
-                    operation: b.operation_id,
-                    key,
-                })
-                .await?;
-            state.current(&generation)?;
-            return match response {
-                Response::WindowsKey {
-                    renewal: rss_mdm_agent_wire::enterprise::KeyRenewal::Current,
-                } => Ok(()),
-                Response::WindowsKey {
-                    renewal: rss_mdm_agent_wire::enterprise::KeyRenewal::RegistrationRequired,
-                } => Err(error(
-                    "registration_required",
-                    "需要重新登记当前账号的企业证明密钥",
-                )),
-                _ => Err(denied()),
-            };
-        }
-        #[cfg(not(windows))]
-        return Err(denied());
-    }
     let op = intent(
         b.id,
         device.into_uuid(),
@@ -158,10 +120,17 @@ pub async fn dispatch<R: tauri::Runtime>(
     {
         return Err(error("factor", "此登录机制由系统或身份提供方管理"));
     }
+    let change = serde_json::json!({"operationId":op,"expectedRevision":input.revision,"action":{"kind":input.change}});
+    if status {
+        return session
+            .employee_operation(device.into_uuid(), b.id, op)
+            .await
+            .map(Some);
+    }
     let origin_url = url::Url::parse(origin).map_err(|_| denied())?;
     let window = match app.get_webview_window(&label) {
         Some(w) => w,
-        None if matches!(input.stage, Stage::Open | Stage::Status) => {
+        None if matches!(input.stage, Stage::Open) => {
             let start = origin_url
                 .join(&format!("tenants/{tenant}"))
                 .map_err(|_| denied())?;
@@ -177,42 +146,71 @@ pub async fn dispatch<R: tauri::Runtime>(
                 .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
                 .build()
                 .map_err(|_| unavailable())?;
-            let watched = window.clone();
-            let app = app.clone();
-            let generation = generation.clone();
-            tauri::async_runtime::spawn(async move {
-                for _ in 0..600 {
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                    if watched.url().is_err() {
-                        return;
-                    }
-                    if app.state::<DesktopRuntime>().current(&generation).is_err() {
-                        break;
-                    }
-                }
-                let _ = watched.destroy();
-            });
+            let owned = window.clone();
+            state.own_employee_window(move || {
+                let _ = owned.destroy();
+            })?;
             window
         }
         _ => return Err(unavailable()),
     };
     window.set_focus().map_err(|_| unavailable())?;
     if matches!(input.stage, Stage::Open) {
-        return Ok(());
+        return Ok(None);
     }
     if window.url().map_err(|_| unavailable())?.origin() != origin_url.origin() {
         return Err(unavailable());
     }
+    if matches!(input.stage, Stage::Submit) {
+        let cookies = window
+            .cookies_for_url(origin_url.clone())
+            .map_err(|_| unavailable())?;
+        let mut pairs = Vec::new();
+        for name in ["__Host-identity-session", "__Host-identity-operation"] {
+            let mut found = cookies.iter().filter(|c| c.name() == name);
+            if let Some(cookie) = found.next() {
+                let value = cookie.value();
+                if found.next().is_some()
+                    || value.is_empty()
+                    || value.len() > 4096
+                    || !value
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c))
+                {
+                    return Err(unavailable());
+                }
+                pairs.push(zeroize::Zeroizing::new(format!("{name}={value}")));
+            } else if name == "__Host-identity-session" {
+                return Err(unavailable());
+            }
+        }
+        let cookie = zeroize::Zeroizing::new(
+            pairs
+                .iter()
+                .map(|p| p.as_str())
+                .collect::<Vec<_>>()
+                .join("; "),
+        );
+        drop(_guard);
+        let csrf = session.employee_browser_csrf(&cookie).await?;
+        let _admitted = state.employee_guard(&generation).await?;
+        if window.url().map_err(|_| unavailable())?.origin() != origin_url.origin() {
+            return Err(unavailable());
+        }
+        session
+            .submit_employee_change(&cookie, &csrf, device.into_uuid(), b.id, &change)
+            .await?;
+        return Ok(None);
+    }
     let config = serde_json::json!({
         "origin":origin,"tenant":tenant,"principal":principal,"device":device,"binding":b.id,
-        "operation": if status { b.operation_id } else { op }, "stage":input.stage,
-        "change":{"operationId":op,"expectedRevision":input.revision,"action":{"kind":input.change}}
+        "change":change,"returnTarget":session.employee_return_target()
     });
-    state.current(&generation)?;
     let script = include_str!("employee-browser.js");
     window
         .eval(format!("({script})({config})"))
-        .map_err(|_| unavailable())
+        .map_err(|_| unavailable())?;
+    Ok(None)
 }
 
 #[cfg(test)]

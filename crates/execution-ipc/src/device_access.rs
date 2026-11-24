@@ -32,13 +32,6 @@ pub enum Operation {
         /// Existing employee binding.
         binding: Uuid,
     },
-    /// Continue the original applied operation using the employee's already registered public key.
-    RenewWindowsKey {
-        /// Original repair or reset.
-        operation: Uuid,
-        /// Domain-separated proof of possession and public binding coordinates.
-        key: rss_mdm_agent_wire::enterprise::KeyRegistration,
-    },
     /// Discover eligible first-enrollment policies and own binding states.
     Directory {
         /// Policy cursor.
@@ -125,11 +118,6 @@ pub enum Response {
     Application {
         /// Registered start page.
         launch_url: String,
-    },
-    /// Server disposition of the already registered enterprise key.
-    WindowsKey {
-        /// Current or explicit registration required.
-        renewal: rss_mdm_agent_wire::enterprise::KeyRenewal,
     },
     /// Confirmed desired binding; not evidence of Applied.
     Binding(Box<w::AccessBindingStatus>),
@@ -267,6 +255,8 @@ pub struct WindowsHelloStatus {
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EmployeePortal {
+    /// Registered same-origin return target for employee OIDC step-up.
+    pub recovery_return_target: Option<String>,
     /// Single organization-selected employee RP and its public start page.
     pub application: Option<EmployeeApplication>,
     /// Exact public HTTPS browser origin.
@@ -291,11 +281,11 @@ pub struct EmployeeApplication {
 impl EmployeeApplication {
     fn valid(&self) -> bool {
         !self.relying_party.is_empty()
-            && self.relying_party.len() <= 128
+            && self.relying_party.len() <= 64
             && self
                 .relying_party
                 .bytes()
-                .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
+                .all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c))
             && self.launch_url.scheme() == "https"
             && self.launch_url.host().is_some()
             && self.launch_url.username().is_empty()
@@ -370,7 +360,15 @@ impl EmployeePortal {
             .transpose()
             .map_err(|_| Rejected)?;
         if let Some(p) = &mut package {
-            if p.application.as_ref().is_some_and(|app| !app.valid()) {
+            if p.application.as_ref().is_some_and(|app| !app.valid())
+                || p.recovery_return_target.as_ref().is_some_and(|v| {
+                    v.is_empty()
+                        || v.len() > 128
+                        || !v
+                            .bytes()
+                            .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
+                })
+            {
                 return Err(Rejected);
             }
             p.origin = Self::origin(&p.origin).ok_or(Rejected)?;
@@ -379,13 +377,14 @@ impl EmployeePortal {
             return Ok(package.filter(|p| (p.tenant, p.instance) == (tenant, instance)));
         };
         let origin = Self::origin(origin).ok_or(Rejected)?;
-        let (product, application) =
+        let (product, application, recovery_return_target) =
             match package.filter(|p| p.origin == origin && p.tenant == tenant) {
                 Some(p) if p.instance != instance => return Err(Rejected),
-                Some(p) => (p.product, p.application),
-                None => (PortalProduct::Da, None),
+                Some(p) => (p.product, p.application, p.recovery_return_target),
+                None => (PortalProduct::Da, None, None),
             };
         Ok(Some(Self {
+            recovery_return_target,
             application,
             product,
             origin,

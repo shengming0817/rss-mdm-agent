@@ -64,7 +64,6 @@ operations! {
     Changes: GET "/api/v1/agent/runtime/management-activities/changes" [200] Some("application/json"), () => a::ManagementActivityPage;
     Activity: GET "/api/v1/agent/runtime/management-activities/{id}" [200] Some("application/json"), () => a::ManagementActivityDetail;
     AccessUse: POST "/api/v1/agent/runtime/device-access/recovery-uses" [200] Some("application/json"), w::AccessRecoveryUse => RecoveryUseAck;
-    AccessKey: POST "/api/v1/agent/runtime/device-access/operations/{operation}/windows-key" [200] Some("application/json"), rss_mdm_agent_wire::enterprise::KeyRegistration => rss_mdm_agent_wire::enterprise::KeyRenewal;
     AccessDirectory: GET "/api/v1/agent/runtime/device-access" [200] Some("application/json"), () => w::AccessDirectory;
     AccessBegin: POST "/api/v1/agent/runtime/device-access/begin" [200] Some("application/json"), w::AccessBegin => w::AccessChallenge;
     AccessConfirm: POST "/api/v1/agent/runtime/device-access/confirm" [200] Some("application/json"), w::AccessConfirm => w::AccessBindingStatus;
@@ -76,7 +75,6 @@ operations! {
     DaPssoRegister: POST "/api/v1/da/platform-sso/register" [200] Some("application/json"), s::Registration => s::RegistrationReceipt;
     DaPssoStatus: GET "/api/v1/da/platform-sso/status" [200] Some("application/json"), () => s::Status;
     DaPssoRevoke: POST "/api/v1/da/platform-sso/sources/{id}/revoke" [200] Some("application/json"), s::Revocation => s::RevocationReceipt;
-    DaAccessKey: POST "/api/v1/da/device-access/operations/{operation}/windows-key" [200] Some("application/json"), rss_mdm_agent_wire::enterprise::KeyRegistration => rss_mdm_agent_wire::enterprise::KeyRenewal;
     DaAccessDirectory: GET "/api/v1/da/device-access" [200] Some("application/json"), () => w::AccessDirectory;
     FilevaultConfiguration: GET "/api/v1/agent/runtime/filevault/configuration" [200] Some("application/json"), () => f::Configuration;
     FilevaultUpload: POST "/api/v1/agent/runtime/filevault/escrows" [200] Some("application/json"), f::Upload => f::Receipt;

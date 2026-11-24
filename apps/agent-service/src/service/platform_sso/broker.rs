@@ -17,6 +17,27 @@ struct Selection {
     until: Instant,
     operation: Option<Uuid>,
 }
+impl Selection {
+    fn admit(
+        &mut self,
+        session: Uuid,
+        operation: Uuid,
+        now: Instant,
+        confirmed: bool,
+    ) -> Result<(), Error> {
+        if self.until <= now
+            || !(self.current)()
+            || self.session != session
+            || self.operation.is_some_and(|selected| selected != operation)
+        {
+            return Err(Error::Denied);
+        }
+        if confirmed {
+            self.operation = Some(operation);
+        }
+        Ok(())
+    }
+}
 static SELECTED: Mutex<Option<Selection>> = Mutex::new(None);
 
 pub(crate) fn select(
@@ -69,25 +90,21 @@ pub(super) async fn challenge(
     let context = owner.context(command, scope, true, mode).await?;
     let binding = context.binding.ok_or(Error::Identity)?;
     let session = super::super::login_binding_id(command.binding.as_ref().ok_or(Error::Identity)?);
-    let admit = || -> Result<EmployeePortal, Error> {
+    let admit = |confirmed: bool| -> Result<EmployeePortal, Error> {
         let mut lock = SELECTED.lock().map_err(|_| Error::Storage)?;
         let selected = lock.as_mut().ok_or(Error::Denied)?;
-        if selected.until <= Instant::now()
-            || !(selected.current)()
-            || selected.binding != binding
-            || selected.session != session
+        if selected.binding != binding
             || selected.portal.tenant != context.tenant
             || selected.portal.origin != context.origin
             || (context.authority == w::RegistrationTrust::DaDevicePop
                 && selected.device != context.device_id)
-            || selected.operation.is_some_and(|op| op != operation)
         {
             return Err(Error::Denied);
         }
-        selected.operation = Some(operation);
+        selected.admit(session, operation, Instant::now(), confirmed)?;
         Ok(selected.portal.clone())
     };
-    let portal = admit()?;
+    let portal = admit(false)?;
     let begin = broker::Begin {
         operation_id: operation,
         binding_id: binding,
@@ -113,6 +130,36 @@ pub(super) async fn challenge(
     {
         return Err(Error::Identity);
     }
-    admit()?;
+    admit(true)?;
     Ok(Response::BrokerChallenge { challenge })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn selection_is_consumed_only_by_the_authenticated_transaction_and_current_console() {
+        let now = Instant::now();
+        let session = Uuid::new_v4();
+        let op = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        let live = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let observed = live.clone();
+        let mut selection = Selection {
+            binding: Uuid::new_v4(), device: rss_mdm_agent_wire::DeviceId::new_v4(),
+            portal: serde_json::from_value(serde_json::json!({"origin":"https://example.test","tenant":Uuid::new_v4(),"instance":Uuid::new_v4(),"product":"mdm"})).unwrap(),
+            session, current: Box::new(move || observed.load(std::sync::atomic::Ordering::Acquire)),
+            until: now + Duration::from_secs(120), operation: None
+        };
+        assert!(selection.admit(session, other, now, false).is_ok());
+        assert!(selection.admit(session, op, now, true).is_ok());
+        assert!(selection.admit(session, op, now, true).is_ok());
+        assert!(selection.admit(session, other, now, true).is_err());
+        assert!(selection.admit(Uuid::new_v4(), op, now, false).is_err());
+        assert!(selection
+            .admit(session, op, selection.until, false)
+            .is_err());
+        live.store(false, std::sync::atomic::Ordering::Release);
+        assert!(selection.admit(session, op, now, false).is_err());
+    }
 }

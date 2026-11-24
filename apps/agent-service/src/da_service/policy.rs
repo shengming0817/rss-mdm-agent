@@ -69,8 +69,7 @@ impl PolicyConsumer for Machine {
     fn modules(&self) -> rss_mdm_agent_wire::da::ClientModules {
         self.deployment
             .as_ref()
-            .and_then(crate::installation::observation)
-            .map(|v| v.modules)
+            .and_then(crate::installation::module_facts)
             .unwrap_or_default()
     }
     fn managed_snapshot(&self) -> ManagedSnapshot {
