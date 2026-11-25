@@ -1,9 +1,9 @@
 {
   "repository": "https://dev.azure.com/shengming0923/rss/_git/rss-mdm",
-  "revision": "df060faa52329898e8f978d6f1fd9a90a3ace3f6",
+  "revision": "1ba8daee875a9d10d32ed71d51fddde951f3e846",
   "sources": {
-    "agent": "55caeab1f39d5a879eab5a2d3e72704417fb6146ad60027274c09c5de1fd1967",
-    "da": "0aadc80abda315cd8029893b86e7b032c91a72f1a3af89c4f55a98837997a795"
+    "agent": "c49695cb39117496232c327a9fd59de75fcb304022916ea91fdd3276319f24be",
+    "da": "0130958292fd71ad9bbf26b076c64f057f61b8cee6d474ef9fc35ad5937dc586"
   },
-  "sha256": "b11d8bf4cd1a86a44fe3526c02eff066f1626f835ef55d6d438473c9b0163242"
+  "sha256": "528049454aa59541dc55663ae013cf5be0b584d2974fe2647bf1a9c545cbc57e"
 }
