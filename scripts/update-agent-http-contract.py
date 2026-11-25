@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Refresh device listeners and employee browser operations from a published, revision-bound producer bundle."""
+"""Refresh device listeners and employee browser operations from a revision-bound producer bundle."""
 import hashlib
 import json
 from pathlib import Path
@@ -37,7 +37,7 @@ def references(value):
 
 def main():
     if len(sys.argv) != 2:
-        raise ValueError('usage: update-agent-http-contract.py <published contract ZIP>')
+        raise ValueError('usage: update-agent-http-contract.py <contract ZIP>')
     wire = tomllib.loads((ROOT / 'Cargo.toml').read_text())['workspace']['dependencies']['rss-mdm-agent-wire']
     revision = wire['rev']
     packages = tomllib.loads((ROOT / 'Cargo.lock').read_text())['package']
