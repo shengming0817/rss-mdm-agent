@@ -18,7 +18,7 @@ Schema 描述结构，不能替代动态预算、可信主体验证或 provider 
 
 来源和改写边界见[执行契约来源](../reference/contracts-extraction.md)与[AI Runtime 来源](../reference/ai-runtime.md)。
 
-更新 wire 和 Cargo.lock 时，在锁定的 rss-mdm 提交上分别运行 `rss-mdm http-contract` 和 `rss-da http-contract`，将原始输出保存为 `rss-mdm-http.json` 和 `rss-da-http.json`。两个导出都含员工浏览器操作。将这两个文件与记录 `repository`、`revision` 和逐文件 `sha256` 的 `manifest.json` 打入同一个 ZIP，运行 `python3 scripts/update-agent-http-contract.py <合同ZIP路径>` 导入。常规构建和 CI 使用本仓快照。当前提交及摘要见 [http-v1-source.json](../../tests/agent-protocol/http-v1-source.json)。
+更新 wire 和 Cargo.lock 时，在干净的 rss-mdm 工作树中，从锁定提交构建两个二进制，分别运行 `rss-mdm http-contract` 和 `rss-da http-contract`，将原始输出保存为 `rss-mdm-http.json` 和 `rss-da-http.json`。两个导出都含员工浏览器操作。将这两个文件与记录 `repository: "rss-mdm"`、完整提交号 `revision` 和逐文件 `sha256` 的 `manifest.json` 打入同一个 ZIP，运行 `python3 scripts/update-agent-http-contract.py <合同ZIP路径>` 导入。常规构建和 CI 使用本仓快照。当前提交及摘要见 [http-v1-source.json](../../tests/agent-protocol/http-v1-source.json)。
 
 私库读取使用系统 Git credential helper 或受保护构建凭据；可通过 `CARGO_NET_GIT_FETCH_WITH_CLI=true` 使用 Git helper，不在 manifest 或日志中写凭据。`node scripts/check-agent-dependencies.mjs` 核对完整依赖闭包，常规 `make ci` 已包含该检查。Agent 继续拥有验签、身份绑定、防重放、本机权限与预算；网络解码成功不授予本机执行权限。
 
