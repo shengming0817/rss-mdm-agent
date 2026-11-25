@@ -65,3 +65,98 @@ export function desktopBuildEnvironment(root, inherited = process.env) {
   env[organizationBuildInput] = JSON.stringify(organization);
   return env;
 }
+
+export function employeePortalConfiguration(
+  organization,
+  desktopConfiguration,
+) {
+  const defaults = organization.modules;
+  const mdmEnabled = defaults.mdm?.state === "enabled";
+  const daEnabled = defaults.da?.state === "enabled";
+  const product = organization.employeeIssuer ?? (mdmEnabled ? "mdm" : "da");
+  if (
+    !["mdm", "da"].includes(product) ||
+    (organization.employeeIssuer !== undefined &&
+      defaults[product]?.state !== "enabled")
+  )
+    throw Error("Employee issuer must select an enabled DA or MDM module");
+  if (
+    mdmEnabled &&
+    daEnabled &&
+    (organization.employeeApplication || organization.recoveryReturnTarget) &&
+    !organization.employeeIssuer
+  )
+    throw Error("Select the employee issuer for the coinstalled modules");
+  const owner = defaults[product]?.backend;
+  const daBrowser = product === "da" ? owner?.browser : null;
+  const issuer = daBrowser
+    ? { ...daBrowser, tenant: owner.tenant }
+    : desktopConfiguration;
+  const recoveryReturnTarget = organization.recoveryReturnTarget;
+  if (
+    recoveryReturnTarget !== undefined &&
+    (!issuer ||
+      typeof recoveryReturnTarget !== "string" ||
+      !/^[a-zA-Z0-9_.-]{1,128}$/.test(recoveryReturnTarget))
+  ) {
+    throw Error(
+      "Employee recovery requires the registered same-origin OIDC return target ID",
+    );
+  }
+  let application = organization.employeeApplication;
+  if (application !== undefined) {
+    if (
+      !issuer ||
+      !application ||
+      typeof application !== "object" ||
+      Object.keys(application).some(
+        (k) => !["relyingParty", "launchUrl"].includes(k),
+      ) ||
+      typeof application.relyingParty !== "string" ||
+      !/^[a-zA-Z0-9_-]{1,64}$/.test(application.relyingParty) ||
+      typeof application.launchUrl !== "string" ||
+      application.launchUrl.length > 2048
+    )
+      throw Error(
+        "Employee application requires the deployed RP ID and its fixed HTTPS launch URL",
+      );
+    const url = new URL(application.launchUrl);
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      url.href.includes("?") ||
+      url.href.includes("#") ||
+      url.href.length > 2048
+    )
+      throw Error("Invalid employee application launch URL");
+    application = { ...application, launchUrl: url.href };
+  }
+  if (!issuer) return null;
+  if (!owner || issuer.tenant?.toLowerCase() !== owner.tenant)
+    throw Error(
+      "Employee browser issuer must belong to the selected module tenant",
+    );
+  const url = new URL(issuer.origin);
+  const host = url.hostname.replace(/\.+$/, "");
+  if (
+    url.protocol !== "https:" ||
+    !host ||
+    url.username ||
+    url.password ||
+    url.pathname !== "/" ||
+    url.href.includes("?") ||
+    url.href.includes("#")
+  )
+    throw Error("Employee issuer requires a public HTTPS origin");
+  url.hostname = host;
+  return {
+    product,
+    instance: owner.instance,
+    tenant: owner.tenant,
+    origin: url.origin,
+    ca_pem: issuer.ca_pem == null ? undefined : publicCa(issuer.ca_pem),
+    application,
+    recovery_return_target: recoveryReturnTarget,
+  };
+}

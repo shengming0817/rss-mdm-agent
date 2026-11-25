@@ -24,6 +24,8 @@ pub use redaction::CredentialRedactor;
 mod client;
 mod configuration;
 mod connections;
+/// Enterprise Broker transport for trusted native proof.
+pub mod enterprise;
 mod http;
 pub use connections::{verify_connections, ConnectionStatus};
 mod enrollment;
@@ -58,8 +60,8 @@ pub use content::{ContentFile, Materials};
 /// Generated values for the backend-owned HTTP API.
 use rss_mdm_agent_wire::runtime as wire;
 pub use store::{
-    inspect_binding, inspect_optional_binding, validate_existing, validate_identity,
-    validate_stored_identity,
+    inspect_binding, inspect_optional_binding, inspect_registration, validate_existing,
+    validate_identity, validate_stored_identity,
 };
 /// Closed errors, without secrets, response bodies or backend paths.
 #[derive(

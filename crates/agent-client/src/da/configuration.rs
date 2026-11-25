@@ -35,6 +35,8 @@ pub trait PolicyConsumer {
     /// Publish or withdraw effective client settings and independently read the active selection.
     fn apply(&mut self, settings: Option<&Selection>)
         -> Result<Option<AccessConfiguration>, Error>;
+    /// Last observation from the protected installation owner.
+    fn modules(&self) -> wire::ClientModules;
     /// Independent observations of binding and factor readiness.
     fn health(&self) -> (wire::Health, wire::Health);
 }
@@ -265,6 +267,7 @@ impl<S: Credentials, C: Clock> Client<S, C> {
             let sequence = self.next("status")?;
             let event = wire::StatusReport {
                 identity: id,
+                modules: consumer.modules(),
                 sequence,
                 observed_at: Some(now),
                 client_version: env!("CARGO_PKG_VERSION").into(),

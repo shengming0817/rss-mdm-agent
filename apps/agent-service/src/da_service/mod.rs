@@ -140,7 +140,7 @@ pub(crate) fn renew(d: &Deployment) -> Result<(), Error> {
 pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
     #[cfg(windows)]
     if let Err(e) = crate::access_component::prepare_store(&d) {
-        return Ok(Deployment::startup_diagnostic(d.clients.clone(), e));
+        return Ok(d.startup_diagnostic(e));
     }
     if !d.modules.da.enabled() {
         return d.mdm_owner();
@@ -165,6 +165,7 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
     let ready = Arc::new(AtomicBool::new(false));
     let available = ready.clone();
     let root = d.da_root()?;
+    let installation = d.clone();
     let worker = thread::Builder::new()
         .name("device-access".into())
         .spawn(move || {
@@ -186,6 +187,8 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                             }
                         }) {
                             Ok(None) => {
+                                #[cfg(windows)]
+                                worker_login.registered.store(false, Ordering::Release);
                                 available.store(true, Ordering::Release);
                                 tokio::time::sleep(Duration::from_secs(2)).await;
                                 continue;
@@ -200,7 +203,13 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                                     d.installation_id,
                                 )
                                 .await;
+                                policy.deployment = Some(d.clone());
                                 async {
+                                #[cfg(windows)]
+                                {
+                                    worker_login.registered.store(client.registered()?, Ordering::Release);
+                                    worker_login.read_directory(&client).await?;
+                                }
                                     #[cfg(not(target_os="macos"))]
                                     let result = client.drive(&mut policy).await;
                                     #[cfg(target_os="macos")]
@@ -252,10 +261,17 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
                                 .await
                             }
                             Err(e) => {
+                                #[cfg(windows)]
+                                worker_login.registered.store(false, Ordering::Release);
                                 available.store(false, Ordering::Release);
                                 Err(e)
                             }
                         };
+                        if result.is_err() {
+                            available.store(false, Ordering::Release);
+                            #[cfg(windows)]
+                            worker_login.registered.store(false, Ordering::Release);
+                        }
                         let delay = match result {
                             Ok(()) => 30,
                             Err(Error::Conflict) => 2,
@@ -292,6 +308,8 @@ pub(crate) fn assemble(d: Deployment) -> Result<Box<dyn Handler>, Error> {
             })
         })?;
     Ok(Box::new(Service {
+        observed: None,
+        installation,
         mdm,
         #[cfg(target_os = "macos")]
         endpoint,
@@ -313,7 +331,8 @@ fn settle_mac_request(
         request,
         Request::BindContext { .. }
             | Request::DeviceAccess {
-                input: execution_ipc::device_access::Operation::Tasks {},
+                input: execution_ipc::device_access::Operation::Tasks {}
+                    | execution_ipc::device_access::Operation::OwnBindings {},
                 ..
             }
     ) {
@@ -323,7 +342,23 @@ fn settle_mac_request(
     };
     Box::new(move || {
         let result = native();
+        use execution_ipc::device_access::Response;
         match (other.map(|wait| wait()), result) {
+            (
+                Some(
+                    mdm @ Reply::DeviceAccess {
+                        value: Response::OwnBindings { .. },
+                    },
+                ),
+                da,
+            ) => {
+                if matches!(&da, Reply::DeviceAccess{value:Response::OwnBindings{bindings,..}} if !bindings.is_empty())
+                {
+                    da
+                } else {
+                    mdm
+                }
+            }
             (Some(bound @ Reply::ContextBound { .. }), _) => bound,
             (
                 Some(Reply::DeviceAccess {
@@ -438,6 +473,11 @@ fn account_tasks_merge_after_enqueue_and_a_denied_da_input_is_never_forwarded() 
     ));
 }
 struct Service {
+    observed: Option<(
+        std::time::Instant,
+        Option<execution_ipc::host::InstallationObservation>,
+    )>,
+    installation: Deployment,
     #[cfg(target_os = "macos")]
     endpoint: native::Endpoint,
     #[cfg(windows)]
@@ -525,7 +565,35 @@ impl Service {
                         },
                     };
                 }
-                (Some(_), Reply::Rejected) if matches!(request, Request::BindContext { .. }) => (),
+                (
+                    Some(mdm),
+                    reply @ Reply::DeviceAccess {
+                        value: Response::OwnBindings { .. },
+                    },
+                ) => {
+                    if matches!(&reply, Reply::DeviceAccess {value: Response::OwnBindings{bindings,..}} if bindings.is_empty())
+                    {
+                        if let other @ Reply::DeviceAccess {
+                            value: Response::OwnBindings { .. },
+                        } = mdm.handle(peer, request)
+                        {
+                            return other;
+                        }
+                    }
+                    return reply;
+                }
+                (Some(_), Reply::Rejected)
+                    if matches!(
+                        request,
+                        Request::BindContext { .. }
+                            | Request::DeviceAccess {
+                                input: execution_ipc::device_access::Operation::OwnBindings {},
+                                ..
+                            }
+                    ) =>
+                {
+                    ()
+                }
                 (_, reply) => return reply,
             }
         }
@@ -542,13 +610,28 @@ impl Service {
             return Reply::Rejected;
         }
         match request {
-            Request::ServiceStatus {} => Reply::ServiceStatus {
-                value: ServiceStatus::new(if da_ready {
+            Request::ServiceStatus {} => {
+                let mut value = ServiceStatus::new(if da_ready {
                     Readiness::Ready
                 } else {
                     Readiness::NotReady
-                }),
-            },
+                });
+                if self
+                    .observed
+                    .as_ref()
+                    .is_none_or(|(at, _)| at.elapsed() >= std::time::Duration::from_secs(30))
+                {
+                    self.observed = Some((
+                        std::time::Instant::now(),
+                        crate::installation::observation(&self.installation),
+                    ));
+                }
+                value.installation = self
+                    .observed
+                    .as_ref()
+                    .and_then(|(_, sample)| sample.clone());
+                Reply::ServiceStatus { value }
+            }
             _ => Reply::Rejected,
         }
     }

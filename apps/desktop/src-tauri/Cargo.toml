@@ -64,6 +64,7 @@ native-e2e = ["dep:tauri-plugin-wdio-webdriver"]
 custom-protocol = ["tauri/custom-protocol"]
 
 [dev-dependencies]
+jsonschema.workspace = true
 execution-app = { path = "../../../crates/execution-app", features = ["test-support"] }
 execution-sqlite = { path = "../../../crates/execution-sqlite", features = ["test-support"] }
 execution-interaction = { path = "../../../crates/execution-interaction" }

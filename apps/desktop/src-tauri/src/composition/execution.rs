@@ -592,6 +592,33 @@ impl ExecutionHandle {
         let mut response = self
             .send_device_access(&context, &input, password.as_ref(), confirmation)
             .await?;
+        #[cfg(target_os = "macos")]
+        if let execution_ipc::device_access::Response::Application { launch_url } = &response {
+            if !matches!(input, Operation::OpenApplication { .. }) || self.context_ref()? != context
+            {
+                return Err(bad(Error::Denied));
+            }
+            let start = url::Url::parse(launch_url).map_err(|_| bad(Error::Denied))?;
+            if start.scheme() != "https"
+                || !start.username().is_empty()
+                || start.password().is_some()
+                || start.fragment().is_some()
+                || start.query().is_some()
+            {
+                return Err(bad(Error::Denied));
+            }
+            let result = tokio::task::spawn_blocking(move || {
+                std::process::Command::new("/usr/bin/open")
+                    .args(["-b", "com.apple.Safari", start.as_str()])
+                    .status()
+            })
+            .await
+            .map_err(|_| bad(Error::Unavailable))?
+            .map_err(|_| bad(Error::Unavailable))?;
+            if !result.success() {
+                return Err(bad(Error::Unavailable));
+            }
+        }
         if let execution_ipc::device_access::Response::Tasks { tasks } = &mut response {
             for task in tasks {
                 task.mac_confirmation = None;
@@ -607,7 +634,15 @@ impl ExecutionHandle {
         password: Option<&zeroize::Zeroizing<String>>,
         mac_confirmation: Option<[u8; 32]>,
     ) -> ui::Result<execution_ipc::device_access::Response> {
-        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let timeout = if matches!(
+            input,
+            execution_ipc::device_access::Operation::OwnBindings {}
+        ) {
+            15
+        } else {
+            5
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(timeout), async {
             loop {
                 let reply = self
                     .request(Request::DeviceAccess {

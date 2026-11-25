@@ -4,6 +4,7 @@ import { UserOutlined, PlusOutlined } from "@ant-design/icons";
 import { useSnapshot } from "valtio";
 import { PageHeader, SectionCard, StatePanel } from "@rss-mdm-agent/ui";
 import { MacAccountSetup } from "./MacAccountSetup";
+import { EmployeeRecovery } from "./EmployeeRecovery";
 import { WindowsLoginSetup } from "./WindowsLoginSetup";
 import { useDesktop, usePlatform } from "../state/react";
 import type { Workspace } from "../state/workspace";
@@ -48,7 +49,10 @@ export function AccountPage({
       {platform === "windows" &&
         workspace.identity.identity.mode === "user_device" &&
         workspace.deviceAccess && (
-          <WindowsLoginSetup port={workspace.deviceAccess} />
+          <WindowsLoginSetup
+            key={workspace.identity.generation}
+            port={workspace.deviceAccess}
+          />
         )}
       {platform === "macos" &&
         workspace.identity.identity.mode === "user_device" &&
@@ -58,11 +62,18 @@ export function AccountPage({
             port={workspace.deviceAccess}
           />
         )}
+      {workspace.identity.identity.mode === "user_device" &&
+        workspace.deviceAccess && (
+          <EmployeeRecovery
+            key={workspace.identity.generation}
+            port={workspace.deviceAccess}
+          />
+        )}
       <BindingNotice />
       <OrganizationManager />
       <SectionCard title="本机会话">
         <p className="rss-muted">
-          退出企业账号后回到本机工作区。已受理的设备任务仍按原记录查询。
+          退出后关闭本桌面账号会话。已打开的企业应用可在应用内退出；设备注册和本机登录因子由设备访问设置管理。
         </p>
         <div className="rss-account-actions">
           <Button onClick={() => void desktop.logout()}>

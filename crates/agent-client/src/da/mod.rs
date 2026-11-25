@@ -99,10 +99,27 @@ pub struct Client<S, C> {
     clock: C,
 }
 
+/// Current local admission evidence, independent of historical receipts.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RegistrationState {
+    /// Current activated credential is within its validity window.
+    Registered,
+    /// Activated credential has expired.
+    Expired,
+    /// The current credential was withdrawn, or only a withdrawal remains.
+    Revoked,
+    /// No activation or withdrawal exists.
+    Unregistered,
+    /// The validity window has not begun.
+    Unknown,
+}
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 /// Secret-free readback of the current registration and diagnostics.
 pub struct Status {
+    /// State of the currently retained credential.
+    pub credential: RegistrationState,
     /// Last committed activation receipt.
     pub registration: Option<wire::Registration>,
     /// Original administrative withdrawal, retained after the local key is released.
@@ -167,7 +184,29 @@ pub fn inspect(
         && read::<i64>(&c, "clock")?.is_some_and(|seen| now >= seen);
     let device = active.as_ref().map(|a| a.receipt.device);
     let delivery_key = |kind: &str| device.map(|d| operations::operation_key(d, kind));
+    let revocation: Option<wire::RevocationReceipt> = read(&c, "revocation")?;
+    let credential = match active.as_ref() {
+        Some(a)
+            if revocation.as_ref().is_some_and(|r| {
+                (r.service_id, r.tenant, r.device, r.credential)
+                    == (
+                        a.receipt.service_id,
+                        a.receipt.tenant,
+                        a.receipt.device,
+                        a.receipt.credential,
+                    )
+            }) =>
+        {
+            RegistrationState::Revoked
+        }
+        Some(a) if now >= a.validity.1 => RegistrationState::Expired,
+        Some(a) if now < a.validity.0 => RegistrationState::Unknown,
+        Some(_) => RegistrationState::Registered,
+        None if revocation.is_some() => RegistrationState::Revoked,
+        None => RegistrationState::Unregistered,
+    };
     Ok(Some(Status {
+        credential,
         account_settlement: delivery_key("last-account-settlement")
             .map(|k| read(&c, &k))
             .transpose()?
@@ -191,7 +230,7 @@ pub fn inspect(
         status_receipt: receipt("status")?,
         application_receipt: receipt("application")?,
         registration: active.map(|a| a.receipt),
-        revocation: read(&c, "revocation")?,
+        revocation,
         pending_operation: pending.as_ref().map(|p| p.operation),
         issuance_id: pending.as_ref().and_then(|p| p.issuance_id),
         issuance_unknown: pending.is_some_and(|p| p.unknown),

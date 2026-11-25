@@ -7,6 +7,17 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { cargoTargetDir } from "./cargo-target.mjs";
 import { passkeyEntitlements } from "./build-macos-passkey.mjs";
 const root = fileURLToPath(new URL("../", import.meta.url));
+export function packagePlatformSso(
+  signed,
+  portal,
+  options,
+  build = buildPlatformSso,
+) {
+  if (!signed || !portal) return null;
+  const { binary } = build(options);
+  return { binary, origin: portal.origin };
+}
+
 export function buildPlatformSso({
   output,
   identity = "-",

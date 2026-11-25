@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 impl Operations<'_> {
     /// Discover existing bindings for the authenticated employee on this DA device.
-    pub async fn mac_bindings(&self, proof: &str) -> Result<runtime::AccessDirectory, Error> {
+    pub async fn employee_bindings(&self, proof: &str) -> Result<runtime::AccessDirectory, Error> {
         if proof.len() != 64
             || !proof
                 .bytes()
@@ -24,7 +24,11 @@ impl Operations<'_> {
                 .timeout(Duration::from_secs(2))
                 .send()
                 .await?;
-        Self::decode(response).await
+        let directory: runtime::AccessDirectory = Self::decode(response).await?;
+        if directory.device_id != self.registration().device {
+            return Err(Error::Identity);
+        }
+        Ok(directory)
     }
 
     /// Begin registration for the current system callback.

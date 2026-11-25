@@ -25,6 +25,13 @@ pub enum Operation {
     WindowsStatus {},
     /// Open the current user's native sign-in settings; never accepts a URL, PIN or account.
     OpenWindowsHello {},
+    /// Existing bindings for both the authenticated enterprise employee and the current OS account.
+    OwnBindings {},
+    /// Authorize the configured enterprise application for this account and console login.
+    OpenApplication {
+        /// Existing employee binding.
+        binding: Uuid,
+    },
     /// Discover eligible first-enrollment policies and own binding states.
     Directory {
         /// Policy cursor.
@@ -97,6 +104,20 @@ pub enum Response {
         operation: Uuid,
         /// Expiry in UTC seconds.
         expires_at: i64,
+    },
+    /// Device and bindings from the authenticated device directory, filtered by native identity.
+    OwnBindings {
+        /// A fixed employee application was installed for this issuer.
+        application_bindings: Vec<Uuid>,
+        /// Device registration owning these binding operations.
+        device: rss_mdm_agent_wire::DeviceId,
+        /// Bindings on the current stable native account.
+        bindings: Vec<w::AccessBindingStatus>,
+    },
+    /// Public start page from the protected installation, never a callback or session credential.
+    Application {
+        /// Registered start page.
+        launch_url: String,
     },
     /// Confirmed desired binding; not evidence of Applied.
     Binding(Box<w::AccessBindingStatus>),
@@ -234,6 +255,10 @@ pub struct WindowsHelloStatus {
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EmployeePortal {
+    /// Registered same-origin return target for employee OIDC step-up.
+    pub recovery_return_target: Option<String>,
+    /// Single organization-selected employee RP and its public start page.
+    pub application: Option<EmployeeApplication>,
     /// Exact public HTTPS browser origin.
     pub origin: String,
     /// Optional public trust root.
@@ -243,6 +268,32 @@ pub struct EmployeePortal {
     /// Tenant at this issuer.
     pub tenant: Uuid,
     product: PortalProduct,
+}
+/// Public deployment coordinates for the one supported employee application.
+#[derive(Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EmployeeApplication {
+    /// Registered Broker RP identifier.
+    pub relying_party: String,
+    /// Exact public HTTPS entry. No ticket or credential travels in this URL.
+    pub launch_url: url::Url,
+}
+impl EmployeeApplication {
+    fn valid(&self) -> bool {
+        !self.relying_party.is_empty()
+            && self.relying_party.len() <= 64
+            && self
+                .relying_party
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c))
+            && self.launch_url.scheme() == "https"
+            && self.launch_url.host().is_some()
+            && self.launch_url.username().is_empty()
+            && self.launch_url.password().is_none()
+            && self.launch_url.query().is_none()
+            && self.launch_url.fragment().is_none()
+            && self.launch_url.as_str().len() <= 2048
+    }
 }
 #[derive(Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -259,29 +310,62 @@ impl EmployeePortal {
     pub fn accepts(&self, user: &w::SelfServiceUser) -> bool {
         (self.tenant, self.instance) == (user.tenant_id, user.instance_id)
     }
-    /// The desktop uses the same protected DA profile and packaged issuer as the service.
-    pub fn installed() -> Option<Self> {
+    /// Resolve a portal from the enabled modules of the current, protected deployment.
+    /// An explicit DA browser overrides packaged origin and trust for that DA instance.
+    pub fn installed_for(
+        tenant: Uuid,
+        instance: Option<Uuid>,
+        origin: Option<&str>,
+    ) -> Option<Self> {
         let path = installation_security::deployment_path().ok()?;
         let bytes = installation_security::read_protected(&path).ok()?;
-        let d: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+        let d = serde_json::from_slice(&bytes).ok()?;
+        Self::from_deployment(
+            &d,
+            tenant,
+            instance,
+            origin,
+            option_env!("RSS_BUILD_EMPLOYEE_PORTAL"),
+        )
+    }
+    fn from_deployment(
+        d: &serde_json::Value,
+        tenant: Uuid,
+        instance: Option<Uuid>,
+        origin: Option<&str>,
+        package: Option<&str>,
+    ) -> Option<Self> {
         if d["version"].as_u64() != Some(u64::from(crate::host::DEPLOYMENT_VERSION))
             || d["ipc_version"].as_u64() != Some(u64::from(crate::host::IPC_VERSION))
-            || d["modules"]["da"]["state"] != "enabled"
         {
             return None;
         }
-        let da = &d["modules"]["da"]["backend"];
-        let browser = match da.get("browser").filter(|b| !b.is_null()) {
-            Some(b) => Some((b["origin"].as_str()?, b["ca_pem"].as_str())),
-            None => None,
-        };
-        Self::configured(
-            serde_json::from_value(da["tenant"].clone()).ok()?,
-            serde_json::from_value(da["instance"].clone()).ok()?,
-            browser,
-        )
-        .ok()
-        .flatten()
+        for kind in ["da", "mdm"] {
+            let module = &d["modules"][kind];
+            let backend = &module["backend"];
+            if module["state"] != "enabled" || backend["tenant"] != serde_json::json!(tenant) {
+                continue;
+            }
+            let id: Uuid = serde_json::from_value(backend["instance"].clone()).ok()?;
+            if instance.is_some_and(|v| v != id) {
+                continue;
+            }
+            let browser = if kind == "da" && !backend["browser"].is_null() {
+                Some((
+                    backend["browser"]["origin"].as_str()?,
+                    backend["browser"]["ca_pem"].as_str(),
+                ))
+            } else {
+                None
+            };
+            let Some(portal) = Self::resolve(tenant, id, browser, package).ok()? else {
+                continue;
+            };
+            if (kind == "da" || !portal.dedicated()) && origin.is_none_or(|v| v == portal.origin) {
+                return Some(portal);
+            }
+        }
+        None
     }
     /// Resolve employee login independently of the device listener or other enabled modules.
     /// A device-only profile has no employee portal.
@@ -309,18 +393,32 @@ impl EmployeePortal {
             .transpose()
             .map_err(|_| Rejected)?;
         if let Some(p) = &mut package {
+            if p.application.as_ref().is_some_and(|app| !app.valid())
+                || p.recovery_return_target.as_ref().is_some_and(|v| {
+                    v.is_empty()
+                        || v.len() > 128
+                        || !v
+                            .bytes()
+                            .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
+                })
+            {
+                return Err(Rejected);
+            }
             p.origin = Self::origin(&p.origin).ok_or(Rejected)?;
         }
         let Some((origin, ca)) = browser else {
             return Ok(package.filter(|p| (p.tenant, p.instance) == (tenant, instance)));
         };
         let origin = Self::origin(origin).ok_or(Rejected)?;
-        let product = match package.filter(|p| p.origin == origin && p.tenant == tenant) {
-            Some(p) if p.instance != instance => return Err(Rejected),
-            Some(p) => p.product,
-            None => PortalProduct::Da,
-        };
+        let (product, application, recovery_return_target) =
+            match package.filter(|p| p.origin == origin && p.tenant == tenant) {
+                Some(p) if p.instance != instance => return Err(Rejected),
+                Some(p) => (p.product, p.application, p.recovery_return_target),
+                None => (PortalProduct::Da, None, None),
+            };
         Ok(Some(Self {
+            recovery_return_target,
+            application,
             product,
             origin,
             instance,
@@ -351,6 +449,28 @@ impl EmployeePortal {
 mod portal_tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn current_da_trust_and_rp_follow_only_the_configured_issuer() {
+        let tenant = Uuid::new_v4();
+        let da = Uuid::new_v4();
+        let mdm = Uuid::new_v4();
+        let package = json!({"product":"da","tenant":tenant,"instance":da,"origin":"https://old.test","ca_pem":"old",
+            "application":{"relyingParty":"employee","launchUrl":"https://employee.test/"},"recovery_return_target":"portal"}).to_string();
+        let mut d = json!({"version":crate::host::DEPLOYMENT_VERSION,"ipc_version":crate::host::IPC_VERSION,"modules":{
+            "mdm":{"state":"enabled","backend":{"tenant":tenant,"instance":mdm}},
+            "da":{"state":"enabled","backend":{"tenant":tenant,"instance":da,"browser":{"origin":"https://old.test","ca_pem":"current"}}}}});
+        let read = |d: &serde_json::Value, id: Uuid| {
+            EmployeePortal::from_deployment(d, tenant, Some(id), None, Some(&package))
+        };
+        assert!(read(&d, mdm).is_none());
+        let p = read(&d, da).unwrap();
+        assert!(p.application.is_some());
+        assert_eq!(p.ca_pem.as_deref(), Some("current"));
+        d["modules"]["da"]["backend"]["browser"]["origin"] = json!("https://new.test");
+        let p = read(&d, da).unwrap();
+        assert!(p.application.is_none() && p.recovery_return_target.is_none());
+        assert_eq!(p.origin, "https://new.test");
+    }
     #[test]
     fn employee_portal_belongs_to_one_instance_regardless_of_coinstalled_modules() {
         let tenant = Uuid::new_v4();

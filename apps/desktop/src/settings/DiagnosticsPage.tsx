@@ -62,6 +62,13 @@ export function DiagnosticsPage({
       <div className="rss-stack">
         <SectionCard title="本机服务">
           {registration && <ServiceStatus owner={registration} />}
+          {workspace.deviceAccess && (
+            <Button
+              onClick={() => workspace.navigation.select("settings", "account")}
+            >
+              查看本机登录状态与本人恢复
+            </Button>
+          )}
           <div className="rss-setting-row">
             <span>
               <strong>AI Host</strong>
@@ -201,6 +208,28 @@ function ServiceStatus({
       mismatch: "版本或主体不匹配",
       connected: "已连接",
     };
+  const sample =
+    state.service?.phase === "connected"
+      ? state.service.status.installation
+      : null;
+  const registered = new Map(
+    Object.entries({
+      registered: "已有注册回执",
+      unregistered: "待注册",
+      expired: "注册凭据已过期",
+      revoked: "注册已撤销",
+      unknown: "注册状态未知",
+    }),
+  );
+  const applied = new Map(
+    Object.entries({
+      unknown: "结果未知",
+      received: "已受理",
+      pending: "处理中",
+      applied: "已应用",
+      rejected: "已拒绝",
+    }),
+  );
   return (
     <>
       <div className="rss-setting-row">
@@ -216,6 +245,47 @@ function ServiceStatus({
           {state.service ? labels[state.service.phase] : "尚未读取"}
         </Tag>
       </div>
+      {sample && (
+        <div className="rss-setting-row">
+          <span>
+            <strong>本机模块</strong>
+            {(
+              [
+                ["设备访问", sample.modules.da, sample.daRegistration],
+                ["设备管理", sample.modules.mdm, sample.mdmRegistration],
+              ] as const
+            ).map(([name, value, registration]) => {
+              return (
+                <small key={name}>
+                  {name} ·{" "}
+                  {value.installed === true
+                    ? "已安装"
+                    : value.installed === false
+                      ? "缺少组件"
+                      : "安装状态未知"}{" "}
+                  ·{" "}
+                  {value.enabled === true
+                    ? "已启用"
+                    : value.enabled === false
+                      ? "未启用"
+                      : "启用状态未知"}{" "}
+                  · {registered.get(registration)}
+                </small>
+              );
+            })}
+            {sample.applicationFailure && (
+              <small>配置应用失败 · {sample.applicationFailure}</small>
+            )}
+            <small>
+              安装配置{applied.get(sample.modules.application)} · 系统服务于{" "}
+              {new Date(sample.observedAt * 1000).toLocaleString()} 读取
+            </small>
+          </span>
+        </div>
+      )}
+      {!sample && (
+        <small>尚无本机模块观察。可重新连接设备系统服务后刷新。</small>
+      )}
       {state.serviceError && (
         <Alert type="warning" title={state.serviceError} />
       )}

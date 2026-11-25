@@ -61,6 +61,14 @@ impl Case {
             definition["dataset"] = serde_json::json!("channel.mdm.enrollment");
             definition["fields"] = serde_json::json!([definition["fields"][0].clone()]);
             definition["fields"][0]["key"] = serde_json::json!("channel.mdm.enrollment");
+            let flag = serde_json::json!({"valueType":{"kind":"boolean"},"required":false});
+            let module =
+                serde_json::json!({"kind":"record","properties":{"installed":flag,"enabled":flag}});
+            let mut field = definition["fields"][0].clone();
+            field["key"] = serde_json::json!("channel.client.modules");
+            field["valueType"] = serde_json::json!({"kind":"object","properties":{"da":module,"mdm":module,
+                "application":{"kind":"string","maxLength":32,"allowEmpty":false}}});
+            definition["fields"].as_array_mut().unwrap().push(field);
             collections.push(serde_json::from_value(definition).unwrap());
             server.data.lock().unwrap().collections = Some(collections);
         }
@@ -3942,11 +3950,22 @@ async fn full_report_queue_after_restart_drains_before_retrying_native_observati
         .values()
         .find(|r| r["collection"]["dataset"] == "channel.mdm.enrollment")
         .unwrap();
+    let values = latest["body"]["values"].as_array().unwrap();
+    let fact = |name: &str| {
+        &values.iter().find(|v| v["field"] == name).unwrap()["value"]["value"]["value"]
+    };
     assert_eq!(
-        latest["body"]["values"][0]["value"]["value"]["value"],
+        fact("channel.mdm.enrollment"),
         service.core.mdm.state.as_str()
     );
-    assert_eq!(service.core.mdm_reported, Some(service.core.mdm.state));
+    let observed = fact("channel.client.modules");
+    assert_eq!(observed["application"]["value"], "unknown");
+    assert_eq!(observed["da"]["value"], serde_json::json!({}));
+    assert_eq!(observed["mdm"]["value"], serde_json::json!({}));
+    assert_eq!(
+        service.core.mdm_reported.map(|(_, _, state, _)| state),
+        Some(service.core.mdm.state)
+    );
 }
 
 #[tokio::test]

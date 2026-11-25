@@ -33,6 +33,10 @@ export interface ServiceStatus {
    */
   build: string;
   /**
+   * Installation owner readback, absent when observation is unavailable.
+   */
+  installation?: InstallationObservation | null;
+  /**
    * Native service platform.
    */
   platform: string;
@@ -56,6 +60,75 @@ export interface ServiceStatus {
   telemetry?: {
     [k: string]: unknown;
   };
+}
+/**
+ * Non-authorizing observations sampled by the protected installation service.
+ */
+export interface InstallationObservation {
+  /**
+   * Closed diagnostic from the installation profile journal, if the operation failed.
+   */
+  applicationFailure?: string | null;
+  /**
+   * The DA store's last confirmed registration state.
+   */
+  daRegistration:
+    | "registered"
+    | "unregistered"
+    | "expired"
+    | "revoked"
+    | "unknown";
+  /**
+   * The MDM agent store's last confirmed registration state.
+   */
+  mdmRegistration:
+    | "registered"
+    | "unregistered"
+    | "expired"
+    | "revoked"
+    | "unknown";
+  modules: ClientModules;
+  /**
+   * Device observation time, UTC seconds.
+   */
+  observedAt: number;
+}
+/**
+ * Installed shared service, administrator selection and profile operation outcome.
+ */
+export interface ClientModules {
+  /**
+   * Installation-profile outcome, independent of native login readiness.
+   */
+  application: "unknown" | "received" | "pending" | "applied" | "rejected";
+  da: ModuleObservation;
+  mdm: ModuleObservation1;
+}
+/**
+ * Device Access installation and enablement.
+ */
+export interface ModuleObservation {
+  /**
+   * Administrator's local module selection.
+   */
+  enabled?: boolean | null;
+  /**
+   * Installed components observed on disk.
+   */
+  installed?: boolean | null;
+}
+/**
+ * MDM installation and enablement.
+ */
+export interface ModuleObservation1 {
+  /**
+   * Administrator's local module selection.
+   */
+  enabled?: boolean | null;
+  /**
+   * Installed components observed on disk.
+   */
+  installed?: boolean | null;
 }
 
 /**

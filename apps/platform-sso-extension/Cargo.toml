@@ -10,6 +10,7 @@ publish = false
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
+base64 = "=0.23.1"
 platform-sso = { path = "../../crates/platform-sso" }
 execution-ipc = { path = "../../crates/execution-ipc" }
 rss-mdm-agent-wire.workspace = true

@@ -49,6 +49,9 @@ impl AccountRoutes {
         self.da.as_ref() == Some(generation)
             || self.mdm.as_ref().is_some_and(|(_, g)| g == generation)
     }
+    fn employee_route(&self, generation: &execution_contract::Id) -> bool {
+        self.da.as_ref() == Some(generation)
+    }
     fn reserve(&mut self) -> Result<u64, Error> {
         self.issued = self.issued.checked_add(1).ok_or(Error::Capacity)?;
         Ok(self.issued)
@@ -296,7 +299,7 @@ impl Endpoint {
             request,
             Request::PlatformSso { .. }
                 | Request::DeviceAccess {
-                    input: execution_ipc::device_access::Operation::MacStatus {},
+                    input: AccountOp::MacStatus {} | AccountOp::OpenApplication { .. },
                     ..
                 }
         ) {
@@ -326,7 +329,11 @@ impl Endpoint {
             },
             Request::DeviceAccess {
                 origin: execution_ipc::host::ClientOrigin::Desktop {},
-                input: AccountOp::MacStatus {} | AccountOp::Tasks {},
+                input:
+                    AccountOp::MacStatus {}
+                    | AccountOp::Tasks {}
+                    | AccountOp::OwnBindings {}
+                    | AccountOp::OpenApplication { .. },
                 ..
             } => peer.authenticate(&d.registration_clients).ok(),
             Request::BindContext { value, .. } => {
@@ -348,17 +355,34 @@ impl Endpoint {
         let (Some(subject), Ok(binding)) = (subject, peer.session_binding()) else {
             return Some(Err(Reply::Rejected));
         };
-        if let Request::DeviceAccess {
-            context,
-            input: AccountOp::Tasks {},
-            ..
-        } = request
-        {
-            if d.modules.mdm.enabled() {
-                match self.fence.routes.lock() {
-                    Ok(routes) if !routes.targets(&context.generation) => return None,
+        if let Request::DeviceAccess { context, input, .. } = request {
+            if d.modules.mdm.enabled()
+                && matches!(
+                    input,
+                    AccountOp::Tasks {}
+                        | AccountOp::OwnBindings {}
+                        | AccountOp::OpenApplication { .. }
+                )
+            {
+                let tasks = matches!(input, AccountOp::Tasks {});
+                let active = match self.fence.routes.lock() {
+                    Ok(routes) if tasks => routes.targets(&context.generation),
+                    Ok(routes) => routes.employee_route(&context.generation),
                     Err(_) => return Some(Err(Reply::Unavailable)),
-                    _ => (),
+                };
+                if !active
+                    || (!tasks
+                        && !crate::da_service::status(d)
+                            .ok()
+                            .flatten()
+                            .is_some_and(|s| s.credential == da::RegistrationState::Registered))
+                {
+                    // The PSSO owner was already resolved for a launch. No other issuer can sign for it.
+                    return if matches!(input, AccountOp::OpenApplication { .. }) {
+                        Some(Err(Reply::Unavailable))
+                    } else {
+                        None
+                    };
                 }
             }
         }
@@ -590,6 +614,50 @@ impl Worker {
                             AccountReply::Prepared {}
                         }
                         _ => return Err(Error::Denied),
+                    };
+                    Ok(Reply::DeviceAccess { value })
+                }
+                Some(Request::DeviceAccess {
+                    context,
+                    input: input @ (AccountOp::OwnBindings {} | AccountOp::OpenApplication { .. }),
+                    ..
+                }) => {
+                    let bound = self.bound.as_ref().ok_or(Error::Identity)?;
+                    if bound.principal.is_none() || !bound.permits(&command, context, &self.fence) {
+                        return Err(Error::Identity);
+                    }
+                    let proof = bound.current.credential()?;
+                    let directory = client.operations()?.employee_bindings(&proof).await?;
+                    if !bound.permits(&command, context, &self.fence) {
+                        return Err(Error::Identity);
+                    }
+                    let backend = d.modules.da.backend()?;
+                    let employee = rss_mdm_agent_wire::runtime::SelfServiceUser {
+                        principal_id: bound.principal.ok_or(Error::Identity)?,
+                        tenant_id: backend.tenant,
+                        instance_id: backend.instance,
+                    };
+                    let rows = crate::service::access::own_bindings(
+                        directory,
+                        &command.subject,
+                        &employee,
+                    )?;
+                    let value = if let AccountOp::OpenApplication { binding } = input {
+                        let current = bound.current.clone();
+                        let epoch = self.fence.epoch.clone();
+                        let expected = bound.epoch;
+                        super::broker::select(
+                            rows,
+                            *binding,
+                            crate::service::login_binding_id(&bound.binding),
+                            &employee,
+                            move || {
+                                current.credential().is_ok()
+                                    && epoch.lock().is_ok_and(|v| *v == expected)
+                            },
+                        )?
+                    } else {
+                        rows
                     };
                     Ok(Reply::DeviceAccess { value })
                 }
@@ -830,7 +898,7 @@ impl Da<'_> {
                 }
                 let operations = self.client.operations()?;
                 let (directory, selected) =
-                    tokio::try_join!(operations.mac_bindings(proof), self.selected())?;
+                    tokio::try_join!(operations.employee_bindings(proof), self.selected())?;
                 Ok::<_, Error>(Some((directory, selected)))
             })
         );
@@ -881,6 +949,9 @@ fn admit_existing(
     directory: &wire::AccessDirectory,
     recheck: impl FnOnce() -> Result<(), Error>,
 ) -> Result<(), Error> {
+    if directory.device_id != id.device_id {
+        return Err(Error::Identity);
+    }
     let _lock = state::lock(root)?;
     let old = state::read_optional::<::platform_sso::LocalBinding>(root, &binding_name(&account)?)?;
     if let Some(mut old) = old.filter(|b| {
@@ -897,6 +968,7 @@ fn admit_existing(
         }) {
             old.enabled = false;
             old.revision = revoked.revision;
+            old.definition_digest = revoked.definition_digest;
             old.binding_generation = revoked.binding_generation;
             save_binding(root, &old)?;
         }
@@ -918,6 +990,8 @@ fn admit_existing(
     save_binding(
         root,
         &::platform_sso::LocalBinding {
+            definition_digest: found.definition_digest,
+            required_role: found.configuration.role,
             authority: w::RegistrationTrust::DaDevicePop,
             installation: id.service_id,
             tenant: id.tenant,
@@ -1191,10 +1265,12 @@ mod tests {
         routes.mdm_reply(delayed, &old, &bound(&old)).unwrap();
         assert!(routes.targets(&current));
         assert!(!routes.targets(&old));
+        assert!(!routes.employee_route(&current));
         assert!(routes.mdm_reply(rejected, &old, &bound(&current)).is_err());
         assert!(routes.targets(&current));
         routes.da = Some(old.clone());
         assert!(routes.targets(&current) && routes.targets(&old));
+        assert!(routes.employee_route(&old) && !routes.employee_route(&current));
     }
 
     #[test]
@@ -1260,6 +1336,8 @@ mod tests {
                 enabled: true,
             };
             let binding = wire::AccessBindingStatus {
+                operation_id: Uuid::new_v4(),
+                definition_digest: [4; 32],
                 account_disposition: wire::AccessAccountDisposition::Keep,
                 id: Uuid::new_v4(),
                 binding_generation: 1,
@@ -1273,6 +1351,7 @@ mod tests {
                 effect: None,
             };
             let mut directory = wire::AccessDirectory {
+                device_id: id.device_id,
                 policies: vec![],
                 next_cursor: None,
                 bindings: vec![binding.clone()],

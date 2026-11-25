@@ -23,6 +23,8 @@ pub struct DesktopRuntime {
     pub(super) diagnostics: super::diagnostics::Store,
     pub users: Arc<std::sync::Mutex<super::users::Users>>,
     switching: Mutex<()>,
+    pub(super) employee_directory: std::path::PathBuf,
+    employee_window: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>,
     registration_epoch: AtomicU64,
     pub organizations: std::sync::Mutex<super::account::Organizations>,
     identity: super::identity::IdentityOwner,
@@ -91,6 +93,8 @@ impl DesktopRuntime {
             identity: super::identity::IdentityOwner::new(users.clone()),
             users,
             switching: Mutex::new(()),
+            employee_directory: root.to_owned(),
+            employee_window: Default::default(),
             registration_epoch: AtomicU64::new(0),
             organizations: std::sync::Mutex::new(
                 super::account::Organizations::open(root, super::account::bundled_organization()?)
@@ -147,6 +151,42 @@ impl DesktopRuntime {
             }
         }
         self.host.launch(&self.execution, self.master.clone()).await
+    }
+    /// Admission and submission share the account-switch lock with logout.
+    pub(super) async fn employee_guard(
+        &self,
+        generation: &str,
+    ) -> ui::Result<tokio::sync::MutexGuard<'_, ()>> {
+        let guard = self.switching.lock().await;
+        self.current_locked(generation)?;
+        Ok(guard)
+    }
+    pub(super) fn own_employee_window(
+        &self,
+        close: impl FnOnce() + Send + 'static,
+    ) -> ui::Result<()> {
+        *self.employee_window.lock().map_err(|_| unavailable())? = Some(Box::new(close));
+        Ok(())
+    }
+    pub(super) fn close_employee_window(&self) -> ui::Result<()> {
+        if let Some(close) = self
+            .employee_window
+            .lock()
+            .map_err(|_| unavailable())?
+            .take()
+        {
+            close();
+        }
+        Ok(())
+    }
+    pub(super) fn employee_session(
+        &self,
+        generation: &str,
+    ) -> ui::Result<super::account::EnterpriseSession> {
+        self.current_locked(generation)?;
+        self.identity
+            .session()?
+            .ok_or_else(|| ui::error("employee_login", "请先登录企业账号"))
     }
     pub fn current(&self, generation: &str) -> ui::Result<ai_session_contract::UserContext> {
         self.current_locked(generation)
@@ -258,6 +298,7 @@ impl DesktopRuntime {
         Ok(())
     }
     async fn revoke_locked(&self) -> ui::Result<()> {
+        self.close_employee_window()?;
         self.diagnostics.invalidate();
         let previous = self.identity.snapshot().ok();
         let cleared = self.users.lock().map_err(|_| unavailable())?.clear();

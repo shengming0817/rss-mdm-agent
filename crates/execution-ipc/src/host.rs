@@ -24,10 +24,44 @@ pub enum Readiness {
     /// Existing state must be inspected; it must not be reset or re-registered.
     NotReady,
 }
+/// Non-authorizing observations sampled by the protected installation service.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct InstallationObservation {
+    /// The DA store's last confirmed registration state.
+    pub da_registration: RegistrationObservation,
+    /// The MDM agent store's last confirmed registration state.
+    pub mdm_registration: RegistrationObservation,
+    /// Closed diagnostic from the installation profile journal, if the operation failed.
+    pub application_failure: Option<String>,
+    /// Device observation time, UTC seconds.
+    pub observed_at: i64,
+    /// Installed shared service, administrator selection and profile operation outcome.
+    pub modules: rss_mdm_agent_wire::da::ClientModules,
+}
+
+/// Last local registration receipt. Connectivity and OS login effects are independent.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum RegistrationObservation {
+    /// A confirmed activation receipt is present.
+    Registered,
+    /// No activation receipt has been committed.
+    Unregistered,
+    /// The registered credential has expired.
+    Expired,
+    /// A confirmed withdrawal is present.
+    Revoked,
+    /// The store is unavailable or the module is disabled.
+    Unknown,
+}
+
 /// Safe statement from the authenticated production owner.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceStatus {
+    /// Installation owner readback, absent when observation is unavailable.
+    pub installation: Option<InstallationObservation>,
     /// Bounded local telemetry health; diagnostic values grant no authority.
     pub telemetry: Option<serde_json::Value>,
     /// Actual binary build version.
@@ -46,6 +80,7 @@ impl ServiceStatus {
             build: env!("CARGO_PKG_VERSION").into(),
             protocol: IPC_VERSION,
             telemetry: None,
+            installation: None,
             platform: std::env::consts::OS.into(),
             readiness,
         }

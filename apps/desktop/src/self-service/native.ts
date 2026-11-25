@@ -122,6 +122,19 @@ export type DeviceAccessPort = (
   input: import("./types").SelfServiceCommands["device_access"]["input"],
 ) => Promise<import("./types").SelfServiceCommands["device_access"]["output"]>;
 
+export async function nativeEmployeeChange(
+  input: import("./types").SelfServiceCommands["employee_change"]["input"],
+) {
+  const generation = userGeneration();
+  return currentResult(
+    generation,
+    invoke<import("./types").SelfServiceCommands["employee_change"]["output"]>(
+      "employee_change",
+      { generation, input },
+    ),
+  );
+}
+
 /** Bound to the same native employee generation as the other desktop operations. */
 export function nativeDeviceAccessPort(): DeviceAccessPort | null {
   if (!isTauri()) return null;

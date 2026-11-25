@@ -48,6 +48,15 @@ impl Session {
             }
         });
     }
+    pub fn credential(&self) -> Result<Zeroizing<String>, Error> {
+        self.active
+            .lock()
+            .map_err(|_| Error::Storage)?
+            .as_ref()
+            .filter(|a| a.expires > crate::wall().unwrap_or(u64::MAX))
+            .and_then(|a| a.proof.clone())
+            .ok_or(Error::Identity)
+    }
     pub fn same(&self, proof: Option<&Zeroizing<String>>) -> bool {
         self.active
             .lock()

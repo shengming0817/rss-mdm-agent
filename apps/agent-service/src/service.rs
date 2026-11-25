@@ -339,6 +339,7 @@ impl<S: IdentityProvider> DeviceService<S> {
                     observed_at: None,
                 },
                 mdm_reported: None,
+                installation_observation: None,
                 contexts: Default::default(),
                 current_user_context: None,
                 fences,
@@ -623,27 +624,7 @@ impl<S: IdentityProvider> DeviceService<S> {
             }
         }
         self.recovering = false;
-        if let Some(observed_at) = self.core.mdm.observed_at {
-            if self.core.mdm_reported != Some(self.core.mdm.state)
-                && self
-                    .client
-                    .registration()?
-                    .collections
-                    .iter()
-                    .any(|c| c.dataset() == "channel.mdm.enrollment")
-            {
-                let body = serde_json::from_value(serde_json::json!({"kind":"snapshot","values":[{"field":"channel.mdm.enrollment","value":{"kind":"value","value":{"kind":"string","value":self.core.mdm.state.as_str()}}}]})).map_err(|_| Error::Protocol)?;
-                match self
-                    .client
-                    .queue_report("channel.mdm.enrollment", body, observed_at)
-                {
-                    Ok(_) => self.core.mdm_reported = Some(self.core.mdm.state),
-                    // Retain the latest observation, but never make production capacity block ACK consumption.
-                    Err(Error::Capacity) => {}
-                    Err(error) => return Err(error),
-                }
-            }
-        }
+        self.queue_channel_observation()?;
         #[cfg(windows)]
         {
             let mut offline =
@@ -1266,6 +1247,67 @@ impl<S: IdentityProvider> DeviceService<S> {
             completion,
         })
     }
+    fn queue_channel_observation(&mut self) -> Result<(), Error> {
+        let Some(at) = self.core.mdm.observed_at else {
+            return Ok(());
+        };
+        let registration = self.client.registration()?;
+        let Some(definition) = registration
+            .collections
+            .iter()
+            .find(|c| c.dataset() == "channel.mdm.enrollment")
+        else {
+            return Ok(());
+        };
+        let modules = self
+            .core
+            .installation_observation
+            .as_ref()
+            .map(|o| o.modules);
+        let state = self.core.mdm.state;
+        if self
+            .core
+            .mdm_reported
+            .is_some_and(|(epoch, last, previous, m)| {
+                epoch == registration.epoch
+                    && previous == state
+                    && m == modules
+                    && at.saturating_sub(last) < 300
+            })
+        {
+            return Ok(());
+        }
+        let mut values = Vec::new();
+        for field in definition.fields() {
+            let value = match field.key.as_str() {
+                "channel.mdm.enrollment" => wire::Scalar::String(state.as_str().to_owned()),
+                "channel.client.modules" => {
+                    let json = serde_json::to_value(modules.unwrap_or_default())
+                        .map_err(|_| Error::Protocol)?;
+                    crate::collection_projection::scalar(&field.value_type, &json, 0)?
+                }
+                _ => continue,
+            };
+            values.push(wire::FieldValue {
+                field: field.key,
+                value: wire::CollectedValue::Value(value),
+            });
+        }
+        if values.is_empty() {
+            return Ok(());
+        }
+        let body = if values.len() == definition.fields().len() {
+            wire::ReportBody::Snapshot(values)
+        } else {
+            wire::ReportBody::Partial(values)
+        };
+        match self.client.queue_report(definition.dataset(), body, at) {
+            Ok(_) => self.core.mdm_reported = Some((registration.epoch, at, state, modules)),
+            Err(Error::Capacity) => (),
+            Err(error) => return Err(error),
+        }
+        Ok(())
+    }
     async fn observe_mdm(
         &mut self,
         commands: &mut tokio::sync::mpsc::Receiver<Command>,
@@ -1284,6 +1326,10 @@ impl<S: IdentityProvider> DeviceService<S> {
                 commands,
             )
             .await?;
+            self.core.installation_observation = self
+                .installation
+                .as_ref()
+                .and_then(crate::installation::observation);
             self.core.mdm = execution_ipc::host::MdmStatus {
                 state: observed,
                 observed_at: Some(now),
@@ -1440,7 +1486,13 @@ pub(crate) struct Core {
     pub(crate) recovery_cursor: Option<RequestId>,
     pub(crate) mdm: execution_ipc::host::MdmStatus,
     filevault: Option<execution_contract::FilevaultState>,
-    mdm_reported: Option<wire::MdmEnrollmentState>,
+    mdm_reported: Option<(
+        uuid::Uuid,
+        i64,
+        wire::MdmEnrollmentState,
+        Option<rss_mdm_agent_wire::da::ClientModules>,
+    )>,
+    installation_observation: Option<execution_ipc::host::InstallationObservation>,
     contexts: policy::Contexts,
     // Last explicit authenticated login, independent of remote projection acknowledgement.
     current_user_context: Option<agent_client::current_user::Owner>,
@@ -1963,6 +2015,7 @@ impl Core {
                     Ok(Reply::ServiceStatus {
                         value: {
                             let mut value = execution_ipc::host::ServiceStatus::new(readiness);
+                            value.installation = self.installation_observation.clone();
                             value.telemetry = self.telemetry.as_ref().map(|t| t.summary.clone());
                             value
                         },

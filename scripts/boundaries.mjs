@@ -71,6 +71,7 @@ const compositionCommands = [
   ...new Set([...selfServiceCommands, ...assistantCommands]),
   ...userCommands,
   ...settingsCommands,
+  "employee_change",
   "appearance_snapshot",
   "navigation",
   "device_overview",
@@ -84,7 +85,10 @@ const nativeAdapters = new Map([
   ["apps/desktop/src/appearance.ts", ["appearance_snapshot"]],
   ["apps/desktop/src/settings/native.ts", settingsCommands],
   ["apps/desktop/src/test-users.ts", userCommands],
-  ["apps/desktop/src/self-service/native.ts", selfServiceCommands],
+  [
+    "apps/desktop/src/self-service/native.ts",
+    [...selfServiceCommands, "employee_change"],
+  ],
   ["apps/desktop/src/assistant/native.ts", assistantCommands],
 ]);
 const uiDependencies = {
@@ -987,6 +991,7 @@ export function checkTree(treeRoot = root, executable) {
         'execution-app = { path = "../../../crates/execution-app", features = ["test-support"] }',
         'execution-ipc = { path = "../../../crates/execution-ipc" }',
         'execution-interaction = { path = "../../../crates/execution-interaction" }',
+        "[dev-dependencies] jsonschema.workspace = true",
         "rusqlite.workspace = true",
         'execution-sqlite = { path = "../../../crates/execution-sqlite", features = ["test-support"] }',
         'execution-mcp = { path = "../../../crates/execution-mcp" }',
@@ -1026,23 +1031,25 @@ export function checkTree(treeRoot = root, executable) {
       ],
     ],
   ]) {
-    let dependencySection = false;
+    let section = "";
     const dependencies = [];
     for (const line of read(path)
       .split("\n")
       .map((s) => s.replace(/#.*$/, "").trim())
       .filter(Boolean)) {
       if (line.startsWith("[")) {
-        dependencySection = /dependencies/.test(line);
+        section = line;
         if (/patch|replace/.test(line))
           errors.push(`${path}: unexpected host dependency override`);
       } else if (
-        dependencySection &&
+        /dependencies/.test(section) &&
         (path !== "Cargo.toml" || /^tauri(?:-build)?\s*=/.test(line))
       ) {
         // Root workspace dependencies are shared declarations. Only the two
         // inherited desktop dependencies belong to this presentation boundary.
-        dependencies.push(line);
+        dependencies.push(
+          /^jsonschema\b/.test(line) ? `${section} ${line}` : line,
+        );
       }
     }
     if (

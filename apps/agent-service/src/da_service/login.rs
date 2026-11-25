@@ -49,6 +49,8 @@ struct State {
     employee: Option<Employee>,
     offers: BTreeMap<Uuid, Offer>,
     checking: Option<Check>,
+    directory: Option<(Instant, mpsc::Receiver<Result<Response, Error>>)>,
+    lookup: Option<(Employee, mpsc::SyncSender<Result<Response, Error>>)>,
     mdm_tasks: Option<(u64, Instant, Vec<SetupTask>)>,
 }
 struct Offer {
@@ -74,6 +76,8 @@ impl State {
             o.password = None;
         }
         self.checking = None;
+        self.directory = None;
+        self.lookup = None;
     }
     fn logout(&mut self) {
         self.clear_setup();
@@ -83,6 +87,7 @@ impl State {
 pub(super) struct Login {
     deployment: Deployment,
     portal: Option<EmployeePortal>,
+    pub(super) registered: AtomicBool,
     state: Mutex<State>,
     verifier: mpsc::SyncSender<Verify>,
     pub(super) wake: tokio::sync::Notify,
@@ -108,6 +113,7 @@ impl Login {
         Ok(Self {
             deployment: d.clone(),
             portal,
+            registered: AtomicBool::new(false),
             state: Mutex::default(),
             other,
             verifier,
@@ -164,6 +170,35 @@ impl Login {
             result: rx,
         });
         Ok(false)
+    }
+    /// All device HTTP uses the active DA worker and its current certificate.
+    pub(super) async fn read_directory(
+        &self,
+        client: &da::Client<DeviceSecrets, SystemClock>,
+    ) -> Result<(), Error> {
+        let job = self.state.lock().map_err(|_| Error::Storage)?.lookup.take();
+        if let Some((employee, sender)) = job {
+            let result = async {
+                Self::verify(self.portal.as_ref(), &employee).await?;
+                let ops = client.operations()?;
+                let d = ops.employee_bindings(&employee.credential).await?;
+                let state = self.state.lock().map_err(|_| Error::Storage)?;
+                if !employee.current()
+                    || !state.employee.as_ref().is_some_and(|e| {
+                        e.context == employee.context
+                            && e.binding == employee.binding
+                            && e.identity == employee.identity
+                            && e.credential == employee.credential
+                    })
+                {
+                    return Err(Error::Identity);
+                }
+                crate::service::access::own_bindings(d, &employee.subject, &employee.identity)
+            }
+            .await;
+            let _ = sender.send(result);
+        }
+        Ok(())
     }
     fn store(&self) -> Result<Store, Error> {
         Store::open(
@@ -440,6 +475,7 @@ impl Login {
         if !matches!(
             input,
             Operation::Tasks {}
+                | Operation::OwnBindings {}
                 | Operation::WindowsStatus {}
                 | Operation::Prepare { .. }
                 | Operation::ConfirmFactor { .. }
@@ -456,6 +492,31 @@ impl Login {
             || !e.current()
         {
             return Ok(None);
+        }
+        if matches!(input, Operation::OwnBindings {}) {
+            if !self.registered.load(Ordering::Acquire) {
+                return Ok(None);
+            }
+            if let Some((start, rx)) = &s.directory {
+                match rx.try_recv() {
+                    Ok(result) => {
+                        s.directory = None;
+                        return Ok(Some(Reply::DeviceAccess { value: result? }));
+                    }
+                    Err(mpsc::TryRecvError::Empty) if start.elapsed() < Duration::from_secs(12) => {
+                        return Ok(Some(Reply::DaVerificationPending {}))
+                    }
+                    _ => {
+                        s.directory = None;
+                        return Err(Error::Unavailable);
+                    }
+                }
+            }
+            let (tx, rx) = mpsc::sync_channel(1);
+            s.lookup = Some((e, tx));
+            s.directory = Some((Instant::now(), rx));
+            self.wake.notify_one();
+            return Ok(Some(Reply::DaVerificationPending {}));
         }
         let root = crate::access_worker::root(&self.deployment.execution);
         let installation = self.deployment.installation_id;

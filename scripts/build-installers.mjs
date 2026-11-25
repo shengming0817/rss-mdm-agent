@@ -22,10 +22,11 @@ import { runtimeTreeSha256 } from "./ai-host-artifacts.mjs";
 import { sourceEvidence } from "./native-evidence.mjs";
 import { msiSource, msixManifest } from "./windows-packages.mjs";
 import {
-  buildPlatformSso,
+  packagePlatformSso,
   containerEntitlements,
 } from "./build-platform-sso.mjs";
 import {
+  employeePortalConfiguration,
   organizationConfiguration,
   publicCa,
 } from "./desktop-organization.mjs";
@@ -72,7 +73,14 @@ if (format === "windows_msix" && !process.env.RSS_WINDOWS_PUBLISHER)
 const organization = JSON.parse(readFileSync(resolve(args[input + 1]), "utf8"));
 if (
   Object.keys(organization).some(
-    (key) => !["modules", "desktop"].includes(key),
+    (key) =>
+      ![
+        "modules",
+        "desktop",
+        "employeeApplication",
+        "employeeIssuer",
+        "recoveryReturnTarget",
+      ].includes(key),
   ) ||
   !organization.modules
 )
@@ -81,25 +89,19 @@ const defaults = organization.modules;
 const desktopConfiguration =
   organization.desktop ??
   (defaults.mdm?.state === "enabled" ? organizationConfiguration(root) : null);
+const employeePortal = employeePortalConfiguration(
+  organization,
+  desktopConfiguration,
+);
 if (desktopConfiguration?.ca_pem !== undefined)
   desktopConfiguration.ca_pem = publicCa(desktopConfiguration.ca_pem);
 const env = { ...process.env };
 delete env.RSS_BUILD_MDM_ORGANIZATION;
 delete env.RSS_BUILD_EMPLOYEE_PORTAL;
-if (desktopConfiguration) {
-  const product = defaults.mdm?.state === "enabled" ? "mdm" : "da";
-  const owner = defaults[product].backend;
-  if (desktopConfiguration.tenant?.toLowerCase() !== owner.tenant)
-    throw Error("Desktop and browser issuer must belong to the same tenant");
+if (desktopConfiguration)
   env.RSS_BUILD_MDM_ORGANIZATION = JSON.stringify(desktopConfiguration);
-  env.RSS_BUILD_EMPLOYEE_PORTAL = JSON.stringify({
-    product,
-    instance: owner.instance,
-    tenant: owner.tenant,
-    origin: desktopConfiguration.origin,
-    ca_pem: desktopConfiguration.ca_pem,
-  });
-}
+if (employeePortal)
+  env.RSS_BUILD_EMPLOYEE_PORTAL = JSON.stringify(employeePortal);
 // The outer build runner retains the worktree/target locks for this entire package build.
 // pnpm descendants do not inherit their descriptors and must not claim a borrowed lease.
 delete env._AGENT_BUILD_LEASE;
@@ -282,14 +284,11 @@ if (windows) {
   packagedRuntime = join(app, "Contents/Resources/ai-host-runtime");
   sign(app, undefined, "com.rss.mdmagent");
   const nativeExtensions = appleSigned(app);
-  psso =
-    nativeExtensions && desktopConfiguration
-      ? buildPlatformSso({
-          output: join(app, "Contents/PlugIns/RSSPlatformSSO.appex"),
-          identity: macosIdentity,
-          release: true,
-        })
-      : null;
+  psso = packagePlatformSso(nativeExtensions, employeePortal, {
+    output: join(app, "Contents/PlugIns/RSSPlatformSSO.appex"),
+    identity: macosIdentity,
+    release: true,
+  });
   assemblePasskeyHost({
     app,
     output: join(output, "passkey-container-entitlements.plist"),
@@ -357,7 +356,7 @@ const candidate = {
   platform_sso: psso
     ? {
         extension: image(psso.binary),
-        origin: desktopConfiguration.origin,
+        origin: psso.origin,
       }
     : null,
   version: 3,

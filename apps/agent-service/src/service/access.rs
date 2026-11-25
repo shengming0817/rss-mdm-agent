@@ -294,6 +294,40 @@ fn console(subject: &str, session: u32, binding: &execution_contract::Id) -> Res
         Err(Error::Unsupported)
     }
 }
+pub(crate) fn own_bindings(
+    directory: w::AccessDirectory,
+    subject: &str,
+    user: &w::SelfServiceUser,
+) -> Result<execution_ipc::device_access::Response, Error> {
+    let account = native_account(subject)?;
+    let bindings: Vec<_> = directory
+        .bindings
+        .into_iter()
+        .filter(|b| !b.revoked && b.account.as_ref() == Some(&account))
+        .collect();
+    let portal = execution_ipc::device_access::EmployeePortal::installed_for(
+        user.tenant_id,
+        Some(user.instance_id),
+        None,
+    );
+    let application_bindings = if cfg!(all(target_os = "macos", target_arch = "aarch64"))
+        && portal.is_some_and(|p| p.application.is_some())
+    {
+        bindings
+            .iter()
+            .filter(|b| super::platform_sso::broker::eligible(b))
+            .map(|b| b.id)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    Ok(execution_ipc::device_access::Response::OwnBindings {
+        application_bindings,
+        device: directory.device_id,
+        bindings,
+    })
+}
+
 fn native_account(subject: &str) -> Result<w::AccessAccount, Error> {
     #[cfg(windows)]
     {
@@ -388,7 +422,7 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
         #[cfg(windows)]
         if !matches!(
             input,
-            Op::WindowsStatus {} | Op::Directory { .. } | Op::Tasks {}
+            Op::WindowsStatus {} | Op::OwnBindings {} | Op::Directory { .. } | Op::Tasks {}
         ) {
             let native = device_access::windows::account::inspect(&owner.subject)
                 .map_err(|_| Error::Identity)?;
@@ -495,6 +529,29 @@ impl<S: agent_client::IdentityProvider> super::DeviceService<S> {
                 }
                 #[cfg(not(windows))]
                 return Err(Error::Unsupported);
+            }
+            Op::OwnBindings {} | Op::OpenApplication { .. } => {
+                let directory = super::network(
+                    self.client.access_directory(&proof, None),
+                    &mut self.core,
+                    commands,
+                )
+                .await?;
+                owner.validate(&self.core.access.fences)?;
+                let rows = own_bindings(directory, &owner.subject, &user)?;
+                if let Op::OpenApplication { binding } = input {
+                    let fences = self.core.access.fences.clone();
+                    let selected = owner.clone();
+                    super::platform_sso::broker::select(
+                        rows,
+                        *binding,
+                        super::login_binding_id(&owner.binding),
+                        &user,
+                        move || selected.validate(&fences).is_ok(),
+                    )?
+                } else {
+                    rows
+                }
             }
             Op::Directory { cursor } => Out::Directory(
                 super::network(

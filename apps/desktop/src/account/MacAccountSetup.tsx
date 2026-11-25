@@ -5,6 +5,14 @@ import type { DeviceAccessPort } from "../self-service/native";
 import type { SetupTask } from "../self-service/types";
 
 export function MacAccountSetup({ port }: { port: DeviceAccessPort }) {
+  type MacFacts = Extract<
+    Awaited<ReturnType<DeviceAccessPort>>,
+    { kind: "macStatus" }
+  >;
+  const [facts, setFacts] = useState<MacFacts | null>(null);
+  const [observed, setObserved] = useState(false);
+  const label = (value: boolean | null) =>
+    value == null ? "未知" : value ? "已确认" : "未就绪";
   const [tasks, setTasks] = useState<SetupTask[]>([]);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -39,6 +47,44 @@ export function MacAccountSetup({ port }: { port: DeviceAccessPort }) {
   }
   return (
     <SectionCard title="Mac 本地账号">
+      <Button
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          try {
+            const reply = await port({ kind: "macStatus" });
+            setFacts(reply.kind === "macStatus" ? reply : null);
+          } catch {
+            setFacts(null);
+          } finally {
+            setObserved(true);
+            setBusy(false);
+          }
+        }}
+      >
+        读取平台单点登录状态
+      </Button>
+      {observed &&
+        (facts ? (
+          <div>
+            <p>
+              系统扩展 {label(facts.extensionInstalled)} · 本机配置{" "}
+              {label(facts.nativeConfigurationMatches)} · 本机用户注册{" "}
+              {label(facts.nativeUserRegistered)}
+            </p>
+            <p>
+              服务端设备注册 {label(facts.deviceRegistered)} · 用户注册{" "}
+              {label(facts.userRegistered)} · 登录许可 {label(facts.loginReady)}
+            </p>
+            <p>
+              {facts.observedAt
+                ? `本机扩展观察于 ${new Date(facts.observedAt).toLocaleString()}`
+                : "暂无本机扩展观察时间"}
+            </p>
+          </div>
+        ) : (
+          <p>平台单点登录状态未知，可刷新本人绑定或重试。</p>
+        ))}
       <Button disabled={busy} onClick={() => void run()}>
         刷新建号任务
       </Button>

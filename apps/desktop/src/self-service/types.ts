@@ -2,6 +2,32 @@
 
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Change".
+ */
+export type Change = "reset_factors" | "repair_binding";
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Stage".
+ */
+export type Stage = "open" | "verify" | "submit" | "status" | "close";
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Output".
+ */
+export type Output =
+  | {
+      kind: "done";
+    }
+  | {
+      intent: Input | null;
+      kind: "stored";
+    }
+  | {
+      value: Progress;
+      kind: "progress";
+    };
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "NavigationOperation".
  */
 export type NavigationOperation =
@@ -1786,6 +1812,16 @@ export type Operation2 =
       kind: "openWindowsHello";
     }
   | {
+      kind: "ownBindings";
+    }
+  | {
+      /**
+       * Existing employee binding.
+       */
+      binding: string;
+      kind: "openApplication";
+    }
+  | {
       /**
        * Policy cursor.
        */
@@ -1913,6 +1949,10 @@ export type Response =
     }
   | {
       /**
+       * DA registration resolved from the authenticated endpoint.
+       */
+      deviceId: DeviceId;
+      /**
        * Eligible policies in this scan page.
        */
       policies: AccessPolicyOption[];
@@ -1939,6 +1979,32 @@ export type Response =
     }
   | {
       /**
+       * A fixed employee application was installed for this issuer.
+       */
+      applicationBindings: string[];
+      /**
+       * Device registration owning these binding operations.
+       */
+      device: DeviceId;
+      /**
+       * Bindings on the current stable native account.
+       */
+      bindings: AccessBindingStatus[];
+      kind: "ownBindings";
+    }
+  | {
+      /**
+       * Registered start page.
+       */
+      launchUrl: string;
+      kind: "application";
+    }
+  | {
+      /**
+       * Operation which requested this desired revision.
+       */
+      operationId: string;
+      /**
        * Desired account handling on revocation.
        */
       accountDisposition: AccessAccountDisposition;
@@ -1954,6 +2020,47 @@ export type Response =
        * Factor replacement generation.
        */
       factorGeneration: number;
+      /**
+       * Exact desired effect identity used in signed native application results.
+       *
+       * @minItems 32
+       * @maxItems 32
+       */
+      definitionDigest: [
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+        ...number[],
+      ];
       /**
        * Desired revision.
        */
@@ -2520,45 +2627,78 @@ export type FilevaultState =
   | "retired";
 
 export interface SelfServiceCommands {
-  navigation: Command;
-  personal_vault: Command2;
-  self_service_offers: Command3;
-  task_list: Command4;
-  task_detail: Command5;
-  task_control: Command6;
-  task_control_status: Command7;
-  network_check: Command8;
-  system_settings: Command9;
-  device_access: Command10;
-  software_prepare: Command11;
-  software_submit: Command12;
-  software_status: Command13;
-  software_history: Command14;
-  software_read: Command15;
-  query_directory: Command16;
-  data_read: Command17;
-  query_submit: Command18;
-  query_status: Command19;
-  self_service_observe_software: Command20;
-  self_service_policy_resolve: Command21;
-  self_service_policy_directory: Command22;
-  self_service_policy_invoke: Command23;
-  ai_operation_submit: Command24;
-  self_service_policy_confirm: Command25;
-  self_service_policy_status: Command26;
-  self_service_execute: Command27;
-  self_service_confirm: Command27;
-  diagnostics_prepare: Command28;
-  diagnostics_export: Command29;
-  diagnostics_discard: Command30;
-  appearance_snapshot: Command31;
-  device_overview: Command32;
+  employee_change: Command;
+  navigation: Command2;
+  personal_vault: Command3;
+  self_service_offers: Command4;
+  task_list: Command5;
+  task_detail: Command6;
+  task_control: Command7;
+  task_control_status: Command8;
+  network_check: Command9;
+  system_settings: Command10;
+  device_access: Command11;
+  software_prepare: Command12;
+  software_submit: Command13;
+  software_status: Command14;
+  software_history: Command15;
+  software_read: Command16;
+  query_directory: Command17;
+  data_read: Command18;
+  query_submit: Command19;
+  query_status: Command20;
+  self_service_observe_software: Command21;
+  self_service_policy_resolve: Command22;
+  self_service_policy_directory: Command23;
+  self_service_policy_invoke: Command24;
+  ai_operation_submit: Command25;
+  self_service_policy_confirm: Command26;
+  self_service_policy_status: Command27;
+  self_service_execute: Command28;
+  self_service_confirm: Command28;
+  diagnostics_prepare: Command29;
+  diagnostics_export: Command30;
+  diagnostics_discard: Command31;
+  appearance_snapshot: Command32;
+  device_overview: Command33;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "Command".
  */
 export interface Command {
+  input: Input | null;
+  output: Output;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Input".
+ */
+export interface Input {
+  binding: string;
+  revision: number;
+  change: Change;
+  stage: Stage;
+}
+/**
+ * Public progress for the exact employee operation, with no account or proof material.
+ *
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Progress".
+ */
+export interface Progress {
+  revision: number;
+  received: boolean;
+  execution: string;
+  cancellation: string;
+  cleanupPending: boolean;
+  effectState: string | null;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Command2".
+ */
+export interface Command2 {
   input: NavigationOperation;
   output: NavigationResponse;
 }
@@ -4238,9 +4378,9 @@ export interface SoftwareRef {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command2".
+ * via the `definition` "Command3".
  */
-export interface Command2 {
+export interface Command3 {
   input: PersonalVaultOperation;
   output: PersonalVaultStatus;
 }
@@ -4279,17 +4419,17 @@ export interface ProviderStatus {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command3".
+ * via the `definition` "Command4".
  */
-export interface Command3 {
+export interface Command4 {
   input: null;
   output: BackendTask[];
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command4".
+ * via the `definition` "Command5".
  */
-export interface Command4 {
+export interface Command5 {
   input: TaskQuery;
   output: TaskPage;
 }
@@ -4387,17 +4527,17 @@ export interface TaskPage {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command5".
+ * via the `definition` "Command6".
  */
-export interface Command5 {
+export interface Command6 {
   input: TaskRef;
   output: TaskDetail;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command6".
+ * via the `definition` "Command7".
  */
-export interface Command6 {
+export interface Command7 {
   input: TaskControl;
   output: TaskControlReceipt;
 }
@@ -4451,9 +4591,9 @@ export interface TaskControlReceipt {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command7".
+ * via the `definition` "Command8".
  */
-export interface Command7 {
+export interface Command8 {
   input: TaskControlQuery;
   output: TaskControlReceipt;
 }
@@ -4479,9 +4619,9 @@ export interface TaskControlQuery {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command8".
+ * via the `definition` "Command9".
  */
-export interface Command8 {
+export interface Command9 {
   input: NetworkCheckOperation;
   output: NetworkCheckResponse;
 }
@@ -4547,9 +4687,9 @@ export interface NetworkProbe {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command9".
+ * via the `definition` "Command10".
  */
-export interface Command9 {
+export interface Command10 {
   input: SettingsOperation;
   output: SettingsResponse;
 }
@@ -4695,9 +4835,9 @@ export interface SettingsOption {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command10".
+ * via the `definition` "Command11".
  */
-export interface Command10 {
+export interface Command11 {
   input: Operation2;
   output: Response;
 }
@@ -4881,6 +5021,10 @@ export interface AccessConfiguration {
  */
 export interface AccessBindingStatus {
   /**
+   * Operation which requested this desired revision.
+   */
+  operationId: string;
+  /**
    * Desired account handling on revocation.
    */
   accountDisposition: AccessAccountDisposition;
@@ -4896,6 +5040,47 @@ export interface AccessBindingStatus {
    * Factor replacement generation.
    */
   factorGeneration: number;
+  /**
+   * Exact desired effect identity used in signed native application results.
+   *
+   * @minItems 32
+   * @maxItems 32
+   */
+  definitionDigest: [
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    ...number[],
+  ];
   /**
    * Desired revision.
    */
@@ -5024,9 +5209,9 @@ export interface SetupTask {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command11".
+ * via the `definition` "Command12".
  */
-export interface Command11 {
+export interface Command12 {
   input: LocalSoftwareChoice;
   output: LocalSoftwarePrepared;
 }
@@ -5092,9 +5277,9 @@ export interface LocalSoftwarePrepared {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command12".
+ * via the `definition` "Command13".
  */
-export interface Command12 {
+export interface Command13 {
   input: LocalSoftwareSubmission;
   output: LocalSoftwareStatus;
 }
@@ -5136,9 +5321,9 @@ export interface LocalSoftwareStatus {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command13".
+ * via the `definition` "Command14".
  */
-export interface Command13 {
+export interface Command14 {
   input: QueryRequest;
   output: LocalSoftwareStatus;
 }
@@ -5156,9 +5341,9 @@ export interface QueryRequest {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command14".
+ * via the `definition` "Command15".
  */
-export interface Command14 {
+export interface Command15 {
   input: SoftwareHistoryQuery;
   output: LocalSoftwareHistory;
 }
@@ -5196,9 +5381,9 @@ export interface LocalSoftwareHistory {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command15".
+ * via the `definition` "Command16".
  */
-export interface Command15 {
+export interface Command16 {
   input: SoftwareRead;
   output: SoftwarePage;
 }
@@ -5352,9 +5537,9 @@ export interface SoftwareActionView {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command16".
+ * via the `definition` "Command17".
  */
-export interface Command16 {
+export interface Command17 {
   input: QueryDirectory;
   output: QueryPage;
 }
@@ -5404,17 +5589,17 @@ export interface QueryPage {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command17".
+ * via the `definition` "Command18".
  */
-export interface Command17 {
+export interface Command18 {
   input: DataRead;
   output: CollectedData;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command18".
+ * via the `definition` "Command19".
  */
-export interface Command18 {
+export interface Command19 {
   input: QuerySubmit;
   output: QueryStatus;
 }
@@ -5486,33 +5671,33 @@ export interface QueryPreparationRef {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command19".
- */
-export interface Command19 {
-  input: QueryRequest;
-  output: QueryStatus;
-}
-/**
- * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "Command20".
  */
 export interface Command20 {
-  input: SoftwareReadChoice;
-  output: BackendRequest;
+  input: QueryRequest;
+  output: QueryStatus;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "Command21".
  */
 export interface Command21 {
-  input: CapabilitySelector;
-  output: SelfServiceDirectoryItem;
+  input: SoftwareReadChoice;
+  output: BackendRequest;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
  * via the `definition` "Command22".
  */
 export interface Command22 {
+  input: CapabilitySelector;
+  output: SelfServiceDirectoryItem;
+}
+/**
+ * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
+ * via the `definition` "Command23".
+ */
+export interface Command23 {
   input: PolicyDirectoryQuery;
   output: SelfServiceDirectoryResponse;
 }
@@ -5581,9 +5766,9 @@ export interface SelfServiceDirectoryProjection {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command23".
+ * via the `definition` "Command24".
  */
-export interface Command23 {
+export interface Command24 {
   input: PolicyInvocation;
   output: BackendRequest;
 }
@@ -5621,9 +5806,9 @@ export interface PolicyExpectation {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command24".
+ * via the `definition` "Command25".
  */
-export interface Command24 {
+export interface Command25 {
   input: PolicySubmission;
   output: BackendRequest;
 }
@@ -5651,9 +5836,9 @@ export interface PolicySubmission {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command25".
+ * via the `definition` "Command26".
  */
-export interface Command25 {
+export interface Command26 {
   input: ActionRef;
   output: BackendRequest;
 }
@@ -5666,9 +5851,9 @@ export interface ActionRef {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command26".
+ * via the `definition` "Command27".
  */
-export interface Command26 {
+export interface Command27 {
   input: ActionRef;
   output: PolicyStatus;
 }
@@ -5815,9 +6000,9 @@ export interface TaskDiagnostics {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command27".
+ * via the `definition` "Command28".
  */
-export interface Command27 {
+export interface Command28 {
   input: BackendSelection;
   output: TaskSubmission;
 }
@@ -5839,9 +6024,9 @@ export interface TaskSubmission {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command28".
+ * via the `definition` "Command29".
  */
-export interface Command28 {
+export interface Command29 {
   input: Scopes;
   output: Preview;
 }
@@ -5866,9 +6051,9 @@ export interface Preview {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command29".
+ * via the `definition` "Command30".
  */
-export interface Command29 {
+export interface Command30 {
   input: Selection;
   output: boolean;
 }
@@ -5881,17 +6066,17 @@ export interface Selection {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command30".
+ * via the `definition` "Command31".
  */
-export interface Command30 {
+export interface Command31 {
   input: Selection;
   output: null;
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command31".
+ * via the `definition` "Command32".
  */
-export interface Command31 {
+export interface Command32 {
   input: null;
   output: AppearanceSnapshot;
 }
@@ -5906,9 +6091,9 @@ export interface AppearanceSnapshot {
 }
 /**
  * This interface was referenced by `SelfServiceCommands`'s JSON-Schema
- * via the `definition` "Command32".
+ * via the `definition` "Command33".
  */
-export interface Command32 {
+export interface Command33 {
   input: null;
   output: DeviceOverview;
 }

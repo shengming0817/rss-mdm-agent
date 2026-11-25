@@ -213,14 +213,17 @@ impl Journal {
         self.save(record)?;
         Ok(access)
     }
-    fn save(&self, record: &Record) -> Result<(), Error> {
+    fn replace(&self, destination: &Path, bytes: &[u8]) -> Result<(), Error> {
         let staged = self.root.join(format!("{}.tmp", Uuid::new_v4()));
-        platform_private_storage::write_new(&staged, &json(record)?)?;
-        let result = platform_private_storage::replace(&staged, &self.active());
+        platform_private_storage::write_new(&staged, bytes)?;
+        let result = platform_private_storage::replace(&staged, destination);
         if result.is_err() {
             let _ = std::fs::remove_file(staged);
         }
-        result?;
+        Ok(result?)
+    }
+    fn save(&self, record: &Record) -> Result<(), Error> {
+        self.replace(&self.active(), &json(record)?)?;
         if let (Some(step), Some(error)) = (record.failure_phase, record.failure) {
             outcome::profile_failure(step, error);
         }
@@ -253,8 +256,15 @@ impl Journal {
                 self.save(record)?;
             }
         }
-        // Atomically move the terminal checkpoint to immutable per-operation history.
-        platform_private_storage::replace(&self.active(), &self.file(record.operation, "result"))?;
+        // An unlocked reader may have missed active() before this operation started.
+        // Publish the result before its pointer and keep the checkpoint until both
+        // writes succeed so a restart can finish the same archive.
+        self.replace(&self.file(record.operation, "result"), &json(record)?)?;
+        self.replace(
+            &self.root.join("last-operation"),
+            record.operation.as_bytes(),
+        )?;
+        std::fs::remove_file(self.active())?;
         if record.phase == Phase::Applied && self.recovery_identity().try_exists()? {
             std::fs::remove_file(self.recovery_identity())?;
         }
@@ -298,7 +308,7 @@ pub(super) fn status(config: &Path, id: Uuid) -> Result<bool, Error> {
     }
 }
 
-fn binding(d: &Deployment) -> Result<Option<(Uuid, Uuid)>, Error> {
+pub(super) fn binding(d: &Deployment) -> Result<Option<(Uuid, Uuid)>, Error> {
     if !d.modules.mdm.enabled() || !d.state_root.join("communication").try_exists()? {
         return Ok(None);
     }
@@ -308,27 +318,96 @@ fn binding(d: &Deployment) -> Result<Option<(Uuid, Uuid)>, Error> {
     Ok(binding.map(|b| (b.device_id.into_uuid(), b.epoch)))
 }
 
+fn latest_record(config: &Path) -> Result<Option<Record>, Error> {
+    let journal = Journal::new(config)?;
+    let current = match journal.read(&journal.active())? {
+        Some(record) => record,
+        None => {
+            let bytes =
+                match platform_private_storage::read(&journal.root.join("last-operation"), 16) {
+                    Ok(bytes) => bytes,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                    Err(e) => return Err(e.into()),
+                };
+            let operation = Uuid::from_slice(&bytes).map_err(|_| Error::Storage)?;
+            let record = journal
+                .read(&journal.file(operation, "result"))?
+                .ok_or(Error::Storage)?;
+            if record.operation != operation {
+                return Err(Error::Identity);
+            }
+            record
+        }
+    };
+    if current.config != config {
+        return Err(Error::Identity);
+    }
+    Ok(Some(current))
+}
+
+/// Both logical channels are shipped in the same authenticated service executable.
+/// CP and PSSO availability are observed separately by the native owners.
+pub(crate) fn observe_modules(
+    config: &Path,
+    d: &Deployment,
+) -> (rss_mdm_agent_wire::da::ClientModules, Option<String>) {
+    use rss_mdm_agent_wire::da::{ClientModules, ModuleApplication, ModuleObservation};
+    let installed = Candidate::retained(config, d).ok().and_then(|candidate| {
+        candidate.validate_trust().ok()?;
+        match std::fs::symlink_metadata(&candidate.service.path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(false),
+            Ok(_) => candidate
+                .service
+                .verify(&candidate.service.path)
+                .ok()
+                .map(|_| true),
+            Err(_) => None,
+        }
+    });
+    let module = |enabled| ModuleObservation {
+        installed,
+        enabled: Some(enabled),
+    };
+    let lookup = latest_record(config);
+    let diagnostic = lookup.as_ref().err().map(|e| e.to_string());
+    let record = lookup
+        .ok()
+        .flatten()
+        .filter(|r| r.installation == d.installation_id);
+    let failure = diagnostic.or_else(|| {
+        record
+            .as_ref()
+            .and_then(|r| r.failure)
+            .map(|e| e.to_string())
+    });
+    let application = match record.map(|r| r.phase) {
+        Some(Phase::Received) => ModuleApplication::Received,
+        Some(Phase::Applied) => ModuleApplication::Applied,
+        Some(Phase::Rejected) => ModuleApplication::Rejected,
+        Some(_) => ModuleApplication::Pending,
+        None => ModuleApplication::Unknown,
+    };
+    (
+        ClientModules {
+            da: module(d.modules.da.enabled()),
+            mdm: module(d.modules.mdm.enabled()),
+            application,
+        },
+        failure,
+    )
+}
+
 pub(super) fn module_status(config: &Path) -> Result<(), Error> {
     if optional(config)?.is_none() {
-        let j = Journal::new(config)?;
-        if let Some(record) = j.read(&j.active())? {
+        if let Some(record) = latest_record(config)? {
             record.report()?;
         }
         return Ok(());
     }
     let deployment = Deployment::metadata(config)?;
-    let manifest = config
-        .parent()
-        .ok_or(Error::Configuration)?
-        .join("install-manifests")
-        .join(format!("{}.json", deployment.installation_artifact));
-    let available = if config != Deployment::default_path()? && !manifest.try_exists()? {
-        None
-    } else {
-        Some(Candidate::retained(config, &deployment)?.assembly)
-    };
-    let observed = binding(&deployment);
-    let registered = observed.as_ref().ok().map(|value| value.is_some());
+    let (modules, application_failure) = observe_modules(config, &deployment);
+    let observed_at = SystemClock::new()?.now()?;
+    let registered = super::mdm_registration(&deployment, observed_at);
     let da = crate::da_service::status(&deployment);
     let j = Journal::new(config)?;
     let pending = j
@@ -336,10 +415,9 @@ pub(super) fn module_status(config: &Path) -> Result<(), Error> {
         .filter(|r| !r.terminal())
         .map(|r| r.operation);
     outcome::details(serde_json::json!({
-        "available": available,
-        "enabled": { "mdm":deployment.modules.mdm.enabled(), "da":deployment.modules.da.enabled() },
+        "modules":modules,"applicationFailure":application_failure,"observedAt":observed_at,
         "daEmployeePortalOrigin":deployment.modules.employee_portal()?.map(|p|p.origin),
-        "mdmRegistered":registered,"da":da.as_ref().ok().and_then(|state|state.as_ref()),"daError":da.as_ref().err(),"pendingOperation":pending,
+        "mdmRegistration":registered,"da":da.as_ref().ok().and_then(|state|state.as_ref()),"daError":da.as_ref().err(),"pendingOperation":pending,
         "revision":deployment.modules.revision,
     }))?;
     Ok(())
@@ -509,7 +587,7 @@ fn prepare(
     Ok(())
 }
 
-fn same_runtime(old: &Deployment, next: &Deployment) -> bool {
+pub(super) fn same_runtime(old: &Deployment, next: &Deployment) -> bool {
     old.modules.mdm == next.modules.mdm
         && old.modules.da == next.modules.da
         && old.clients.subjects == next.clients.subjects
@@ -1052,27 +1130,55 @@ mod tests {
     #[test]
     fn private_checkpoint_reopens_frozen_input_and_retains_original_result() {
         let temp = crate::protocol_test_support::Root::new();
-        let journal = Journal {
-            root: temp.path.join("profiles"),
-        };
+        let config = temp.path.join("execution.json");
+        let journal = Journal::new(&config).unwrap();
+        platform_private_storage::directory(journal.root.parent().unwrap()).unwrap();
         platform_private_storage::directory(&journal.root).unwrap();
         let mut r = record(Phase::Received);
+        r.config = config.clone();
+        assert!(latest_record(&config).unwrap().is_none());
         r.input = Some("original profile".into());
         r.profile_digest = Some(hash(r.input.as_ref().unwrap().as_bytes()));
         journal.save(&r).unwrap();
         let recovered = journal.read(&journal.active()).unwrap().unwrap();
+        assert_eq!(
+            latest_record(&config).unwrap().unwrap().operation,
+            r.operation
+        );
         assert_eq!(recovered.input, r.input);
         assert_eq!(recovered.profile_digest, r.profile_digest);
         r.input = None;
         r.phase = Phase::Rejected;
         r.failure = Some(Error::Unsupported);
         journal.save(&r).unwrap();
+        // A publication failure leaves the result queryable and the checkpoint replayable.
+        let pointer = journal.root.join("last-operation");
+        std::fs::create_dir(&pointer).unwrap();
+        assert!(journal.archive(&mut r).is_err());
+        assert_eq!(
+            journal
+                .read(&journal.file(r.operation, "result"))
+                .unwrap()
+                .unwrap()
+                .operation,
+            r.operation
+        );
+        assert_eq!(
+            latest_record(&config).unwrap().unwrap().operation,
+            r.operation
+        );
+        std::fs::remove_dir(&pointer).unwrap();
         journal.archive(&mut r).unwrap();
         assert!(journal.read(&journal.active()).unwrap().is_none());
         let archived = journal
             .read(&journal.file(r.operation, "result"))
             .unwrap()
             .unwrap();
+        assert_eq!(
+            latest_record(&config).unwrap().unwrap().result(),
+            Err(Error::Unsupported)
+        );
+        assert!(latest_record(&config.with_file_name("other.json")).is_err());
         assert_eq!(archived.result(), Err(Error::Unsupported));
         assert!(archived.input.is_none());
     }
