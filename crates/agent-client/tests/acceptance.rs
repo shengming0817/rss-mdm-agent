@@ -29,7 +29,8 @@ async fn expired_report_status_preserves_the_original_ack_across_restart() {
         )
         .unwrap();
     assert_eq!(client.flush_reports(1).await, Ok(1));
-    let ack = client.report_status(id).await.unwrap().ack;
+    let ack = server.data.lock().unwrap().report_statuses[&id].ack.clone();
+    assert_eq!(client.report_status(id).await.unwrap().ack, ack);
     assert_eq!(ack.report_id, id);
     assert_eq!(ack.intake, IntakeStatus::Durable);
     server.time.set(ack.received_at + 1);
