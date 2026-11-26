@@ -7,6 +7,113 @@ mod support;
 use rss_mdm_agent_wire::runtime::{TaskArchitecture, TaskPlatform};
 use support::*;
 #[tokio::test]
+async fn expired_report_status_preserves_the_original_ack_across_restart() {
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let id = client
+        .queue_report(
+            "inventory",
+            ReportBody::Snapshot(
+                collections()[0]
+                    .fields()
+                    .iter()
+                    .map(|field| FieldValue {
+                        field: field.key,
+                        value: CollectedValue::Value(Scalar::String("test".into())),
+                    })
+                    .collect(),
+            ),
+            1,
+        )
+        .unwrap();
+    assert_eq!(client.flush_reports(1).await, Ok(1));
+    let ack = client.report_status(id).await.unwrap().ack;
+    assert_eq!(ack.report_id, id);
+    assert_eq!(ack.intake, IntakeStatus::Durable);
+    server.time.set(ack.received_at + 1);
+    drop(client);
+
+    let mut client = server.client(&root, OpenMode::Existing);
+    for projection in [ProjectionStatus::Unconfirmed, ProjectionStatus::Applied] {
+        {
+            let mut data = server.data.lock().unwrap();
+            let status = data.report_statuses.get_mut(&id).unwrap();
+            status.observation = ObservationStatus::Expired;
+            status.projection = projection;
+        }
+        let status = client.report_status(id).await.unwrap();
+        assert_eq!(status.ack, ack);
+        assert_eq!(status.observation, ObservationStatus::Expired);
+        assert_eq!(status.projection, projection);
+        assert_eq!(client.flush_reports(1).await, Ok(0));
+    }
+    assert_eq!(server.data.lock().unwrap().report_posts, 1);
+    assert_eq!(
+        client.report_status(Uuid::new_v4()).await,
+        Err(Error::NotFound)
+    );
+    let mut wrong = client.report_status(id).await.unwrap();
+    wrong.ack.report_id = Uuid::new_v4();
+    server.data.lock().unwrap().response_override =
+        Some((id.to_string(), serde_json::to_value(wrong).unwrap()));
+    assert_eq!(client.report_status(id).await, Err(Error::Protocol));
+}
+
+#[tokio::test]
+async fn report_lookup_distinguishes_the_http_status_and_wire_error() {
+    use axum::http::StatusCode;
+    use serde_json::json;
+    let server = Server::tls().await;
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+    let id = Uuid::new_v4();
+    // Model mismatched intermediary replies alongside the production 403/401 paths.
+    for (http, body, expected) in [
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({"code":"report_not_found"}),
+            Error::Protocol,
+        ),
+        (
+            StatusCode::NOT_FOUND,
+            json!({"code":"task_not_found"}),
+            Error::Protocol,
+        ),
+        (StatusCode::NOT_FOUND, json!({}), Error::Protocol),
+        (
+            StatusCode::FORBIDDEN,
+            json!({"code":"permission_denied"}),
+            Error::Denied,
+        ),
+    ] {
+        {
+            let mut data = server.data.lock().unwrap();
+            data.invalid_contract_response = http != StatusCode::FORBIDDEN;
+            data.report_lookup_fault = Some((http, body));
+        }
+        assert_eq!(client.report_status(id).await, Err(expected));
+    }
+    {
+        let mut data = server.data.lock().unwrap();
+        data.report_lookup_fault = None;
+        data.invalid_contract_response = false;
+        data.denied = true;
+    }
+    assert_eq!(
+        client.report_status(id).await,
+        Err(Error::CredentialRevoked)
+    );
+    server.data.lock().unwrap().denied = false;
+    assert_eq!(
+        client.report_status(id).await,
+        Err(Error::CredentialRevoked)
+    );
+}
+
+#[tokio::test]
 async fn a_full_task_cache_keeps_cancellations_and_replays_the_unadmitted_offer_after_restart() {
     let server = Server::tls().await;
     let root = Root::new();
