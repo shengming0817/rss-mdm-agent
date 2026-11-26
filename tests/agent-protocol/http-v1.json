@@ -6794,7 +6794,7 @@
             "content_type": "application/json",
             "schema": {
               "direction": "response",
-              "schemaId": "sha256-abb3aea02f1d1403d5f29d8eeb57f05c7515bf0db56a45bd2a03d91abe40a8dd"
+              "schemaId": "sha256-b70c4664bc6413f17f24de983fba1150b7e5fb772426ef5d84fcc323fd9ca5c9"
             }
           },
           "headers": {},
@@ -9341,7 +9341,7 @@
             "content_type": "application/json",
             "schema": {
               "direction": "response",
-              "schemaId": "sha256-c89aa33742c3f9928cee6c89e0735466f8b13b618f7d65a29509ea22024ff49e"
+              "schemaId": "sha256-6c84f87726ba3e99fd0a846f1fc4ec2c797ff76cd789dc846de7f35b17785406"
             }
           },
           "headers": {},
@@ -56421,6 +56421,153 @@
       "title": "Body",
       "type": "object"
     },
+    "sha256-6c84f87726ba3e99fd0a846f1fc4ec2c797ff76cd789dc846de7f35b17785406": {
+      "$defs": {
+        "ObservationStatus": {
+          "description": "Observation processing status.",
+          "oneOf": [
+            {
+              "const": "pending",
+              "description": "Awaiting the Observation worker.",
+              "type": "string"
+            },
+            {
+              "const": "expired",
+              "description": "The batch identity is retained but the original Observation receipt has expired.",
+              "type": "string"
+            },
+            {
+              "const": "snapshot",
+              "description": "A complete snapshot established the current baseline.",
+              "type": "string"
+            },
+            {
+              "const": "needSnapshotPartial",
+              "description": "A partial report requires another complete snapshot.",
+              "type": "string"
+            },
+            {
+              "const": "needSnapshotCollectionFailed",
+              "description": "A collection failure requires another complete snapshot.",
+              "type": "string"
+            },
+            {
+              "const": "stale",
+              "description": "The sequence did not exceed the stream high-water mark.",
+              "type": "string"
+            }
+          ]
+        },
+        "ProjectionStatus": {
+          "description": "Projection processing status.",
+          "oneOf": [
+            {
+              "const": "pending",
+              "description": "Awaiting an applicable Observation decision or projection commit.",
+              "type": "string"
+            },
+            {
+              "const": "unconfirmed",
+              "description": "The receipt expired without an independently confirmed projection.",
+              "type": "string"
+            },
+            {
+              "const": "applied",
+              "description": "Applicable facts committed to the asset projection.",
+              "type": "string"
+            },
+            {
+              "const": "notApplicable",
+              "description": "The Observation decision deliberately carries no projectable facts.",
+              "type": "string"
+            }
+          ]
+        },
+        "TelemetryCurrentState": {
+          "description": "An inbox receipt does not assert that current assets were changed.",
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "description": "The profile requested historical storage only.",
+              "properties": {
+                "state": {
+                  "const": "not_requested",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "state"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "The shared delivery path has not confirmed current-asset admission.",
+              "properties": {
+                "state": {
+                  "const": "pending",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "state"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "description": "Independently observed decisions from the existing Inventory owner.",
+              "properties": {
+                "observation": {
+                  "$ref": "#/$defs/ObservationStatus",
+                  "description": "Observation ordering and completeness decision."
+                },
+                "projection": {
+                  "$ref": "#/$defs/ProjectionStatus",
+                  "description": "Independently confirmed Inventory projection state."
+                },
+                "state": {
+                  "const": "observed",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "state",
+                "observation",
+                "projection"
+              ],
+              "type": "object"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "Independent current-asset processing status for one observation in a durable batch.",
+      "properties": {
+        "batchId": {
+          "description": "Original batch identity.",
+          "format": "uuid",
+          "type": "string"
+        },
+        "observationId": {
+          "description": "Original sampling identity, never generated again during retry.",
+          "format": "uuid",
+          "type": "string"
+        },
+        "state": {
+          "$ref": "#/$defs/TelemetryCurrentState",
+          "description": "Current-asset destination and its observed progress."
+        }
+      },
+      "required": [
+        "batchId",
+        "observationId",
+        "state"
+      ],
+      "title": "TelemetryCurrentStatus",
+      "type": "object"
+    },
     "sha256-6c8e02acfbe36c391cc6785a198c09bfed69c06ed39ff4290e05994b4a2f2194": {
       "$defs": {
         "PublicKey": {
@@ -66531,132 +66678,6 @@
       "const": "same-origin",
       "type": "string"
     },
-    "sha256-abb3aea02f1d1403d5f29d8eeb57f05c7515bf0db56a45bd2a03d91abe40a8dd": {
-      "$defs": {
-        "IntakeStatus": {
-          "description": "Durable intake stage.",
-          "oneOf": [
-            {
-              "const": "durable",
-              "description": "The sealed report and receipt committed to PostgreSQL.",
-              "type": "string"
-            }
-          ]
-        },
-        "ObservationStatus": {
-          "description": "Observation processing status.",
-          "oneOf": [
-            {
-              "const": "pending",
-              "description": "Awaiting the Observation worker.",
-              "type": "string"
-            },
-            {
-              "const": "snapshot",
-              "description": "A complete snapshot established the current baseline.",
-              "type": "string"
-            },
-            {
-              "const": "needSnapshotPartial",
-              "description": "A partial report requires another complete snapshot.",
-              "type": "string"
-            },
-            {
-              "const": "needSnapshotCollectionFailed",
-              "description": "A collection failure requires another complete snapshot.",
-              "type": "string"
-            },
-            {
-              "const": "stale",
-              "description": "The sequence did not exceed the stream high-water mark.",
-              "type": "string"
-            }
-          ]
-        },
-        "ProjectionStatus": {
-          "description": "Projection processing status.",
-          "oneOf": [
-            {
-              "const": "pending",
-              "description": "Awaiting an applicable Observation decision or projection commit.",
-              "type": "string"
-            },
-            {
-              "const": "applied",
-              "description": "Applicable facts committed to the asset projection.",
-              "type": "string"
-            },
-            {
-              "const": "notApplicable",
-              "description": "The Observation decision deliberately carries no projectable facts.",
-              "type": "string"
-            }
-          ]
-        },
-        "ReportAck": {
-          "additionalProperties": false,
-          "description": "Immutable durable-intake acknowledgement.",
-          "properties": {
-            "intake": {
-              "$ref": "#/$defs/IntakeStatus",
-              "const": "durable",
-              "description": "Durable intake status."
-            },
-            "receivedAt": {
-              "description": "Authoritative server receipt time as Unix seconds.",
-              "format": "int64",
-              "maximum": 9223372036854775807,
-              "minimum": 0,
-              "type": "integer"
-            },
-            "reportId": {
-              "description": "Report identity.",
-              "format": "uuid",
-              "not": {
-                "const": "00000000-0000-0000-0000-000000000000"
-              },
-              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-              "type": "string"
-            },
-            "wireVersion": {
-              "const": 1,
-              "description": "Exact wire major."
-            }
-          },
-          "required": [
-            "wireVersion",
-            "reportId",
-            "receivedAt",
-            "intake"
-          ],
-          "type": "object"
-        }
-      },
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "additionalProperties": false,
-      "description": "Current processing status for one durably accepted report.",
-      "properties": {
-        "ack": {
-          "$ref": "#/$defs/ReportAck",
-          "description": "Immutable intake acknowledgement."
-        },
-        "observation": {
-          "$ref": "#/$defs/ObservationStatus",
-          "description": "Observation decision stage."
-        },
-        "projection": {
-          "$ref": "#/$defs/ProjectionStatus",
-          "description": "Projection stage."
-        }
-      },
-      "required": [
-        "ack",
-        "observation",
-        "projection"
-      ],
-      "title": "ReportStatus",
-      "type": "object"
-    },
     "sha256-aca41d44bde4be758bc63b50a3cbc5595c81584b2f32671baf9e2a64a2d49069": {
       "$defs": {
         "DeviceId": {
@@ -69070,6 +69091,142 @@
       "title": "AccessDirectory",
       "type": "object"
     },
+    "sha256-b70c4664bc6413f17f24de983fba1150b7e5fb772426ef5d84fcc323fd9ca5c9": {
+      "$defs": {
+        "IntakeStatus": {
+          "description": "Durable intake stage.",
+          "oneOf": [
+            {
+              "const": "durable",
+              "description": "The sealed report and receipt committed to PostgreSQL.",
+              "type": "string"
+            }
+          ]
+        },
+        "ObservationStatus": {
+          "description": "Observation processing status.",
+          "oneOf": [
+            {
+              "const": "pending",
+              "description": "Awaiting the Observation worker.",
+              "type": "string"
+            },
+            {
+              "const": "expired",
+              "description": "The batch identity is retained but the original Observation receipt has expired.",
+              "type": "string"
+            },
+            {
+              "const": "snapshot",
+              "description": "A complete snapshot established the current baseline.",
+              "type": "string"
+            },
+            {
+              "const": "needSnapshotPartial",
+              "description": "A partial report requires another complete snapshot.",
+              "type": "string"
+            },
+            {
+              "const": "needSnapshotCollectionFailed",
+              "description": "A collection failure requires another complete snapshot.",
+              "type": "string"
+            },
+            {
+              "const": "stale",
+              "description": "The sequence did not exceed the stream high-water mark.",
+              "type": "string"
+            }
+          ]
+        },
+        "ProjectionStatus": {
+          "description": "Projection processing status.",
+          "oneOf": [
+            {
+              "const": "pending",
+              "description": "Awaiting an applicable Observation decision or projection commit.",
+              "type": "string"
+            },
+            {
+              "const": "unconfirmed",
+              "description": "The receipt expired without an independently confirmed projection.",
+              "type": "string"
+            },
+            {
+              "const": "applied",
+              "description": "Applicable facts committed to the asset projection.",
+              "type": "string"
+            },
+            {
+              "const": "notApplicable",
+              "description": "The Observation decision deliberately carries no projectable facts.",
+              "type": "string"
+            }
+          ]
+        },
+        "ReportAck": {
+          "additionalProperties": false,
+          "description": "Immutable durable-intake acknowledgement.",
+          "properties": {
+            "intake": {
+              "$ref": "#/$defs/IntakeStatus",
+              "const": "durable",
+              "description": "Durable intake status."
+            },
+            "receivedAt": {
+              "description": "Authoritative server receipt time as Unix seconds.",
+              "format": "int64",
+              "maximum": 9223372036854775807,
+              "minimum": 0,
+              "type": "integer"
+            },
+            "reportId": {
+              "description": "Report identity.",
+              "format": "uuid",
+              "not": {
+                "const": "00000000-0000-0000-0000-000000000000"
+              },
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "wireVersion": {
+              "const": 1,
+              "description": "Exact wire major."
+            }
+          },
+          "required": [
+            "wireVersion",
+            "reportId",
+            "receivedAt",
+            "intake"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "description": "Current processing status for one durably accepted report.",
+      "properties": {
+        "ack": {
+          "$ref": "#/$defs/ReportAck",
+          "description": "Immutable intake acknowledgement."
+        },
+        "observation": {
+          "$ref": "#/$defs/ObservationStatus",
+          "description": "Observation decision stage."
+        },
+        "projection": {
+          "$ref": "#/$defs/ProjectionStatus",
+          "description": "Projection stage."
+        }
+      },
+      "required": [
+        "ack",
+        "observation",
+        "projection"
+      ],
+      "title": "ReportStatus",
+      "type": "object"
+    },
     "sha256-b9867f73883294b0cd05a9040726b7824c2c5d7424faf96119f859e182d6feab": {
       "$defs": {
         "Code": {
@@ -70236,143 +70393,6 @@
         "selector"
       ],
       "title": "SelfServiceResolve",
-      "type": "object"
-    },
-    "sha256-c89aa33742c3f9928cee6c89e0735466f8b13b618f7d65a29509ea22024ff49e": {
-      "$defs": {
-        "ObservationStatus": {
-          "description": "Observation processing status.",
-          "oneOf": [
-            {
-              "const": "pending",
-              "description": "Awaiting the Observation worker.",
-              "type": "string"
-            },
-            {
-              "const": "snapshot",
-              "description": "A complete snapshot established the current baseline.",
-              "type": "string"
-            },
-            {
-              "const": "needSnapshotPartial",
-              "description": "A partial report requires another complete snapshot.",
-              "type": "string"
-            },
-            {
-              "const": "needSnapshotCollectionFailed",
-              "description": "A collection failure requires another complete snapshot.",
-              "type": "string"
-            },
-            {
-              "const": "stale",
-              "description": "The sequence did not exceed the stream high-water mark.",
-              "type": "string"
-            }
-          ]
-        },
-        "ProjectionStatus": {
-          "description": "Projection processing status.",
-          "oneOf": [
-            {
-              "const": "pending",
-              "description": "Awaiting an applicable Observation decision or projection commit.",
-              "type": "string"
-            },
-            {
-              "const": "applied",
-              "description": "Applicable facts committed to the asset projection.",
-              "type": "string"
-            },
-            {
-              "const": "notApplicable",
-              "description": "The Observation decision deliberately carries no projectable facts.",
-              "type": "string"
-            }
-          ]
-        },
-        "TelemetryCurrentState": {
-          "description": "An inbox receipt does not assert that current assets were changed.",
-          "oneOf": [
-            {
-              "additionalProperties": false,
-              "description": "The profile requested historical storage only.",
-              "properties": {
-                "state": {
-                  "const": "not_requested",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "state"
-              ],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "description": "The shared delivery path has not confirmed current-asset admission.",
-              "properties": {
-                "state": {
-                  "const": "pending",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "state"
-              ],
-              "type": "object"
-            },
-            {
-              "additionalProperties": false,
-              "description": "Independently observed decisions from the existing Inventory owner.",
-              "properties": {
-                "observation": {
-                  "$ref": "#/$defs/ObservationStatus",
-                  "description": "Observation ordering and completeness decision."
-                },
-                "projection": {
-                  "$ref": "#/$defs/ProjectionStatus",
-                  "description": "Independently confirmed Inventory projection state."
-                },
-                "state": {
-                  "const": "observed",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "state",
-                "observation",
-                "projection"
-              ],
-              "type": "object"
-            }
-          ]
-        }
-      },
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "additionalProperties": false,
-      "description": "Independent current-asset processing status for one observation in a durable batch.",
-      "properties": {
-        "batchId": {
-          "description": "Original batch identity.",
-          "format": "uuid",
-          "type": "string"
-        },
-        "observationId": {
-          "description": "Original sampling identity, never generated again during retry.",
-          "format": "uuid",
-          "type": "string"
-        },
-        "state": {
-          "$ref": "#/$defs/TelemetryCurrentState",
-          "description": "Current-asset destination and its observed progress."
-        }
-      },
-      "required": [
-        "batchId",
-        "observationId",
-        "state"
-      ],
-      "title": "TelemetryCurrentStatus",
       "type": "object"
     },
     "sha256-ca3ea0cc36fa1b26f907cfd72afef7d7e3c4310f3942fed3236a405ce00b93c6": {
