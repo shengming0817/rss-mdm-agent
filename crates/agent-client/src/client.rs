@@ -262,10 +262,12 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         Err(Error::Protocol)
     }
     pub(crate) fn runtime_error(&self, bytes: &[u8]) -> Result<(), Error> {
-        let body: wire::ErrorBody = decode(bytes)?;
+        self.runtime_error_code(decode::<wire::ErrorBody>(bytes)?.code)
+    }
+    fn runtime_error_code(&self, code: wire::ErrorCode) -> Result<(), Error> {
         use rss_mdm_agent_wire::enroll::ErrorCode as E;
         use wire::ErrorCode as R;
-        let error = match body.code {
+        let error = match code {
             R::CredentialRevoked => {
                 self.identity_failure(E::CredentialRevoked)?;
                 Error::CredentialRevoked
@@ -291,7 +293,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         params: &[&str],
         input: Option<&E::Input>,
     ) -> Result<E::Output, Error> {
-        self.runtime_reply(self.call::<E>(params, None, input)?)
+        self.runtime_reply(self.call::<E>(params, None, input)?, None)
             .await
     }
     pub(crate) async fn runtime_frozen_json<E: Endpoint>(
@@ -299,15 +301,17 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         params: &[&str],
         bytes: &[u8],
     ) -> Result<E::Output, Error> {
-        self.runtime_reply(Call::<E>::frozen(
-            &self.http,
-            &self.connection_origin()?,
-            params,
-            bytes,
-        )?)
+        self.runtime_reply(
+            Call::<E>::frozen(&self.http, &self.connection_origin()?, params, bytes)?,
+            None,
+        )
         .await
     }
-    async fn runtime_reply<E: Endpoint>(&self, call: Call<E>) -> Result<E::Output, Error> {
+    async fn runtime_reply<E: Endpoint>(
+        &self,
+        call: Call<E>,
+        not_found: Option<wire::ErrorCode>,
+    ) -> Result<E::Output, Error> {
         self.active()?;
         self.now()?;
         let request = call.timeout(self.store.cfg.limits.request_timeout);
@@ -315,7 +319,11 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             .agent_json_transport(request, self.store.cfg.limits.response_bytes)
             .await?;
         if !status.is_success() {
-            self.runtime_error(&bytes)?;
+            let code = decode::<wire::ErrorBody>(&bytes)?.code;
+            if status == StatusCode::NOT_FOUND && not_found == Some(code) {
+                return Err(Error::NotFound);
+            }
+            self.runtime_error_code(code)?;
         }
         self.active()?;
         decode(&bytes)
@@ -396,10 +404,12 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         }
         Ok(sent)
     }
-    /// Persistent intake/projection status is separate from delivery acknowledgement.
+    /// Read the original durable acknowledgement and independent processing states.
+    /// An expired observation receipt retains the ACK; a missing report returns [`Error::NotFound`].
     pub async fn report_status(&self, id: Uuid) -> Result<wire::ReportStatus, Error> {
-        let result: wire::ReportStatus = self
-            .runtime_json::<h::ReportStatus>(&[&id.to_string()], None)
+        let call = self.call::<h::ReportStatus>(&[&id.to_string()], None, None)?;
+        let result = self
+            .runtime_reply(call, Some(wire::ErrorCode::ReportNotFound))
             .await?;
         if result.ack.report_id != id {
             return Err(Error::Protocol);

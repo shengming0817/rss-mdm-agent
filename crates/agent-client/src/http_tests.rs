@@ -167,3 +167,38 @@ fn fixture_requests_and_responses_are_not_guessed_from_another_success_shape() {
     assert!(contract.response(endpoint, 204, &headers, b"").is_err());
     assert!(contract.response(endpoint, 200, &headers, b"{}").is_err());
 }
+
+#[test]
+fn telemetry_current_status_decodes_expired_observation_and_independent_projection() {
+    let contract = contract::fixed();
+    let endpoint = contract
+        .endpoint(
+            "GET",
+            "/api/v1/agent/runtime/telemetry/batches/{id}/observations/{observation}",
+        )
+        .unwrap();
+    let batch = uuid::Uuid::new_v4();
+    let observation = uuid::Uuid::new_v4();
+    let mut headers = HeaderMap::new();
+    headers.insert("content-type", "application/json".parse().unwrap());
+    for (label, expected) in [
+        ("applied", w::ProjectionStatus::Applied),
+        ("unconfirmed", w::ProjectionStatus::Unconfirmed),
+    ] {
+        let body = serde_json::to_vec(&serde_json::json!({
+            "batchId": batch, "observationId": observation, "state":{
+                "state":"observed", "observation":"expired", "projection":label
+            }
+        }))
+        .unwrap();
+        contract.response(endpoint, 200, &headers, &body).unwrap();
+        let decoded: w::TelemetryCurrentStatus = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            (decoded.batch_id, decoded.observation_id),
+            (batch, observation)
+        );
+        assert!(matches!(decoded.state, w::TelemetryCurrentState::Observed {
+            observation: w::ObservationStatus::Expired, projection
+        } if projection == expected));
+    }
+}

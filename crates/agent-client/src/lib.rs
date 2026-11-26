@@ -71,7 +71,7 @@ pub enum Error {
     /// Original content preparation is durably paused; no dispatch has occurred.
     #[error("content preparation paused")]
     TransferPaused,
-    /// Original employee invocation is not yet present.
+    /// The requested report, operation, or remote resource was not found.
     #[error("Agent operation not found")]
     NotFound,
     /// Invalid trusted configuration.

@@ -247,6 +247,9 @@ pub struct Data {
     pub received: bool,
     pub content_calls: Vec<Option<String>>,
     pub reports: BTreeMap<String, Value>,
+    pub report_statuses: BTreeMap<Uuid, ReportStatus>,
+    pub report_posts: usize,
+    pub report_lookup_fault: Option<(StatusCode, Value)>,
     pub collections: Option<Vec<CollectionDefinition>>,
     pub results: BTreeMap<String, Value>,
     pub credential_escrows: Vec<Value>,
@@ -770,6 +773,9 @@ impl Server {
             invalid_contract_response: false,
             contract_violations: Arc::default(),
             reports: BTreeMap::new(),
+            report_statuses: BTreeMap::new(),
+            report_posts: 0,
+            report_lookup_fault: None,
             collections: None,
             results: BTreeMap::new(),
             credential_escrows: vec![],
@@ -1363,6 +1369,16 @@ fn runtime_response(d: &mut Data, path: &str, headers: HeaderMap, value: Value) 
     if d.activation.is_none() {
         return runtime_error(StatusCode::UNAUTHORIZED, ErrorCode::InvalidIdentity);
     }
+    if let Some(id) = path.strip_prefix("/api/v1/agent/runtime/reports/") {
+        if let Some((status, body)) = &d.report_lookup_fault {
+            return (*status, axum::Json(body.clone())).into_response();
+        }
+        return Uuid::parse_str(id)
+            .ok()
+            .and_then(|id| d.report_statuses.get(&id))
+            .map(|status| axum::Json(status.clone()).into_response())
+            .unwrap_or_else(|| runtime_error(StatusCode::NOT_FOUND, ErrorCode::ReportNotFound));
+    }
     if path.contains("/runtime/telemetry/") {
         return telemetry::response(d, path, value);
     }
@@ -1807,20 +1823,40 @@ fn activation_response(d: &mut Data, value: Value, peer: Option<&[u8]>) -> Respo
     axum::Json(receipt).into_response()
 }
 fn report_response(d: &mut Data, value: Value) -> Response {
+    d.report_posts += 1;
     let id = value["reportId"].as_str().unwrap().to_owned();
     if let Some(old) = d.reports.get(&id) {
         if old != &value {
             return runtime_error(StatusCode::CONFLICT, ErrorCode::OperationConflict);
         }
     }
-    d.reports.insert(id.clone(), value);
+    let report_id = Uuid::parse_str(&id).unwrap();
+    d.reports.insert(id, value);
+    let received_at = d.time.now().unwrap();
+    let status = d
+        .report_statuses
+        .entry(report_id)
+        .or_insert_with(|| ReportStatus {
+            ack: ReportAck {
+                wire_version: WIRE_VERSION,
+                report_id,
+                received_at,
+                intake: IntakeStatus::Durable,
+            },
+            observation: ObservationStatus::Pending,
+            projection: ProjectionStatus::Pending,
+        });
     if std::mem::take(&mut d.report_failure) {
         return runtime_error(
             StatusCode::SERVICE_UNAVAILABLE,
             ErrorCode::ServiceUnavailable,
         );
     }
-    (StatusCode::ACCEPTED,axum::Json(json!({"wireVersion":1,"reportId":if d.bad_ack{Uuid::new_v4().to_string()}else{id},"receivedAt":1,"intake":"durable"}))).into_response()
+    let mut ack = status.ack.clone();
+    if d.bad_ack {
+        ack.report_id = Uuid::new_v4();
+    }
+    (StatusCode::ACCEPTED, axum::Json(ack)).into_response()
 }
 fn claim_response(d: &mut Data, value: Value) -> Response {
     let _: TaskClaimRequest = serde_json::from_value(value.clone()).unwrap();
