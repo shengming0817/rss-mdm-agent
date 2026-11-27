@@ -292,6 +292,7 @@ impl Deployment {
                 connect_timeout: Duration::from_secs(1),
                 read_timeout: Duration::from_secs(5),
                 request_timeout: Duration::from_secs(2),
+                report_upload_timeout: Duration::from_secs(30),
                 transfer_timeout: Duration::from_secs(1800),
             },
         })

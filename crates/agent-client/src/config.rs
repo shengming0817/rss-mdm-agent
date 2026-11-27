@@ -31,6 +31,8 @@ pub struct Limits {
     pub read_timeout: Duration,
     /// Metadata request timeout.
     pub request_timeout: Duration,
+    /// Total deadline for a complete report POST and its durable acknowledgement.
+    pub report_upload_timeout: Duration,
     /// Streaming transfer timeout.
     pub transfer_timeout: Duration,
 }
@@ -47,6 +49,7 @@ impl Limits {
             connect_timeout: Duration::from_secs(5),
             read_timeout: Duration::from_secs(5),
             request_timeout: Duration::from_secs(10),
+            report_upload_timeout: Duration::from_secs(30),
             transfer_timeout: Duration::from_secs(30),
         }
     }
@@ -174,6 +177,7 @@ impl Config {
                 l.connect_timeout,
                 l.read_timeout,
                 l.request_timeout,
+                l.report_upload_timeout,
                 l.transfer_timeout,
             ]
             .iter()

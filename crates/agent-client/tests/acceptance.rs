@@ -208,8 +208,26 @@ async fn full_size_snapshot_replays_unchanged_until_its_post_ack_matches() {
         2,
     );
 
-    server.data.lock().unwrap().bad_ack = false;
+    {
+        let mut data = server.data.lock().unwrap();
+        data.bad_ack = false;
+        data.report_upload_bytes_per_second = Some(1_250_000);
+    }
+    drop(client);
+    let mut config = server.config();
+    config.limits.request_timeout = std::time::Duration::from_secs(2);
+    let mut client = Client::open(
+        &root.path,
+        config,
+        OpenMode::Existing,
+        server.secrets.clone(),
+        server.time.clone(),
+    )
+    .unwrap();
+    let started = std::time::Instant::now();
     assert_eq!(client.flush_reports(1).await, Ok(1));
+    assert!(started.elapsed() > std::time::Duration::from_secs(2));
+    server.data.lock().unwrap().report_upload_bytes_per_second = None;
     assert_eq!(
         client.report_status(report_id).await.unwrap().ack,
         original_ack

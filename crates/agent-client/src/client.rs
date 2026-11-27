@@ -297,19 +297,19 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         params: &[&str],
         input: Option<&E::Input>,
     ) -> Result<E::Output, Error> {
-        self.runtime_reply(self.call::<E>(params, None, input)?, None)
-            .await
+        let call = self
+            .call::<E>(params, None, input)?
+            .timeout(self.store.cfg.limits.request_timeout);
+        self.runtime_reply(call, None).await
     }
     pub(crate) async fn runtime_frozen_json<E: Endpoint>(
         &self,
         params: &[&str],
         bytes: &[u8],
     ) -> Result<E::Output, Error> {
-        self.runtime_reply(
-            Call::<E>::frozen(&self.http, &self.connection_origin()?, params, bytes)?,
-            None,
-        )
-        .await
+        let call = Call::<E>::frozen(&self.http, &self.connection_origin()?, params, bytes)?
+            .timeout(self.store.cfg.limits.request_timeout);
+        self.runtime_reply(call, None).await
     }
     async fn runtime_reply<E: Endpoint>(
         &self,
@@ -318,9 +318,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     ) -> Result<E::Output, Error> {
         self.active()?;
         self.now()?;
-        let request = call.timeout(self.store.cfg.limits.request_timeout);
         let (status, bytes) = self
-            .agent_json_transport(request, self.store.cfg.limits.response_bytes)
+            .agent_json_transport(call, self.store.cfg.limits.response_bytes)
             .await?;
         if !status.is_success() {
             let code = decode::<wire::ErrorBody>(&bytes)?.code;
@@ -409,7 +408,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         if device != self.registration()?.device_id.to_string() {
             return Err(Error::Identity);
         }
-        let ack: wire::ReportAck = self.runtime_frozen_json::<h::Report>(&[], &body).await?;
+        let call = Call::<h::Report>::frozen(&self.http, &self.connection_origin()?, &[], &body)?
+            .timeout(self.store.cfg.limits.report_upload_timeout);
+        let ack = self.runtime_reply(call, None).await?;
         if ack.report_id.to_string() != id {
             return Err(Error::Protocol);
         }
@@ -421,7 +422,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     /// Read the original durable acknowledgement and independent processing states.
     /// An expired observation receipt retains the ACK; a missing report returns [`Error::NotFound`].
     pub async fn report_status(&self, id: Uuid) -> Result<wire::ReportStatus, Error> {
-        let call = self.call::<h::ReportStatus>(&[&id.to_string()], None, None)?;
+        let call = self
+            .call::<h::ReportStatus>(&[&id.to_string()], None, None)?
+            .timeout(self.store.cfg.limits.request_timeout);
         let result = self
             .runtime_reply(call, Some(wire::ErrorCode::ReportNotFound))
             .await?;

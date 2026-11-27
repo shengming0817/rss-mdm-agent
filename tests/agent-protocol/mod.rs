@@ -10,8 +10,9 @@ pub mod telemetry;
 use agent_client::*;
 use axum::{
     body::{Body, Bytes},
-    extract::{ConnectInfo, DefaultBodyLimit, State},
+    extract::{ConnectInfo, DefaultBodyLimit, Request, State},
     http::{HeaderMap, StatusCode, Uri},
+    middleware::{self, Next},
     response::{IntoResponse, Response},
 };
 use base64::Engine;
@@ -250,6 +251,7 @@ pub struct Data {
     pub report_statuses: BTreeMap<Uuid, ReportStatus>,
     pub report_posts: usize,
     pub report_body_digests: Vec<[u8; 32]>,
+    pub report_upload_bytes_per_second: Option<usize>,
     pub report_lookup_fault: Option<(StatusCode, Value)>,
     pub collections: Option<Vec<CollectionDefinition>>,
     pub results: BTreeMap<String, Value>,
@@ -777,6 +779,7 @@ impl Server {
             report_statuses: BTreeMap::new(),
             report_posts: 0,
             report_body_digests: Vec::new(),
+            report_upload_bytes_per_second: None,
             report_lookup_fault: None,
             collections: None,
             results: BTreeMap::new(),
@@ -857,7 +860,11 @@ impl Server {
                         .route(
                             "/api/v1/agent/runtime/reports",
                             axum::routing::post(handler)
-                                .layer(DefaultBodyLimit::max(MAX_REPORT_BYTES)),
+                                .layer(DefaultBodyLimit::max(MAX_REPORT_BYTES))
+                                .layer(middleware::from_fn_with_state(
+                                    server_data.clone(),
+                                    pace_report_upload,
+                                )),
                         )
                         .fallback(handler)
                         .with_state(server_data);
@@ -1096,6 +1103,35 @@ fn native_enrollment_response(d: &mut Data, value: Value) -> Response {
         );
     }
     axum::Json(d.native_receipt.clone().unwrap()).into_response()
+}
+
+async fn pace_report_upload(
+    State(data): State<Arc<Mutex<Data>>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    use futures_util::StreamExt as _;
+    use tokio::time::{sleep_until, Duration, Instant};
+
+    let bytes_per_second = data.lock().unwrap().report_upload_bytes_per_second;
+    let Some(bytes_per_second) = bytes_per_second else {
+        return next.run(request).await;
+    };
+    let started = Instant::now();
+    let mut received = 0;
+    let (parts, body) = request.into_parts();
+    let stream = body.into_data_stream().then(move |chunk| {
+        if let Ok(bytes) = &chunk {
+            received += bytes.len();
+        }
+        let due = started + Duration::from_secs_f64(received as f64 / bytes_per_second as f64);
+        async move {
+            sleep_until(due).await;
+            chunk
+        }
+    });
+    next.run(Request::from_parts(parts, Body::from_stream(stream)))
+        .await
 }
 
 async fn handler(
