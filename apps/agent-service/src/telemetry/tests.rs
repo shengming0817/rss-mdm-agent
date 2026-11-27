@@ -11,6 +11,148 @@ fn values() -> BTreeMap<w::FieldKey, w::TelemetryReading> {
     )]
     .into()
 }
+
+#[tokio::test]
+async fn expanded_state_contract_maps_persists_and_uploads_over_tls() {
+    let server = protocol::Server::tls().await;
+    let root = protocol::Root::new();
+    let mut client = server.client(&root, agent_client::OpenMode::Create);
+    let registration = server.register(&mut client).await;
+    let states: std::collections::BTreeSet<_> =
+        (0..1024).map(|index| format!("state_{index:04}")).collect();
+    let dimension = |values| w::TelemetryDimension {
+        path: vec!["s".into()],
+        values,
+    };
+    let evidence = ProcessEvidence {
+        content_digest: Digest::new("a".repeat(64)).unwrap(),
+        attempt_id: AttemptId::new("expanded-state").unwrap(),
+        runner: Id::new("periodic").unwrap(),
+        scope: ProcessScope::NotStarted {},
+        finished: true,
+        quiescent: true,
+        exit_code: Some(0),
+        end: ProcessEnd::Exited,
+        failure_kind: ProcessFailureKind::None,
+        total_output_bytes: 0,
+        stdout: vec![],
+        stderr: vec![],
+        quality: OutputQuality::Complete,
+    };
+
+    for many_dimensions in [false, true] {
+        let mut configuration = fixture::configuration(&server, &registration).configuration;
+        configuration.max_bytes = 256 * 1024;
+        configuration.max_resources = 1;
+        configuration.binding = if many_dimensions { "b" } else { "a" }.repeat(64);
+        let selected = if many_dimensions { "x" } else { "state_1023" };
+        let field = &mut configuration.fields[0];
+        field.value_type = w::ValueType::Object {
+            properties: [(
+                "s".into(),
+                w::ValueType::Enum {
+                    values: if many_dimensions {
+                        [selected.to_owned()].into()
+                    } else {
+                        states.clone()
+                    },
+                },
+            )]
+            .into(),
+        };
+        let binding = field.time_series.as_mut().unwrap();
+        binding.kind = w::TelemetryKind::State;
+        binding.value_path = vec!["s".into()];
+        binding.aggregations = [w::TelemetryAggregation::Timeline].into();
+        binding.dimensions = if many_dimensions {
+            (0..1024)
+                .map(|index| {
+                    (
+                        format!("d{index:04}"),
+                        dimension([selected.to_owned()].into()),
+                    )
+                })
+                .collect()
+        } else {
+            [("state".into(), dimension(states.clone()))].into()
+        };
+        let mut outside = binding.clone();
+        if many_dimensions {
+            outside
+                .dimensions
+                .insert("extra".into(), dimension([selected.to_owned()].into()));
+        } else {
+            outside
+                .dimensions
+                .get_mut("state")
+                .unwrap()
+                .values
+                .insert("extra".into());
+        }
+        assert!(outside.validate().is_err());
+        let w::TelemetryCollector::Script { output_schema, .. } = &mut configuration.collector
+        else {
+            unreachable!();
+        };
+        *output_schema = serde_json::json!({"type":"object","properties":{
+            "load":{"type":"object","properties":{"s":{"type":"string"}},
+                "required":["s"],"additionalProperties":false}},
+            "required":["load"], "additionalProperties":false});
+
+        let signed = fixture::sign(&server.data.lock().unwrap(), configuration);
+        let p = &signed.configuration;
+        server.data.lock().unwrap().telemetry.configuration = Some(signed.clone());
+        let verified = client
+            .telemetry_configuration(p.policy, p.policy_version)
+            .await
+            .unwrap();
+        let at = server.time.now().unwrap() * 1_000_000;
+        let mut candidate = evidence.clone();
+        candidate.stdout = serde_json::to_vec(&serde_json::json!({"load":{"s":selected}})).unwrap();
+        candidate.total_output_bytes = candidate.stdout.len() as u64;
+        let samples = mapping::readings(verified.payload(), &candidate, at).unwrap();
+        let mut rejected = candidate;
+        rejected.stdout = br#"{"load":{"s":"unapproved"}}"#.to_vec();
+        rejected.total_output_bytes = rejected.stdout.len() as u64;
+        assert_eq!(
+            mapping::readings(verified.payload(), &rejected, at),
+            Err(Error::Protocol)
+        );
+        let mut spool = client.telemetry_spool(Limits::production()).unwrap();
+        spool.install(&verified).unwrap();
+        let mut small_request = verified.payload().clone();
+        small_request.max_bytes = 128;
+        small_request.output_bytes = 128;
+        let signed_small = fixture::sign(&server.data.lock().unwrap(), small_request);
+        let small = client.verify_telemetry(signed_small).unwrap();
+        assert_eq!(
+            spool.append(&small, at, samples.clone(), "test-boot"),
+            Err(Error::Capacity),
+        );
+        let sample = spool
+            .append(&verified, at, samples.clone(), "test-boot")
+            .unwrap();
+        spool.freeze_all(&verified).unwrap();
+        let id = spool.pending(at / 1_000_000, false).unwrap().unwrap().id();
+        drop(spool);
+        drop(client);
+
+        client = server.client(&root, agent_client::OpenMode::Existing);
+        let mut spool = client.telemetry_spool(Limits::production()).unwrap();
+        let pending = spool.pending(at / 1_000_000, false).unwrap().unwrap();
+        assert_eq!(pending.id(), id);
+        let receipt = client.telemetry_submit(&pending).await.unwrap();
+        spool.acknowledge(&pending, &receipt).unwrap();
+        assert_eq!(spool.summary().unwrap().pending, 0);
+        let data = server.data.lock().unwrap();
+        let uploaded: w::TelemetryUpload =
+            serde_json::from_value(data.telemetry.uploads.last().unwrap().clone()).unwrap();
+        assert_eq!(uploaded.configuration.configuration.binding, p.binding);
+        assert_eq!(uploaded.observations[0].id, sample);
+        assert_eq!(uploaded.observations[0].values, samples);
+    }
+}
+
 #[tokio::test]
 async fn withdrawal_expiry_and_clock_jump_preserve_gaps_without_restarting_work() {
     let _budget = crate::scenario_budget::enter();
