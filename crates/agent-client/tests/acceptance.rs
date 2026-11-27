@@ -2,7 +2,6 @@ use agent_client::{Client, Config, Error, Limits, OpenMode, Transport};
 use rss_mdm_agent_wire::runtime::*;
 use url::Url;
 use uuid::Uuid;
-mod paired_mdm;
 #[path = "../../../tests/agent-protocol/mod.rs"]
 mod support;
 use rss_mdm_agent_wire::runtime::{TaskArchitecture, TaskPlatform};

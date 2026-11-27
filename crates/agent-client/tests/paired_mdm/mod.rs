@@ -1,7 +1,10 @@
 //! Manual pairing against a disposable, revision-bound MDM deployment.
-//! The driver supplies a private directory with endpoint.json (signed origin,
-//! tenant and service_id) and ca.crt. It runs each phase in a fresh process.
-use super::support::{self, Secrets};
+//! AGENT_REPORT_PAIR_DIR points to a private directory with endpoint.json
+//! (origin, tenant and service_id) and the ephemeral gateway ca.crt.
+//! Run this ignored test in separate processes with AGENT_REPORT_PAIR_PHASE
+//! set to prepare, queue, submit, then verify. Authorize the emitted grant-id after
+//! prepare and set up the two expired Observation receipts after submit.
+use crate::test_support::{self as support, Secrets};
 use agent_client::{Client, Clock, Config, Error, Limits, OpenMode, Transport};
 use ring::signature::{Ed25519KeyPair, KeyPair};
 use rss_mdm_agent_wire::runtime::*;
@@ -36,6 +39,12 @@ struct Reports {
     failed: ReportAck,
 }
 
+#[derive(Deserialize, Serialize)]
+struct Queued {
+    snapshot: Uuid,
+    failed: Uuid,
+}
+
 #[tokio::test]
 #[ignore = "requires a disposable MDM deployment, real CA and database state transitions"]
 async fn paired_mdm_reports() {
@@ -45,6 +54,12 @@ async fn paired_mdm_reports() {
     let endpoint: Endpoint =
         serde_json::from_slice(&std::fs::read(root.join("endpoint.json")).unwrap()).unwrap();
     let origin = Url::parse(&endpoint.origin).unwrap();
+    assert!(
+        origin
+            .host_str()
+            .is_some_and(|host| host.ends_with(".localhost")),
+        "the pairing fixture requires a disposable local endpoint"
+    );
     let mut connections =
         support::signed_connections(origin.origin().ascii_serialization(), endpoint.tenant, 1);
     connections.configuration.service_id = endpoint.service_id;
@@ -90,7 +105,7 @@ async fn paired_mdm_reports() {
             platform_private_storage::write_new(&identity_path, &identity).unwrap();
             std::fs::write(root.join("grant-id"), status.grant_id.unwrap().to_string()).unwrap();
         }
-        "submit" => {
+        "queue" => {
             client.drive_enrollment().await.unwrap();
             let registration = client.registration().unwrap();
             let field = FieldKey::parse("channel.mdm.enrollment").unwrap();
@@ -118,13 +133,31 @@ async fn paired_mdm_reports() {
                     WallClock.now().unwrap(),
                 )
                 .unwrap();
-            assert_eq!(client.flush_reports(2).await, Ok(2));
+            std::fs::write(
+                root.join("queued.json"),
+                serde_json::to_vec(&Queued { snapshot, failed }).unwrap(),
+            )
+            .unwrap();
+        }
+        "submit" => {
+            let Queued { snapshot, failed } =
+                serde_json::from_slice(&std::fs::read(root.join("queued.json")).unwrap()).unwrap();
+            assert_eq!(client.report_status(snapshot).await, Err(Error::NotFound));
+            assert_eq!(client.report_status(failed).await, Err(Error::NotFound));
             let reports = Reports {
-                snapshot: client.report_status(snapshot).await.unwrap().ack,
-                failed: client.report_status(failed).await.unwrap().ack,
+                snapshot: client.flush_next_report().await.unwrap().unwrap(),
+                failed: client.flush_next_report().await.unwrap().unwrap(),
             };
             assert_eq!(reports.snapshot.report_id, snapshot);
             assert_eq!(reports.failed.report_id, failed);
+            assert_eq!(
+                client.report_status(snapshot).await.unwrap().ack,
+                reports.snapshot
+            );
+            assert_eq!(
+                client.report_status(failed).await.unwrap().ack,
+                reports.failed
+            );
             std::fs::write(
                 root.join("reports.json"),
                 serde_json::to_vec(&reports).unwrap(),
@@ -159,6 +192,6 @@ async fn paired_mdm_reports() {
             )
             .unwrap();
         }
-        _ => panic!("expected prepare, submit or verify pairing phase"),
+        _ => panic!("expected prepare, queue, submit or verify pairing phase"),
     }
 }

@@ -9,6 +9,10 @@ use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use uuid::Uuid;
+
+#[cfg(test)]
+#[path = "../tests/paired_mdm/mod.rs"]
+mod paired_mdm;
 /// A verified offer; public callers cannot deserialize or invent this wrapper.
 #[derive(Debug)]
 pub struct Offer {
@@ -376,40 +380,43 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             return Err(Error::Configuration);
         }
         let mut sent = 0;
-        while sent < limit {
-            let report = self
-                .store
-                .conn
-                .query_row(
-                    "SELECT id, device,
-                    CASE WHEN typeof(body)='blob' AND length(body)<=?1 THEN body END
-                 FROM reports ORDER BY rowid LIMIT 1",
-                    [wire::MAX_REPORT_BYTES],
-                    |row| {
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, String>(1)?,
-                            row.get::<_, Vec<u8>>(2)?,
-                        ))
-                    },
-                )
-                .optional()?;
-            let Some((id, device, body)) = report else {
-                break;
-            };
-            if device != self.registration()?.device_id.to_string() {
-                return Err(Error::Identity);
-            }
-            let ack: wire::ReportAck = self.runtime_frozen_json::<h::Report>(&[], &body).await?;
-            if ack.report_id.to_string() != id {
-                return Err(Error::Protocol);
-            }
-            self.store
-                .conn
-                .execute("DELETE FROM reports WHERE id=?1", [id])?;
+        while sent < limit && self.flush_next_report().await?.is_some() {
             sent += 1;
         }
         Ok(sent)
+    }
+    async fn flush_next_report(&mut self) -> Result<Option<wire::ReportAck>, Error> {
+        let report = self
+            .store
+            .conn
+            .query_row(
+                "SELECT id, device,
+                    CASE WHEN typeof(body)='blob' AND length(body)<=?1 THEN body END
+                 FROM reports ORDER BY rowid LIMIT 1",
+                [wire::MAX_REPORT_BYTES],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Vec<u8>>(2)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((id, device, body)) = report else {
+            return Ok(None);
+        };
+        if device != self.registration()?.device_id.to_string() {
+            return Err(Error::Identity);
+        }
+        let ack: wire::ReportAck = self.runtime_frozen_json::<h::Report>(&[], &body).await?;
+        if ack.report_id.to_string() != id {
+            return Err(Error::Protocol);
+        }
+        self.store
+            .conn
+            .execute("DELETE FROM reports WHERE id=?1", [id])?;
+        Ok(Some(ack))
     }
     /// Read the original durable acknowledgement and independent processing states.
     /// An expired observation receipt retains the ACK; a missing report returns [`Error::NotFound`].
