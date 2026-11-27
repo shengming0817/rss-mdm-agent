@@ -78,6 +78,7 @@ pub struct ResumedStart {
 pub struct Client<S, C> {
     pub(crate) store: Store,
     pub(crate) http: reqwest::Client,
+    pub(crate) report_http: reqwest::Client,
     pub(crate) bootstrap: reqwest::Client,
     pub(crate) native_http: reqwest::Client,
     pub(crate) runtime_gate: crate::RuntimeGate,
@@ -209,6 +210,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             transfers,
             delivery_owner: Uuid::new_v4(),
             store,
+            report_http: http.clone(),
             http,
             bootstrap,
             native_http,
@@ -408,8 +410,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         if device != self.registration()?.device_id.to_string() {
             return Err(Error::Identity);
         }
-        let call = Call::<h::Report>::frozen(&self.http, &self.connection_origin()?, &[], &body)?
-            .timeout(self.store.cfg.limits.report_upload_timeout);
+        let call =
+            Call::<h::Report>::frozen(&self.report_http, &self.connection_origin()?, &[], &body)?
+                .timeout(self.store.cfg.limits.report_upload_timeout);
         let ack = self.runtime_reply(call, None).await?;
         if ack.report_id.to_string() != id {
             return Err(Error::Protocol);

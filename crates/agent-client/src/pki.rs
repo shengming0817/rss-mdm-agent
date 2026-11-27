@@ -136,9 +136,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     pub(crate) fn restore_runtime_transport(&mut self) -> Result<(), Error> {
         self.active()?;
         let active = self.identity_state()?.active.ok_or(Error::Identity)?;
-        self.http = crate::tls::client(
+        (self.http, self.report_http) = crate::tls::runtime_clients(
             &self.store.cfg,
-            Some((&active.key_reference, &active.chain)),
+            (&active.key_reference, &active.chain),
             &self.secrets,
         )?;
         Ok(())
