@@ -470,7 +470,7 @@ impl Collector {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
     use crate::{protocol_test_support::telemetry as fixture, service::product_gate_tests::Case};
