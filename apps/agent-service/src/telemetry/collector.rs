@@ -173,6 +173,32 @@ impl Collector {
         observed: i64,
         native: Option<NativeMaterials>,
     ) -> Result<(), Error> {
+        let (frozen, artifacts, now_ms) =
+            Self::prepare_execution(&configuration, bytes, core, native)?;
+        let leases = vec![execution_runner::staging::verify_retained(
+            &artifacts.content,
+            &frozen.spec().launch.artifact.sha256,
+        )
+        .map_err(crate::error::app_error)?];
+        let input_digest = frozen.spec().launch.artifact.sha256.clone();
+        self.runner
+            .start(&configuration, frozen, artifacts, now_ms)
+            .map_err(crate::error::app_error)?;
+        self.active = Some(Active {
+            configuration,
+            observed,
+            input_digest,
+            _leases: leases,
+        });
+        Ok(())
+    }
+
+    fn prepare_execution(
+        configuration: &Configuration,
+        bytes: Option<Vec<u8>>,
+        core: &mut crate::service::Core,
+        native: Option<NativeMaterials>,
+    ) -> Result<(FrozenExecution, Artifacts, u64), Error> {
         let p = configuration.payload();
         let now_ms = crate::wall()?;
         let deadline =
@@ -400,12 +426,6 @@ impl Collector {
                 )
             }
         };
-        parameters.insert(
-            "rss-periodic-collection".into(),
-            InputValue::Literal {
-                value: serde_json::to_value(p).map_err(|_| Error::Protocol)?,
-            },
-        );
         let policy = reference(p.policy.to_string(), p.policy_version.to_string())?;
         let frozen = FrozenExecution::freeze(
             ExecutionInput {
@@ -446,21 +466,33 @@ impl Collector {
             &plan::storage_limits().input,
         )
         .map_err(|_| Error::Protocol)?;
-        let leases = vec![execution_runner::staging::verify_retained(
-            &artifacts.content,
-            &frozen.spec().launch.artifact.sha256,
-        )
-        .map_err(crate::error::app_error)?];
-        let input_digest = frozen.spec().launch.artifact.sha256.clone();
-        self.runner
-            .start(&configuration, frozen, artifacts, now_ms)
-            .map_err(crate::error::app_error)?;
-        self.active = Some(Active {
-            configuration,
-            observed,
-            input_digest,
-            _leases: leases,
-        });
-        Ok(())
+        Ok((frozen, artifacts, now_ms))
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+    use crate::{protocol_test_support::telemetry as fixture, service::product_gate_tests::Case};
+    use sha2::{Digest as _, Sha256};
+
+    #[tokio::test]
+    async fn script_plan_has_only_signed_execution_parameters() {
+        let _budget = crate::scenario_budget::enter();
+        let mut case = Case::new(None).await;
+        let registration = case.service.client.registration().unwrap();
+        let mut configuration = fixture::configuration(&case._server, &registration).configuration;
+        let script = b"printf '%s' '{\"load\":1}'".to_vec();
+        let w::TelemetryCollector::Script { content, .. } = &mut configuration.collector else {
+            unreachable!();
+        };
+        content.length = script.len() as u64;
+        content.sha256 = Sha256::digest(&script).into();
+        let signed = fixture::sign(&case._server.data.lock().unwrap(), configuration);
+        let verified = case.service.client.verify_telemetry(signed).unwrap();
+        let (plan, _, _) =
+            Collector::prepare_execution(&verified, Some(script), &mut case.service.core, None)
+                .unwrap();
+        assert!(plan.spec().request.parameters.is_empty());
     }
 }

@@ -23,6 +23,15 @@ pub(super) fn verify(
     if format!("{:x}", Sha256::digest(&bytes)) != p.launch.artifact.sha256.as_str() {
         return Err(Error::Denied);
     }
+    verify_launch(c, p, artifacts, &bytes)
+}
+
+fn verify_launch(
+    c: &w::TelemetryConfiguration,
+    p: &ExecutionInput,
+    artifacts: &Artifacts,
+    bytes: &[u8],
+) -> Result<(), Error> {
     match &c.collector {
         w::TelemetryCollector::Script {
             content,
@@ -34,7 +43,7 @@ pub(super) fn verify(
             ..
         } => {
             if bytes.len() as u64 != content.length
-                || Sha256::digest(&bytes).as_slice() != content.sha256
+                || Sha256::digest(bytes).as_slice() != content.sha256
             {
                 return Err(Error::Denied);
             }
@@ -70,15 +79,10 @@ pub(super) fn verify(
                 {
                     return Err(Error::Denied);
                 }
-                crate::osquery::arguments(
-                    &bytes,
-                    &parameters,
-                    *max_rows,
-                    p.request.target.platform,
-                )?
-                .into_iter()
-                .map(|value| LaunchArg::Literal { value })
-                .collect::<Vec<_>>()
+                crate::osquery::arguments(bytes, &parameters, *max_rows, p.request.target.platform)?
+                    .into_iter()
+                    .map(|value| LaunchArg::Literal { value })
+                    .collect::<Vec<_>>()
             } else {
                 let profile = match profile {
                     w::ExecutorProfile::PowerShell7 => script_plan::ScriptProfile::PowerShell7,
@@ -110,7 +114,7 @@ pub(super) fn verify(
         }
         w::TelemetryCollector::Native { plan: read, .. } => {
             let input: serde_json::Value =
-                serde_json::from_slice(&bytes).map_err(|_| Error::Denied)?;
+                serde_json::from_slice(bytes).map_err(|_| Error::Denied)?;
             if input.pointer("/read/plan")
                 != Some(&serde_json::to_value(read).map_err(|_| Error::Denied)?)
                 || input.pointer("/run_as")
@@ -300,5 +304,48 @@ mod tests {
             verify_binding(&c, &p, &artifacts, 200000),
             Err(Error::Denied)
         );
+    }
+
+    #[test]
+    fn periodic_osquery_requires_exact_signed_parameters() {
+        let (mut c, mut p, artifacts) = baseline();
+        let bytes = b"SELECT version FROM osquery_info WHERE version = :version";
+        let value = serde_json::json!("1.0");
+        let w::TelemetryCollector::Script {
+            content,
+            profile,
+            sql_parameters,
+            ..
+        } = &mut c.collector
+        else {
+            unreachable!();
+        };
+        *content = w::TaskContent {
+            length: bytes.len() as u64,
+            sha256: Sha256::digest(bytes).into(),
+        };
+        *profile = w::ExecutorProfile::Osquery;
+        *sql_parameters = Some([("version".into(), value.clone())].into());
+        p.request.target.platform = Platform::Macos;
+        p.request.parameters = [("version".into(), InputValue::Literal { value })].into();
+        p.launch.env.clear();
+        p.launch.output.format = OutputFormat::Json { max_rows: 1 };
+        p.launch.interpreter.profile = VersionedRef {
+            id: Id::new(crate::osquery::PROFILE).unwrap(),
+            revision: Id::new("1").unwrap(),
+        };
+        p.launch.argv = crate::osquery::arguments(bytes, &p.request.parameters, 1, Platform::Macos)
+            .unwrap()
+            .into_iter()
+            .map(|value| LaunchArg::Literal { value })
+            .collect();
+        assert_eq!(verify_launch(&c, &p, &artifacts, bytes), Ok(()));
+        p.request.parameters.insert(
+            "rss-periodic-collection".into(),
+            InputValue::Literal {
+                value: serde_json::json!({}),
+            },
+        );
+        assert_eq!(verify_launch(&c, &p, &artifacts, bytes), Err(Error::Denied));
     }
 }

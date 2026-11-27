@@ -9,6 +9,10 @@ use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use uuid::Uuid;
+
+#[cfg(test)]
+#[path = "../tests/paired_mdm/mod.rs"]
+mod paired_mdm;
 /// A verified offer; public callers cannot deserialize or invent this wrapper.
 #[derive(Debug)]
 pub struct Offer {
@@ -74,6 +78,7 @@ pub struct ResumedStart {
 pub struct Client<S, C> {
     pub(crate) store: Store,
     pub(crate) http: reqwest::Client,
+    pub(crate) report_http: reqwest::Client,
     pub(crate) bootstrap: reqwest::Client,
     pub(crate) native_http: reqwest::Client,
     pub(crate) runtime_gate: crate::RuntimeGate,
@@ -205,6 +210,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             transfers,
             delivery_owner: Uuid::new_v4(),
             store,
+            report_http: http.clone(),
             http,
             bootstrap,
             native_http,
@@ -293,19 +299,19 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         params: &[&str],
         input: Option<&E::Input>,
     ) -> Result<E::Output, Error> {
-        self.runtime_reply(self.call::<E>(params, None, input)?, None)
-            .await
+        let call = self
+            .call::<E>(params, None, input)?
+            .timeout(self.store.cfg.limits.request_timeout);
+        self.runtime_reply(call, None).await
     }
     pub(crate) async fn runtime_frozen_json<E: Endpoint>(
         &self,
         params: &[&str],
         bytes: &[u8],
     ) -> Result<E::Output, Error> {
-        self.runtime_reply(
-            Call::<E>::frozen(&self.http, &self.connection_origin()?, params, bytes)?,
-            None,
-        )
-        .await
+        let call = Call::<E>::frozen(&self.http, &self.connection_origin()?, params, bytes)?
+            .timeout(self.store.cfg.limits.request_timeout);
+        self.runtime_reply(call, None).await
     }
     async fn runtime_reply<E: Endpoint>(
         &self,
@@ -314,9 +320,8 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
     ) -> Result<E::Output, Error> {
         self.active()?;
         self.now()?;
-        let request = call.timeout(self.store.cfg.limits.request_timeout);
         let (status, bytes) = self
-            .agent_json_transport(request, self.store.cfg.limits.response_bytes)
+            .agent_json_transport(call, self.store.cfg.limits.response_bytes)
             .await?;
         if !status.is_success() {
             let code = decode::<wire::ErrorBody>(&bytes)?.code;
@@ -375,39 +380,54 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         if limit == 0 || limit > self.store.cfg.limits.pending_reports {
             return Err(Error::Configuration);
         }
-        let reports = {
-            let mut stmt=self.store.conn.prepare("SELECT id,device,CASE WHEN typeof(body)='blob' AND length(body)<=16384 THEN body END FROM reports ORDER BY rowid LIMIT ?1")?;
-            let rows = stmt
-                .query_map([limit as i64], |r| {
-                    Ok((
-                        r.get::<_, String>(0)?,
-                        r.get::<_, String>(1)?,
-                        r.get::<_, Vec<u8>>(2)?,
-                    ))
-                })?
-                .collect::<Result<Vec<_>, _>>()?;
-            rows
-        };
         let mut sent = 0;
-        for (id, device, body) in reports {
-            if device != self.registration()?.device_id.to_string() {
-                return Err(Error::Identity);
-            }
-            let ack: wire::ReportAck = self.runtime_frozen_json::<h::Report>(&[], &body).await?;
-            if ack.report_id.to_string() != id {
-                return Err(Error::Protocol);
-            }
-            self.store
-                .conn
-                .execute("DELETE FROM reports WHERE id=?1", [id])?;
+        while sent < limit && self.flush_next_report().await?.is_some() {
             sent += 1;
         }
         Ok(sent)
     }
+    async fn flush_next_report(&mut self) -> Result<Option<wire::ReportAck>, Error> {
+        let report = self
+            .store
+            .conn
+            .query_row(
+                "SELECT id, device,
+                    CASE WHEN typeof(body)='blob' AND length(body)<=?1 THEN body END
+                 FROM reports ORDER BY rowid LIMIT 1",
+                [wire::MAX_REPORT_BYTES],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Vec<u8>>(2)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((id, device, body)) = report else {
+            return Ok(None);
+        };
+        if device != self.registration()?.device_id.to_string() {
+            return Err(Error::Identity);
+        }
+        let call =
+            Call::<h::Report>::frozen(&self.report_http, &self.connection_origin()?, &[], &body)?
+                .timeout(self.store.cfg.limits.report_upload_timeout);
+        let ack = self.runtime_reply(call, None).await?;
+        if ack.report_id.to_string() != id {
+            return Err(Error::Protocol);
+        }
+        self.store
+            .conn
+            .execute("DELETE FROM reports WHERE id=?1", [id])?;
+        Ok(Some(ack))
+    }
     /// Read the original durable acknowledgement and independent processing states.
     /// An expired observation receipt retains the ACK; a missing report returns [`Error::NotFound`].
     pub async fn report_status(&self, id: Uuid) -> Result<wire::ReportStatus, Error> {
-        let call = self.call::<h::ReportStatus>(&[&id.to_string()], None, None)?;
+        let call = self
+            .call::<h::ReportStatus>(&[&id.to_string()], None, None)?
+            .timeout(self.store.cfg.limits.request_timeout);
         let result = self
             .runtime_reply(call, Some(wire::ErrorCode::ReportNotFound))
             .await?;

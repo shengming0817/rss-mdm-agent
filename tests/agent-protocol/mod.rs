@@ -10,8 +10,9 @@ pub mod telemetry;
 use agent_client::*;
 use axum::{
     body::{Body, Bytes},
-    extract::{ConnectInfo, State},
+    extract::{ConnectInfo, DefaultBodyLimit, Request, State},
     http::{HeaderMap, StatusCode, Uri},
+    middleware::{self, Next},
     response::{IntoResponse, Response},
 };
 use base64::Engine;
@@ -249,6 +250,8 @@ pub struct Data {
     pub reports: BTreeMap<String, Value>,
     pub report_statuses: BTreeMap<Uuid, ReportStatus>,
     pub report_posts: usize,
+    pub report_body_digests: Vec<[u8; 32]>,
+    pub report_upload_bytes_per_second: Option<usize>,
     pub report_lookup_fault: Option<(StatusCode, Value)>,
     pub collections: Option<Vec<CollectionDefinition>>,
     pub results: BTreeMap<String, Value>,
@@ -775,6 +778,8 @@ impl Server {
             reports: BTreeMap::new(),
             report_statuses: BTreeMap::new(),
             report_posts: 0,
+            report_body_digests: Vec::new(),
+            report_upload_bytes_per_second: None,
             report_lookup_fault: None,
             collections: None,
             results: BTreeMap::new(),
@@ -852,6 +857,15 @@ impl Server {
                         }
                     }
                     let router = axum::Router::new()
+                        .route(
+                            "/api/v1/agent/runtime/reports",
+                            axum::routing::post(handler)
+                                .layer(DefaultBodyLimit::max(MAX_REPORT_BYTES))
+                                .layer(middleware::from_fn_with_state(
+                                    server_data.clone(),
+                                    pace_report_upload,
+                                )),
+                        )
                         .fallback(handler)
                         .with_state(server_data);
                     let serving = async move {
@@ -1091,6 +1105,35 @@ fn native_enrollment_response(d: &mut Data, value: Value) -> Response {
     axum::Json(d.native_receipt.clone().unwrap()).into_response()
 }
 
+async fn pace_report_upload(
+    State(data): State<Arc<Mutex<Data>>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    use futures_util::StreamExt as _;
+    use tokio::time::{sleep_until, Duration, Instant};
+
+    let bytes_per_second = data.lock().unwrap().report_upload_bytes_per_second;
+    let Some(bytes_per_second) = bytes_per_second else {
+        return next.run(request).await;
+    };
+    let started = Instant::now();
+    let mut received = 0;
+    let (parts, body) = request.into_parts();
+    let stream = body.into_data_stream().then(move |chunk| {
+        if let Ok(bytes) = &chunk {
+            received += bytes.len();
+        }
+        let due = started + Duration::from_secs_f64(received as f64 / bytes_per_second as f64);
+        async move {
+            sleep_until(due).await;
+            chunk
+        }
+    });
+    next.run(Request::from_parts(parts, Body::from_stream(stream)))
+        .await
+}
+
 async fn handler(
     state: State<Arc<Mutex<Data>>>,
     uri: Uri,
@@ -1110,6 +1153,14 @@ async fn handler(
             .unwrap()
             .push(format!("request {} {}: {error}", method, uri.path()));
         return runtime_error(StatusCode::BAD_REQUEST, ErrorCode::MalformedRequest);
+    }
+    if method == axum::http::Method::POST && uri.path() == "/api/v1/agent/runtime/reports" {
+        state
+            .0
+            .lock()
+            .unwrap()
+            .report_body_digests
+            .push(Sha256::digest(&bytes).into());
     }
     // Fault overrides deliberately reach the client. All ordinary fixture replies
     // must match the producer, rather than a second hand-written protocol.

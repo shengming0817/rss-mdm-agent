@@ -237,13 +237,7 @@ pub(crate) fn validate_script_output(
     {
         return Err(Error::Capacity);
     }
-    admit_schema(schema)?;
-    if serde_json::to_vec(schema)
-        .map_err(|_| Error::Protocol)?
-        .len()
-        .saturating_mul(bytes)
-        > 16 * 1024 * 1024
-    {
+    if admit_schema(schema)?.saturating_mul(bytes) > 16 * 1024 * 1024 {
         return Err(Error::Capacity);
     }
     let validator = jsonschema::validator_for(schema).map_err(|_| Error::Protocol)?;
@@ -254,12 +248,18 @@ pub(crate) fn validate_script_output(
 }
 
 /// Restrict remote validation to bounded, non-recursive structural schemas.
-pub(crate) fn admit_schema(schema: &Json) -> Result<(), Error> {
-    fn walk(v: &Json, depth: usize, nodes: &mut usize, literal: bool) -> Result<(), Error> {
+/// Return the encoded size for charging output validation work.
+pub(crate) fn admit_schema(schema: &Json) -> Result<usize, Error> {
+    fn visit_node(depth: usize, nodes: &mut usize) -> Result<(), Error> {
         *nodes += 1;
         if depth > 12 || *nodes > 256 {
             return Err(Error::Capacity);
         }
+        Ok(())
+    }
+
+    fn walk(v: &Json, depth: usize, nodes: &mut usize, literal: bool) -> Result<(), Error> {
+        visit_node(depth, nodes)?;
         match v {
             Json::Object(map) => {
                 for (key, value) in map {
@@ -275,7 +275,23 @@ pub(crate) fn admit_schema(schema: &Json) -> Result<(), Error> {
                             }
                         }
                         "items" => walk(value, depth + 1, nodes, false)?,
-                        "type" | "required" | "enum" | "const" | "minimum" | "maximum"
+                        "enum" => {
+                            if let Some(values) = value.as_array().filter(|values| {
+                                values.iter().all(|value| {
+                                    value.is_string() || value.is_i64() || value.is_u64()
+                                })
+                            }) {
+                                if values.len() > 1024 {
+                                    return Err(Error::Capacity);
+                                }
+                                // Flat vocabulary entries are data. Their array consumes one
+                                // node and every entry counts toward the schema byte budget.
+                                visit_node(depth + 2, nodes)?;
+                            } else {
+                                walk(value, depth + 1, nodes, true)?;
+                            }
+                        }
+                        "type" | "required" | "const" | "minimum" | "maximum"
                         | "exclusiveMinimum" | "exclusiveMaximum" | "minLength" | "maxLength"
                         | "minItems" | "maxItems" | "minProperties" | "maxProperties" | "title"
                         | "description" | "$schema" => walk(value, depth + 1, nodes, true)?,
@@ -296,7 +312,15 @@ pub(crate) fn admit_schema(schema: &Json) -> Result<(), Error> {
         }
         Ok(())
     }
-    walk(schema, 0, &mut 0, false)
+    let bytes = serde_json::to_vec(schema)
+        .map_err(|_| Error::Protocol)?
+        .len();
+    // The producer bounds the complete script output schema to 16 KiB.
+    if bytes > 16 * 1024 {
+        return Err(Error::Capacity);
+    }
+    walk(schema, 0, &mut 0, false)?;
+    Ok(bytes)
 }
 
 #[cfg(test)]
@@ -361,6 +385,33 @@ mod tests {
         assert!(admit_schema(&json!({"type":"string","pattern":"(a+)+$"})).is_err());
         assert!(admit_schema(&json!({"type":"array","items":{"type":"object","properties":{"load":{"type":"integer"}},"required":["load"],"additionalProperties":false},"maxItems":16})).is_ok());
     }
+    #[test]
+    fn flat_vocabulary_respects_entry_schema_and_output_work_limits() {
+        let mut values: Vec<_> = (0..1024).map(|i| format!("state_{i:04}")).collect();
+        let schema = json!({"type":"string", "enum":values});
+        assert_eq!(
+            validate_script_output(&schema, &json!("state_1023"), 12, 1),
+            Ok(())
+        );
+        assert_eq!(
+            validate_script_output(&schema, &json!("state_1023"), 2048, 1),
+            Err(Error::Capacity),
+        );
+        values.push("extra".into());
+        assert_eq!(
+            admit_schema(&json!({"type":"string", "enum":values})),
+            Err(Error::Capacity)
+        );
+        assert_eq!(
+            admit_schema(&json!({"type":"integer", "enum":(0..1025).collect::<Vec<_>>()})),
+            Err(Error::Capacity)
+        );
+        assert_eq!(
+            admit_schema(&json!({"type":"string", "enum":["x".repeat(16 * 1024)]})),
+            Err(Error::Capacity),
+        );
+    }
+
     #[test]
     fn cim_time_requires_a_complete_calendar_and_timezone() {
         assert_eq!(

@@ -645,9 +645,9 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         if device != receipt.runtime.device_id {
             return Err(Error::Identity);
         }
-        let http = crate::tls::client(
+        let (http, report_http) = crate::tls::runtime_clients(
             &self.store.cfg,
-            Some((&p.key_reference, &candidate.certificate_chain)),
+            (&p.key_reference, &candidate.certificate_chain),
             &self.secrets,
         )?;
         self.store.put(
@@ -666,6 +666,7 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
             },
         )?;
         self.http = http;
+        self.report_http = report_http;
         self.publish_runtime_gate();
         Ok(())
     }

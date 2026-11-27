@@ -41,16 +41,36 @@ pub(crate) fn client(
     provider: &impl IdentityProvider,
 ) -> Result<reqwest::Client, Error> {
     let identity = identity
-        .map(|(reference, chain)| {
-            let key = Arc::new(CertifiedKey::new(
-                certificates(chain)?,
-                provider.key(reference)?,
-            ));
-            key.keys_match().map_err(|_| Error::Identity)?;
-            Ok::<_, Error>(key)
-        })
+        .map(|identity| certified_identity(identity, provider))
         .transpose()?;
     client_identity(cfg, identity)
+}
+
+fn certified_identity(
+    (reference, chain): (&String, &[String]),
+    provider: &impl IdentityProvider,
+) -> Result<Arc<CertifiedKey>, Error> {
+    let key = CertifiedKey::new(certificates(chain)?, provider.key(reference)?);
+    key.keys_match().map_err(|_| Error::Identity)?;
+    Ok(Arc::new(key))
+}
+
+pub(crate) fn runtime_clients(
+    cfg: &Config,
+    identity: (&String, &[String]),
+    provider: &impl IdentityProvider,
+) -> Result<(reqwest::Client, reqwest::Client), Error> {
+    let identity = certified_identity(identity, provider)?;
+    let metadata = client_identity(cfg, Some(identity.clone()))?;
+    // reqwest's client read timer also covers waiting for headers during upload.
+    let reports = transport(
+        cfg.ca_pem.as_deref(),
+        cfg.transport == Transport::Https,
+        cfg.limits.connect_timeout,
+        cfg.limits.report_upload_timeout,
+        Some(identity),
+    )?;
+    Ok((metadata, reports))
 }
 pub(crate) fn client_identity(
     cfg: &Config,
