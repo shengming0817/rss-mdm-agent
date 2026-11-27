@@ -94,8 +94,13 @@ async fn expanded_state_contract_maps_persists_and_uploads_over_tls() {
         else {
             unreachable!();
         };
+        let output_states = if many_dimensions {
+            [selected.to_owned()].into()
+        } else {
+            states.clone()
+        };
         *output_schema = serde_json::json!({"type":"object","properties":{
-            "load":{"type":"object","properties":{"s":{"type":"string"}},
+            "load":{"type":"object","properties":{"s":{"type":"string","enum":output_states}},
                 "required":["s"],"additionalProperties":false}},
             "required":["load"], "additionalProperties":false});
 
@@ -118,8 +123,9 @@ async fn expanded_state_contract_maps_persists_and_uploads_over_tls() {
             mapping::readings(verified.payload(), &rejected, at),
             Err(Error::Protocol)
         );
-        let mut spool = client.telemetry_spool(Limits::production()).unwrap();
-        spool.install(&verified).unwrap();
+        let mut telemetry = Telemetry::open(&client).unwrap();
+        telemetry.install(verified.clone()).unwrap();
+        let spool = &mut telemetry.spool;
         let mut small_request = verified.payload().clone();
         small_request.max_bytes = 128;
         small_request.output_bytes = 128;
@@ -134,7 +140,7 @@ async fn expanded_state_contract_maps_persists_and_uploads_over_tls() {
             .unwrap();
         spool.freeze_all(&verified).unwrap();
         let id = spool.pending(at / 1_000_000, false).unwrap().unwrap().id();
-        drop(spool);
+        drop(telemetry);
         drop(client);
 
         client = server.client(&root, agent_client::OpenMode::Existing);
