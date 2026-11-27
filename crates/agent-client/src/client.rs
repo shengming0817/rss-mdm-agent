@@ -375,21 +375,28 @@ impl<S: IdentityProvider, C: Clock> Client<S, C> {
         if limit == 0 || limit > self.store.cfg.limits.pending_reports {
             return Err(Error::Configuration);
         }
-        let reports = {
-            let mut stmt=self.store.conn.prepare("SELECT id,device,CASE WHEN typeof(body)='blob' AND length(body)<=16384 THEN body END FROM reports ORDER BY rowid LIMIT ?1")?;
-            let rows = stmt
-                .query_map([limit as i64], |r| {
-                    Ok((
-                        r.get::<_, String>(0)?,
-                        r.get::<_, String>(1)?,
-                        r.get::<_, Vec<u8>>(2)?,
-                    ))
-                })?
-                .collect::<Result<Vec<_>, _>>()?;
-            rows
-        };
         let mut sent = 0;
-        for (id, device, body) in reports {
+        while sent < limit {
+            let report = self
+                .store
+                .conn
+                .query_row(
+                    "SELECT id, device,
+                    CASE WHEN typeof(body)='blob' AND length(body)<=?1 THEN body END
+                 FROM reports ORDER BY rowid LIMIT 1",
+                    [wire::MAX_REPORT_BYTES],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, Vec<u8>>(2)?,
+                        ))
+                    },
+                )
+                .optional()?;
+            let Some((id, device, body)) = report else {
+                break;
+            };
             if device != self.registration()?.device_id.to_string() {
                 return Err(Error::Identity);
             }

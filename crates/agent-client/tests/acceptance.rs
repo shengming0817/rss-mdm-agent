@@ -2,6 +2,7 @@ use agent_client::{Client, Config, Error, Limits, OpenMode, Transport};
 use rss_mdm_agent_wire::runtime::*;
 use url::Url;
 use uuid::Uuid;
+mod paired_mdm;
 #[path = "../../../tests/agent-protocol/mod.rs"]
 mod support;
 use rss_mdm_agent_wire::runtime::{TaskArchitecture, TaskPlatform};
@@ -60,6 +61,180 @@ async fn expired_report_status_preserves_the_original_ack_across_restart() {
     server.data.lock().unwrap().response_override =
         Some((id.to_string(), serde_json::to_value(wrong).unwrap()));
     assert_eq!(client.report_status(id).await, Err(Error::Protocol));
+}
+
+#[tokio::test]
+async fn full_size_snapshot_replays_unchanged_until_its_post_ack_matches() {
+    use sha2::{Digest, Sha256};
+
+    let original = collections().remove(0);
+    let fields: Vec<_> = (0..=MAX_REPORT_FIELDS)
+        .map(|index| {
+            let mut field = original.fields()[0].clone();
+            field.key = FieldKey::parse(&format!("custom.field_{index:04}")).unwrap();
+            field.value_type = ValueType::String {
+                max_length: 65_536,
+                allow_empty: true,
+            };
+            field
+        })
+        .collect();
+    let definition = |fields| {
+        CollectionDefinition::new(
+            original.dataset(),
+            original.version(),
+            original.source(),
+            fields,
+        )
+    };
+    assert!(definition(fields.clone()).is_err());
+    let collection = definition(fields[..MAX_REPORT_FIELDS].to_vec()).unwrap();
+    let mut values: Vec<_> = collection
+        .fields()
+        .iter()
+        .map(|field| FieldValue {
+            field: field.key,
+            value: CollectedValue::Value(Scalar::String(String::new())),
+        })
+        .collect();
+    values[0].value = CollectedValue::Value(Scalar::String("界".repeat(24_000)));
+    let request = |values: Vec<FieldValue>| {
+        ReportRequest::new(
+            Uuid::from_u128(1),
+            0,
+            1,
+            collection.clone(),
+            ReportBody::Snapshot(values),
+        )
+    };
+    let base_bytes = request(values.clone()).unwrap().canonical().unwrap().len();
+    let mut remaining = MAX_REPORT_BYTES - base_bytes;
+    for value in &mut values[1..] {
+        if remaining == 0 {
+            break;
+        }
+        let bytes = remaining.min(65_536);
+        value.value = CollectedValue::Value(Scalar::String("x".repeat(bytes)));
+        remaining -= bytes;
+    }
+    assert_eq!(remaining, 0);
+    assert_eq!(
+        request(values.clone()).unwrap().canonical().unwrap().len(),
+        MAX_REPORT_BYTES,
+    );
+
+    let server = Server::tls().await;
+    server.data.lock().unwrap().collections = Some(vec![collection.clone()]);
+    let root = Root::new();
+    let mut client = server.client(&root, OpenMode::Create);
+    server.register(&mut client).await;
+
+    let mut too_many = values.clone();
+    too_many.push(FieldValue {
+        field: fields[MAX_REPORT_FIELDS].key,
+        value: CollectedValue::Value(Scalar::String("extra".into())),
+    });
+    assert_eq!(
+        client.queue_report(collection.dataset(), ReportBody::Snapshot(too_many), 1),
+        Err(Error::Protocol),
+    );
+    let mut too_large = values.clone();
+    too_large[MAX_REPORT_FIELDS - 1].value = CollectedValue::Value(Scalar::String("x".into()));
+    assert_eq!(
+        client.queue_report(collection.dataset(), ReportBody::Snapshot(too_large), 1),
+        Err(Error::Protocol),
+    );
+    drop(client);
+    let mut small_disk = server.config();
+    small_disk.limits.database_pages = 512;
+    let mut client = Client::open(
+        &root.path,
+        small_disk,
+        OpenMode::Existing,
+        server.secrets.clone(),
+        server.time.clone(),
+    )
+    .unwrap();
+    assert_eq!(
+        client.queue_report(
+            collection.dataset(),
+            ReportBody::Snapshot(values.clone()),
+            1
+        ),
+        Err(Error::Storage),
+    );
+    drop(client);
+    let mut client = server.client(&root, OpenMode::Existing);
+    let report_id = client
+        .queue_report(collection.dataset(), ReportBody::Snapshot(values), 1)
+        .unwrap();
+    let next = client
+        .queue_report(
+            collection.dataset(),
+            ReportBody::Failed {
+                code: FailureCode::CollectionFailed,
+            },
+            1,
+        )
+        .unwrap();
+    let database = rusqlite::Connection::open(root.path.join("communication.sqlite")).unwrap();
+    let frozen: Vec<u8> = database
+        .query_row(
+            "SELECT body FROM reports WHERE id=?1",
+            [report_id.to_string()],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let digest: [u8; 32] = Sha256::digest(&frozen).into();
+    assert_eq!(frozen.len(), MAX_REPORT_BYTES);
+
+    server.data.lock().unwrap().report_failure = true;
+    assert_eq!(client.flush_reports(2).await, Err(Error::Unavailable));
+    let original_ack = client.report_status(report_id).await.unwrap().ack;
+    drop(client);
+
+    let mut client = server.client(&root, OpenMode::Existing);
+    assert_eq!(
+        client.report_status(report_id).await.unwrap().ack,
+        original_ack
+    );
+    server.data.lock().unwrap().bad_ack = true;
+    assert_eq!(client.flush_reports(2).await, Err(Error::Protocol));
+    assert_eq!(client.report_status(next).await, Err(Error::NotFound));
+    assert_eq!(
+        database
+            .query_row("SELECT count(*) FROM reports", [], |row| row
+                .get::<_, usize>(0))
+            .unwrap(),
+        2,
+    );
+
+    server.data.lock().unwrap().bad_ack = false;
+    assert_eq!(client.flush_reports(1).await, Ok(1));
+    assert_eq!(
+        client.report_status(report_id).await.unwrap().ack,
+        original_ack
+    );
+    assert_eq!(client.flush_reports(2).await, Ok(1));
+    drop(client);
+    let mut client = server.client(&root, OpenMode::Existing);
+    assert_eq!(client.flush_reports(2).await, Ok(0));
+    let data = server.data.lock().unwrap();
+    assert_eq!(&data.report_body_digests[..3], &[digest; 3]);
+    assert_eq!(data.report_posts, 4);
+    assert_eq!(data.reports[&report_id.to_string()]["sequence"], 0);
+    assert_eq!(
+        data.reports[&report_id.to_string()]["body"]["kind"],
+        "snapshot"
+    );
+    assert_eq!(
+        data.reports[&report_id.to_string()]["body"]["values"]
+            .as_array()
+            .unwrap()
+            .len(),
+        MAX_REPORT_FIELDS,
+    );
+    assert_eq!(data.reports[&next.to_string()]["sequence"], 1);
 }
 
 #[tokio::test]

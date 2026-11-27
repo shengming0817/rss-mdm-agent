@@ -10,7 +10,7 @@ pub mod telemetry;
 use agent_client::*;
 use axum::{
     body::{Body, Bytes},
-    extract::{ConnectInfo, State},
+    extract::{ConnectInfo, DefaultBodyLimit, State},
     http::{HeaderMap, StatusCode, Uri},
     response::{IntoResponse, Response},
 };
@@ -249,6 +249,7 @@ pub struct Data {
     pub reports: BTreeMap<String, Value>,
     pub report_statuses: BTreeMap<Uuid, ReportStatus>,
     pub report_posts: usize,
+    pub report_body_digests: Vec<[u8; 32]>,
     pub report_lookup_fault: Option<(StatusCode, Value)>,
     pub collections: Option<Vec<CollectionDefinition>>,
     pub results: BTreeMap<String, Value>,
@@ -775,6 +776,7 @@ impl Server {
             reports: BTreeMap::new(),
             report_statuses: BTreeMap::new(),
             report_posts: 0,
+            report_body_digests: Vec::new(),
             report_lookup_fault: None,
             collections: None,
             results: BTreeMap::new(),
@@ -852,6 +854,11 @@ impl Server {
                         }
                     }
                     let router = axum::Router::new()
+                        .route(
+                            "/api/v1/agent/runtime/reports",
+                            axum::routing::post(handler)
+                                .layer(DefaultBodyLimit::max(MAX_REPORT_BYTES)),
+                        )
                         .fallback(handler)
                         .with_state(server_data);
                     let serving = async move {
@@ -1110,6 +1117,14 @@ async fn handler(
             .unwrap()
             .push(format!("request {} {}: {error}", method, uri.path()));
         return runtime_error(StatusCode::BAD_REQUEST, ErrorCode::MalformedRequest);
+    }
+    if method == axum::http::Method::POST && uri.path() == "/api/v1/agent/runtime/reports" {
+        state
+            .0
+            .lock()
+            .unwrap()
+            .report_body_digests
+            .push(Sha256::digest(&bytes).into());
     }
     // Fault overrides deliberately reach the client. All ordinary fixture replies
     // must match the producer, rather than a second hand-written protocol.
