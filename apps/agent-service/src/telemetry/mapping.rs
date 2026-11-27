@@ -276,9 +276,11 @@ pub(crate) fn admit_schema(schema: &Json) -> Result<usize, Error> {
                         }
                         "items" => walk(value, depth + 1, nodes, false)?,
                         "enum" => {
-                            if let Some(values) =
-                                value.as_array().filter(|v| v.iter().all(Json::is_string))
-                            {
+                            if let Some(values) = value.as_array().filter(|values| {
+                                values.iter().all(|value| {
+                                    value.is_string() || value.is_i64() || value.is_u64()
+                                })
+                            }) {
                                 if values.len() > 1024 {
                                     return Err(Error::Capacity);
                                 }
@@ -398,6 +400,10 @@ mod tests {
         values.push("extra".into());
         assert_eq!(
             admit_schema(&json!({"type":"string", "enum":values})),
+            Err(Error::Capacity)
+        );
+        assert_eq!(
+            admit_schema(&json!({"type":"integer", "enum":(0..1025).collect::<Vec<_>>()})),
             Err(Error::Capacity)
         );
         assert_eq!(

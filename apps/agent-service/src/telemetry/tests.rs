@@ -13,7 +13,7 @@ fn values() -> BTreeMap<w::FieldKey, w::TelemetryReading> {
 }
 
 #[tokio::test]
-async fn expanded_state_contract_maps_persists_and_uploads_over_tls() {
+async fn expanded_telemetry_contract_maps_persists_and_uploads_over_tls() {
     let server = protocol::Server::tls().await;
     let root = protocol::Root::new();
     let mut client = server.client(&root, agent_client::OpenMode::Create);
@@ -40,51 +40,70 @@ async fn expanded_state_contract_maps_persists_and_uploads_over_tls() {
         quality: OutputQuality::Complete,
     };
 
-    for many_dimensions in [false, true] {
+    use serde_json::json;
+    let integers: Vec<i64> = (0..1024).collect();
+    let scenarios = [
+        (
+            [("state".into(), dimension(states.clone()))].into(),
+            w::ValueType::Enum {
+                values: states.clone(),
+            },
+            json!({"type":"string", "enum":states}),
+            json!("state_1023"),
+            json!("unapproved"),
+        ),
+        (
+            (0..1024)
+                .map(|index| (format!("d{index:04}"), dimension(["x".into()].into())))
+                .collect(),
+            w::ValueType::Enum {
+                values: ["x".into()].into(),
+            },
+            json!({"type":"string", "enum":["x"]}),
+            json!("x"),
+            json!("unapproved"),
+        ),
+        (
+            [(
+                "code".into(),
+                dimension(integers.iter().map(ToString::to_string).collect()),
+            )]
+            .into(),
+            w::ValueType::Integer,
+            json!({"type":"integer", "enum":integers}),
+            json!(1023),
+            json!(1024),
+        ),
+    ];
+    for (index, (dimensions, value_type, schema, observed, unapproved)) in
+        scenarios.into_iter().enumerate()
+    {
         let mut configuration = fixture::configuration(&server, &registration).configuration;
         configuration.max_bytes = 256 * 1024;
         configuration.max_resources = 1;
-        configuration.binding = if many_dimensions { "b" } else { "a" }.repeat(64);
-        let selected = if many_dimensions { "x" } else { "state_1023" };
+        configuration.binding = format!("{index:064x}");
         let field = &mut configuration.fields[0];
+        let state = matches!(value_type, w::ValueType::Enum { .. });
         field.value_type = w::ValueType::Object {
-            properties: [(
-                "s".into(),
-                w::ValueType::Enum {
-                    values: if many_dimensions {
-                        [selected.to_owned()].into()
-                    } else {
-                        states.clone()
-                    },
-                },
-            )]
-            .into(),
+            properties: [("s".into(), value_type)].into(),
         };
         let binding = field.time_series.as_mut().unwrap();
-        binding.kind = w::TelemetryKind::State;
+        if state {
+            binding.kind = w::TelemetryKind::State;
+            binding.aggregations = [w::TelemetryAggregation::Timeline].into();
+        }
         binding.value_path = vec!["s".into()];
-        binding.aggregations = [w::TelemetryAggregation::Timeline].into();
-        binding.dimensions = if many_dimensions {
-            (0..1024)
-                .map(|index| {
-                    (
-                        format!("d{index:04}"),
-                        dimension([selected.to_owned()].into()),
-                    )
-                })
-                .collect()
-        } else {
-            [("state".into(), dimension(states.clone()))].into()
-        };
+        binding.dimensions = dimensions;
         let mut outside = binding.clone();
-        if many_dimensions {
+        if outside.dimensions.len() == 1024 {
             outside
                 .dimensions
-                .insert("extra".into(), dimension([selected.to_owned()].into()));
+                .insert("extra".into(), dimension(["x".into()].into()));
         } else {
             outside
                 .dimensions
-                .get_mut("state")
+                .values_mut()
+                .next()
                 .unwrap()
                 .values
                 .insert("extra".into());
@@ -94,13 +113,8 @@ async fn expanded_state_contract_maps_persists_and_uploads_over_tls() {
         else {
             unreachable!();
         };
-        let output_states = if many_dimensions {
-            [selected.to_owned()].into()
-        } else {
-            states.clone()
-        };
-        *output_schema = serde_json::json!({"type":"object","properties":{
-            "load":{"type":"object","properties":{"s":{"type":"string","enum":output_states}},
+        *output_schema = json!({"type":"object","properties":{
+            "load":{"type":"object","properties":{"s":schema},
                 "required":["s"],"additionalProperties":false}},
             "required":["load"], "additionalProperties":false});
 
@@ -113,11 +127,11 @@ async fn expanded_state_contract_maps_persists_and_uploads_over_tls() {
             .unwrap();
         let at = server.time.now().unwrap() * 1_000_000;
         let mut candidate = evidence.clone();
-        candidate.stdout = serde_json::to_vec(&serde_json::json!({"load":{"s":selected}})).unwrap();
+        candidate.stdout = serde_json::to_vec(&json!({"load":{"s":observed}})).unwrap();
         candidate.total_output_bytes = candidate.stdout.len() as u64;
         let samples = mapping::readings(verified.payload(), &candidate, at).unwrap();
         let mut rejected = candidate;
-        rejected.stdout = br#"{"load":{"s":"unapproved"}}"#.to_vec();
+        rejected.stdout = serde_json::to_vec(&json!({"load":{"s":unapproved}})).unwrap();
         rejected.total_output_bytes = rejected.stdout.len() as u64;
         assert_eq!(
             mapping::readings(verified.payload(), &rejected, at),
